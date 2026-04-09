@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { EventBus } from "./event-bus.js";
+import { ContextManager } from "./context-manager.js";
 import { Shell } from "./shell.js";
 import { TUI } from "./tui.js";
 import { AcpClient } from "./acp-client.js";
@@ -66,6 +68,10 @@ Inside the shell:
 
 async function main(): Promise<void> {
   const config = parseArgs(process.argv.slice(2));
+
+  // Create foundational infrastructure
+  const bus = new EventBus();
+  const contextManager = new ContextManager(bus);
   const tui = new TUI(config.agentCommand);
 
   // Set terminal title
@@ -89,8 +95,9 @@ async function main(): Promise<void> {
     process.exit(0);
   };
 
-  // Create shell first
+  // Create shell — emits events to bus, ContextManager listens
   const shell = new Shell({
+    bus,
     cols,
     rows,
     shell: config.shell,
@@ -174,8 +181,8 @@ async function main(): Promise<void> {
     },
   });
 
-  // Create agent client
-  acpClient = new AcpClient(shell, tui, config);
+  // Create agent client — emits agent events, queries ContextManager for context
+  acpClient = new AcpClient({ bus, contextManager, shell, tui, config });
 
   // Connect to agent asynchronously (don't block shell startup)
   const connectAgent = async () => {

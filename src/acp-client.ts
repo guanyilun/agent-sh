@@ -6,6 +6,8 @@ import { executeCommand, killSession, type ExecutorSession } from "./executor.js
 import { computeDiff } from "./diff.js";
 import { FileWatcher } from "./file-watcher.js";
 import * as path from "node:path";
+import type { EventBus } from "./event-bus.js";
+import type { ContextManager } from "./context-manager.js";
 import type { Shell } from "./shell.js";
 import type { TUI } from "./tui.js";
 import type { AgentShellConfig } from "./types.js";
@@ -14,6 +16,8 @@ export class AcpClient {
   private agentProcess: ChildProcess | null = null;
   private connection: acp.ClientSideConnection | null = null;
   private sessionId: string | null = null;
+  private bus: EventBus;
+  private contextManager: ContextManager;
   private shell: Shell;
   private tui: TUI;
   private config: AgentShellConfig;
@@ -29,12 +33,20 @@ export class AcpClient {
   private agentInfo: { name: string; version: string } | null = null; // Store agent info
   private model: string | undefined; // Store model name from config
 
-  constructor(shell: Shell, tui: TUI, config: AgentShellConfig) {
-    this.shell = shell;
-    this.tui = tui;
-    this.config = config;
+  constructor(opts: {
+    bus: EventBus;
+    contextManager: ContextManager;
+    shell: Shell;
+    tui: TUI;
+    config: AgentShellConfig;
+  }) {
+    this.bus = opts.bus;
+    this.contextManager = opts.contextManager;
+    this.shell = opts.shell;
+    this.tui = opts.tui;
+    this.config = opts.config;
     this.fileWatcher = new FileWatcher(process.cwd());
-    this.model = config.model; // Store model from config
+    this.model = opts.config.model;
   }
 
   async start(): Promise<void> {
@@ -110,10 +122,10 @@ export class AcpClient {
     }
 
     // Create a session
-    const context = this.shell.getContext();
-    this.log(`Creating new session with cwd: ${context.cwd}`);
+    const cwd = this.contextManager.getCwd();
+    this.log(`Creating new session with cwd: ${cwd}`);
     const sessionResponse = await this.connection.newSession({
-      cwd: context.cwd,
+      cwd,
       mcpServers: [],
     });
 
@@ -146,22 +158,11 @@ export class AcpClient {
     this.tui.startAgentResponse();
     this.tui.startSpinner();
 
-    // Include shell context — cwd + commands executed since last agent interaction
-    const context = this.shell.getContext();
-    const recentActivity = this.shell.getAndClearRecentActivity();
-    let contextBlock = `<shell_context>\n`;
-    contextBlock += `cwd: ${context.cwd}\n`;
-    if (recentActivity.length > 0) {
-      contextBlock += `\nshell_activity_since_last_interaction:\n`;
-      for (const entry of recentActivity) {
-        contextBlock += `$ ${entry.command}\n`;
-        if (entry.output) {
-          contextBlock += `${entry.output}\n`;
-        }
-        contextBlock += `\n`;
-      }
-    }
-    contextBlock += `</shell_context>\n\n`;
+    // Emit agent query event (ContextManager records it)
+    this.bus.emit("agent:query", { query });
+
+    // Build structured context from ContextManager
+    const contextBlock = this.contextManager.getContext();
 
     try {
       this.log("sending prompt...");
@@ -170,7 +171,7 @@ export class AcpClient {
         prompt: [
           {
             type: "text",
-            text: contextBlock + query,
+            text: contextBlock + "\n" + query,
           },
         ],
       });
@@ -189,6 +190,9 @@ export class AcpClient {
       );
     } finally {
       this.log("restoring shell mode");
+      this.bus.emit("agent:response-done", {
+        response: this.currentResponseText,
+      });
       this.lastResponseText = this.currentResponseText;
       this.tui.endAgentResponse();
 
@@ -236,9 +240,8 @@ export class AcpClient {
    */
   async resetSession(): Promise<void> {
     if (!this.connection) return;
-    const context = this.shell.getContext();
     const sessionResponse = await this.connection.newSession({
-      cwd: context.cwd,
+      cwd: this.contextManager.getCwd(),
       mcpServers: [],
     });
     this.sessionId = sessionResponse.sessionId;
@@ -344,6 +347,7 @@ export class AcpClient {
         if (content.type === "text") {
           this.currentResponseText += content.text;
           this.tui.writeAgentText(content.text);
+          this.bus.emit("agent:response-chunk", { text: content.text });
         }
         break;
       }
@@ -427,10 +431,30 @@ export class AcpClient {
       ? `${params.command} ${params.args.join(" ")}`
       : params.command;
 
-    const context = this.shell.getContext();
-    const cwd = params.cwd ?? context.cwd;
+    const cwd = params.cwd ?? this.contextManager.getCwd();
 
-    // Don't show tool call here - it's already shown in handleSessionUpdate
+    // Intercept __shell_recall commands — return result without spawning a process
+    if (fullCommand.trimStart().startsWith("__shell_recall")) {
+      const id = `t${++this.terminalCounter}`;
+      const result = this.contextManager.handleRecallCommand(fullCommand.trim());
+      const session: ExecutorSession = {
+        id,
+        command: fullCommand,
+        output: result,
+        exitCode: 0,
+        done: true,
+        truncated: false,
+        process: null,
+      };
+      this.terminalSessions.set(id, session);
+      this.terminalDonePromises.set(id, Promise.resolve());
+      return { terminalId: id };
+    }
+
+    this.bus.emit("agent:tool-call", {
+      tool: fullCommand,
+      args: { command: params.command, args: params.args, cwd },
+    });
 
     const id = `t${++this.terminalCounter}`;
 
@@ -484,6 +508,12 @@ export class AcpClient {
 
     this.tui.flushCommandOutput();
     this.tui.showToolResult(session.exitCode);
+
+    this.bus.emit("agent:tool-output", {
+      tool: session.command ?? "",
+      output: session.output,
+      exitCode: session.exitCode,
+    });
 
     return { exitCode: session.exitCode ?? -1 };
   }
