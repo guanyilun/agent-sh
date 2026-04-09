@@ -51,12 +51,23 @@ export class InputHandler {
   }
 
   handleInput(data: string): void {
-    // If agent is running (processing a query), handle Ctrl-C as cancel
+    // If agent is running (processing a query), only Ctrl-C and control keys
     if (this.ctx.isAgentActive()) {
       if (data === "\x03") {
         this.bus.emit("agent:cancel-request", {});
+      } else if (data.length === 1 && data.charCodeAt(0) < 32) {
+        this.bus.emit("input:keypress", { key: data });
       }
       return;
+    }
+
+    // Forward control chars that normal shell mode doesn't handle
+    if (data.length === 1 && data.charCodeAt(0) < 32 && !this.agentInputMode) {
+      const code = data.charCodeAt(0);
+      // Don't intercept keys that shell mode handles: CR, Ctrl-C, Ctrl-D, Tab
+      if (code !== 0x0d && code !== 0x03 && code !== 0x04 && code !== 0x09) {
+        this.bus.emit("input:keypress", { key: data });
+      }
     }
 
     // If in agent input mode (typing a query after ">")
