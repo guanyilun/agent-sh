@@ -13,6 +13,7 @@ export class Shell implements InputContext {
   private outputParser: OutputParser;
   private paused = false;
   private agentActive = false;
+  private isZsh = false;
   private tmpDir?: string;
 
   constructor(opts: {
@@ -53,6 +54,7 @@ export class Shell implements InputContext {
     const osc7Cmd = 'printf "\\e]7;file://%s%s\\a" "$(hostname)" "$PWD"';
     const promptMarker = 'printf "\\e]9999;PROMPT\\a"';
 
+    this.isZsh = isZsh;
     if (isZsh) {
       // For zsh: use ZDOTDIR to source user's real config, then append
       // our hooks via precmd_functions (additive — doesn't clobber p10k/omz).
@@ -83,6 +85,14 @@ export class Shell implements InputContext {
         "  }",
         "fi",
         "zle -N zle-line-init __agent_sh_line_init",
+        "",
+        "# Hidden widget to trigger prompt redraw from Node.js side",
+        "# Bound to an unused escape sequence that no real key produces",
+        "__agent_sh_redraw() {",
+        "  zle reset-prompt",
+        "}",
+        "zle -N __agent_sh_redraw",
+        "bindkey '\\e[9999~' __agent_sh_redraw",
       ].join("\n") + "\n");
       env.ZDOTDIR = this.tmpDir;
       shellArgs = ["--no-globalrcs"];
@@ -153,10 +163,11 @@ export class Shell implements InputContext {
   }
 
   /**
-   * Lightweight redraw: replay just the last line of the shell's prompt
-   * (e.g. p10k's "❯ "). This works because agent input mode only overwrites
-   * the final prompt line — the path bar above is still intact. The last
-   * line is linear text (colors + chars + clear-to-end), no cursor positioning.
+   * Lightweight redraw: ask the shell to redraw its own prompt via a hidden
+   * ZLE widget (zsh) bound to \e[9999~. The shell knows how to draw its
+   * prompt correctly — we don't try to replay captured bytes.
+   *
+   * For bash, falls back to sending \n for a fresh prompt cycle.
    */
   redrawPrompt(): void {
     const result = this.bus.emitPipe("shell:redraw-prompt", {
@@ -164,11 +175,11 @@ export class Shell implements InputContext {
       handled: false,
     });
     if (!result.handled) {
-      const lastLine = this.outputParser.getLastPromptLine();
-      if (lastLine) {
-        process.stdout.write("\r" + lastLine);
+      if (this.isZsh) {
+        // Trigger the hidden ZLE widget — zle reset-prompt redraws cleanly
+        this.ptyProcess.write("\x1b[9999~");
       } else {
-        // Fallback: send \n for a fresh prompt cycle
+        // Bash: no zle reset-prompt equivalent, use fresh prompt cycle
         this.ptyProcess.write("\n");
       }
     }
