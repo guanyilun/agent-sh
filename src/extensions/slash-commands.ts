@@ -7,6 +7,7 @@
  * - Uses "ui:info"/"ui:error" for user feedback (no direct TUI dependency)
  */
 import { execSync } from "node:child_process";
+import { palette as p } from "../utils/palette.js";
 import type { ExtensionContext } from "../types.js";
 
 interface SlashCommand {
@@ -22,7 +23,7 @@ export default function activate({ bus, getAcpClient, quit }: ExtensionContext):
       description: "Show available commands",
       handler: () => {
         const lines = commands.map(
-          (c) => `  \x1b[36m${c.name.padEnd(12)}\x1b[0m ${c.description}`
+          (c) => `  ${p.accent}${c.name.padEnd(12)}${p.reset} ${c.description}`
         );
         bus.emit("ui:info", { message: "Available commands:\n" + lines.join("\n") });
       },

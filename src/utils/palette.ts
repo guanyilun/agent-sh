@@ -27,6 +27,7 @@ export interface ColorPalette {
   bold: string;
   dim: string;
   italic: string;
+  underline: string;
   reset: string;
 }
 
@@ -42,10 +43,11 @@ const defaultPalette: ColorPalette = {
   successBgEmph: "\x1b[48;2;0;112;0m",
   errorBgEmph:   "\x1b[48;2;90;0;0m",
 
-  bold:   "\x1b[1m",
-  dim:    "\x1b[2m",
-  italic: "\x1b[3m",
-  reset:  "\x1b[0m",
+  bold:      "\x1b[1m",
+  dim:       "\x1b[2m",
+  italic:    "\x1b[3m",
+  underline: "\x1b[4m",
+  reset:     "\x1b[0m",
 };
 
 /** Active palette — import and use directly in components. */

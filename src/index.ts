@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Shell } from "./shell.js";
 import { createCore } from "./core.js";
-import { DIM, GREEN, RESET } from "./utils/ansi.js";
+import { palette as p } from "./utils/palette.js";
 import tuiRenderer from "./extensions/tui-renderer.js";
 import slashCommands from "./extensions/slash-commands.js";
 import fileAutocomplete from "./extensions/file-autocomplete.js";
@@ -81,15 +81,15 @@ Inside the shell:
 
 function formatAgentInfo(agentInfo: { name: string; version: string }, model?: string): string {
   const name = agentInfo.name.replace(/-acp$/, "").replace(/-/g, " ");
-  let infoStr = `${DIM}${name}${RESET}`;
+  let infoStr = `${p.dim}${name}${p.reset}`;
   if (model) {
     const cleanModel = model
       .replace(/^openai\//i, "")
       .replace(/^anthropic\//i, "")
       .replace(/^google\//i, "");
-    infoStr += ` ${DIM}(${cleanModel})${RESET}`;
+    infoStr += ` ${p.dim}(${cleanModel})${p.reset}`;
   }
-  return `${infoStr} ${GREEN}●${RESET}`;
+  return `${infoStr} ${p.success}●${p.reset}`;
 }
 
 async function main(): Promise<void> {
