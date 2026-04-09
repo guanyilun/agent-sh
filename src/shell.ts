@@ -1,9 +1,7 @@
 import * as pty from "node-pty";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ShellContext, CommandRecord } from "./types.js";
-
-const MAX_HISTORY = 20;
+import type { EventBus } from "./event-bus.js";
 
 // Helper function to calculate visible string length (excluding ANSI codes)
 function visibleLen(str: string): number {
@@ -12,10 +10,9 @@ function visibleLen(str: string): number {
 
 export class Shell {
   private ptyProcess: pty.IPty;
+  private bus: EventBus;
   private lineBuffer = "";
   private cwd: string;
-  // Structured command history
-  private commandHistory: CommandRecord[] = [];
   private currentOutputCapture = "";  // accumulates output for the current command
   private lastCommand = "";           // the command that's currently running
   private paused = false;
@@ -26,7 +23,6 @@ export class Shell {
   private autocompleteIndex = 0;
   private autocompleteItems: { name: string; description: string }[] = [];
   private autocompleteLines = 0; // how many lines the suggestion list occupies
-  private shellActivitySinceAgent: CommandRecord[] = [];
   private foregroundBusy = false; // true while a command is running in the PTY (between Enter and next prompt marker)
   private slashCommandDefs: { name: string; description: string }[] = [];
   private onAgentRequest: (query: string) => void;
@@ -36,6 +32,7 @@ export class Shell {
   private onShowAgentInfo: () => { info: string; model?: string }; // Callback to get agent info string and model
 
   constructor(opts: {
+    bus: EventBus;
     onAgentRequest: (query: string) => void;
     onAgentCancel: () => void;
     onSlashCommand?: (command: string) => void;
@@ -47,6 +44,7 @@ export class Shell {
     shell: string;
     cwd: string;
   }) {
+    this.bus = opts.bus;
     this.onAgentRequest = opts.onAgentRequest;
     this.onAgentCancel = opts.onAgentCancel;
     this.onSlashCommand = opts.onSlashCommand ?? (() => {});
@@ -132,6 +130,11 @@ export class Shell {
           this.lastCommand = this.lineBuffer.trim();
           this.currentOutputCapture = "";
           this.foregroundBusy = true;
+          this.bus.emit("shell:command-start", {
+            command: this.lastCommand,
+            cwd: this.cwd,
+          });
+          this.bus.emit("shell:foreground-busy", { busy: true });
         }
         this.lineBuffer = "";
         this.ptyProcess.write(ch);
@@ -510,7 +513,11 @@ export class Shell {
     // OSC 7: \x1b]7;file://hostname/path\x07 or \x1b]7;file://hostname/path\x1b\\
     const match = data.match(/\x1b\]7;file:\/\/[^/]*(\/[^\x07\x1b]*)/);
     if (match?.[1]) {
-      this.cwd = decodeURIComponent(match[1]);
+      const newCwd = decodeURIComponent(match[1]);
+      if (newCwd !== this.cwd) {
+        this.cwd = newCwd;
+        this.bus.emit("shell:cwd-change", { cwd: this.cwd });
+      }
     }
   }
 
@@ -523,17 +530,18 @@ export class Shell {
     if (data.includes("\x1b]9999;PROMPT\x07")) {
       // A new prompt appeared — the foreground process has exited
       this.foregroundBusy = false;
+      this.bus.emit("shell:foreground-busy", { busy: false });
       // Finalize the previous command
       if (this.lastCommand) {
         const output = this.stripAnsi(this.currentOutputCapture).trim();
         // Remove the echoed command from the start of the output
         const cleaned = this.removeEchoedCommand(output, this.lastCommand);
-        const record = { command: this.lastCommand, output: cleaned };
-        this.commandHistory.push(record);
-        this.shellActivitySinceAgent.push(record);
-        if (this.commandHistory.length > MAX_HISTORY) {
-          this.commandHistory.shift();
-        }
+        this.bus.emit("shell:command-done", {
+          command: this.lastCommand,
+          output: cleaned,
+          cwd: this.cwd,
+          exitCode: null, // PTY doesn't give us exit codes directly
+        });
       }
       this.lastCommand = "";
       this.currentOutputCapture = "";
@@ -562,21 +570,8 @@ export class Shell {
     return output;
   }
 
-  getContext(): ShellContext {
-    return {
-      cwd: this.cwd,
-      history: this.commandHistory.slice(-10),
-    };
-  }
-
-  /**
-   * Get shell commands executed since the last agent interaction, then clear the buffer.
-   * Capped at 5 most recent to prevent context blowup.
-   */
-  getAndClearRecentActivity(): CommandRecord[] {
-    const activity = this.shellActivitySinceAgent.slice(-5);
-    this.shellActivitySinceAgent = [];
-    return activity;
+  getCwd(): string {
+    return this.cwd;
   }
 
   pauseOutput(): void {
