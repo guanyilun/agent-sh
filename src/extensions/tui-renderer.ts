@@ -12,38 +12,52 @@
  */
 import { MarkdownRenderer } from "../utils/markdown.js";
 import { CYAN, DIM, YELLOW, GREEN, RED, GRAY, BOLD, RESET } from "../utils/ansi.js";
+import {
+  renderToolCall,
+  renderToolResult,
+  startSpinner,
+  stopSpinner as stopToolSpinner,
+  type SpinnerState,
+} from "../utils/tool-display.js";
 import type { ExtensionContext } from "../types.js";
 
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const MAX_COMMAND_OUTPUT_LINES = 30;
 
 export default function activate({ bus }: ExtensionContext): void {
-  let spinnerInterval: ReturnType<typeof setInterval> | null = null;
-  let spinnerFrame = 0;
+  let spinner: SpinnerState | null = null;
   let renderer: MarkdownRenderer | null = null;
   let commandOutputBuffer = "";
+  let commandOutputLineCount = 0;
+  let commandOutputOverflow = 0;
+  let lastCommand = "";
 
   // ── Event subscriptions ─────────────────────────────────────
 
   bus.on("agent:query", (e) => {
     process.stdout.write(`\n${CYAN}${BOLD}❯ ${RESET}${CYAN}${e.query}${RESET}\n`);
     startAgentResponse();
-    startSpinner();
+    startThinkingSpinner();
   });
 
   bus.on("agent:response-chunk", (e) => writeAgentText(e.text));
   bus.on("agent:response-done", () => endAgentResponse());
 
-  bus.on("agent:tool-started", (e) => {
-    stopSpinner();
-    showToolCall(e.title);
+  bus.on("agent:tool-call", (e) => {
+    lastCommand = e.tool;
   });
 
-  bus.on("agent:tool-completed", (e) => showToolResult(e.exitCode));
+  bus.on("agent:tool-started", (e) => {
+    stopCurrentSpinner();
+    showToolCall(e.title, lastCommand);
+    lastCommand = "";
+  });
+
+  bus.on("agent:tool-completed", (e) => showToolComplete(e.exitCode));
   bus.on("agent:tool-output-chunk", (e) => writeCommandOutput(e.chunk));
   bus.on("agent:tool-output", () => flushCommandOutput());
 
   bus.on("agent:cancelled", () => {
-    stopSpinner();
+    stopCurrentSpinner();
     showInfo("(cancelled)");
     endAgentResponse();
   });
@@ -52,7 +66,7 @@ export default function activate({ bus }: ExtensionContext): void {
 
   // Flush rendering state before any permission prompt
   bus.on("permission:request", () => {
-    stopSpinner();
+    stopCurrentSpinner();
     flushCommandOutput();
     renderer?.flush();
     endAgentResponse();
@@ -84,46 +98,44 @@ export default function activate({ bus }: ExtensionContext): void {
   }
 
   function writeAgentText(text: string): void {
-    stopSpinner();
+    stopCurrentSpinner();
     if (!renderer) startAgentResponse();
     renderer!.push(text);
     flushOutput();
   }
 
-  function showToolCall(title: string): void {
-    stopSpinner();
+  function showToolCall(title: string, command?: string): void {
+    stopCurrentSpinner();
     if (!renderer) startAgentResponse();
     renderer!.flush();
-    renderer!.writeLine(`${YELLOW}${BOLD}▶ ${title}${RESET}`);
+    const termW = process.stdout.columns || 80;
+    const lines = renderToolCall({ title, command: command || undefined }, termW);
+    for (const line of lines) {
+      renderer!.writeLine(line);
+    }
+    // Reset output tracking for the new tool
+    commandOutputLineCount = 0;
+    commandOutputOverflow = 0;
   }
 
-  function showToolResult(exitCode: number | null): void {
+  function showToolComplete(exitCode: number | null): void {
     if (!renderer) return;
-    if (exitCode === null) {
-      renderer.writeLine(`${GRAY}(timed out)${RESET}`);
-    } else if (exitCode === 0) {
-      renderer.writeLine(`${GREEN}✓${RESET}`);
-    } else {
-      renderer.writeLine(`${RED}✗ exit ${exitCode}${RESET}`);
+    const termW = process.stdout.columns || 80;
+    const lines = renderToolResult({ exitCode }, termW);
+    for (const line of lines) {
+      renderer.writeLine(line);
     }
   }
 
-  function startSpinner(label = "Thinking"): void {
-    stopSpinner();
-    spinnerFrame = 0;
-    spinnerInterval = setInterval(() => {
-      const frame = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
-      process.stdout.write(`\r  ${CYAN}${frame} ${label}...${RESET}\x1b[K`);
-      flushOutput();
-      spinnerFrame++;
-    }, 80);
+  function startThinkingSpinner(label = "Thinking"): void {
+    stopCurrentSpinner();
+    spinner = startSpinner(label);
   }
 
-  function stopSpinner(): void {
-    if (spinnerInterval) {
-      clearInterval(spinnerInterval);
-      spinnerInterval = null;
-      process.stdout.write("\r\x1b[2K");
+  function stopCurrentSpinner(): void {
+    if (spinner) {
+      stopToolSpinner(spinner);
+      spinner = null;
     }
   }
 
@@ -133,15 +145,29 @@ export default function activate({ bus }: ExtensionContext): void {
     const lines = commandOutputBuffer.split("\n");
     commandOutputBuffer = lines.pop()!;
     for (const line of lines) {
-      renderer.writeLine(`${DIM}  ${line}${RESET}`);
+      if (commandOutputLineCount < MAX_COMMAND_OUTPUT_LINES) {
+        renderer.writeLine(`${DIM}  ${line}${RESET}`);
+        commandOutputLineCount++;
+      } else {
+        commandOutputOverflow++;
+      }
     }
   }
 
   function flushCommandOutput(): void {
     if (!renderer) return;
     if (commandOutputBuffer) {
-      renderer.writeLine(`${DIM}  ${commandOutputBuffer}${RESET}`);
+      if (commandOutputLineCount < MAX_COMMAND_OUTPUT_LINES) {
+        renderer.writeLine(`${DIM}  ${commandOutputBuffer}${RESET}`);
+        commandOutputLineCount++;
+      } else {
+        commandOutputOverflow++;
+      }
       commandOutputBuffer = "";
+    }
+    if (commandOutputOverflow > 0) {
+      renderer.writeLine(`${DIM}  … ${commandOutputOverflow} more lines${RESET}`);
+      commandOutputOverflow = 0;
     }
   }
 
