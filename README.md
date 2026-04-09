@@ -39,6 +39,9 @@ The [Agent Client Protocol](https://agentclientprotocol.com/) decouples the shel
 - **🧠 Context Aware** — Agent sees your cwd, recent commands, and their output
 - **🎯 Multiple Agents** — Easy switching between pi-acp, claude, and other ACP agents
 - **🏷️ Agent Info Display** — Shows current agent and model next to the prompt (e.g., `pi (gpt-4o) ●`)
+- **📝 Inline Diff Preview** — File writes show syntax-highlighted diffs inline (Ctrl+O to expand)
+- **💭 Thinking Display** — Toggle agent thinking/reasoning text with Ctrl+T
+- **🎨 Themeable** — Semantic color palette, swappable via extensions
 
 ## Install
 
@@ -253,6 +256,8 @@ export GOOGLE_API_KEY="your-key"
 | `> refactor this fn` | Sends to agent via ACP, streams response inline |
 | `> /help` | Shows available slash commands |
 | `Ctrl-C` | Standard signal to shell, or cancels active agent response |
+| `Ctrl-O` | Expand/collapse truncated diff preview |
+| `Ctrl-T` | Toggle thinking/reasoning text display |
 | `Escape` | Exit agent input mode (when typing after `>`) |
 
 When you type `>` at the start of a line, agent-shell enters **agent input mode** — the prompt changes to show the agent and model information (e.g., `pi (gpt-4o) ● ❯`) and your text is sent to the agent on Enter. The agent's response streams inline in real-time in a bordered box with markdown rendering and syntax highlighting.
@@ -303,13 +308,19 @@ index.ts — interactive terminal frontend:
   │     Shell             — PTY lifecycle (delegates to InputHandler + OutputParser)
   │
   ├── Built-in extensions:
-  │     tuiRenderer       — markdown rendering, syntax-highlighted diffs, spinner
+  │     tuiRenderer       — markdown rendering, inline diffs, thinking display, spinner
   │     slashCommands     — /help, /clear, /copy, /compact, /quit
   │     fileAutocomplete  — @ file path completion
   │     shellRecall       — __shell_recall terminal interception
   │
+  ├── Shared utilities:
+  │     palette           — semantic color system (accent, success, warning, error, muted)
+  │     diff-renderer     — syntax-highlighted diffs (split/unified/summary)
+  │     box-frame         — bordered TUI panels
+  │     tool-display      — width-adaptive tool call rendering
+  │
   └── User extensions (opt-in, loaded from -e flag / settings.json / extensions dir):
-        e.g. interactive-prompts — permission dialogs, diff preview
+        e.g. interactive-prompts, solarized-theme
 ```
 
 All components communicate exclusively through typed bus events. AcpClient has no reference to Shell — it emits lifecycle events (`agent:processing-start`, `agent:processing-done`) and Shell subscribes to manage its own state. Input flows the same way: any frontend emits `agent:submit` and the core routes it to the agent.
@@ -348,8 +359,10 @@ All components communicate exclusively through typed bus events. AcpClient has n
 | Update type | What we render |
 |---|---|
 | `agent_message_chunk` | Real-time streaming markdown with syntax highlighting in a bordered box |
+| `agent_thought_chunk` | Thinking spinner (default), or streaming text when toggled on with Ctrl+T |
 | `tool_call` | Yellow header showing what the agent is invoking |
 | `tool_call_update` | Status indicator (✓ or ✗ with exit code) |
+| `file_write` | Inline diff preview in bordered box (Ctrl+O to expand/collapse) |
 
 ## Project structure
 
@@ -368,7 +381,8 @@ agent-shell/
 │   ├── executor.ts         # Isolated child process execution
 │   ├── types.ts            # Shared type definitions
 │   ├── utils/
-│   │   ├── ansi.ts         # Shared ANSI constants + utilities
+│   │   ├── palette.ts      # Semantic color palette (accent/success/warning/error/muted)
+│   │   ├── ansi.ts         # ANSI utility functions (visibleLen, stripAnsi)
 │   │   ├── diff.ts         # Line-level LCS diff for file change previews
 │   │   ├── diff-renderer.ts# Syntax-highlighted diff display (split/unified/summary)
 │   │   ├── box-frame.ts    # Bordered TUI panels (rounded/square/double/heavy)
@@ -382,7 +396,8 @@ agent-shell/
 │       └── shell-recall.ts      # __shell_recall terminal interception
 ├── examples/
 │   └── extensions/
-│       └── interactive-prompts.ts # Example: permission gates (opt-in)
+│       ├── interactive-prompts.ts # Example: permission gates (opt-in)
+│       └── solarized-theme.ts    # Example: color theme via setPalette()
 ├── package.json
 └── tsconfig.json
 ```
@@ -470,6 +485,7 @@ The `ExtensionContext` provides:
 | `contextManager` | `ContextManager` | Access exchange history, cwd, search, expand |
 | `getAcpClient` | `() => AcpClient` | Lazy getter for the agent client |
 | `quit` | `() => void` | Exit agent-shell |
+| `setPalette` | `(overrides: Partial<ColorPalette>) => void` | Override color palette slots for theming |
 
 ### Yolo mode
 
@@ -486,6 +502,30 @@ cp examples/extensions/interactive-prompts.ts ~/.agent-shell/extensions/
 # Or add to settings.json
 echo '{ "extensions": ["./examples/extensions/interactive-prompts.ts"] }' > ~/.agent-shell/settings.json
 ```
+
+### Theming
+
+agent-shell uses a semantic color palette with ~10 base roles (`accent`, `success`, `warning`, `error`, `muted`, plus background variants and style modifiers). Extensions can override any slot via `setPalette()`:
+
+```typescript
+// solarized-theme.ts
+export default function activate({ setPalette }) {
+  setPalette({
+    accent:  "\x1b[38;2;38;139;210m",   // solarized blue
+    success: "\x1b[38;2;133;153;0m",    // solarized green
+    warning: "\x1b[38;2;181;137;0m",    // solarized yellow
+    error:   "\x1b[38;2;220;50;47m",    // solarized red
+    muted:   "\x1b[38;2;88;110;117m",   // solarized base01
+  });
+}
+```
+
+Load a theme like any other extension:
+```bash
+npm start -- -e ./examples/extensions/solarized-theme.ts
+```
+
+A complete example is included at `examples/extensions/solarized-theme.ts`.
 
 ### Loading extensions
 

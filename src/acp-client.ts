@@ -326,7 +326,10 @@ export class AcpClient {
       }
 
       case "agent_thought_chunk": {
-        // Hide thinking — don't display to user
+        const thought = update.content;
+        if (thought.type === "text" && thought.text) {
+          this.bus.emit("agent:thinking-chunk", { text: thought.text });
+        }
         break;
       }
 

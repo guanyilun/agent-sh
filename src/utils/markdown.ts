@@ -1,9 +1,6 @@
 import { highlight } from "cli-highlight";
-import { CYAN, BOLD, DIM, GREEN, YELLOW, GRAY, RESET, visibleLen } from "./ansi.js";
-
-const ITALIC = "\x1b[3m";
-const UNDERLINE = "\x1b[4m";
-const MAGENTA = "\x1b[35m";
+import { visibleLen } from "./ansi.js";
+import { palette as p } from "./palette.js";
 
 const MAX_CONTENT_WIDTH = 90;
 
@@ -26,7 +23,7 @@ export function wrapLine(text: string, maxWidth: number): string[] {
     if (seg.startsWith("\x1b[")) {
       // ANSI code — track it, add to current line
       currentLine += seg;
-      if (seg === RESET) {
+      if (seg === p.reset) {
         activeStyles = "";
       } else {
         activeStyles += seg;
@@ -50,7 +47,7 @@ export function wrapLine(text: string, maxWidth: number): string[] {
           remaining = remaining.slice(chunk.length);
           currentLine += chunk;
           if (remaining.length > 0) {
-            result.push(currentLine + RESET);
+            result.push(currentLine + p.reset);
             currentLine = activeStyles;
             currentWidth = 0;
           } else {
@@ -59,7 +56,7 @@ export function wrapLine(text: string, maxWidth: number): string[] {
         }
       } else {
         // Wrap to next line
-        result.push(currentLine + RESET);
+        result.push(currentLine + p.reset);
         currentLine = activeStyles;
         currentWidth = 0;
         // Skip leading spaces on new line
@@ -120,13 +117,13 @@ export class MarkdownRenderer {
 
   printTopBorder(): void {
     const w = Math.min(this.contentWidth, 40);
-    process.stdout.write(`${DIM}${CYAN}${"─".repeat(w)}${RESET}\n`);
+    process.stdout.write(`${p.dim}${p.accent}${"─".repeat(w)}${p.reset}\n`);
     this.firstLine = true;
   }
 
   printBottomBorder(): void {
     const w = Math.min(this.contentWidth, 40);
-    process.stdout.write(`${DIM}${CYAN}${"─".repeat(w)}${RESET}\n`);
+    process.stdout.write(`${p.dim}${p.accent}${"─".repeat(w)}${p.reset}\n`);
   }
 
   private processBuffer(): void {
@@ -172,38 +169,38 @@ export class MarkdownRenderer {
 
     // Headings
     const h1 = line.match(/^# (.+)/);
-    if (h1) return `${BOLD}${MAGENTA}${h1[1]}${RESET}`;
+    if (h1) return `${p.bold}${p.warning}${h1[1]}${p.reset}`;
 
     const h2 = line.match(/^## (.+)/);
-    if (h2) return `${BOLD}${CYAN}${h2[1]}${RESET}`;
+    if (h2) return `${p.bold}${p.accent}${h2[1]}${p.reset}`;
 
     const h3 = line.match(/^### (.+)/);
-    if (h3) return `${BOLD}${h3[1]}${RESET}`;
+    if (h3) return `${p.bold}${h3[1]}${p.reset}`;
 
     const h4 = line.match(/^#{4,} (.+)/);
-    if (h4) return `${BOLD}${h4[1]}${RESET}`;
+    if (h4) return `${p.bold}${h4[1]}${p.reset}`;
 
     // Horizontal rule
     if (/^(-{3,}|_{3,}|\*{3,})\s*$/.test(line)) {
-      return `${GRAY}${"─".repeat(this.contentWidth)}${RESET}`;
+      return `${p.muted}${"─".repeat(this.contentWidth)}${p.reset}`;
     }
 
     // Blockquote
     const bq = line.match(/^>\s?(.*)/);
-    if (bq) return `${GRAY}│${RESET} ${DIM}${ITALIC}${this.renderInline(bq[1] || "")}${RESET}`;
+    if (bq) return `${p.muted}│${p.reset} ${p.dim}${p.italic}${this.renderInline(bq[1] || "")}${p.reset}`;
 
     // Unordered list
     const ul = line.match(/^(\s*)[*\-+]\s+(.*)/);
     if (ul) {
       const indent = ul[1] || "";
-      return `${indent}  ${CYAN}*${RESET} ${this.renderInline(ul[2] || "")}`;
+      return `${indent}  ${p.accent}*${p.reset} ${this.renderInline(ul[2] || "")}`;
     }
 
     // Ordered list
     const ol = line.match(/^(\s*)(\d+)[.)]\s+(.*)/);
     if (ol) {
       const indent = ol[1] || "";
-      return `${indent}  ${CYAN}${ol[2]}.${RESET} ${this.renderInline(ol[3] || "")}`;
+      return `${indent}  ${p.accent}${ol[2]}.${p.reset} ${this.renderInline(ol[3] || "")}`;
     }
 
     return this.renderInline(line);
@@ -211,21 +208,21 @@ export class MarkdownRenderer {
 
   private renderInline(text: string): string {
     // Inline code
-    text = text.replace(/`([^`]+)`/g, `${CYAN}$1${RESET}`);
+    text = text.replace(/`([^`]+)`/g, `${p.accent}$1${p.reset}`);
     // Bold + italic
-    text = text.replace(/\*\*\*(.+?)\*\*\*/g, `${BOLD}${ITALIC}$1${RESET}`);
+    text = text.replace(/\*\*\*(.+?)\*\*\*/g, `${p.bold}${p.italic}$1${p.reset}`);
     // Bold
-    text = text.replace(/\*\*(.+?)\*\*/g, `${BOLD}$1${RESET}`);
-    text = text.replace(/__(.+?)__/g, `${BOLD}$1${RESET}`);
+    text = text.replace(/\*\*(.+?)\*\*/g, `${p.bold}$1${p.reset}`);
+    text = text.replace(/__(.+?)__/g, `${p.bold}$1${p.reset}`);
     // Italic
-    text = text.replace(/\*(.+?)\*/g, `${ITALIC}$1${RESET}`);
-    text = text.replace(/_(.+?)_/g, `${ITALIC}$1${RESET}`);
+    text = text.replace(/\*(.+?)\*/g, `${p.italic}$1${p.reset}`);
+    text = text.replace(/_(.+?)_/g, `${p.italic}$1${p.reset}`);
     // Strikethrough
-    text = text.replace(/~~(.+?)~~/g, `${DIM}$1${RESET}`);
+    text = text.replace(/~~(.+?)~~/g, `${p.dim}$1${p.reset}`);
     // Links
     text = text.replace(
       /\[([^\]]+)\]\(([^)]+)\)/g,
-      `$1 ${GRAY}${UNDERLINE}($2)${RESET}`
+      `$1 ${p.muted}${p.underline}($2)${p.reset}`
     );
     return text;
   }
@@ -235,14 +232,14 @@ export class MarkdownRenderer {
     const lang = this.codeLanguage;
 
     if (lang) {
-      this.writeLine(`${DIM}${lang}${RESET}`);
+      this.writeLine(`${p.dim}${lang}${p.reset}`);
     }
 
     let highlighted: string;
     try {
       highlighted = highlight(code, { language: lang || undefined });
     } catch {
-      highlighted = `${GREEN}${code}${RESET}`;
+      highlighted = `${p.success}${code}${p.reset}`;
     }
 
     // Code blocks get indented, and each line is individually wrapped
