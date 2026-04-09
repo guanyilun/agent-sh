@@ -352,20 +352,21 @@ Extensions are factory functions that receive the EventBus and self-register. Th
 ```
 agent-shell/
 ├── src/
-│   ├── index.ts           # Entry point, CLI args, wiring, extension loading
-│   ├── event-bus.ts       # Typed EventBus: emit/on, emitPipe, emitPipeAsync
-│   ├── shell.ts           # PTY lifecycle + wiring (InputHandler + OutputParser)
-│   ├── input-handler.ts   # Keyboard input, agent mode, bus-driven autocomplete
-│   ├── output-parser.ts   # OSC parsing, command boundary detection
-│   ├── acp-client.ts      # ACP protocol, terminal execution, session management
-│   ├── context-manager.ts # Exchange log, context assembly, recall API
+│   ├── index.ts            # Entry point, CLI args, wiring, extension loading
+│   ├── event-bus.ts        # Typed EventBus: emit/on, emitPipe, emitPipeAsync
+│   ├── shell.ts            # PTY lifecycle + wiring (InputHandler + OutputParser)
+│   ├── input-handler.ts    # Keyboard input, agent mode, bus-driven autocomplete
+│   ├── output-parser.ts    # OSC parsing, command boundary detection
+│   ├── acp-client.ts       # ACP protocol, terminal execution, session management
+│   ├── context-manager.ts  # Exchange log, context assembly, recall API
 │   ├── extension-loader.ts # Dynamic extension loading (CLI + directory)
-│   ├── executor.ts        # Isolated child process execution
-│   ├── markdown.ts        # Streaming markdown → ANSI renderer
-│   ├── diff.ts            # Line-level LCS diff for file change previews
-│   ├── file-watcher.ts    # File change detection for agent tool writes
-│   ├── ansi.ts            # Shared ANSI constants + utilities
-│   ├── types.ts           # Shared type definitions
+│   ├── executor.ts         # Isolated child process execution
+│   ├── types.ts            # Shared type definitions
+│   ├── utils/
+│   │   ├── ansi.ts         # Shared ANSI constants + utilities
+│   │   ├── diff.ts         # Line-level LCS diff for file change previews
+│   │   ├── file-watcher.ts # File change detection for agent tool writes
+│   │   └── markdown.ts     # Streaming markdown → ANSI renderer
 │   └── extensions/
 │       ├── tui-renderer.ts        # Terminal rendering (markdown, spinner, tools)
 │       ├── interactive-prompts.ts # Permission dialogs + diff preview
