@@ -21,6 +21,7 @@ export interface ShellEvents {
 
   // Agent interaction
   "agent:query": { query: string };
+  "agent:thinking-chunk": { text: string };
   "agent:response-chunk": { text: string };
   "agent:response-done": { response: string };
 
@@ -62,6 +63,9 @@ export interface ShellEvents {
   // UI feedback (TUI subscribes to render; silently ignored without TUI)
   "ui:info": { message: string };
   "ui:error": { message: string };
+
+  // Generic keypress forwarding (control chars not handled by input-handler)
+  "input:keypress": { key: string };
 
   // Terminal interception (sync pipe: extensions can intercept before execution)
   "agent:terminal-intercept": {
