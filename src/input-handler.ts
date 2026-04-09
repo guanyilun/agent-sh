@@ -1,5 +1,3 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { visibleLen } from "./ansi.js";
 import type { EventBus } from "./event-bus.js";
 
@@ -136,89 +134,20 @@ export class InputHandler {
   }
 
   private updateAutocomplete(): void {
-    // ── File autocomplete: @ triggers file path completion ──
-    const atPos = this.agentInputBuffer.lastIndexOf("@");
-    if (
-      atPos >= 0 &&
-      (atPos === 0 || this.agentInputBuffer[atPos - 1] === " ")
-    ) {
-      const afterAt = this.agentInputBuffer.slice(atPos + 1);
-      if (!afterAt.includes(" ") && /^[a-zA-Z0-9_.\/-]*$/.test(afterAt)) {
-        this.autocompleteItems = this.listFiles(afterAt);
-        if (this.autocompleteItems.length > 0) {
-          this.autocompleteActive = true;
-          if (this.autocompleteIndex >= this.autocompleteItems.length) {
-            this.autocompleteIndex = 0;
-          }
-          this.renderAutocomplete();
-          return;
-        }
-      }
-    }
-
-    // ── Slash command autocomplete ──
-    if (this.agentInputBuffer.startsWith("/")) {
-      const prefix = this.agentInputBuffer.toLowerCase();
-      const { commands } = this.bus.emitPipe("command:list", { commands: [] });
-      this.autocompleteItems = commands.filter((c) =>
-        c.name.toLowerCase().startsWith(prefix)
-      );
-      if (this.autocompleteItems.length > 0) {
-        this.autocompleteActive = true;
-        if (this.autocompleteIndex >= this.autocompleteItems.length) {
-          this.autocompleteIndex = 0;
-        }
-        this.renderAutocomplete();
-        return;
-      }
-    }
-
-    // ── Nothing to autocomplete ──
-    this.autocompleteActive = false;
-    this.autocompleteItems = [];
-    this.autocompleteLines = 0;
-  }
-
-  private listFiles(query: string): { name: string; description: string }[] {
-    const cwd = this.ctx.getCwd();
-    const lastSlash = query.lastIndexOf("/");
-    let searchDir: string;
-    let prefix: string;
-    let basePath: string;
-
-    if (lastSlash >= 0) {
-      basePath = query.slice(0, lastSlash + 1);
-      searchDir = path.resolve(cwd, query.slice(0, lastSlash) || ".");
-      prefix = query.slice(lastSlash + 1);
+    const { items } = this.bus.emitPipe("autocomplete:request", {
+      buffer: this.agentInputBuffer,
+      items: [],
+    });
+    if (items.length > 0) {
+      this.autocompleteItems = items;
+      this.autocompleteActive = true;
+      if (this.autocompleteIndex >= items.length) this.autocompleteIndex = 0;
+      this.renderAutocomplete();
     } else {
-      basePath = "";
-      searchDir = cwd;
-      prefix = query;
+      this.autocompleteActive = false;
+      this.autocompleteItems = [];
+      this.autocompleteLines = 0;
     }
-
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(searchDir, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-
-    return entries
-      .filter(
-        (e) =>
-          !e.name.startsWith(".") &&
-          e.name.toLowerCase().startsWith(prefix.toLowerCase()),
-      )
-      .sort((a, b) => {
-        if (a.isDirectory() && !b.isDirectory()) return -1;
-        if (!a.isDirectory() && b.isDirectory()) return 1;
-        return a.name.localeCompare(b.name);
-      })
-      .slice(0, 15)
-      .map((e) => ({
-        name: basePath + e.name + (e.isDirectory() ? "/" : ""),
-        description: e.isDirectory() ? "dir" : "",
-      }));
   }
 
   private renderAutocomplete(): void {

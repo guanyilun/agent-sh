@@ -2,7 +2,7 @@
  * Slash commands extension.
  *
  * Registers built-in slash commands on the event bus:
- * - Responds to "command:list" pipe with command definitions (for autocomplete)
+ * - Responds to "autocomplete:request" pipe for /-prefixed completions
  * - Handles "command:execute" events and dispatches to matching handler
  * - Uses "ui:info"/"ui:error" for user feedback (no direct TUI dependency)
  */
@@ -27,8 +27,7 @@ export function slashCommands(bus: EventBus, services: SlashCommandServices): vo
       name: "/help",
       description: "Show available commands",
       handler: () => {
-        const { commands: all } = bus.emitPipe("command:list", { commands: [] });
-        const lines = all.map(
+        const lines = commands.map(
           (c) => `  \x1b[36m${c.name.padEnd(12)}\x1b[0m ${c.description}`
         );
         bus.emit("ui:info", { message: "Available commands:\n" + lines.join("\n") });
@@ -87,14 +86,16 @@ export function slashCommands(bus: EventBus, services: SlashCommandServices): vo
     },
   ];
 
-  // Provide command definitions for autocomplete
-  bus.onPipe("command:list", (payload) => ({
-    ...payload,
-    commands: [
-      ...payload.commands,
-      ...commands.map((c) => ({ name: c.name, description: c.description })),
-    ],
-  }));
+  // Provide command completions for /-prefixed input
+  bus.onPipe("autocomplete:request", (payload) => {
+    if (!payload.buffer.startsWith("/")) return payload;
+    const prefix = payload.buffer.toLowerCase();
+    const matching = commands
+      .filter((c) => c.name.toLowerCase().startsWith(prefix))
+      .map((c) => ({ name: c.name, description: c.description }));
+    if (matching.length === 0) return payload;
+    return { ...payload, items: [...payload.items, ...matching] };
+  });
 
   // Handle command execution
   bus.on("command:execute", (e) => {

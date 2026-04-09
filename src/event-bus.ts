@@ -47,10 +47,7 @@ export interface ShellEvents {
     decision: Record<string, unknown>;
   };
 
-  // Slash command system
-  "command:list": {
-    commands: { name: string; description: string }[];
-  };
+  // Slash command execution
   "command:execute": {
     name: string;
     args: string;
@@ -59,6 +56,12 @@ export interface ShellEvents {
   // UI feedback (TUI subscribes to render; silently ignored without TUI)
   "ui:info": { message: string };
   "ui:error": { message: string };
+
+  // Autocomplete (sync pipe: extensions inspect buffer and append items)
+  "autocomplete:request": {
+    buffer: string;
+    items: { name: string; description: string }[];
+  };
 }
 
 type Listener<T> = (payload: T) => void;
