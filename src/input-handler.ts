@@ -1,4 +1,5 @@
 import { visibleLen } from "./utils/ansi.js";
+import { palette as p } from "./utils/palette.js";
 import type { EventBus } from "./event-bus.js";
 
 /**
@@ -45,8 +46,8 @@ export class InputHandler {
     process.stdout.write(
       "\r\x1b[2K" +
       infoPrefix +
-      "\x1b[33m\x1b[1m❯ \x1b[0m" +
-      (showBuffer ? "\x1b[36m" + this.agentInputBuffer + "\x1b[0m" : "")
+      p.warning + p.bold + "❯ " + p.reset +
+      (showBuffer ? p.accent + this.agentInputBuffer + p.reset : "")
     );
   }
 
@@ -161,11 +162,11 @@ export class InputHandler {
       const selected = i === this.autocompleteIndex;
       if (selected) {
         lines.push(
-          `  \x1b[7m \x1b[36m${item.name.padEnd(12)}\x1b[0m\x1b[7m ${item.description} \x1b[0m`
+          `  \x1b[7m ${p.accent}${item.name.padEnd(12)}${p.reset}\x1b[7m ${item.description} ${p.reset}`
         );
       } else {
         lines.push(
-          `   \x1b[90m${item.name.padEnd(12)} ${item.description}\x1b[0m`
+          `   ${p.muted}${item.name.padEnd(12)} ${item.description}${p.reset}`
         );
       }
     }
