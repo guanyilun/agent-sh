@@ -54,6 +54,33 @@ export default function activate(ctx) {
 | `quit` | `() => void` | Exit agent-sh |
 | `setPalette` | `(overrides: Partial<ColorPalette>) => void` | Override color palette slots for theming |
 
+### Extension Settings
+
+Extensions can read user-configurable settings from `~/.agent-sh/settings.json` using `getExtensionSettings`. Settings are namespaced under the extension name with type-safe defaults:
+
+```typescript
+import { getExtensionSettings } from "agent-sh/settings";
+
+const config = getExtensionSettings("my-extension", {
+  maxItems: 10,
+  color: "blue",
+  enabled: true,
+});
+// config.maxItems, config.color, config.enabled — all typed
+```
+
+Users configure in `~/.agent-sh/settings.json`:
+```json
+{
+  "my-extension": {
+    "maxItems": 50,
+    "color": "red"
+  }
+}
+```
+
+Unspecified keys use the defaults. Core settings and extension settings coexist in the same file.
+
 ## Content Transforms
 
 Agent response streams flow through a **transform pipeline** before any renderer sees them. This lets extensions modify, replace, or enrich content — rendering LaTeX as images, replacing diagram blocks with graphics, filtering output, etc.
