@@ -222,7 +222,8 @@ agent-sh stores settings and query history in `~/.agent-sh/`. Configure behavior
   "shellHeadLines": 5,
   "shellTailLines": 5,
   "recallExpandMaxLines": 100,
-  "maxCommandOutputLines": 30,
+  "maxCommandOutputLines": 5,
+  "readOutputMaxLines": 0,
   "diffMaxLines": 20,
   "enableMcp": true
 }
@@ -237,7 +238,8 @@ agent-sh stores settings and query history in `~/.agent-sh/`. Configure behavior
 | `shellTruncateThreshold` | `10` | Shell output lines before truncation |
 | `shellHeadLines` / `shellTailLines` | `5` / `5` | Lines kept from start/end of truncated output |
 | `recallExpandMaxLines` | `100` | Max lines for recall expand before requiring line ranges |
-| `maxCommandOutputLines` | `30` | Max command output lines shown inline in TUI |
+| `maxCommandOutputLines` | `5` | Max internal tool output lines shown inline in TUI |
+| `readOutputMaxLines` | `0` | Max read tool output lines shown inline (0 = hidden) |
 | `diffMaxLines` | `20` | Max diff lines shown before "ctrl+o to expand" |
 | `enableMcp` | `true` | Register MCP server for bridge tools (disable if agent doesn't use MCP) |
 
