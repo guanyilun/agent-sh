@@ -108,6 +108,12 @@ export interface ShellEvents {
     mcpServers: { name: string; command: string; args: string[]; env: { name: string; value: string }[] }[];
   };
 
+  // Session mode/config updated (from ACP agent)
+  "config:changed": Record<string, never>;
+
+  // Cycle session mode (input-handler → core)
+  "config:cycle": Record<string, never>;
+
   // Autocomplete (sync pipe: extensions inspect buffer and append items)
   "autocomplete:request": {
     buffer: string;
