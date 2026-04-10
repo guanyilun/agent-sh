@@ -29,6 +29,8 @@ export class AcpClient {
   private autoCancelled = false;
   private pendingToolCounter = 0;
   private agentInfo: { name: string; version: string } | null = null;
+  private modes: { id: string; name: string }[] = [];
+  private currentModeId: string | null = null;
 
   constructor(opts: {
     bus: EventBus;
@@ -149,6 +151,12 @@ export class AcpClient {
 
     this.sessionId = sessionResponse.sessionId;
     this.log(`Session created: ${this.sessionId}`);
+
+    // Parse session modes (thinking level, etc.)
+    this.updateModes(sessionResponse);
+
+    // Listen for mode cycle requests from input handler
+    this.bus.on("config:cycle", () => this.cycleMode());
   }
 
   /**
@@ -277,6 +285,7 @@ export class AcpClient {
     this.sessionId = sessionResponse.sessionId;
     this.lastResponseText = "";
     this.currentResponseText = "";
+    this.updateModes(sessionResponse);
   }
 
   /**
@@ -298,12 +307,60 @@ export class AcpClient {
   }
 
   /**
+   * Get the current mode (e.g. thinking level).
+   */
+  getCurrentMode(): { id: string; name: string } | null {
+    if (!this.currentModeId) return null;
+    return this.modes.find((m) => m.id === this.currentModeId) ?? null;
+  }
+
+  /**
    * Check if agent is connected.
    */
   isConnected(): boolean {
     // Consider connected if we have a connection and agent info
     // Session ID may not be set yet if we're still initializing
     return this.connection !== null && this.agentInfo !== null;
+  }
+
+  /**
+   * Parse modes from a session response and notify listeners.
+   */
+  private updateModes(response: any): void {
+    const modes = response.modes;
+    if (!modes) return;
+    if (modes.availableModes) {
+      this.modes = modes.availableModes.map((m: any) => ({
+        id: m.id,
+        name: m.name || m.id,
+      }));
+    }
+    if (modes.currentModeId) {
+      this.currentModeId = modes.currentModeId;
+    }
+    this.bus.emit("config:changed", {});
+  }
+
+  /**
+   * Cycle to the next session mode.
+   */
+  private async cycleMode(): Promise<void> {
+    if (!this.connection || !this.sessionId || this.modes.length === 0) return;
+
+    const currentIdx = this.modes.findIndex((m) => m.id === this.currentModeId);
+    const nextIdx = (currentIdx + 1) % this.modes.length;
+    const nextMode = this.modes[nextIdx]!;
+
+    try {
+      await this.connection.setSessionMode({
+        sessionId: this.sessionId,
+        modeId: nextMode.id,
+      });
+      this.currentModeId = nextMode.id;
+      this.bus.emit("config:changed", {});
+    } catch (err) {
+      this.log(`Failed to set mode: ${err}`);
+    }
   }
 
   private log(msg: string): void {
@@ -404,9 +461,10 @@ export class AcpClient {
         const toolTitle = toolId ? this.pendingToolCalls.get(toolId) : undefined;
 
         if (update.status === "completed" || update.status === "failed") {
-          // Show content only on final status, and skip for informational
-          // tools like shell_recall (output is for the agent, not the user)
-          if (toolTitle !== "shell_recall" && update.content && Array.isArray(update.content)) {
+          // Show content only on final status. Skip tools whose output the
+          // user already sees (user_shell → PTY) or is agent-only (shell_recall).
+          const skipOutput = toolTitle === "user_shell" || toolTitle === "shell_recall";
+          if (!skipOutput && update.content && Array.isArray(update.content)) {
             for (const block of update.content) {
               if (block.type === "content" && block.content?.type === "text" && block.content.text) {
                 this.bus.emit("agent:tool-output-chunk", { chunk: block.content.text });
@@ -431,6 +489,15 @@ export class AcpClient {
           if (toolTitle === "user_shell" && update.status === "completed") {
             this.autoCancel();
           }
+        }
+        break;
+      }
+
+      case "current_mode_update": {
+        const modeId = (update as any).currentModeId;
+        if (modeId) {
+          this.currentModeId = modeId;
+          this.bus.emit("config:changed", {});
         }
         break;
       }

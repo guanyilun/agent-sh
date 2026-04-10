@@ -15,6 +15,8 @@ export class ContextManager {
   private currentCwd: string;
   private sessionStart: number;
   private pendingToolCalls: ToolCallRecord[] = [];
+  private firstPrompt = true;
+  private agentShellActive = false; // true while user_shell command is executing
 
   constructor(bus: EventBus) {
     this.currentCwd = process.cwd();
@@ -31,12 +33,17 @@ export class ContextManager {
         exitCode: e.exitCode,
         outputLines: lines.length,
         outputBytes: e.output.length,
+        source: this.agentShellActive ? "agent" : "user",
       });
     });
 
     bus.on("shell:cwd-change", (e) => {
       this.currentCwd = e.cwd;
     });
+
+    // Track agent-initiated shell commands (user_shell tool)
+    bus.on("shell:agent-exec-start", () => { this.agentShellActive = true; });
+    bus.on("shell:agent-exec-done", () => { this.agentShellActive = false; });
 
     // ── Subscribe to agent events ──
     bus.on("agent:query", (e) => {
@@ -253,6 +260,7 @@ export class ContextManager {
   clear(): void {
     this.exchanges = [];
     this.pendingToolCalls = [];
+    this.firstPrompt = true;
     // Don't reset nextId — IDs should be globally unique within a session
   }
 
@@ -325,9 +333,24 @@ export class ContextManager {
     const totalCount = this.exchanges.length;
 
     let out = "<shell_context>\n";
+
+    if (this.firstPrompt) {
+      out += `You are an AI assistant living inside agent-sh, a shell-first terminal.\n`;
+      out += `The user interacts with a real shell (PTY) and sends you queries inline. You are there to help them with their tasks.\n`;
+      out += `\n`;
+      out += `IMPORTANT tool usage rules:\n`;
+      out += `- user_shell runs commands in the user's live shell (PTY). The user sees output directly — no summary needed.\n`;
+      out += `- Your internal tools (bash, read, write, ls, etc.) run in an isolated subprocess. The user CANNOT see their output.\n`;
+      out += `- When the user asks to see, list, view, or display anything, ALWAYS use user_shell. NEVER use internal tools like ls/read/bash for display — the user won't see it.\n`;
+      out += `- Only use internal tools when YOU need to reason about content silently (e.g. reading a file to answer a question about it).\n`;
+      out += `- After a user_shell command, the user already saw the output. Do NOT repeat or summarize it.\n`;
+      out += `- You can browse or search session history with shell_recall.\n`;
+      out += `\n`;
+      this.firstPrompt = false;
+    }
+
     out += `cwd: ${this.currentCwd}\n`;
     out += `session: ${totalCount} exchanges, ${elapsed}m elapsed\n`;
-    out += `[hint: use the shell_recall tool to retrieve truncated content — search(query) or expand(ids)]\n`;
 
     for (const ex of exchanges) {
       out += "\n" + this.formatExchangeTruncated(ex);
@@ -351,7 +374,8 @@ export class ContextManager {
   private formatExchangeTruncated(ex: Exchange): string {
     switch (ex.type) {
       case "shell_command": {
-        let s = `#${ex.id} [shell cwd:${ex.cwd}] $ ${ex.command}\n`;
+        const label = ex.source === "agent" ? "agent → shell" : "shell";
+        let s = `#${ex.id} [${label} cwd:${ex.cwd}] $ ${ex.command}\n`;
         if (ex.output) s += indent(ex.output, "  ") + "\n";
         if (ex.exitCode !== null) s += `  exit ${ex.exitCode}\n`;
         return s;
@@ -379,8 +403,9 @@ export class ContextManager {
   private formatExchangeFull(ex: Exchange): string {
     switch (ex.type) {
       case "shell_command": {
+        const label = ex.source === "agent" ? "agent → shell" : "shell";
         const output = ex.output;
-        let s = `#${ex.id} [shell] $ ${ex.command} (${ex.outputLines} lines, ${ex.outputBytes} bytes)\n`;
+        let s = `#${ex.id} [${label}] $ ${ex.command} (${ex.outputLines} lines, ${ex.outputBytes} bytes)\n`;
         if (output) s += output + "\n";
         if (ex.exitCode !== null) s += `exit ${ex.exitCode}\n`;
         return s;
@@ -400,8 +425,10 @@ export class ContextManager {
 
   private exchangeOneLiner(ex: Exchange): string {
     switch (ex.type) {
-      case "shell_command":
-        return `#${ex.id} shell [cwd:${ex.cwd}]: ${ex.command} (${ex.outputLines} total lines, exit ${ex.exitCode ?? "?"})`;
+      case "shell_command": {
+        const label = ex.source === "agent" ? "agent → shell" : "shell";
+        return `#${ex.id} ${label} [cwd:${ex.cwd}]: ${ex.command} (${ex.outputLines} total lines, exit ${ex.exitCode ?? "?"})`;
+      }
       case "agent_query":
         return `#${ex.id} query: ${ex.query}`;
       case "agent_response": {

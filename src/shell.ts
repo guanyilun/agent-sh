@@ -12,6 +12,7 @@ export class Shell implements InputContext {
   private inputHandler: InputHandler;
   private outputParser: OutputParser;
   private paused = false;
+  private echoSkip = false;
   private agentActive = false;
   private isZsh = false;
   private tmpDir?: string;
@@ -204,9 +205,19 @@ export class Shell implements InputContext {
     this.ptyProcess.onData((data: string) => {
       this.outputParser.processData(data);
 
-      if (!this.paused) {
-        process.stdout.write(data);
+      if (this.paused) return;
+
+      // During user_shell exec, skip the command echo (first line)
+      if (this.echoSkip) {
+        const nlIdx = data.indexOf("\n");
+        if (nlIdx === -1) return;
+        this.echoSkip = false;
+        const rest = data.slice(nlIdx + 1);
+        if (rest) process.stdout.write(rest);
+        return;
       }
+
+      process.stdout.write(data);
     });
   }
 
@@ -231,6 +242,7 @@ export class Shell implements InputContext {
     this.bus.on("agent:processing-done", () => {
       this.paused = false;
       this.agentActive = false;
+      this.echoSkip = true;
       this.freshPrompt();
     });
 
@@ -248,10 +260,13 @@ export class Shell implements InputContext {
     // stdout is paused during agent processing, so PTY output flows through
     // OutputParser (for OSC detection) but never reaches the terminal.
     this.bus.onPipeAsync("shell:exec-request", async (payload) => {
+      this.echoSkip = true;
+      this.paused = false;
+      process.stdout.write("\n");
+
       const output = await new Promise<{ output: string; cwd: string }>((resolve, reject) => {
         const timeout = setTimeout(() => {
           this.bus.off("shell:command-done", handler);
-          // Kill any hung command
           this.ptyProcess.write("\x03");
           reject(new Error("Shell exec timed out after 30s"));
         }, 30_000);
@@ -263,10 +278,12 @@ export class Shell implements InputContext {
         };
         this.bus.on("shell:command-done", handler);
 
-        // Start capture and write to PTY
         this.outputParser.onCommandEntered(payload.command, this.outputParser.getCwd());
         this.ptyProcess.write(payload.command + "\r");
       });
+
+      this.paused = true;
+      this.echoSkip = false;
 
       return { ...payload, output: output.output, cwd: output.cwd, done: true };
     });

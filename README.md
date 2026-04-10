@@ -77,6 +77,7 @@ See the [Usage Guide](docs/usage.md) for all options, model configuration, and e
 | `Ctrl-C` | Standard signal to shell, or cancels active agent response |
 | `Ctrl-O` | Expand/collapse truncated diff preview |
 | `Ctrl-T` | Toggle thinking/reasoning text display |
+| `Shift-Tab` | Cycle thinking level (off → minimal → low → medium → high → xhigh) |
 | `Escape` | Exit agent input mode (when typing after `>`) |
 
 ### Agent Input Keybindings
@@ -86,6 +87,9 @@ When typing after `>`, full readline-style keybindings are available:
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Browse query history (persisted across sessions) |
+| `Shift-Enter` | Insert newline (multiline input) |
+| `Shift-Tab` | Cycle thinking level |
+| `Ctrl-D` | Exit agent input mode (on empty line) |
 | `Ctrl-A` / `Home` | Move to start of line |
 | `Ctrl-E` / `End` | Move to end of line |
 | `Ctrl-B` / `←` | Move back one character |
@@ -96,6 +100,16 @@ When typing after `>`, full readline-style keybindings are available:
 | `Ctrl-K` | Delete to end of line |
 | `Ctrl-W` / `Option-Backspace` | Delete word backward |
 | `Option-D` | Delete word forward |
+
+### Thinking Level
+
+The agent prompt shows the current thinking level next to the model name:
+
+```
+pi (claude-3.5-sonnet) [medium] ● ❯
+```
+
+Press **Shift-Tab** in agent input mode to cycle through levels. The levels are advertised by the agent via ACP session modes — different agents may offer different options. The spinner label reflects the mode: "Thinking" when thinking is enabled, "Working" when it's off.
 
 ### Slash Commands
 
