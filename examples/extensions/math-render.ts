@@ -102,63 +102,54 @@ function transformMath(expr: string): string {
   return out;
 }
 
-/**
- * Split text at a safe boundary — everything before an unmatched `$` is safe
- * to emit. Returns { ready, pending } where pending may contain a partial `$...`.
- */
-function splitAtSafeBoundary(text: string): { ready: string; pending: string } {
-  // Process all complete $...$ pairs
-  let result = "";
-  let i = 0;
-
-  while (i < text.length) {
-    const openIdx = text.indexOf("$", i);
-    if (openIdx === -1) {
-      // No more $ — everything is safe
-      result += text.slice(i);
-      return { ready: result, pending: "" };
-    }
-
-    // Check for display math $$...$$
-    const isDisplay = text[openIdx + 1] === "$";
-    const delimiter = isDisplay ? "$$" : "$";
-    const searchFrom = openIdx + delimiter.length;
-
-    const closeIdx = text.indexOf(delimiter, searchFrom);
-    if (closeIdx === -1) {
-      // Unclosed $ — hold back from the $ onward
-      result += text.slice(i, openIdx);
-      return { ready: result, pending: text.slice(openIdx) };
-    }
-
-    // Complete match — transform it
-    const inner = text.slice(openIdx + delimiter.length, closeIdx);
-    result += text.slice(i, openIdx) + transformMath(inner);
-    i = closeIdx + delimiter.length;
-  }
-
-  return { ready: result, pending: "" };
-}
-
 // ── Extension entry point ────────────────────────────────────────
+//
+// Simple approach: transform all LaTeX commands in the raw stream.
+// No delimiter detection needed — works on both code blocks and
+// inline math because it's just text replacement.
+//
+// We buffer to handle partial commands at chunk boundaries
+// (e.g. chunk ends with "\" and next chunk starts with "alpha").
 
 export default function activate({ bus }: ExtensionContext) {
   let buffer = "";
 
   bus.onPipe("agent:response-chunk", (e) => {
     buffer += e.text;
-    const { ready, pending } = splitAtSafeBoundary(buffer);
-    buffer = pending;
-    return { ...e, text: ready };
+
+    // Hold back if buffer ends with a backslash (partial command)
+    // or ends mid-brace (partial ^{...} or _{...})
+    const holdBack = findHoldBackPoint(buffer);
+    const safe = buffer.slice(0, holdBack);
+    buffer = buffer.slice(holdBack);
+
+    return { ...e, text: transformMath(safe) };
   });
 
-  // Flush remaining buffer when response ends
   bus.onPipe("agent:response-done", (e) => {
     if (buffer) {
-      // Pattern never closed — emit raw text through the transform pipe
-      bus.emitTransform("agent:response-chunk", { text: buffer });
+      bus.emitTransform("agent:response-chunk", { text: transformMath(buffer) });
       buffer = "";
     }
     return e;
   });
+}
+
+/**
+ * Find the point up to which we can safely transform.
+ * Hold back from any trailing \ (incomplete command), or unclosed {.
+ */
+function findHoldBackPoint(text: string): number {
+  // If ends with \, hold back from there (incomplete \command)
+  if (text.endsWith("\\")) return text.length - 1;
+
+  // If there's an unclosed { after the last }, hold back from the {
+  const lastOpen = text.lastIndexOf("{");
+  const lastClose = text.lastIndexOf("}");
+  if (lastOpen > lastClose) return lastOpen;
+
+  // If ends with ^ or _ (incomplete super/subscript), hold back
+  if (text.endsWith("^") || text.endsWith("_")) return text.length - 1;
+
+  return text.length; // everything is safe
 }
