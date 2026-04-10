@@ -67,7 +67,13 @@ export class OutputParser {
    * Each time a prompt appears, we finalize the previous command's output.
    */
   private parsePromptMarker(data: string): void {
-    if (data.includes("\x1b]9999;PROMPT\x07")) {
+    const marker = "\x1b]9999;PROMPT\x07";
+    const markerIdx = data.indexOf(marker);
+    if (markerIdx !== -1) {
+      // Capture any output that arrived in the same chunk before the marker
+      if (markerIdx > 0) {
+        this.currentOutputCapture += data.slice(0, markerIdx);
+      }
       this.promptReady = false;
       if (this.foregroundBusy) {
         this.foregroundBusy = false;

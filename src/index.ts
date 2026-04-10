@@ -7,6 +7,7 @@ import tuiRenderer from "./extensions/tui-renderer.js";
 import slashCommands from "./extensions/slash-commands.js";
 import fileAutocomplete from "./extensions/file-autocomplete.js";
 import shellRecall from "./extensions/shell-recall.js";
+import shellExec from "./extensions/shell-exec.js";
 import { loadExtensions } from "./extension-loader.js";
 import type { AgentShellConfig } from "./types.js";
 
@@ -173,6 +174,13 @@ async function main(): Promise<void> {
   slashCommands(extCtx);
   fileAutocomplete(extCtx);
   shellRecall(extCtx);
+
+  // Shell-exec: start the Unix socket bridge so the MCP server can
+  // route user_shell tool calls to the PTY via the EventBus.
+  const tmpDir = shell.getTmpDir();
+  if (tmpDir) {
+    shellExec(extCtx, { socketPath: `${tmpDir}/shell.sock` });
+  }
 
   await loadExtensions(extCtx, config.extensions);
 
