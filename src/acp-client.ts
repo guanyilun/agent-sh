@@ -114,12 +114,16 @@ export class AcpClient {
       this.log(`Agent info: ${this.agentInfo.name} v${this.agentInfo.version}`);
     }
 
-    // Create a session
+    // Create a session — let extensions add MCP servers via pipe
     const cwd = this.contextManager.getCwd();
     this.log(`Creating new session with cwd: ${cwd}`);
-    const sessionResponse = await this.connection.newSession({
+    const sessionConfig = this.bus.emitPipe("session:configure", {
       cwd,
       mcpServers: [],
+    });
+    const sessionResponse = await this.connection.newSession({
+      cwd: sessionConfig.cwd,
+      mcpServers: sessionConfig.mcpServers as acp.McpServer[],
     });
 
     this.sessionId = sessionResponse.sessionId;
@@ -220,9 +224,13 @@ export class AcpClient {
    */
   async resetSession(): Promise<void> {
     if (!this.connection) return;
-    const sessionResponse = await this.connection.newSession({
+    const sessionConfig = this.bus.emitPipe("session:configure", {
       cwd: this.contextManager.getCwd(),
       mcpServers: [],
+    });
+    const sessionResponse = await this.connection.newSession({
+      cwd: sessionConfig.cwd,
+      mcpServers: sessionConfig.mcpServers as acp.McpServer[],
     });
     this.sessionId = sessionResponse.sessionId;
     this.lastResponseText = "";
@@ -261,6 +269,7 @@ export class AcpClient {
       process.stderr.write(`[agent-sh] ${msg}\n`);
     }
   }
+
 
   /**
    * Create the Client handler that responds to agent requests.
@@ -349,6 +358,15 @@ export class AcpClient {
       }
 
       case "tool_call_update": {
+        // Stream tool output content (text from pi's internal tool results)
+        if (update.content && Array.isArray(update.content)) {
+          for (const block of update.content) {
+            if (block.type === "content" && block.content?.type === "text" && block.content.text) {
+              this.bus.emit("agent:tool-output-chunk", { chunk: block.content.text });
+            }
+          }
+        }
+
         if (update.status === "completed" || update.status === "failed") {
           const toolId = update.toolCallId;
           const exitCode = update.status === "completed" ? 0 : 1;

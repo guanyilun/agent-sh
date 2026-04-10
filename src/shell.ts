@@ -243,9 +243,41 @@ export class Shell implements InputContext {
       this.paused = true;
       return payload;
     });
+
+    // Shell exec: write a command to the live PTY and capture its output.
+    // stdout is paused during agent processing, so PTY output flows through
+    // OutputParser (for OSC detection) but never reaches the terminal.
+    this.bus.onPipeAsync("shell:exec-request", async (payload) => {
+      const output = await new Promise<{ output: string; cwd: string }>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          this.bus.off("shell:command-done", handler);
+          // Kill any hung command
+          this.ptyProcess.write("\x03");
+          reject(new Error("Shell exec timed out after 30s"));
+        }, 30_000);
+
+        const handler = (e: { command: string; output: string; cwd: string }) => {
+          clearTimeout(timeout);
+          this.bus.off("shell:command-done", handler);
+          resolve({ output: e.output, cwd: e.cwd });
+        };
+        this.bus.on("shell:command-done", handler);
+
+        // Start capture and write to PTY
+        this.outputParser.onCommandEntered(payload.command, this.outputParser.getCwd());
+        this.ptyProcess.write(payload.command + "\r");
+      });
+
+      return { ...payload, output: output.output, cwd: output.cwd, done: true };
+    });
   }
 
   // ── Public API (used by index.ts) ──
+
+  /** Temp directory used for shell config and sockets. */
+  getTmpDir(): string | undefined {
+    return this.tmpDir;
+  }
 
   resize(cols: number, rows: number): void {
     this.ptyProcess.resize(cols, rows);
