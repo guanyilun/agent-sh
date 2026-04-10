@@ -49,6 +49,11 @@ export class InputHandler {
     this.bus = opts.bus;
     this.onShowAgentInfo = opts.onShowAgentInfo;
     this.loadHistory();
+
+    // Re-render prompt when config changes (e.g. thinking level cycled)
+    this.bus.on("config:changed", () => {
+      if (this.agentInputMode) this.writeAgentPromptLine();
+    });
   }
 
   private loadHistory(): void {
@@ -423,6 +428,10 @@ export class InputHandler {
           if (this.autocompleteActive) {
             this.applyAutocomplete();
           }
+          break;
+
+        case "shift+tab":
+          this.bus.emit("config:cycle", {});
           break;
 
         case "arrow-up":

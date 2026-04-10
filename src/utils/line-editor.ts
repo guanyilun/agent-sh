@@ -20,6 +20,7 @@ export type LineEditAction =
   | { action: "cancel" }
   | { action: "delete-empty" }
   | { action: "tab" }
+  | { action: "shift+tab" }
   | { action: "arrow-up" }
   | { action: "arrow-down" };
 
@@ -172,6 +173,7 @@ export class LineEditor {
     "ctrl+k":        () => this.deleteRange(this.cursor, this.buffer.length),
     "ctrl+w":        () => this.deleteWordBackward() ? { action: "changed" } : null,
     "shift+enter":   () => this.insertAt("\n"),
+    "shift+tab":     () => ({ action: "shift+tab" as const }),
   };
 
   /** Resolve a key name from the bindings table and execute it. */
@@ -309,6 +311,9 @@ export class LineEditor {
         break;
       case "F": // End
         if (this.cursor < this.buffer.length) { this.cursor = this.buffer.length; actions.push({ action: "changed" }); }
+        break;
+      case "Z": // Shift+Tab (legacy CSI sequence)
+        actions.push({ action: "shift+tab" });
         break;
       case "u": { // Kitty keyboard protocol: \x1b[<keycode>;<modifier>u
         const action = this.handleKittyKey(params);
