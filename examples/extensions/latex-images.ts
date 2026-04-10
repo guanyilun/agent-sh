@@ -21,6 +21,19 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionContext } from "agent-sh/types";
 import { createBlockTransform } from "agent-sh/utils/stream-transform";
+import { getExtensionSettings } from "agent-sh/settings";
+
+// ── Settings ─────────────────────────────────────────────────────
+//
+// Configure in ~/.agent-sh/settings.json:
+//   "latex-images": { "dpi": 300, "fgColor": "d4d4d4" }
+
+const config = getExtensionSettings("latex-images", {
+  /** dvipng resolution (higher = crisper on retina) */
+  dpi: 300,
+  /** Foreground color (hex, no #) — light for dark terminals */
+  fgColor: "d4d4d4",
+});
 
 // ── LaTeX rendering via latex + dvipng ───────────────────────────
 
@@ -33,8 +46,6 @@ const LATEX_TEMPLATE = (equation: string, fg: string) => `
 $\\displaystyle ${equation}$
 \\end{document}
 `;
-
-const FG_COLOR = "d4d4d4";
 
 let tmpDir: string | null = null;
 let renderCounter = 0;
@@ -54,7 +65,7 @@ function renderEquation(equation: string): Buffer | null {
   const pngPath = path.join(dir, `eq${idx}.png`);
 
   try {
-    fs.writeFileSync(texPath, LATEX_TEMPLATE(equation, FG_COLOR));
+    fs.writeFileSync(texPath, LATEX_TEMPLATE(equation, config.fgColor));
 
     execSync(
       `latex -interaction=nonstopmode -output-directory="${dir}" "${texPath}"`,
@@ -62,7 +73,7 @@ function renderEquation(equation: string): Buffer | null {
     );
 
     execSync(
-      `dvipng -D 300 -T tight -bg Transparent --truecolor -o "${pngPath}" "${dviPath}"`,
+      `dvipng -D ${config.dpi} -T tight -bg Transparent --truecolor -o "${pngPath}" "${dviPath}"`,
       { timeout: 10000, stdio: "pipe" },
     );
 
