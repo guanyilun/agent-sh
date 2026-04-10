@@ -144,7 +144,11 @@ Inside the shell:
   return { agentCommand, agentArgs, shell, model, extensions };
 }
 
-function formatAgentInfo(agentInfo: { name: string; version: string }, model?: string): string {
+function formatAgentInfo(
+  agentInfo: { name: string; version: string },
+  model?: string,
+  thoughtLevel?: string | null,
+): string {
   const name = agentInfo.name.replace(/-acp$/, "").replace(/-/g, " ");
   let infoStr = `${p.dim}${name}${p.reset}`;
   if (model) {
@@ -153,6 +157,11 @@ function formatAgentInfo(agentInfo: { name: string; version: string }, model?: s
       .replace(/^anthropic\//i, "")
       .replace(/^google\//i, "");
     infoStr += ` ${p.dim}(${cleanModel})${p.reset}`;
+  }
+  if (thoughtLevel) {
+    // Clean up verbose mode names like "Thinking: medium" → "medium"
+    const label = thoughtLevel.replace(/^Thinking:\s*/i, "");
+    infoStr += ` ${p.dim}[${label}]${p.reset}`;
   }
   return `${infoStr} ${p.success}●${p.reset}`;
 }
@@ -227,7 +236,8 @@ async function main(): Promise<void> {
         const agentInfo = client.getAgentInfo();
         const model = client.getModel();
         if (agentInfo) {
-          return { info: formatAgentInfo(agentInfo, model) };
+          const mode = client.getCurrentMode();
+          return { info: formatAgentInfo(agentInfo, model, mode?.name ?? null) };
         }
       }
       return { info: "" };

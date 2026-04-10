@@ -14,6 +14,8 @@ export interface ShellEvents {
   };
   "shell:cwd-change": { cwd: string };
   "shell:foreground-busy": { busy: boolean };
+  "shell:agent-exec-start": Record<string, never>;
+  "shell:agent-exec-done": Record<string, never>;
 
   // Agent input (frontend → core: user submitted a query or wants to cancel)
   "agent:submit": { query: string };
@@ -105,6 +107,12 @@ export interface ShellEvents {
     cwd: string;
     mcpServers: { name: string; command: string; args: string[]; env: { name: string; value: string }[] }[];
   };
+
+  // Session mode/config updated (from ACP agent)
+  "config:changed": Record<string, never>;
+
+  // Cycle session mode (input-handler → core)
+  "config:cycle": Record<string, never>;
 
   // Autocomplete (sync pipe: extensions inspect buffer and append items)
   "autocomplete:request": {

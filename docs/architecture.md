@@ -47,9 +47,10 @@ All components communicate exclusively through typed bus events. AcpClient has n
 | Method | When |
 |---|---|
 | `initialize` | Startup: negotiate capabilities |
-| `session/new` | Create a conversation session |
+| `session/new` | Create a conversation session (returns available modes) |
 | `session/prompt` | User types `> query` — sent with shell context |
 | `session/cancel` | User hits Ctrl-C during agent response |
+| `session/set_mode` | Cycle thinking level (Shift-Tab) — e.g. off/low/medium/high |
 
 ### We handle from the agent
 
@@ -69,7 +70,8 @@ All components communicate exclusively through typed bus events. AcpClient has n
 | Update type | What we render |
 |---|---|
 | `agent_message_chunk` | Real-time streaming markdown with syntax highlighting in a bordered box |
-| `agent_thought_chunk` | Thinking spinner (default), or streaming text when toggled on with Ctrl+T |
+| `agent_thought_chunk` | Thinking spinner (default), or streaming text when toggled on with Ctrl+T. Spinner shows "Working" when thinking mode is off |
+| `current_mode_update` | Updates the thinking level indicator in the prompt |
 | `tool_call` | Kind icon (◆ read, ✎ edit, ▶ execute, ⌕ search, etc.) + title, file paths, arguments |
 | `tool_call_update` | Streaming output content + status indicator (checkmark or X with exit code) |
 | `file_write` | Inline diff preview in bordered box (Ctrl+O to expand/collapse) |
@@ -81,7 +83,7 @@ All components communicate exclusively through typed bus events. AcpClient has n
 3. All keyboard input goes directly to the PTY — zero latency, full terminal compatibility
 4. **Smart connection**: The agent connects asynchronously in the background while the shell starts immediately
 5. **Auto-wait**: If you send a query before the agent is fully connected, the system automatically waits for connection completion
-6. When you type `>` at the start of a line, agent-sh intercepts and enters agent input mode
+6. When you type `>` at the start of a line, agent-sh intercepts and enters agent input mode (with Shift-Enter for multiline, Shift-Tab to cycle thinking level)
 7. On Enter, the query (plus shell context) is sent to the agent via `session/prompt`
 8. The agent's streaming response renders inline in a bordered markdown box with real-time output
 9. If the agent needs to run commands, it calls `terminal/create` and agent-sh executes them in isolated child processes, streaming output back

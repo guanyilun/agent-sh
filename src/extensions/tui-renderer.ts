@@ -25,7 +25,7 @@ import type { DiffResult } from "../utils/diff.js";
 import { getSettings } from "../settings.js";
 import type { ExtensionContext } from "../types.js";
 
-export default function activate({ bus }: ExtensionContext): void {
+export default function activate({ bus, getAcpClient }: ExtensionContext): void {
   let spinner: SpinnerState | null = null;
   let renderer: MarkdownRenderer | null = null;
   let commandOutputBuffer = "";
@@ -34,8 +34,10 @@ export default function activate({ bus }: ExtensionContext): void {
   let lastCommand = "";
   let toolLineOpen = false; // true when tool header was written without \n
   let hadToolCalls = false; // true after any tool call in current response
+  let currentToolKind: string | undefined; // kind of the currently executing tool
   let isThinking = false;
   let showThinkingText = false;
+  let spinnerStartTime = 0; // preserved across spinner restarts
   let lastTruncatedDiff: {
     filePath: string;
     diff: DiffResult;
@@ -46,6 +48,7 @@ export default function activate({ bus }: ExtensionContext): void {
   // ── Event subscriptions ─────────────────────────────────────
 
   bus.on("agent:query", (e) => {
+    spinnerStartTime = 0;
     showUserQuery(e.query);
     startAgentResponse();
     startThinkingSpinner();
@@ -54,12 +57,13 @@ export default function activate({ bus }: ExtensionContext): void {
   bus.on("agent:thinking-chunk", (e) => {
     if (!isThinking) {
       isThinking = true;
-      stopCurrentSpinner();
       if (showThinkingText) {
+        stopCurrentSpinner();
         if (!renderer) startAgentResponse();
-        renderer!.writeLine(`${p.dim}${p.bold}💭 Thinking${p.reset}`);
+        renderer!.writeLine(`${p.dim}Thinking (ctrl+t to collapse)${p.reset}`);
       } else {
-        startThinkingSpinner("Thinking");
+        // Restart spinner with ctrl+t hint now that we know thinking is available
+        startThinkingSpinner();
       }
     }
     if (showThinkingText && e.text) {
@@ -81,11 +85,27 @@ export default function activate({ bus }: ExtensionContext): void {
 
   bus.on("agent:tool-started", (e) => {
     stopCurrentSpinner();
-    showToolCall(e.title, lastCommand, e);
+    currentToolKind = e.kind;
+    if (e.title === "user_shell") {
+      // Minimal annotation — PTY echo will show the output
+      closeToolLine();
+      if (!renderer) startAgentResponse();
+      renderer!.flush();
+      const cmd = (e.rawInput as any)?.command || "";
+      renderer!.writeLine(`${p.dim}▶ user_shell: ${cmd}${p.reset}`);
+      hadToolCalls = true;
+    } else {
+      showToolCall(e.title, lastCommand, e);
+    }
     lastCommand = "";
   });
 
-  bus.on("agent:tool-completed", (e) => showToolComplete(e.exitCode));
+  bus.on("agent:tool-completed", (e) => {
+    showToolComplete(e.exitCode);
+    currentToolKind = undefined;
+    spinnerStartTime = 0;
+    startThinkingSpinner();
+  });
   bus.on("agent:tool-output-chunk", (e) => writeCommandOutput(e.chunk));
   bus.on("agent:tool-output", () => flushCommandOutput());
 
@@ -140,7 +160,6 @@ export default function activate({ bus }: ExtensionContext): void {
   function startAgentResponse(): void {
     renderer = new MarkdownRenderer();
     hadToolCalls = false;
-    process.stdout.write("\n");
     renderer.printTopBorder();
   }
 
@@ -262,9 +281,21 @@ export default function activate({ bus }: ExtensionContext): void {
     }
   }
 
-  function startThinkingSpinner(label = "Thinking"): void {
+  function hasThinkingMode(): boolean {
+    const mode = getAcpClient().getCurrentMode();
+    return !mode || mode.id !== "off";
+  }
+
+  function startThinkingSpinner(): void {
+    // Preserve start time if restarting (e.g. toggle), otherwise reset
+    if (!spinnerStartTime) spinnerStartTime = Date.now();
     stopCurrentSpinner();
-    spinner = startSpinner(label);
+    const thinking = hasThinkingMode();
+    const label = thinking ? "Thinking" : "Working";
+    const hint = thinking
+      ? (showThinkingText ? "(ctrl+t to collapse)" : "(ctrl+t to expand)")
+      : "";
+    spinner = startSpinner(label, { hint: hint || undefined, startTime: spinnerStartTime });
   }
 
   function stopCurrentSpinner(): void {
@@ -284,11 +315,14 @@ export default function activate({ bus }: ExtensionContext): void {
   function writeCommandOutput(chunk: string): void {
     if (!renderer) return;
     closeToolLine();
+    const maxLines = currentToolKind === "read"
+      ? getSettings().readOutputMaxLines
+      : getSettings().maxCommandOutputLines;
     commandOutputBuffer += chunk;
     const lines = commandOutputBuffer.split("\n");
     commandOutputBuffer = lines.pop()!;
     for (const line of lines) {
-      if (commandOutputLineCount < getSettings().maxCommandOutputLines) {
+      if (commandOutputLineCount < maxLines) {
         renderer.writeLine(`${p.dim}  ${line}${p.reset}`);
         commandOutputLineCount++;
       } else {
@@ -299,8 +333,11 @@ export default function activate({ bus }: ExtensionContext): void {
 
   function flushCommandOutput(): void {
     if (!renderer) return;
+    const maxLines = currentToolKind === "read"
+      ? getSettings().readOutputMaxLines
+      : getSettings().maxCommandOutputLines;
     if (commandOutputBuffer) {
-      if (commandOutputLineCount < getSettings().maxCommandOutputLines) {
+      if (commandOutputLineCount < maxLines) {
         renderer.writeLine(`${p.dim}  ${commandOutputBuffer}${p.reset}`);
         commandOutputLineCount++;
       } else {
@@ -308,10 +345,10 @@ export default function activate({ bus }: ExtensionContext): void {
       }
       commandOutputBuffer = "";
     }
-    if (commandOutputOverflow > 0) {
+    if (commandOutputOverflow > 0 && maxLines > 0) {
       renderer.writeLine(`${p.dim}  … ${commandOutputOverflow} more lines${p.reset}`);
-      commandOutputOverflow = 0;
     }
+    commandOutputOverflow = 0;
   }
 
 
@@ -439,8 +476,31 @@ export default function activate({ bus }: ExtensionContext): void {
 
   function toggleThinkingDisplay(): void {
     showThinkingText = !showThinkingText;
-    const state = showThinkingText ? "on" : "off";
-    process.stdout.write(`\n${p.dim}Thinking display: ${state}${p.reset}\n`);
+
+    // Update spinner hint to reflect new state, even if not actively thinking
+    if (spinner) {
+      stopCurrentSpinner();
+      startThinkingSpinner();
+      return;
+    }
+
+    if (!isThinking) return;
+
+    if (showThinkingText) {
+      // Switch from spinner to streaming text
+      stopCurrentSpinner();
+      if (!renderer) startAgentResponse();
+      renderer!.writeLine(`${p.dim}Thinking (ctrl+t to collapse)${p.reset}`);
+    } else {
+      // Switch from streaming text to spinner
+      if (renderer) {
+        renderer.flush();
+        const termW = process.stdout.columns || 80;
+        const w = Math.min(80, termW);
+        renderer.writeLine(`${p.dim}${"─".repeat(w)}${p.reset}`);
+      }
+      startThinkingSpinner();
+    }
   }
 
   function showError(message: string): void {
