@@ -87,9 +87,80 @@ All components communicate exclusively through typed bus events. AcpClient has n
 9. If the agent needs to run commands, it calls `terminal/create` and agent-sh executes them in isolated child processes, streaming output back
 10. When the agent finishes, normal shell operation resumes
 
+## Shell ↔ Agent Boundary
+
+The shell and the agent are **separate worlds** by default. The PTY runs your real shell; the agent runs as an isolated subprocess with its own tools (bash, file read/write, etc.). They don't directly interact — the agent's `bash` tool runs commands in an isolated child process, not your live shell. A `cd` by the agent doesn't change your shell's cwd.
+
+The connection between them is **context**: each time you send a query (`> ...`), agent-sh includes a `<shell_context>` block with your recent commands, their output, and your current working directory. The agent can see what you've been doing, but it can't touch your shell state.
+
+### Bridge tools
+
+For cases where the agent *should* affect the live shell (e.g., `cd`, `export`, `source`), agent-sh provides bridge tools via a Unix domain socket:
+
+| Tool | Purpose |
+|---|---|
+| `shell_cwd` | Query the user's real shell cwd (may differ from agent's internal cwd) |
+| `user_shell` | Execute a command in the user's live PTY — `cd`, `export`, etc. take effect |
+| `shell_recall` | Search, expand, or browse session history (commands, output, agent responses) |
+
+These tools are **not built into the agent** — they're registered externally and the agent discovers them at session start. This keeps the architecture clean: the agent doesn't need to know about agent-sh specifically.
+
+### How agents discover bridge tools
+
+Two paths to the same socket backend — **both always active**:
+
+1. **MCP server** (always on, universal) — the shell-exec extension automatically registers an MCP server via the `session:configure` pipe when creating an ACP session. Any ACP agent that forwards `mcpServers` (like claude-agent-acp) discovers `shell_cwd`, `user_shell`, and `shell_recall` tools automatically. No configuration needed.
+
+2. **Agent extensions** (agent-specific) — some agents don't support MCP but have their own extension system. For pi-acp, the pi extension (`examples/pi-agent-sh.ts`, installed to `~/.pi/agent/extensions/pi-agent-sh/`) reads `AGENT_SH_SOCKET` from the environment and connects to the same socket directly.
+
+Both paths connect to the same Unix socket (`$AGENT_SH_SOCKET`), which speaks JSON-RPC 2.0. The shell-exec extension handles requests by routing them through the EventBus — it never touches the PTY directly.
+
+```
+Agent (pi, claude, etc.)
+  │
+  ├── via MCP server (stdio) ──┐
+  │                             ├──→ Unix socket ($AGENT_SH_SOCKET)
+  └── via agent extension ─────┘         │
+                                    shell-exec extension
+                                         │ EventBus
+                                    Shell (PTY write + output capture)
+```
+
+### Pi extension example
+
+The reference implementation lives at `examples/pi-agent-sh.ts`. It registers all three bridge tools with pi's extension API and communicates with agent-sh via the socket:
+
+```typescript
+// Simplified — see examples/pi-agent-sh.ts for full source
+pi.registerTool({
+  name: "user_shell",
+  description: "Execute a command in the user's live terminal session...",
+  async execute(_id, params) {
+    const result = await callSocket("shell/exec", { command: params.command });
+    return { content: [{ type: "text", text: result.output }] };
+  },
+});
+```
+
+To install for pi:
+```bash
+mkdir -p ~/.pi/agent/extensions/pi-agent-sh
+cp examples/pi-agent-sh.ts ~/.pi/agent/extensions/pi-agent-sh/index.ts
+```
+
+### Writing your own bridge client
+
+Any process can connect to the socket. The protocol is JSON-RPC 2.0 (newline-delimited):
+
+```bash
+# Quick test (requires socat)
+echo '{"jsonrpc":"2.0","id":1,"method":"shell/cwd","params":{}}' | \
+  socat - UNIX-CONNECT:$AGENT_SH_SOCKET
+```
+
 ## Socket Protocol
 
-agent-sh exposes a Unix domain socket for external tools (MCP servers, pi extensions, etc.) to interact with the user's live shell. The socket speaks **JSON-RPC 2.0** (newline-delimited), the same protocol family as ACP and MCP.
+The Unix socket speaks **JSON-RPC 2.0** (newline-delimited).
 
 ### Methods
 
@@ -100,21 +171,7 @@ agent-sh exposes a Unix domain socket for external tools (MCP servers, pi extens
 | `shell/info` | `{}` | `{ shell, agentSh }` | Get shell metadata |
 | `shell/recall` | `{ operation, query?, ids?, start?, end? }` | `{ result }` | Search, expand, or browse session exchange history |
 
-### Example
-
-```
-→ {"jsonrpc":"2.0","id":1,"method":"shell/exec","params":{"command":"cd ~/Downloads && pwd"}}
-← {"jsonrpc":"2.0","id":1,"result":{"output":"/Users/me/Downloads","cwd":"/Users/me/Downloads"}}
-```
-
 The socket path is available via the `AGENT_SH_SOCKET` environment variable. The protocol is extensible — new methods can be added without breaking existing clients.
-
-### How agents discover the socket
-
-Two paths, same backend:
-
-1. **MCP server** (universal) — the shell-exec extension registers an MCP server via the `session:configure` pipe. ACP agents that forward `mcpServers` (like claude-agent-acp) discover `shell_cwd`, `user_shell`, and `shell_recall` tools automatically.
-2. **Agent extensions** (agent-specific) — the pi extension (`examples/pi-agent-sh.ts`, installed to `~/.pi/agent/extensions/pi-agent-sh/`) reads `AGENT_SH_SOCKET` from the environment and connects directly. This is the path for pi-acp.
 
 ## EventBus
 
