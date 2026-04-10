@@ -92,6 +92,20 @@ export interface ShellEvents {
     handled: boolean;
   };
 
+  // Shell exec (async pipe: extension requests command execution in user's PTY)
+  "shell:exec-request": {
+    command: string;
+    output: string;
+    cwd: string;
+    done: boolean;
+  };
+
+  // Session configure (sync pipe: extensions can add MCP servers before newSession)
+  "session:configure": {
+    cwd: string;
+    mcpServers: { name: string; command: string; args: string[]; env: { name: string; value: string }[] }[];
+  };
+
   // Autocomplete (sync pipe: extensions inspect buffer and append items)
   "autocomplete:request": {
     buffer: string;
