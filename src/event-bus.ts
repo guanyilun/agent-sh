@@ -111,17 +111,18 @@ export interface ShellEvents {
     done: boolean;
   };
 
-  // Session configure (sync pipe: extensions can add MCP servers before newSession)
-  "session:configure": {
-    cwd: string;
-    mcpServers: { name: string; command: string; args: string[]; env: { name: string; value: string }[] }[];
-  };
-
   // Agent info (backend → frontend: connection established, info available)
   "agent:info": { name: string; version: string; model?: string };
 
   // Session reset (slash command → backend: clear conversation state)
   "agent:reset-session": Record<string, never>;
+
+  // Extension registers itself as agent backend (extension → core)
+  "agent:register-backend": {
+    name: string;
+    kill: () => void;
+    start?: () => Promise<void>;
+  };
 
   // Session mode/config updated (from agent backend)
   "config:changed": Record<string, never>;
@@ -142,9 +143,6 @@ export interface ShellEvents {
     baseURL?: string;
     defaultModel: string;
     models?: string[];
-    type?: "acp";
-    command?: string;
-    args?: string[];
   };
 
   // Autocomplete (sync pipe: extensions inspect buffer and append items)

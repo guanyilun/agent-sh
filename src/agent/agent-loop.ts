@@ -12,7 +12,7 @@
  *     agent:tool-completed, agent:tool-output
  *   - agent:thinking-chunk, agent:cancelled, agent:error
  */
-import type { EventBus } from "../event-bus.js";
+import type { EventBus, ShellEvents } from "../event-bus.js";
 import type { AgentMode } from "../types.js";
 import type { ContextManager } from "../context-manager.js";
 import type { LlmClient } from "../utils/llm-client.js";
@@ -43,6 +43,7 @@ export class AgentLoop implements AgentBackend {
   private conversation = new ConversationState();
   private modes: AgentMode[];
   private currentModeIndex = 0;
+  private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
 
   constructor(
     private bus: EventBus,
@@ -59,19 +60,28 @@ export class AgentLoop implements AgentBackend {
 
     // Register core tools
     this.registerCoreTools();
+  }
 
-    // Self-wire to bus events.
-    bus.on("agent:submit", ({ query, modeInstruction, modeLabel }) => {
+  /** Subscribe to bus events — activates this backend. */
+  wire(): void {
+    const on = <K extends keyof ShellEvents>(
+      event: K,
+      fn: (payload: ShellEvents[K]) => void,
+    ) => {
+      this.bus.on(event, fn);
+      this.boundListeners.push({ event, fn });
+    };
+
+    on("agent:submit", ({ query, modeInstruction, modeLabel }) => {
       this.handleQuery(query, modeInstruction, modeLabel).catch(() => {});
     });
-    bus.on("agent:cancel-request", (e) => {
+    on("agent:cancel-request", (e) => {
       this.abortController?.abort(e.silent ? "silent" : undefined);
     });
-    bus.on("config:cycle", () => this.cycleMode());
-    bus.on("config:set-modes", ({ modes: newModes }) => {
+    on("config:cycle", () => this.cycleMode());
+    on("config:set-modes", ({ modes: newModes }) => {
       this.modes = newModes;
       this.currentModeIndex = 0;
-      // Apply the first mode's config
       const m = this.modes[0];
       if (m.providerConfig) {
         this.llmClient.reconfigure({ ...m.providerConfig, model: m.model });
@@ -80,10 +90,18 @@ export class AgentLoop implements AgentBackend {
       }
       this.bus.emit("config:changed", {});
     });
-    bus.on("agent:reset-session", () => {
+    on("agent:reset-session", () => {
       this.cancel();
       this.conversation = new ConversationState();
     });
+  }
+
+  /** Unsubscribe from bus events — deactivates this backend. */
+  unwire(): void {
+    for (const { event, fn } of this.boundListeners) {
+      this.bus.off(event as any, fn);
+    }
+    this.boundListeners = [];
   }
 
   /** Register a tool (used by extensions via ctx.registerTool). */

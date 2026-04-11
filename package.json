@@ -67,7 +67,6 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.18.1",
     "cli-highlight": "^2.1.11",
     "marked": "^17.0.6",
     "node-pty": "^1.2.0-beta.12",

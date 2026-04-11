@@ -17,21 +17,15 @@ export interface AgentMode {
 }
 
 export interface AgentShellConfig {
-  agentCommand: string;
-  agentArgs: string[];
   shell?: string;
   model?: string;
   extensions?: string[];
-  /** Full shell environment (from user's rc files) for agent subprocess. */
-  shellEnv?: Record<string, string>;
 
-  // ── Internal agent mode (OpenAI-compatible API) ──────────────
-  /** API key for direct LLM access. If set, uses internal agent instead of ACP. */
+  // ── LLM provider ─────────────────────────────────────────────
+  /** API key for OpenAI-compatible provider. */
   apiKey?: string;
-  /** Base URL for OpenAI-compatible API (default: https://api.openai.com/v1). */
+  /** Base URL for OpenAI-compatible API. */
   baseURL?: string;
-
-  // ── Provider profiles ─────────────────────────────────────────
   /** Named provider to use from settings.json. */
   provider?: string;
 }

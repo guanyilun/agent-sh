@@ -5,23 +5,20 @@
  * Consumers attach their own I/O (Shell, WebSocket, REST, tests) by
  * subscribing to bus events.
  *
- * Agent backends are bus-driven — they self-wire to bus events in their
- * constructor. Core creates the backend and holds a reference for lifecycle.
- *
- * Two backend modes:
- *   - Internal agent (apiKey provided): AgentLoop + LlmClient (in-process)
- *   - ACP subprocess (agentCommand provided): AcpClient (existing behavior)
+ * The default backend (AgentLoop) is created eagerly but wired lazily —
+ * extensions can register alternative backends via agent:register-backend
+ * before activateBackend() is called.
  *
  * Usage:
  *   import { createCore } from "agent-sh";
- *   const core = createCore({ agentCommand: "pi-acp" });
- *   core.bus.on("agent:response-chunk", ({ text }) => ws.send(text));
- *   await core.start();
+ *   const core = createCore({ apiKey: "...", model: "gpt-4o" });
+ *   core.bus.on("agent:response-chunk", ({ blocks }) => { ... });
+ *   core.activateBackend();
  *   const response = await core.query("hello");
  */
 import { EventBus, type ContentBlock } from "./event-bus.js";
 import { ContextManager } from "./context-manager.js";
-import { createAgentBackend } from "./agent/index.js";
+import { AgentLoop } from "./agent/agent-loop.js";
 import { LlmClient } from "./utils/llm-client.js";
 import type { AgentShellConfig, AgentMode, ExtensionContext } from "./types.js";
 import { setPalette } from "./utils/palette.js";
@@ -42,10 +39,10 @@ export { LlmClient } from "./utils/llm-client.js";
 export interface AgentShellCore {
   bus: EventBus;
   contextManager: ContextManager;
-  /** LLM client for fast-path features (null in ACP mode). */
+  /** LLM client for fast-path features (null when no provider configured). */
   llmClient: LlmClient | null;
-  /** Connect to the agent subprocess (ACP mode). No-op for internal agent. */
-  start(): Promise<void>;
+  /** Activate the agent backend (call after extensions load). */
+  activateBackend(): void;
   /** Convenience: emit agent:submit and await the response. */
   query(text: string, opts?: { mode?: string }): Promise<string>;
   /** Convenience: emit agent:cancel-request. */
@@ -62,30 +59,25 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   const contextManager = new ContextManager(bus);
 
   // ── Resolve provider ─────────────────────────────────────────
-  // Priority: CLI flags > --provider > settings.defaultProvider
   const settings = settingsMod.getSettings();
   let activeProvider: ResolvedProvider | null = null;
 
-  // Runtime provider registry (settings + extension-registered)
   const providerRegistry = new Map<string, ResolvedProvider>();
 
-  // Load providers from settings
   for (const name of getProviderNames()) {
     const p = resolveProvider(name);
     if (p) providerRegistry.set(name, p);
   }
 
-  // Determine active provider
   const providerName = config.provider ?? settings.defaultProvider;
   if (providerName) {
     activeProvider = providerRegistry.get(providerName) ?? null;
   }
 
-  // Build flat modes list across all non-ACP providers
+  // Build flat modes list across all providers
   const buildModes = (): AgentMode[] => {
     const allModes: AgentMode[] = [];
     for (const [id, p] of providerRegistry) {
-      if (p.type === "acp") continue;
       if (!p.apiKey) continue;
       for (const model of p.models) {
         allModes.push({
@@ -98,66 +90,60 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     return allModes;
   };
 
-  // Determine effective config for initial LLM client
   const effectiveApiKey = config.apiKey ?? activeProvider?.apiKey;
   const effectiveBaseURL = config.baseURL ?? activeProvider?.baseURL;
-  const effectiveModel = config.model ?? activeProvider?.defaultModel ?? "gpt-4o";
+  const effectiveModel = config.model ?? activeProvider?.defaultModel;
 
-  // Build modes — if CLI overrides are set and no providers configured, use single mode
   let modes = buildModes();
-  if (modes.length === 0 && effectiveApiKey) {
+  if (modes.length === 0 && effectiveApiKey && effectiveModel) {
     modes = [{ model: effectiveModel }];
   }
 
-  // Set initial mode index to match the effective model
   const initialModeIndex = Math.max(0, modes.findIndex(
     (m) => m.model === effectiveModel && (!activeProvider || m.provider === activeProvider.id)
   ));
 
   // Shared LLM client — used by agent loop AND fast-path features
-  const llmClient =
-    effectiveApiKey
-      ? new LlmClient({
-          apiKey: effectiveApiKey,
-          baseURL: effectiveBaseURL,
-          model: effectiveModel,
-        })
-      : null;
-
-  // If provider is ACP type, configure as ACP
-  if (activeProvider?.type === "acp" && activeProvider.command) {
-    config.agentCommand = activeProvider.command;
-    config.agentArgs = activeProvider.args ?? [];
+  let llmClient: LlmClient | null = null;
+  if (effectiveApiKey) {
+    if (!effectiveModel) {
+      throw new Error("No model specified. Use --model or configure a provider with defaultModel in ~/.agent-sh/settings.json");
+    }
+    llmClient = new LlmClient({
+      apiKey: effectiveApiKey,
+      baseURL: effectiveBaseURL,
+      model: effectiveModel,
+    });
   }
 
-  // Create agent backend via factory — both backends self-wire to bus events
-  const backend = createAgentBackend(config, bus, contextManager, llmClient ?? undefined, modes, initialModeIndex);
+  // Create AgentLoop (unwired — tools only, no bus subscriptions yet)
+  const agentLoop = llmClient
+    ? new AgentLoop(bus, contextManager, llmClient, modes, initialModeIndex)
+    : null;
+
+  // ── Extension backend registration ───────────────────────────
+  let extensionBackend: { name: string; kill: () => void; start?: () => Promise<void> } | null = null;
+
+  bus.on("agent:register-backend", (backend) => {
+    extensionBackend = backend;
+  });
 
   // ── Runtime provider management ──────────────────────────────
 
-  // Extensions can register providers at runtime
   bus.on("provider:register", (p) => {
     providerRegistry.set(p.id, {
       id: p.id,
       apiKey: p.apiKey,
       baseURL: p.baseURL,
       defaultModel: p.defaultModel,
-      models: p.models ?? [p.defaultModel],
-      type: p.type,
-      command: p.command,
-      args: p.args,
+      models: p.models ?? (p.defaultModel ? [p.defaultModel] : []),
     });
   });
 
-  // Switch provider at runtime (only for internal agent mode)
   bus.on("config:switch-provider", ({ provider: name }) => {
     const p = providerRegistry.get(name);
     if (!p) {
       bus.emit("ui:error", { message: `Unknown provider: ${name}` });
-      return;
-    }
-    if (p.type === "acp") {
-      bus.emit("ui:error", { message: `Cannot switch to ACP provider at runtime` });
       return;
     }
     if (!llmClient) {
@@ -165,19 +151,22 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
       return;
     }
 
-    // Reconfigure LLM client
     const newApiKey = p.apiKey;
     if (!newApiKey) {
       bus.emit("ui:error", { message: `Provider "${name}" has no API key configured` });
       return;
     }
+    const switchModel = p.defaultModel ?? p.models[0];
+    if (!switchModel) {
+      bus.emit("ui:error", { message: `Provider "${name}" has no models configured` });
+      return;
+    }
     llmClient.reconfigure({
       apiKey: newApiKey,
       baseURL: p.baseURL,
-      model: p.defaultModel,
+      model: switchModel,
     });
 
-    // Update agent loop modes
     const newModes: AgentMode[] = p.models.map((m) => ({
       model: m,
       provider: name,
@@ -186,7 +175,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     bus.emit("config:set-modes", { modes: newModes });
 
     activeProvider = p;
-    bus.emit("ui:info", { message: `Switched to ${name} (${p.defaultModel})` });
+    bus.emit("ui:info", { message: `Switched to ${name} (${switchModel})` });
     bus.emit("config:changed", {});
   });
 
@@ -195,8 +184,12 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     contextManager,
     llmClient,
 
-    async start() {
-      await backend.start?.();
+    activateBackend() {
+      if (extensionBackend) {
+        extensionBackend.start?.();
+        return;
+      }
+      agentLoop?.wire();
     },
 
     async query(text, opts) {
@@ -258,7 +251,11 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     },
 
     kill() {
-      backend.kill();
+      if (extensionBackend) {
+        extensionBackend.kill();
+      } else {
+        agentLoop?.kill();
+      }
     },
   };
 }

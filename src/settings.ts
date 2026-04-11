@@ -21,12 +21,6 @@ export interface ProviderConfig {
   defaultModel?: string;
   /** Models available for cycling. */
   models?: string[];
-  /** ACP agent mode — if set, uses ACP subprocess instead of internal agent. */
-  type?: "acp";
-  /** ACP agent command (only when type is "acp"). */
-  command?: string;
-  /** ACP agent args (only when type is "acp"). */
-  args?: string[];
 }
 
 export interface Settings {
@@ -146,11 +140,8 @@ export interface ResolvedProvider {
   id: string;
   apiKey?: string;
   baseURL?: string;
-  defaultModel: string;  // always resolved (from defaultModel or first model)
+  defaultModel?: string;
   models: string[];
-  type?: "acp";
-  command?: string;
-  args?: string[];
 }
 
 /**
@@ -163,17 +154,14 @@ export function resolveProvider(name: string): ResolvedProvider | null {
   if (!provider) return null;
 
   const models = provider.models ?? (provider.defaultModel ? [provider.defaultModel] : []);
-  const defaultModel = provider.defaultModel ?? models[0] ?? "gpt-4o";
+  const defaultModel = provider.defaultModel ?? models[0];
 
   return {
     id: name,
     apiKey: provider.apiKey ? expandEnvVars(provider.apiKey) : undefined,
     baseURL: provider.baseURL,
     defaultModel,
-    models: models.length ? models : [defaultModel],
-    type: provider.type,
-    command: provider.command,
-    args: provider.args,
+    models: models.length ? models : (defaultModel ? [defaultModel] : []),
   };
 }
 
