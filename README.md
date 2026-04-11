@@ -5,7 +5,7 @@
 
 Not a shell that lives in an agent — an agent that lives in a shell.
 
-agent-sh is a real terminal first. Every keystroke goes to a real PTY. `cd`, pipes, vim, job control — they all just work. But type `>` at the start of a line, and you're talking to an AI agent that has full context of what you've been doing: your working directory, recent commands, their output.
+agent-sh is a real terminal first. Every keystroke goes to a real PTY. `cd`, pipes, vim, job control — they all just work. But type `?` or `>` at the start of a line, and you're talking to an AI agent that has full context of what you've been doing: your working directory, recent commands, their output.
 
 The agent connects via the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/), so you can plug in **any** ACP-compatible agent: [pi](https://github.com/svkozak/pi-acp), claude-code, codex, gemini-cli, goose, etc.
 
@@ -13,15 +13,17 @@ The agent connects via the [Agent Client Protocol (ACP)](https://agentclientprot
 ⚡ src $ ls -la                          # real shell command
 ⚡ src $ cd ../tests && npm test          # real cd, env, aliases — all just work
 ⚡ src $ vim file.ts                      # opens vim in the same PTY
-⚡ src $ > refactor the auth middleware   # → sent to agent via ACP
-⚡ src $ > explain the last error         # agent sees your recent commands + output
+⚡ src $ ? explain the last error         # query mode → agent investigates using its own tools
+⚡ src $ > deploy to staging              # execute mode → agent runs it in your live shell
 ```
 
 ## Why shell-first?
 
-Most AI coding tools are agent-first: the LLM drives the experience and the shell is bolted on. That means no real PTY, no job control, no interactive commands, and fragile `cd` tracking that reimplements what bash gives you for free.
+I live mostly in a terminal. I don't just want an agent that has access to my shell — I want a shell that has access to my agent.
 
-agent-sh starts from the opposite end. The shell is the primary interface — it's your terminal, not the agent's. The agent is a tool you reach for when you need it, not the other way around.
+Most AI coding tools get this backwards: the LLM drives the experience and the shell is bolted on. That means no real PTY, no job control, no interactive commands, and fragile `cd` tracking that reimplements what bash gives you for free.
+
+agent-sh starts from the opposite end. The shell is the primary interface — it's your terminal, not the agent's. The agent is a tool you reach for when you need it, not the other way around. Two modes give you fine-grained control: `?` for questions and tasks (agent uses its own tools), `>` for commands that run directly in your live shell.
 
 ### Why ACP?
 
@@ -40,6 +42,8 @@ The [Agent Client Protocol](https://agentclientprotocol.com/) decouples the shel
 - **Real-time Streaming** — Agent responses stream live with syntax highlighting
 - **Zero Latency** — Direct PTY access, full terminal compatibility
 - **Context Aware** — Agent sees your cwd, recent commands, and their output
+- **Dual Input Modes** — `?` for questions/tasks (agent tools), `>` for live shell execution
+- **Extensible Modes** — Extensions can register custom input modes with their own triggers
 - **Multiple Agents** — Easy switching between pi-acp, claude, and other ACP agents
 - **Inline Diff Preview** — File writes show syntax-highlighted diffs inline (Ctrl+O to expand)
 - **Thinking Display** — Toggle agent thinking/reasoning text with Ctrl+T
@@ -67,22 +71,34 @@ See the [Usage Guide](docs/usage.md) for all options, model configuration, and e
 
 ## Input Modes
 
+agent-sh has two agent input modes, each triggered by a single character at the start of an empty line:
+
+| Trigger | Mode | Behavior |
+|---|---|---|
+| `?` | **Query** | Agent uses its own tools (bash, file read/write, search) to investigate and answer. Stays in query mode after each response. |
+| `>` | **Execute** | Agent runs a command in your live shell via `user_shell`. Your aliases, env vars, and cwd apply. Returns to shell after execution. |
+
+Regular shell input works as before — commands go straight to the PTY:
+
 | Input | Behavior |
 |---|---|
 | `ls -la` | Runs in real shell (PTY), output displayed normally |
 | `cd src && make` | Real shell — cd, env, aliases all just work |
 | `vim file.ts` | Opens vim in the same PTY, no hacks needed |
-| `> refactor this fn` | Sends to agent via ACP, streams response inline |
-| `> /help` | Shows available slash commands |
+| `? refactor this fn` | Query mode — agent investigates and responds |
+| `> restart the server` | Execute mode — agent runs it in your live shell |
+| `? /help` | Shows available slash commands (works in either mode) |
 | `Ctrl-C` | Standard signal to shell, or cancels active agent response |
 | `Ctrl-O` | Expand/collapse truncated diff preview |
 | `Ctrl-T` | Toggle thinking/reasoning text display |
 | `Shift-Tab` | Cycle thinking level (off → minimal → low → medium → high → xhigh) |
-| `Escape` | Exit agent input mode (when typing after `>`) |
+| `Escape` | Exit agent input mode |
+
+Modes are extensible — extensions can register new modes via the `input-mode:register` event (see [Extensions](docs/extensions.md#custom-input-modes)).
 
 ### Agent Input Keybindings
 
-When typing after `>`, full readline-style keybindings are available:
+When typing in either agent mode (`?` or `>`), full readline-style keybindings are available:
 
 | Key | Action |
 |---|---|
@@ -103,10 +119,11 @@ When typing after `>`, full readline-style keybindings are available:
 
 ### Thinking Level
 
-The agent prompt shows the current thinking level next to the model name:
+The agent prompt shows the current thinking level next to the model name, with a mode-specific indicator:
 
 ```
-pi (claude-3.5-sonnet) [medium] ● ❯
+pi (claude-sonnet-4-6) [medium] ❓ ❯    # query mode
+pi (claude-sonnet-4-6) [medium] ● ⟩     # execute mode
 ```
 
 Press **Shift-Tab** in agent input mode to cycle through levels. The levels are advertised by the agent via ACP session modes — different agents may offer different options. The spinner label reflects the mode: "Thinking" when thinking is enabled, "Working" when it's off.

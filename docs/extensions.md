@@ -412,6 +412,66 @@ These render outside the response box and work regardless of renderer state.
 
 The tui-renderer maintains a `RenderState` that tracks the current phase of rendering (idle, responding, tool-running), spinner state, tool output buffering, thinking display, and diff expansion. Extensions don't access this directly — they interact through the named handler system and bus events.
 
+## Custom Input Modes
+
+Extensions can register new input modes — each mode binds a trigger character (typed at the start of an empty shell line) to custom behavior. The two built-in modes (`?` for query, `>` for execute) are registered this way.
+
+### Registering a mode
+
+Emit `input-mode:register` with an `InputModeConfig`:
+
+```typescript
+export default function activate(ctx) {
+  const { bus } = ctx;
+
+  bus.emit("input-mode:register", {
+    id: "translate",           // unique identifier
+    trigger: "!",              // single char — typed at empty line start
+    label: "translate",        // shown in prompt
+    promptIcon: "⟩",           // chevron/icon character
+    indicator: "🌐",           // status indicator before the icon
+    onSubmit(query, bus) {
+      // Called when the user presses Enter with a non-empty query.
+      // Use bus.emit("agent:submit", { query, modeInstruction, modeLabel })
+      // to send to the agent with a mode-specific instruction.
+      bus.emit("agent:submit", {
+        query,
+        modeLabel: "Translate",
+        modeInstruction: "[mode: translate] Translate the following to Spanish.",
+      });
+    },
+    returnToSelf: true,        // re-enter this mode after agent finishes
+  });
+}
+```
+
+### InputModeConfig fields
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` | Unique identifier (e.g. `"query"`, `"execute"`, `"translate"`) |
+| `trigger` | `string` | Single character that activates the mode at empty line start |
+| `label` | `string` | Human-readable label shown in the prompt area |
+| `promptIcon` | `string` | The chevron/icon character displayed in the prompt (e.g. `"❯"`, `"⟩"`) |
+| `indicator` | `string` | Status indicator shown before the icon (e.g. `"❓"`, `"●"`, `"🌐"`) |
+| `onSubmit` | `(query, bus) => void` | Called on Enter with non-empty input. Typically emits `agent:submit` |
+| `returnToSelf` | `boolean` | If `true`, re-enter this mode after the agent finishes processing |
+
+### How the built-in modes work
+
+The two default modes are registered in `index.ts`:
+
+- **Query mode** (`?`): Sends queries with `[mode: query]` instruction. The agent uses its internal tools (bash, file read/write) and does **not** use `user_shell`. `returnToSelf: true` — stays in query mode for follow-up questions.
+- **Execute mode** (`>`): Sends queries with `[mode: execute]` instruction. The agent investigates context if needed, then runs the command via `user_shell` in the live PTY. `returnToSelf: false` — returns to normal shell after execution.
+
+A session orientation message is sent on the first prompt to teach the agent about the available modes and tools. Per-query mode instructions then guide behavior for each individual prompt.
+
+### Notes
+
+- Each trigger character can only be claimed by one mode. Attempting to register a duplicate trigger emits a `ui:error`.
+- Slash commands (`/help`, `/clear`, etc.) work in any input mode.
+- All readline keybindings (history, word movement, multiline) are available in every mode.
+
 ## Yolo Mode
 
 By default, agent-sh runs in **yolo mode** — all tool calls and file writes are auto-approved. This matches pi's design philosophy where the agent operates freely unless you explicitly add permission gates.

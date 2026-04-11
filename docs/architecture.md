@@ -86,8 +86,8 @@ All components communicate exclusively through typed bus events. AcpClient has n
 3. All keyboard input goes directly to the PTY — zero latency, full terminal compatibility
 4. **Smart connection**: The agent connects asynchronously in the background while the shell starts immediately
 5. **Auto-wait**: If you send a query before the agent is fully connected, the system automatically waits for connection completion
-6. When you type `>` at the start of a line, agent-sh intercepts and enters agent input mode (with Shift-Enter for multiline, Shift-Tab to cycle thinking level)
-7. On Enter, the query (plus shell context) is sent to the agent via `session/prompt`
+6. When you type `?` or `>` at the start of a line, agent-sh intercepts and enters an agent input mode — **query** (`?`) or **execute** (`>`) — with Shift-Enter for multiline and Shift-Tab to cycle thinking level
+7. On Enter, the query (plus shell context and a mode instruction) is sent to the agent via `session/prompt`
 8. The agent's streaming response renders inline in a bordered markdown box with real-time output
 9. If the agent needs to run commands, it calls `terminal/create` and agent-sh executes them in isolated child processes, streaming output back
 10. When the agent finishes, normal shell operation resumes
@@ -177,6 +177,23 @@ The Unix socket speaks **JSON-RPC 2.0** (newline-delimited).
 | `shell/recall` | `{ operation, query?, ids?, start?, end? }` | `{ result }` | Search, expand, or browse session exchange history |
 
 The socket path is available via the `AGENT_SH_SOCKET` environment variable. The protocol is extensible — new methods can be added without breaking existing clients.
+
+## Input Mode System
+
+agent-sh supports multiple input modes, each triggered by a single character at the start of an empty shell line. The two built-in modes are:
+
+| Trigger | Mode | Behavior |
+|---|---|---|
+| `?` | Query | Agent uses internal tools (bash, file ops). Stays in query mode after response. |
+| `>` | Execute | Agent runs command in user's live shell via `user_shell`. Returns to shell after. |
+
+Modes are registered via `input-mode:register` bus events. Extensions can add new modes — each binds a trigger character to an `onSubmit` handler that typically emits `agent:submit` with a mode-specific instruction.
+
+On first prompt, the ACP client sends a session orientation message explaining the mode system to the agent. Each subsequent prompt includes a per-query mode instruction (e.g. `[mode: query]` or `[mode: execute]`) so the agent knows how to behave.
+
+The `returnToSelf` flag controls what happens after the agent finishes: query mode re-enters itself for follow-up questions, while execute mode returns to the normal shell prompt.
+
+See [Extensions — Custom Input Modes](extensions.md#custom-input-modes) for the registration API.
 
 ## EventBus
 

@@ -42,7 +42,7 @@
 
 **Error**: "Invalid model name"
 - **Cause**: Using incorrect model name
-- **Solution**: Use valid model names like `claude-3-5-sonnet-20241022` or `gpt-4o`
+- **Solution**: Use valid model names like `claude-sonnet-4-6` or `gpt-4o`
 
 **Error**: "Agent process exited with code X"
 - **Cause**: Agent crashed or failed to start

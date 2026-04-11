@@ -44,12 +44,12 @@ npm run claude     # claude-agent-acp (Anthropic's official Claude agent)
 npm start -- --agent pi-acp
 
 # Pass arguments to the agent (including model)
-npm start -- --agent claude-agent-acp --agent-args "--model claude-3-5-sonnet-20241022"
-# Shows: claude-agent-acp (claude-3-5-sonnet-20241022) ● ❯ when entering agent mode
+npm start -- --agent claude-agent-acp --agent-args "--model claude-sonnet-4-6"
+# Shows: claude-agent-acp (claude-sonnet-4-6) ● ❯ when entering agent mode
 
 # Use pi-acp with Claude
-npm start -- --agent pi-acp --agent-args "--provider anthropic --model claude-3-5-sonnet-20241022"
-# Shows: pi (claude-3-5-sonnet-20241022) ● ❯
+npm start -- --agent pi-acp --agent-args "--provider anthropic --model claude-sonnet-4-6"
+# Shows: pi (claude-sonnet-4-6) ● ❯
 
 # Use pi-acp with OpenAI GPT-4
 export OPENAI_API_KEY="your-openai-key"
@@ -87,21 +87,20 @@ fi
 ## Common Claude Models
 
 **Valid Claude model names** (for use with `--model` parameter):
-- `claude-3-5-sonnet-20241022` (latest Sonnet)
-- `claude-3-5-haiku-20241022` (latest Haiku)
-- `claude-3-opus-20240229` (older Opus)
-- `claude-3-sonnet-20240229` (older Sonnet)
+- `claude-opus-4-6` (most capable)
+- `claude-sonnet-4-6` (balanced speed/capability)
+- `claude-haiku-4-5` (fastest)
 
 **Example with claude-agent-acp**:
 ```bash
 export ANTHROPIC_API_KEY="your-key"
-npm start -- --agent claude-agent-acp --agent-args "--model claude-3-5-sonnet-20241022"
+npm start -- --agent claude-agent-acp --agent-args "--model claude-sonnet-4-6"
 ```
 
 **Example with pi-acp**:
 ```bash
 export ANTHROPIC_API_KEY="your-key"
-npm start -- --agent pi-acp --agent-args "--provider anthropic --model claude-3-5-sonnet-20241022"
+npm start -- --agent pi-acp --agent-args "--provider anthropic --model claude-sonnet-4-6"
 ```
 
 ## Agent Environment Configuration
@@ -144,9 +143,9 @@ export OPENROUTER_API_KEY="your-openrouter-key"
 You can also configure pi-acp by passing arguments:
 
 ```bash
-# Use Claude 3.5 Sonnet with pi-acp
-npm start -- --agent pi-acp --agent-args "--provider anthropic --model claude-3-5-sonnet-20241022"
-# Shows: pi (claude-3-5-sonnet-20241022) ● ❯
+# Use Claude Sonnet with pi-acp
+npm start -- --agent pi-acp --agent-args "--provider anthropic --model claude-sonnet-4-6"
+# Shows: pi (claude-sonnet-4-6) ● ❯
 
 # Use GPT-4o with pi-acp
 export OPENAI_API_KEY="your-openai-key"
