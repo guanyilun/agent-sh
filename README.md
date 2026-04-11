@@ -133,11 +133,36 @@ When typing in either agent mode (`?` or `>`), full readline-style keybindings a
 | `/clear` | Start a new agent session |
 | `/copy` | Copy last agent response to clipboard |
 | `/compact` | Ask agent to summarize the conversation |
+| `/model` | Cycle to the next model (same as Shift+Tab) |
+| `/provider <name>` | Switch to a different provider |
+| `/backend [name]` | List backends, or switch to a named backend |
 | `/quit` | Exit agent-sh |
 
 ## Configuration
 
-agent-sh stores settings and history in `~/.agent-sh/`. Behavior is configurable via `~/.agent-sh/settings.json` — context window size, truncation thresholds, display limits, and more. All fields are optional with sensible defaults.
+agent-sh stores settings and history in `~/.agent-sh/`. Configure via `~/.agent-sh/settings.json`:
+
+```json
+{
+  "defaultProvider": "openai",
+  "defaultBackend": "agent-sh",
+  "providers": {
+    "openai": {
+      "apiKey": "$OPENAI_API_KEY",
+      "defaultModel": "gpt-4o",
+      "models": ["gpt-4o", "gpt-4o-mini"]
+    },
+    "ollama": {
+      "apiKey": "not-needed",
+      "baseURL": "http://localhost:11434/v1",
+      "defaultModel": "llama3",
+      "models": ["llama3", "mistral"]
+    }
+  }
+}
+```
+
+Define named providers with multiple models, then cycle between them at runtime with **Shift+Tab** or `/model`. Switch providers with `/provider <name>`. API keys support `$ENV_VAR` syntax so you don't store secrets in the file.
 
 See the [Usage Guide](docs/usage.md#configuration) for the full settings reference.
 
@@ -152,10 +177,11 @@ DEBUG=1 npm start                  # debug mode (logs protocol details)
 
 ## Documentation
 
-- [Usage Guide](docs/usage.md) — providers, models, API keys, environment config
-- [Architecture](docs/architecture.md) — design philosophy, event bus, project structure
-- [Extensions](docs/extensions.md) — writing extensions, theming, content transforms
-- [Library Usage](docs/library.md) — using agent-sh as a Node.js library
+- [Usage Guide](docs/usage.md) — providers, models, configuration, provider profiles
+- [Internal Agent](docs/agent.md) — how the agent loop works: tools, context, streaming
+- [Architecture](docs/architecture.md) — design philosophy, component overview, project structure
+- [Extensions](docs/extensions.md) — event bus, content transforms, custom backends, theming
+- [Library Usage](docs/library.md) — embedding agent-sh in your own apps
 - [Troubleshooting](docs/troubleshooting.md) — common errors and debug mode
 
 ## License
