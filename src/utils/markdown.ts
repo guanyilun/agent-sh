@@ -244,9 +244,9 @@ export class MarkdownRenderer {
     const h4 = line.match(/^#{4,} (.+)/);
     if (h4) return `${p.bold}${h4[1]}${p.reset}`;
 
-    // Horizontal rule
+    // Horizontal rule — subtle short separator, not full-width
     if (/^(-{3,}|_{3,}|\*{3,})\s*$/.test(line)) {
-      return `${p.muted}${"─".repeat(this.contentWidth)}${p.reset}`;
+      return "";
     }
 
     // Blockquote
