@@ -9,7 +9,6 @@
 import type { ExtensionContext } from "../../src/types.js";
 
 export default function activate({ bus }: ExtensionContext): void {
-  console.error("[echo-backend] activating");
   bus.emit("agent:register-backend", {
     name: "echo",
     kill: () => {},
