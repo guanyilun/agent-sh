@@ -304,6 +304,20 @@ async function main(): Promise<void> {
     promptIcon: "⟩",
     indicator: "●",
     onSubmit(query, b) {
+      // Auto-cancel after shell tool completes — the command already ran
+      // in the user's PTY, no need for another LLM round trip.
+      const onToolDone = (e: { kind?: string }) => {
+        if (e.kind === "execute") {
+          b.emit("agent:cancel-request", { silent: true });
+        }
+      };
+      const cleanup = () => {
+        b.off("agent:tool-completed", onToolDone);
+        b.off("agent:processing-done", cleanup);
+      };
+      b.on("agent:tool-completed", onToolDone);
+      b.on("agent:processing-done", cleanup);
+
       b.emit("agent:submit", { query, modeLabel: "Execute", modeInstruction: "[mode: execute]" });
     },
     returnToSelf: false,

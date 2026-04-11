@@ -20,7 +20,7 @@ export interface ShellEvents {
 
   // Agent input (frontend → core: user submitted a query or wants to cancel)
   "agent:submit": { query: string; modeInstruction?: string; modeLabel?: string };
-  "agent:cancel-request": Record<string, never>;
+  "agent:cancel-request": { silent?: boolean };
 
   // Input mode registration (extensions → InputHandler)
   "input-mode:register": import("./types.js").InputModeConfig;
@@ -60,6 +60,7 @@ export interface ShellEvents {
     toolCallId?: string;
     exitCode: number | null;
     rawOutput?: unknown;
+    kind?: string;
   };
   "agent:tool-output-chunk": { chunk: string };
 

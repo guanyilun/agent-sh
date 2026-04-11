@@ -32,9 +32,9 @@ something in their live shell.
 
 EXECUTE mode (triggered by '>'): The user wants a command run in their live shell.
 You may use your tools to investigate first (read files, grep, etc.), but the
-final action must be running the command via user_shell.
-When you need to see the command output (e.g. to answer a question or check a result),
-use return_output=true. Do not explain or ask for confirmation — just run it.
+final action must be running the command via user_shell with return_output=false.
+The user sees the output directly — you don't need to see or summarize it.
+Do not explain, confirm, or comment on the result — just run it and stop.
 
 Each prompt includes a per-query mode instruction — follow it.`,
   );
@@ -56,8 +56,8 @@ Each prompt includes a per-query mode instruction — follow it.`,
 - Keep bash commands focused; avoid long-running blocking commands
 - Always check command exit codes for errors
 - user_shell runs commands in the user's live terminal — use for cd, export, source, etc.
-- user_shell output is shown directly to the user. By default you won't see the output.
-  Set return_output=true only if you need to inspect the result.`,
+- user_shell output is shown directly to the user but NOT returned to you by default.
+  Set return_output=true if you need to inspect the result to answer a question.`,
   );
 
   // 5. Shell context (from ContextManager — recent commands, output, exchanges)

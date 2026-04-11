@@ -15,7 +15,7 @@ export function createUserShellTool(opts: {
   return {
     name: "user_shell",
     description:
-      "Run a command in the user's live shell (visible in terminal). Output is shown directly to the user. Use for cd, export, source, or commands the user wants to see. Set return_output=true only if you need to inspect the result.",
+      "Run a command in the user's live shell (visible in terminal). Output is returned to you by default. Use for cd, export, source, or commands the user wants to see. Set return_output=false for long-running or interactive commands.",
     input_schema: {
       type: "object",
       properties: {
@@ -27,7 +27,7 @@ export function createUserShellTool(opts: {
           type: "boolean",
           default: false,
           description:
-            "Whether to return the command output to you. Default false — output is shown directly to the user.",
+            "Whether to return the command output to you. Default false — output is shown directly to the user. Set true only if you need to inspect the result to answer a question.",
         },
       },
       required: ["command"],

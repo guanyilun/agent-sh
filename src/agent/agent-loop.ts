@@ -64,7 +64,9 @@ export class AgentLoop implements AgentBackend {
     bus.on("agent:submit", ({ query, modeInstruction, modeLabel }) => {
       this.handleQuery(query, modeInstruction, modeLabel).catch(() => {});
     });
-    bus.on("agent:cancel-request", () => this.cancel());
+    bus.on("agent:cancel-request", (e) => {
+      this.abortController?.abort(e.silent ? "silent" : undefined);
+    });
     bus.on("config:cycle", () => this.cycleMode());
     bus.on("config:set-modes", ({ modes: newModes }) => {
       this.modes = newModes;
@@ -96,6 +98,7 @@ export class AgentLoop implements AgentBackend {
   private cancel(): void {
     this.abortController?.abort();
   }
+
 
   private cycleMode(): void {
     const prevMode = this.modes[this.currentModeIndex];
@@ -173,7 +176,6 @@ export class AgentLoop implements AgentBackend {
 
     this.bus.emit("agent:query", { query, modeLabel });
     this.bus.emit("agent:processing-start", {});
-
     let responseText = "";
 
     try {
@@ -185,9 +187,9 @@ export class AgentLoop implements AgentBackend {
 
       responseText = await this.executeLoop(signal);
     } catch (e) {
-      if (signal.aborted) {
+      if (signal.aborted && signal.reason !== "silent") {
         this.bus.emit("agent:cancelled", {});
-      } else {
+      } else if (!signal.aborted) {
         const msg = e instanceof Error ? e.message : String(e);
         this.bus.emit("agent:error", { message: msg });
       }
@@ -339,6 +341,7 @@ export class AgentLoop implements AgentBackend {
           toolCallId: tc.id,
           exitCode: result.exitCode,
           rawOutput: result.content,
+          kind: display.kind,
         });
 
         // Emit tool-output for ContextManager
