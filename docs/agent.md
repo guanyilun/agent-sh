@@ -62,6 +62,81 @@ The system prompt is rebuilt on **every LLM call** (not cached), so context is a
 
 The per-query **mode instruction** (e.g. `[mode: query]` or `[mode: execute]`) is prepended to the user message, not the system prompt. This tells the agent how to behave for this specific query.
 
+## Project Conventions
+
+The agent automatically loads `CLAUDE.md` or `AGENT.md` files from your working directory hierarchy. These are included in the system prompt on every query, so the agent respects project-specific conventions without being told each time.
+
+The agent scans from your current directory upward to the filesystem root. In each directory it checks for `CLAUDE.md` first, then `AGENT.md` as a fallback (only one per directory). Files are included root-first, so more specific project conventions appear last and take precedence.
+
+```
+~/projects/myapp/src/        ← cwd
+~/projects/myapp/CLAUDE.md   ← included (project-level)
+~/CLAUDE.md                  ← included first (global conventions)
+```
+
+Since the system prompt is rebuilt on every query, `cd`-ing to a new project picks up its conventions automatically.
+
+This follows the same convention as Claude Code — if you already have `CLAUDE.md` files, they work out of the box.
+
+## Skills
+
+Skills are reusable instruction sets that the agent can load on demand. They follow the [Agent Skills standard](https://agentskills.io/specification).
+
+### Skill format
+
+A skill is a directory containing a `SKILL.md` file with YAML frontmatter:
+
+```markdown
+---
+name: docker-deploy
+description: Build and deploy Docker containers to production
+---
+
+# Docker Deploy
+
+## Steps
+
+1. Build the image: `docker build -t app .`
+2. Tag for registry: `docker tag app registry.example.com/app:latest`
+3. Push: `docker push registry.example.com/app:latest`
+...
+```
+
+The `name` and `description` fields are required. An optional `disable-model-invocation: true` hides the skill from the agent's automatic discovery.
+
+### Discovery
+
+**Global skills** are discovered from `~/.agent-sh/skills/` by default. Add more locations via `skillPaths` in `~/.agent-sh/settings.json`:
+
+```json
+{
+  "skillPaths": ["~/.agents/skills", "~/.claude/skills"]
+}
+```
+
+**Project skills** are discovered from `.agents/skills/` in your working directory hierarchy (up to the git root). When you `cd` into a directory with new project skills, the agent is notified with their names.
+
+### How the agent uses skills
+
+Skills are **not** loaded into the system prompt. Instead:
+
+1. The system prompt tells the agent how many skills are available
+2. The agent calls `list_skills` to see names, descriptions, and file paths
+3. The agent calls `read_file` on the relevant `SKILL.md` to load full instructions
+
+This keeps the system prompt small regardless of how many skills you have.
+
+### Slash command
+
+Users can force-load a skill directly:
+
+```
+? /skill:docker-deploy
+? /skill:docker-deploy deploy the staging branch
+```
+
+This injects the full skill content into the conversation. Tab completion works for skill names.
+
 ## The Tool Loop
 
 This is the core of how the agent works. After each LLM call, the agent checks if the response includes tool calls. If yes, it executes them and feeds the results back to the LLM.
@@ -227,3 +302,76 @@ When all modes share the same provider, cycling just changes the model name. Whe
 - **`/provider <name>`** — switch to a different provider's model list
 
 The current model is shown in the TUI prompt. Switching mid-conversation preserves the conversation state — only the LLM endpoint changes.
+
+## Extension Tools
+
+Extensions can register custom tools for the built-in agent via `ctx.registerTool()`:
+
+```typescript
+export default function activate(ctx: ExtensionContext) {
+  ctx.registerTool({
+    name: "web_search",
+    description: "Search the web for information",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query" },
+      },
+      required: ["query"],
+    },
+    async execute(args) {
+      const results = await searchWeb(args.query as string);
+      return { content: results, exitCode: 0, isError: false };
+    },
+  });
+}
+```
+
+Extension tools appear alongside built-in tools in the agent's tool list. The same `ToolDefinition` interface applies — you can set `requiresPermission`, `showOutput`, `getDisplayInfo`, etc.
+
+**Note**: `registerTool` only works with the built-in `agent-sh` backend. Bridge backends (pi, claude-code) manage their own tools — extensions for those should use their respective tool registration mechanisms.
+
+## Backend Switching
+
+agent-sh supports multiple agent backends. The built-in `agent-sh` backend is always available. Additional backends can be installed as extensions (e.g. `pi-bridge`, `claude-code-bridge`).
+
+### Configuration
+
+Set a default backend in `~/.agent-sh/settings.json`:
+
+```json
+{
+  "defaultBackend": "pi"
+}
+```
+
+Available backend names depend on which extensions are installed:
+
+| Backend | Source | Description |
+|---|---|---|
+| `agent-sh` | Built-in | Internal agent loop, any OpenAI-compatible API |
+| `pi` | `pi-bridge` extension | Pi coding agent running in-process |
+| `claude-code` | `claude-code-bridge` extension | Claude Code via Agent SDK |
+
+### Runtime switching
+
+Switch backends without restarting:
+
+```
+? /backend           # list available backends
+? /backend pi        # switch to pi
+? /backend agent-sh  # switch back to built-in
+```
+
+Switching kills the current backend and starts the new one. Conversation state is not preserved across switches.
+
+### Installing backend extensions
+
+Backend extensions live in `~/.agent-sh/extensions/`. Each is a directory with its own `package.json` and dependencies:
+
+```bash
+cp -r examples/extensions/pi-bridge ~/.agent-sh/extensions/pi-bridge
+cd ~/.agent-sh/extensions/pi-bridge && npm install
+```
+
+See `examples/extensions/pi-bridge/README.md` and `examples/extensions/claude-code-bridge/README.md` for details.
