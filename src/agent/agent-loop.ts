@@ -17,6 +17,7 @@ import type { AgentMode } from "../types.js";
 import type { ContextManager } from "../context-manager.js";
 import type { LlmClient } from "../utils/llm-client.js";
 import type { HandlerRegistry } from "../utils/handler-registry.js";
+import { setMaxListeners } from "node:events";
 import type { AgentBackend, ToolDefinition } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { ConversationState } from "./conversation-state.js";
@@ -327,6 +328,9 @@ export class AgentLoop implements AgentBackend {
     }
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
+    // Each loop iteration adds an abort listener (via OpenAI SDK stream);
+    // raise the limit to avoid spurious warnings on multi-tool queries.
+    setMaxListeners(50, signal);
 
     this.bus.emit("agent:query", { query, modeLabel });
     this.bus.emit("agent:processing-start", {});

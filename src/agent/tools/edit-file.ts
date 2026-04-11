@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ToolDefinition } from "../types.js";
+import { computeDiff } from "../../utils/diff.js";
 
 export function createEditFileTool(getCwd: () => string): ToolDefinition {
   return {
@@ -26,7 +27,7 @@ export function createEditFileTool(getCwd: () => string): ToolDefinition {
       required: ["path", "old_text", "new_text"],
     },
 
-    showOutput: false,
+    showOutput: true,
     modifiesFiles: true,
     requiresPermission: true,
 
@@ -35,7 +36,7 @@ export function createEditFileTool(getCwd: () => string): ToolDefinition {
       locations: [{ path: args.path as string }],
     }),
 
-    async execute(args) {
+    async execute(args, onChunk) {
       const filePath = args.path as string;
       const oldText = args.old_text as string;
       const newText = args.new_text as string;
@@ -79,8 +80,23 @@ export function createEditFileTool(getCwd: () => string): ToolDefinition {
 
         await fs.writeFile(absPath, finalContent);
 
+        // Compute and stream diff for display
+        const diff = computeDiff(normalized, newContent);
+        if (onChunk && diff.hunks.length > 0) {
+          for (const hunk of diff.hunks) {
+            for (const line of hunk.lines) {
+              if (line.type === "added") onChunk(`+${line.text}\n`);
+              else if (line.type === "removed") onChunk(`-${line.text}\n`);
+              else onChunk(` ${line.text}\n`);
+            }
+          }
+        }
+
+        const stats = diff.isNewFile
+          ? `+${diff.added}`
+          : `+${diff.added} -${diff.removed}`;
         return {
-          content: `Edited ${absPath}`,
+          content: `Edited ${absPath} (${stats})`,
           exitCode: 0,
           isError: false,
         };

@@ -72,7 +72,6 @@ interface RenderState {
   spinnerStartTime: number;
 
   // ── Tool output ──
-  lastCommand: string;
   toolLineOpen: boolean;
   currentToolKind: string | undefined;
   commandOutputBuffer: string;
@@ -97,7 +96,6 @@ function createRenderState(): RenderState {
     spinnerOpts: {},
     spinnerInterval: null,
     spinnerStartTime: 0,
-    lastCommand: "",
     toolLineOpen: false,
     currentToolKind: undefined,
     commandOutputBuffer: "",
@@ -205,10 +203,6 @@ export default function activate(ctx: ExtensionContext): void {
     endAgentResponse();
   });
 
-  bus.on("agent:tool-call", (e) => {
-    s.lastCommand = e.tool;
-  });
-
   bus.on("agent:tool-started", (e) => {
     fencedTransform.flush();
     stopCurrentSpinner();
@@ -222,9 +216,8 @@ export default function activate(ctx: ExtensionContext): void {
       drain();
       s.hadToolCalls = true;
     } else {
-      showToolCall(e.title, s.lastCommand, e);
+      showToolCall(e.title, "", e);
     }
-    s.lastCommand = "";
   });
 
   bus.on("agent:tool-completed", (e) => {
