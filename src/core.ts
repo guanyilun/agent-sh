@@ -127,27 +127,27 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   let activeBackendName: string | null = null;
 
   const activateByName = async (name: string, silent = false) => {
-    const backend = name === "built-in" ? null : backends.get(name);
-    if (name !== "built-in" && !backend) {
+    const backend = name === "agent-sh" ? null : backends.get(name);
+    if (name !== "agent-sh" && !backend) {
       bus.emit("ui:error", { message: `Unknown backend: ${name}` });
       return;
     }
 
     // Deactivate current backend
-    if (activeBackendName === "built-in") {
+    if (activeBackendName === "agent-sh") {
       agentLoop?.unwire();
     } else if (activeBackendName) {
       backends.get(activeBackendName)?.kill();
     }
 
     // Activate new backend
-    if (name === "built-in") {
+    if (name === "agent-sh") {
       if (!agentLoop) {
         bus.emit("ui:error", { message: "No LLM provider configured for built-in backend" });
         return;
       }
       agentLoop.wire();
-      activeBackendName = "built-in";
+      activeBackendName = "agent-sh";
     } else {
       await backend!.start?.();
       activeBackendName = name;
@@ -169,7 +169,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
 
   bus.on("config:list-backends", () => {
     const names: string[] = [];
-    if (agentLoop) names.push("built-in");
+    if (agentLoop) names.push("agent-sh");
     for (const name of backends.keys()) names.push(name);
     const list = names
       .map((n) => n === activeBackendName ? `${n} (active)` : n)
@@ -241,7 +241,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         activateByName(backends.keys().next().value!);
       } else if (agentLoop) {
         agentLoop.wire();
-        activeBackendName = "built-in";
+        activeBackendName = "agent-sh";
       } else if (backends.size > 0) {
         activateByName(backends.keys().next().value!);
       }
@@ -310,7 +310,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     },
 
     kill() {
-      if (activeBackendName === "built-in") {
+      if (activeBackendName === "agent-sh") {
         agentLoop?.kill();
       } else if (activeBackendName) {
         backends.get(activeBackendName)?.kill();
