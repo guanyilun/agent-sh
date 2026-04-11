@@ -111,9 +111,13 @@ function createRenderState(): RenderState {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, define } = ctx;
+  const { bus, llmClient, define } = ctx;
   const writer = new StdoutWriter();
   const s = createRenderState();
+
+  // Track backend/model info for display on response border
+  let backendInfo: { name: string; model?: string } | null = null;
+  bus.on("agent:info", (info) => { backendInfo = info; });
 
   // ── Register fenced block transform (code blocks → ContentBlock) ──
   // Nobody is special — tui-renderer uses the same primitive as any extension.
@@ -334,11 +338,21 @@ export default function activate(ctx: ExtensionContext): void {
       ? `${borderColor}${p.bold} ${modeLabel} ${p.reset}`
       : `${p.accent}${p.bold}❯${p.reset}`;
 
+    // Backend/model label on the right
+    const modelLabel = backendInfo?.model
+      ? `${p.dim}${backendInfo.model}${p.reset}`
+      : backendInfo?.name && backendInfo.name !== "agent-sh"
+        ? `${p.dim}${backendInfo.name}${p.reset}`
+        : llmClient?.model
+          ? `${p.dim}${llmClient.model}${p.reset}`
+          : undefined;
+
     const framed = renderBoxFrame(lines, {
       width: boxW,
       style: "rounded",
       borderColor,
       title,
+      titleRight: modelLabel,
     });
     writer.write("\n");
     for (const line of framed) {
