@@ -222,7 +222,7 @@ This complements the event bus: events are for **data flow** (content streaming,
 Agent content streams use `emitTransform` — a two-phase emission that runs pipe listeners (transforms) first, then notifies `on` listeners (renderers) with the transformed result.
 
 ```
-AcpClient emitTransform("agent:response-chunk", { text })
+Backend emitTransform("agent:response-chunk", { blocks: [{ type: "text", text }] })
   │
   │ Phase 1 — onPipe transforms (nobody is special):
   │   createBlockTransform:        text → finds $$...$$ → image blocks

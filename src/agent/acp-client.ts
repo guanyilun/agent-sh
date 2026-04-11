@@ -2,14 +2,14 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as fs from "node:fs/promises";
 import * as acp from "@agentclientprotocol/sdk";
-import { executeCommand, killSession, type ExecutorSession } from "./executor.js";
-import { computeDiff } from "./utils/diff.js";
-import { FileWatcher } from "./utils/file-watcher.js";
+import { executeCommand, killSession, type ExecutorSession } from "../executor.js";
+import { computeDiff } from "../utils/diff.js";
+import { FileWatcher } from "../utils/file-watcher.js";
 import * as path from "node:path";
-import { stripAnsi } from "./utils/ansi.js";
-import type { EventBus, ShellEvents } from "./event-bus.js";
-import type { ContextManager } from "./context-manager.js";
-import type { AgentShellConfig } from "./types.js";
+import { stripAnsi } from "../utils/ansi.js";
+import type { EventBus, ShellEvents } from "../event-bus.js";
+import type { ContextManager } from "../context-manager.js";
+import type { AgentShellConfig } from "../types.js";
 
 export class AcpClient {
   private agentProcess: ChildProcess | null = null;
@@ -35,6 +35,8 @@ export class AcpClient {
   private modes: { id: string; name: string }[] = [];
   private currentModeId: string | null = null;
 
+  private connected = false;
+
   constructor(opts: {
     bus: EventBus;
     contextManager: ContextManager;
@@ -44,6 +46,40 @@ export class AcpClient {
     this.contextManager = opts.contextManager;
     this.config = opts.config;
     this.fileWatcher = new FileWatcher(process.cwd());
+
+    // Self-wire to bus events (bus-driven backend pattern)
+    this.bus.on("agent:submit", ({ query, modeInstruction, modeLabel }) => {
+      (async () => {
+        if (!this.connected) {
+          for (let i = 0; i < 30 && !this.connected; i++) {
+            await new Promise((r) => setTimeout(r, 100));
+          }
+        }
+        if (!this.connected) {
+          this.bus.emit("ui:error", {
+            message: "Agent not connected. Please wait a moment and try again.",
+          });
+          return;
+        }
+        await this.sendPrompt(query, { modeInstruction, modeLabel });
+      })().catch((err) => {
+        this.bus.emit("agent:error", {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      });
+    });
+
+    this.bus.on("agent:cancel-request", () => {
+      this.cancel().catch(() => {});
+    });
+
+    this.bus.on("config:cycle", () => {
+      this.cycleMode().catch(() => {});
+    });
+
+    this.bus.on("agent:reset-session", () => {
+      this.resetSession().catch(() => {});
+    });
   }
 
   async start(): Promise<void> {
@@ -125,13 +161,18 @@ export class AcpClient {
 
     this.log("Initialize successful");
 
-    // Store agent info for display
+    // Store agent info for display and notify via bus
     if (initResponse.agentInfo) {
       this.agentInfo = {
         name: initResponse.agentInfo.name || this.config.agentCommand,
         version: initResponse.agentInfo.version || "unknown"
       };
       this.log(`Agent info: ${this.agentInfo.name} v${this.agentInfo.version}`);
+      this.bus.emit("agent:info", {
+        name: this.agentInfo.name,
+        version: this.agentInfo.version,
+        model: this.config.model,
+      });
     }
 
     // Create a session — let extensions add MCP servers via pipe
@@ -158,8 +199,7 @@ export class AcpClient {
     // Parse session modes (thinking level, etc.)
     this.updateModes(sessionResponse);
 
-    // Listen for mode cycle requests from input handler
-    this.bus.on("config:cycle", () => this.cycleMode());
+    this.connected = true;
   }
 
   /**
@@ -464,7 +504,9 @@ export class AcpClient {
         const content = update.content;
         if (content.type === "text") {
           this.currentResponseText += content.text;
-          this.bus.emitTransform("agent:response-chunk", { text: content.text });
+          this.bus.emitTransform("agent:response-chunk", {
+            blocks: [{ type: "text", text: content.text }],
+          });
         }
         break;
       }

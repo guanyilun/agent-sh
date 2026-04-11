@@ -111,7 +111,7 @@ function createRenderState(): RenderState {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, getAcpClient, define } = ctx;
+  const { bus, define } = ctx;
   const writer = new StdoutWriter();
   const s = createRenderState();
 
@@ -157,39 +157,47 @@ export default function activate(ctx: ExtensionContext): void {
   });
 
   bus.on("agent:response-chunk", (e) => {
-    if (e.blocks) {
-      // Inject spacing: append \n to text blocks that precede non-text blocks
-      const blocks = e.blocks;
-      for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i]!;
-        const next = blocks[i + 1];
-        if (block.type === "text" && next && next.type !== "text") {
-          block.text += "\n";
-        }
+    const { blocks } = e;
+    // Inject spacing: append \n to text blocks that precede non-text blocks
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i]!;
+      const next = blocks[i + 1];
+      if (block.type === "text" && next && next.type !== "text") {
+        block.text += "\n";
       }
-      for (const block of blocks) {
-        switch (block.type) {
-          case "text":
-            if (block.text) writeAgentText(block.text);
-            break;
-          case "code-block":
-            writeCodeBlock(block.language, block.code);
-            break;
-          case "image":
-            writeInlineImage(block.data);
-            break;
-          case "raw":
-            flushForRaw();
-            writer.write(block.escape);
-            break;
-        }
+    }
+    for (const block of blocks) {
+      switch (block.type) {
+        case "text":
+          if (block.text) writeAgentText(block.text);
+          break;
+        case "code-block":
+          writeCodeBlock(block.language, block.code);
+          break;
+        case "image":
+          writeInlineImage(block.data);
+          break;
+        case "raw":
+          flushForRaw();
+          writer.write(block.escape);
+          break;
       }
-    } else {
-      writeAgentText(e.text);
     }
   });
+  // Track token usage for display
+  let pendingUsage: { prompt_tokens: number; completion_tokens: number } | null = null;
+  bus.on("agent:usage", (e) => { pendingUsage = e; });
+
   bus.on("agent:response-done", () => {
     s.isThinking = false;
+    if (pendingUsage && s.renderer) {
+      const { prompt_tokens, completion_tokens } = pendingUsage;
+      s.renderer.writeLine(
+        `${p.dim}tokens: ${prompt_tokens} in / ${completion_tokens} out${p.reset}`,
+      );
+      drain();
+      pendingUsage = null;
+    }
     endAgentResponse();
   });
 
@@ -260,6 +268,9 @@ export default function activate(ctx: ExtensionContext): void {
   });
   bus.on("ui:info", (e) => showInfo(e.message));
   bus.on("ui:error", (e) => showError(e.message));
+  bus.on("ui:suggestion", (e) => {
+    writer.write(`${p.dim}💡 ${e.text}${p.reset}\n`);
+  });
 
   // ── Rendering functions ─────────────────────────────────────
 
@@ -461,9 +472,10 @@ export default function activate(ctx: ExtensionContext): void {
     }
   }
 
+  // Thinking is always assumed available — the TUI renders thinking
+  // tokens whenever they arrive, regardless of backend.
   function hasThinkingMode(): boolean {
-    const mode = getAcpClient().getCurrentMode();
-    return !mode || mode.id !== "off";
+    return true;
   }
 
   function startThinkingSpinner(): void {

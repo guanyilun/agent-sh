@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as path from "node:path";
 import { Shell } from "./shell.js";
 import { createCore } from "./core.js";
@@ -9,6 +9,7 @@ import slashCommands from "./extensions/slash-commands.js";
 import fileAutocomplete from "./extensions/file-autocomplete.js";
 import shellRecall from "./extensions/shell-recall.js";
 import shellExec from "./extensions/shell-exec.js";
+import commandSuggest from "./extensions/command-suggest.js";
 import { loadExtensions } from "./extension-loader.js";
 import type { AgentShellConfig } from "./types.js";
 
@@ -92,6 +93,10 @@ function parseArgs(argv: string[]): AgentShellConfig {
   let extensions: string[] | undefined;
   const shell = process.env.SHELL || "/bin/bash";
 
+  // Internal agent mode
+  let apiKey: string | undefined = process.env.OPENAI_API_KEY;
+  let baseURL: string | undefined = process.env.OPENAI_BASE_URL;
+
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--agent" && argv[i + 1]) {
@@ -104,61 +109,78 @@ function parseArgs(argv: string[]): AgentShellConfig {
       if (modelArgIndex !== -1 && agentArgs[modelArgIndex + 1]) {
         model = agentArgs[modelArgIndex + 1];
       }
+    } else if (arg === "--model" && argv[i + 1]) {
+      model = argv[++i]!;
+    } else if (arg === "--api-key" && argv[i + 1]) {
+      apiKey = argv[++i]!;
+    } else if (arg === "--base-url" && argv[i + 1]) {
+      baseURL = argv[++i]!;
     } else if (arg === "--shell" && argv[i + 1]) {
-      return { agentCommand, agentArgs, shell: argv[++i]!, model, extensions };
+      return { agentCommand, agentArgs, shell: argv[++i]!, model, extensions, apiKey, baseURL };
     } else if ((arg === "--extensions" || arg === "-e") && argv[i + 1]) {
       const exts = argv[++i]!.split(",").map(s => s.trim());
       extensions = extensions ? [...extensions, ...exts] : exts;
     } else if (arg === "--help" || arg === "-h") {
-      console.log(`agent-sh — a shell-first terminal with ACP agent access
+      console.log(`agent-sh — a shell-first terminal with AI agent access
 
 Usage: agent-sh [options]
 
 Quick Start:
-  npm start           Start with default agent (pi-acp)
-  npm run pi          Start with pi-acp agent
-  npm run claude      Start with Claude agent
+  npm start                         Start with default agent (pi-acp)
+  npm run pi                        Start with pi-acp agent
+  npm run claude                    Start with Claude agent
 
-Options:
+Internal Agent Mode (direct LLM API):
+  --api-key <key>     API key for OpenAI-compatible provider (or set OPENAI_API_KEY)
+  --base-url <url>    Base URL for API (default: https://api.openai.com/v1, or set OPENAI_BASE_URL)
+  --model <name>      Model to use (default: gpt-4o)
+
+ACP Agent Mode (subprocess):
   --agent <cmd>       Agent command to launch (default: $AGENT_SH_AGENT or "pi-acp")
   --agent-args <args> Arguments for the agent (space-separated, quoted)
+
+General Options:
   --shell <path>      Shell to use (default: $SHELL or /bin/bash)
   -e, --extensions    Extensions to load (comma-separated, repeatable)
   -h, --help          Show this help
 
-Extensions:
-  Extensions are loaded from (in order):
-    1. -e flags:  npm packages or file paths
-    2. settings:  ~/.agent-sh/settings.json → "extensions": [...]
-    3. directory:  ~/.agent-sh/extensions/ (files or dirs with index.ts)
-
 Environment Variables:
-  AGENT_SH_AGENT   Default agent to use (e.g., "pi-acp", "claude")
+  OPENAI_API_KEY     API key for internal agent mode
+  OPENAI_BASE_URL    Base URL override (e.g., http://localhost:11434/v1 for Ollama)
+  AGENT_SH_AGENT     Default ACP agent to use (e.g., "pi-acp", "claude")
 
 Examples:
-  npm start --agent pi-acp
-  npm start -- -e my-extension-package
-  npm start -- -e ./local-ext.ts -e another-package
+  # Internal agent with OpenAI
+  agent-sh --model gpt-4o
+
+  # Internal agent with Ollama (local)
+  agent-sh --base-url http://localhost:11434/v1 --model llama3
+
+  # Internal agent with OpenRouter
+  agent-sh --base-url https://openrouter.ai/api/v1 --model anthropic/claude-sonnet-4-20250514
+
+  # ACP agent (existing behavior)
+  agent-sh --agent pi-acp
 
 Inside the shell:
   Type normally        Commands run in your real shell
-  > <query>           Send query to the AI agent
-  > /help             Show available slash commands
+  ? <query>           Ask the AI agent a question (query mode)
+  > <command>         Have the agent run a command (execute mode)
+  ? /help             Show available slash commands
   Ctrl-C              Cancel agent response (or signal shell as usual)
 `);
       process.exit(0);
     }
   }
 
-  return { agentCommand, agentArgs, shell, model, extensions };
+  return { agentCommand, agentArgs, shell, model, extensions, apiKey, baseURL };
 }
 
 function formatAgentInfo(
-  agentInfo: { name: string; version: string },
+  info: { name: string; version: string },
   model?: string,
-  thoughtLevel?: string | null,
 ): string {
-  const name = agentInfo.name.replace(/-acp$/, "").replace(/-/g, " ");
+  const name = info.name.replace(/-acp$/, "").replace(/-/g, " ");
   let infoStr = `${p.dim}${name}${p.reset}`;
   if (model) {
     const cleanModel = model
@@ -166,11 +188,6 @@ function formatAgentInfo(
       .replace(/^anthropic\//i, "")
       .replace(/^google\//i, "");
     infoStr += ` ${p.dim}(${cleanModel})${p.reset}`;
-  }
-  if (thoughtLevel) {
-    // Clean up verbose mode names like "Thinking: medium" → "medium"
-    const label = thoughtLevel.replace(/^Thinking:\s*/i, "");
-    infoStr += ` ${p.dim}[${label}]${p.reset}`;
   }
   return infoStr;
 }
@@ -207,7 +224,12 @@ async function main(): Promise<void> {
 
   // ── Core (frontend-agnostic) ──────────────────────────────────
   const core = createCore(config);
-  const { bus, client } = core;
+  const { bus } = core;
+  const useInternalAgent = !!core.llmClient;
+
+  // Track agent info from bus events (populated when ACP agent connects)
+  let agentInfo: { name: string; version: string; model?: string } | null = null;
+  bus.on("agent:info", (info) => { agentInfo = info; });
 
   // ── Interactive frontend ──────────────────────────────────────
   if (process.env.DEBUG) {
@@ -242,13 +264,12 @@ async function main(): Promise<void> {
     shell: config.shell || process.env.SHELL || "/bin/bash",
     cwd: process.cwd(),
     onShowAgentInfo: () => {
-      if (client.isConnected()) {
-        const agentInfo = client.getAgentInfo();
-        const model = client.getModel();
-        if (agentInfo) {
-          const mode = client.getCurrentMode();
-          return { info: formatAgentInfo(agentInfo, model, mode?.name ?? null) };
-        }
+      if (useInternalAgent) {
+        const modelName = config.model ?? core.llmClient!.model;
+        return { info: `${p.dim}agent-sh (${modelName})${p.reset}` };
+      }
+      if (agentInfo) {
+        return { info: formatAgentInfo(agentInfo, agentInfo.model) };
       }
       return { info: "" };
     },
@@ -292,6 +313,7 @@ async function main(): Promise<void> {
   slashCommands(extCtx);
   fileAutocomplete(extCtx);
   shellRecall(extCtx);
+  commandSuggest(extCtx);
 
   // Shell-exec: start the Unix domain socket bridge so agent extensions
   // and MCP servers can route tool calls to the PTY via the EventBus.
@@ -321,15 +343,18 @@ async function main(): Promise<void> {
   }
 
   // ── Agent connection (async — don't block shell startup) ──────
-  const agentStartTimeoutMs = 35000; // 35 seconds (slightly longer than internal timeouts)
-  Promise.race([
-    core.start(),
-    new Promise<void>((_, reject) =>
-      setTimeout(() => reject(new Error(`Agent connection timeout`)), agentStartTimeoutMs)
-    ),
-  ]).catch((err) => {
-    console.error(`Failed to connect to ${config.agentCommand}:`, err);
-  });
+  if (!useInternalAgent) {
+    const agentStartTimeoutMs = 35000;
+    Promise.race([
+      core.start(),
+      new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error(`Agent connection timeout`)), agentStartTimeoutMs)
+      ),
+    ]).catch((err) => {
+      console.error(`Failed to connect to ${config.agentCommand}:`, err);
+    });
+  }
+  // Internal agent: no startup needed — AgentLoop is already wired to bus.
 
   // ── Terminal lifecycle ────────────────────────────────────────
   process.on("SIGTERM", cleanup);

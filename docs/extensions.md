@@ -256,9 +256,7 @@ To transform blocks that another extension produced (e.g. claim `code-block` wit
 ```typescript
 // Render mermaid code blocks as images
 bus.onPipe("agent:response-chunk", (e) => {
-  if (!e.blocks) return e;
   return {
-    ...e,
     blocks: e.blocks.map(block => {
       if (block.type !== "code-block" || block.language !== "mermaid") return block;
       const png = renderMermaid(block.code);
@@ -310,8 +308,7 @@ export default function activate(ctx: ExtensionContext) {
 
   // Handle ```latex code blocks
   bus.onPipe("agent:response-chunk", (e) => {
-    if (!e.blocks) return e;
-    return { ...e, blocks: e.blocks.map(block => {
+    return { blocks: e.blocks.map(block => {
       if (block.type !== "code-block") return block;
       if (block.language !== "latex" && block.language !== "tex") return block;
       const png = renderEquation(block.code);

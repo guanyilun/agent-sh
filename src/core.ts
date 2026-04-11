@@ -1,24 +1,28 @@
 /**
  * Core kernel — the minimum viable agent-sh.
  *
- * Wires up EventBus + ContextManager + AcpClient without any frontend.
+ * Wires up EventBus + ContextManager + AgentBackend without any frontend.
  * Consumers attach their own I/O (Shell, WebSocket, REST, tests) by
- * subscribing to bus events and calling client methods.
+ * subscribing to bus events.
  *
- * The core listens for `agent:submit` and `agent:cancel-request` events
- * from any frontend, routing them to the AcpClient. This means frontends
- * never need a direct reference to AcpClient — they just emit events.
+ * Agent backends are bus-driven — they self-wire to bus events in their
+ * constructor. Core creates the backend and holds a reference for lifecycle.
+ *
+ * Two backend modes:
+ *   - Internal agent (apiKey provided): AgentLoop + LlmClient (in-process)
+ *   - ACP subprocess (agentCommand provided): AcpClient (existing behavior)
  *
  * Usage:
  *   import { createCore } from "agent-sh";
  *   const core = createCore({ agentCommand: "pi-acp" });
  *   core.bus.on("agent:response-chunk", ({ text }) => ws.send(text));
  *   await core.start();
- *   core.bus.emit("agent:submit", { query: "hello" });
+ *   const response = await core.query("hello");
  */
-import { EventBus } from "./event-bus.js";
+import { EventBus, type ContentBlock } from "./event-bus.js";
 import { ContextManager } from "./context-manager.js";
-import { AcpClient } from "./acp-client.js";
+import { createAgentBackend } from "./agent/index.js";
+import { LlmClient } from "./utils/llm-client.js";
 import type { AgentShellConfig, ExtensionContext } from "./types.js";
 import { setPalette } from "./utils/palette.js";
 import * as streamTransform from "./utils/stream-transform.js";
@@ -31,16 +35,23 @@ export type { ShellEvents } from "./event-bus.js";
 export type { AgentShellConfig, ExtensionContext } from "./types.js";
 export { palette, setPalette, resetPalette } from "./utils/palette.js";
 export type { ColorPalette } from "./utils/palette.js";
+export type { AgentBackend } from "./agent/types.js";
+export { LlmClient } from "./utils/llm-client.js";
 
 export interface AgentShellCore {
   bus: EventBus;
   contextManager: ContextManager;
-  client: AcpClient;
-  /** Connect to the agent subprocess. Call after wiring up bus listeners. */
+  /** LLM client for fast-path features (null in ACP mode). */
+  llmClient: LlmClient | null;
+  /** Connect to the agent subprocess (ACP mode). No-op for internal agent. */
   start(): Promise<void>;
+  /** Convenience: emit agent:submit and await the response. */
+  query(text: string, opts?: { mode?: string }): Promise<string>;
+  /** Convenience: emit agent:cancel-request. */
+  cancel(): void;
   /** Build an ExtensionContext for loading extensions against this core. */
   extensionContext(opts: { quit: () => void }): ExtensionContext;
-  /** Tear down the agent process and clean up. */
+  /** Tear down the agent and clean up. */
   kill(): void;
 }
 
@@ -48,55 +59,80 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   const bus = new EventBus();
   const handlers = new HandlerRegistry();
   const contextManager = new ContextManager(bus);
-  const client = new AcpClient({ bus, contextManager, config });
 
-  let connected = false;
+  // Shared LLM client — used by agent loop AND fast-path features
+  const llmClient =
+    config.apiKey
+      ? new LlmClient({
+          apiKey: config.apiKey,
+          baseURL: config.baseURL,
+          model: config.model ?? "gpt-4o",
+        })
+      : null;
 
-  // Route frontend events to the agent — any frontend (Shell, WebSocket,
-  // REST handler, test harness) can emit these without knowing about AcpClient.
-  bus.on("agent:submit", ({ query, modeInstruction, modeLabel }) => {
-    (async () => {
-      // Wait briefly for agent connection if start() is still in progress
-      if (!connected) {
-        for (let i = 0; i < 30 && !connected; i++) {
-          await new Promise((r) => setTimeout(r, 100));
-        }
-      }
-      if (!connected) {
-        bus.emit("ui:error", { message: "Agent not connected. Please wait a moment and try again." });
-        return;
-      }
-      await client.sendPrompt(query, { modeInstruction, modeLabel });
-    })().catch((err) => {
-      bus.emit("agent:error", {
-        message: err instanceof Error ? err.message : String(err),
-      });
-    });
-  });
-
-  bus.on("agent:cancel-request", () => {
-    client.cancel().catch(() => {});
-  });
+  // Create agent backend via factory — both backends self-wire to bus events
+  const backend = createAgentBackend(config, bus, contextManager, llmClient ?? undefined);
 
   return {
     bus,
     contextManager,
-    client,
+    llmClient,
 
     async start() {
-      await client.start();
-      connected = true;
+      await backend.start?.();
+    },
+
+    async query(text, opts) {
+      return new Promise((resolve, reject) => {
+        let response = "";
+        let settled = false;
+
+        const onChunk = (e: { blocks: ContentBlock[] }) => {
+          for (const b of e.blocks) if (b.type === "text") response += b.text;
+        };
+        const onDone = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(response);
+        };
+        const onError = (e: { message: string }) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(new Error(e.message));
+        };
+        const cleanup = () => {
+          bus.off("agent:response-chunk", onChunk);
+          bus.off("agent:processing-done", onDone);
+          bus.off("agent:error", onError);
+        };
+
+        bus.on("agent:response-chunk", onChunk);
+        bus.on("agent:processing-done", onDone);
+        bus.on("agent:error", onError);
+
+        bus.emit("agent:submit", {
+          query: text,
+          modeInstruction: opts?.mode,
+        });
+      });
+    },
+
+    cancel() {
+      bus.emit("agent:cancel-request", {});
     },
 
     extensionContext(opts) {
       return {
         bus,
         contextManager,
-        getAcpClient: () => client,
+        llmClient,
         quit: opts.quit,
         setPalette,
         createBlockTransform: (o) => streamTransform.createBlockTransform(bus, o),
-        createFencedBlockTransform: (o) => streamTransform.createFencedBlockTransform(bus, o),
+        createFencedBlockTransform: (o) =>
+          streamTransform.createFencedBlockTransform(bus, o),
         getExtensionSettings: settingsMod.getExtensionSettings,
         define: (name, fn) => handlers.define(name, fn),
         advise: (name, wrapper) => handlers.advise(name, wrapper),
@@ -105,7 +141,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     },
 
     kill() {
-      client.kill();
+      backend.kill();
     },
   };
 }

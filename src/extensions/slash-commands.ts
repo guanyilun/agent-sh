@@ -16,7 +16,14 @@ interface SlashCommand {
   handler: (args: string) => Promise<void> | void;
 }
 
-export default function activate({ bus, getAcpClient, quit }: ExtensionContext): void {
+export default function activate({ bus, quit }: ExtensionContext): void {
+  // Track last response for /copy
+  let lastResponseText = "";
+  bus.on("agent:processing-start", () => { lastResponseText = ""; });
+  bus.on("agent:response-chunk", ({ blocks }) => {
+    for (const b of blocks) if (b.type === "text") lastResponseText += b.text;
+  });
+
   const commands: SlashCommand[] = [
     {
       name: "/help",
@@ -31,22 +38,16 @@ export default function activate({ bus, getAcpClient, quit }: ExtensionContext):
     {
       name: "/clear",
       description: "Start a new agent session",
-      handler: async () => {
-        try {
-          await getAcpClient().resetSession();
-          bus.emit("ui:info", { message: "Session cleared." });
-        } catch (err) {
-          bus.emit("ui:error", {
-            message: `Failed to reset session: ${err instanceof Error ? err.message : String(err)}`,
-          });
-        }
+      handler: () => {
+        bus.emit("agent:reset-session", {});
+        bus.emit("ui:info", { message: "Session cleared." });
       },
     },
     {
       name: "/copy",
       description: "Copy last agent response to clipboard",
       handler: () => {
-        const text = getAcpClient().getLastResponseText();
+        const text = lastResponseText;
         if (!text) {
           bus.emit("ui:info", { message: "No agent response to copy." });
           return;
@@ -67,9 +68,9 @@ export default function activate({ bus, getAcpClient, quit }: ExtensionContext):
       name: "/compact",
       description: "Ask agent to summarize the conversation",
       handler: async () => {
-        await getAcpClient().sendPrompt(
-          "Please provide a concise summary of our conversation so far and the current state of the work."
-        );
+        bus.emit("agent:submit", {
+          query: "Please provide a concise summary of our conversation so far and the current state of the work.",
+        });
       },
     },
     {

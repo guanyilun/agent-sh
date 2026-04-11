@@ -1,6 +1,6 @@
 import type { EventBus, ContentBlock } from "./event-bus.js";
 import type { ContextManager } from "./context-manager.js";
-import type { AcpClient } from "./acp-client.js";
+import type { LlmClient } from "./utils/llm-client.js";
 import type { ColorPalette } from "./utils/palette.js";
 import type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
 
@@ -15,6 +15,12 @@ export interface AgentShellConfig {
   extensions?: string[];
   /** Full shell environment (from user's rc files) for agent subprocess. */
   shellEnv?: Record<string, string>;
+
+  // ── Internal agent mode (OpenAI-compatible API) ──────────────
+  /** API key for direct LLM access. If set, uses internal agent instead of ACP. */
+  apiKey?: string;
+  /** Base URL for OpenAI-compatible API (default: https://api.openai.com/v1). */
+  baseURL?: string;
 }
 
 /**
@@ -26,7 +32,8 @@ export interface AgentShellConfig {
 export interface ExtensionContext {
   bus: EventBus;
   contextManager: ContextManager;
-  getAcpClient: () => AcpClient;
+  /** LLM client for fast-path features (null in ACP mode). */
+  llmClient: LlmClient | null;
   quit: () => void;
   /** Override color palette slots for theming. */
   setPalette: (overrides: Partial<ColorPalette>) => void;

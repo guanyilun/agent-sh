@@ -46,7 +46,7 @@ export default function activate(
           {
             name: "agent-sh",
             command: process.execPath,
-            args: [path.join(__dirname, "..", "mcp-server.js")],
+            args: [path.join(__dirname, "..", "agent", "mcp-server.js")],
             env: [{ name: "AGENT_SH_SOCKET", value: socketPath }],
           },
         ],

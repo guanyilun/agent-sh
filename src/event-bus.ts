@@ -27,8 +27,11 @@ export interface ShellEvents {
   // Agent interaction
   "agent:query": { query: string; modeLabel?: string };
   "agent:thinking-chunk": { text: string };
-  "agent:response-chunk": { text: string; blocks?: ContentBlock[] };
+  "agent:response-chunk": { blocks: ContentBlock[] };
   "agent:response-done": { response: string };
+
+  // Token usage (emitted after each LLM call, when available)
+  "agent:usage": { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 
   // Agent lifecycle
   "agent:processing-start": Record<string, never>;
@@ -78,6 +81,7 @@ export interface ShellEvents {
   // UI feedback (TUI subscribes to render; silently ignored without TUI)
   "ui:info": { message: string };
   "ui:error": { message: string };
+  "ui:suggestion": { text: string };
 
   // Generic keypress forwarding (control chars not handled by input-handler)
   "input:keypress": { key: string };
@@ -111,10 +115,16 @@ export interface ShellEvents {
     mcpServers: { name: string; command: string; args: string[]; env: { name: string; value: string }[] }[];
   };
 
-  // Session mode/config updated (from ACP agent)
+  // Agent info (backend → frontend: connection established, info available)
+  "agent:info": { name: string; version: string; model?: string };
+
+  // Session reset (slash command → backend: clear conversation state)
+  "agent:reset-session": Record<string, never>;
+
+  // Session mode/config updated (from agent backend)
   "config:changed": Record<string, never>;
 
-  // Cycle session mode (input-handler → core)
+  // Cycle session mode (input-handler → backend)
   "config:cycle": Record<string, never>;
 
   // Autocomplete (sync pipe: extensions inspect buffer and append items)

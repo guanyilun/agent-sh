@@ -8,7 +8,9 @@ import { createCore } from "agent-sh";
 const core = createCore({ agentCommand: "pi-acp" });
 
 // Subscribe to events
-core.bus.on("agent:response-chunk", ({ text }) => process.stdout.write(text));
+core.bus.on("agent:response-chunk", ({ blocks }) => {
+  for (const b of blocks) if (b.type === "text") process.stdout.write(b.text);
+});
 core.bus.on("agent:processing-done", () => console.log("\n[done]"));
 
 // Handle permissions (auto-approve, or wire to your own UI)
