@@ -1,115 +1,64 @@
 /**
- * Subagent extension — delegates tasks to focused sub-agents.
+ * Subagent extension — lets the main agent spawn focused sub-agents.
  *
- * Instead of the main agent handling everything with its full context,
- * subagents each get a clean, specialized context for their task.
- * The main agent becomes a router that delegates to the right specialist.
+ * The main agent gets a `spawn_agent` tool that creates a fresh agent
+ * with its own context. The LLM decides how to specialize — no
+ * predefined categories, no registry, no config.
  *
  * Usage:
  *   agent-sh -e ./examples/extensions/subagents.ts
- *
- * The main agent gets a `delegate` tool that dispatches to subagents.
- * Each subagent has its own system prompt and tool subset.
  */
 import type { ExtensionContext } from "../../src/types.js";
-import type { ToolDefinition } from "../../src/agent/types.js";
 import { runSubagent } from "../../src/agent/subagent.js";
-
-interface SubagentConfig {
-  name: string;
-  description: string;
-  systemPrompt: string;
-  /** Tool names this subagent can use. If omitted, gets all tools. */
-  toolNames?: string[];
-  /** Model override for this subagent (e.g., cheaper model for simple tasks). */
-  model?: string;
-}
 
 export default function activate(ctx: ExtensionContext): void {
   const { bus, llmClient, contextManager } = ctx;
   if (!llmClient) return;
 
-  const subagents: SubagentConfig[] = [
-    {
-      name: "researcher",
-      description: "Investigate codebase questions — reads files, searches code, explores structure. Use for questions that need reading multiple files.",
-      systemPrompt: `You are a code researcher working in a terminal.
-Your job is to investigate questions about the codebase and provide clear, concise answers.
-You have read-only tools — use them to find the information needed.
-Be thorough but focused. Return a direct answer, not a plan.
-Working directory: {{cwd}}`,
-      toolNames: ["read_file", "grep", "glob", "ls", "bash"],
-    },
-    {
-      name: "editor",
-      description: "Make code changes — edit files, create new files, refactor. Use when changes need to be made to the codebase.",
-      systemPrompt: `You are a code editor working in a terminal.
-Your job is to make the requested changes to the codebase.
-Read files before editing. Prefer edit_file over write_file for existing files.
-Make minimal, focused changes. Do not add unnecessary comments or refactoring.
-Working directory: {{cwd}}`,
-      toolNames: ["read_file", "write_file", "edit_file", "grep", "glob", "ls", "bash"],
-    },
-    {
-      name: "shell",
-      description: "Run shell commands and interpret results — build, test, deploy, git operations. Use for tasks that primarily involve running commands.",
-      systemPrompt: `You are a shell assistant working in a terminal.
-Your job is to run commands and interpret their results.
-Use bash for isolated commands. Be concise in your responses.
-Working directory: {{cwd}}`,
-      toolNames: ["bash", "read_file", "ls"],
-    },
-  ];
+  const allToolNames = () => ctx.getTools().map(t => t.name);
 
-  // Build the delegate tool
   ctx.registerTool({
-    name: "delegate",
-    description: `Delegate a task to a specialized subagent. Available subagents:\n${
-      subagents.map(s => `- ${s.name}: ${s.description}`).join("\n")
-    }`,
+    name: "spawn_agent",
+    description:
+      "Spawn a subagent with its own fresh context to handle a focused task. " +
+      "Use this to delegate work that needs investigation or multiple tool calls, " +
+      "without polluting your main conversation context. " +
+      "The subagent runs to completion and returns its result.",
     input_schema: {
       type: "object",
       properties: {
-        agent: {
-          type: "string",
-          description: `Which subagent to use: ${subagents.map(s => s.name).join(", ")}`,
-          enum: subagents.map(s => s.name),
-        },
         task: {
           type: "string",
-          description: "The task for the subagent to perform",
+          description: "Clear description of what the subagent should do",
+        },
+        tools: {
+          type: "array",
+          items: { type: "string" },
+          description: `Tool names the subagent can use. Available: ${allToolNames().join(", ")}`,
         },
       },
-      required: ["agent", "task"],
+      required: ["task"],
     },
 
-    getDisplayInfo: (args) => ({
+    showOutput: false,
+
+    getDisplayInfo: () => ({
       kind: "execute",
-      locations: [],
     }),
 
     async execute(args) {
-      const agentName = args.agent as string;
       const task = args.task as string;
+      const toolNames = args.tools as string[] | undefined;
 
-      const config = subagents.find(s => s.name === agentName);
-      if (!config) {
-        return {
-          content: `Unknown subagent: ${agentName}`,
-          exitCode: 1,
-          isError: true,
-        };
-      }
-
-      // Resolve tool subset
       const allTools = ctx.getTools();
-      const tools = config.toolNames
-        ? allTools.filter(t => config.toolNames!.includes(t.name))
-        : allTools;
+      // Filter to requested tools, or give all tools (minus spawn_agent to prevent recursion)
+      const tools = toolNames
+        ? allTools.filter(t => toolNames.includes(t.name))
+        : allTools.filter(t => t.name !== "spawn_agent");
 
-      // Build system prompt with current context
-      const systemPrompt = config.systemPrompt
-        .replace("{{cwd}}", contextManager.getCwd());
+      const systemPrompt =
+        `You are a focused subagent. Complete the task and return a clear, concise result.\n` +
+        `Working directory: ${contextManager.getCwd()}`;
 
       try {
         const result = await runSubagent({
@@ -117,13 +66,12 @@ Working directory: {{cwd}}`,
           tools,
           systemPrompt,
           task,
-          model: config.model,
           bus,
           maxIterations: 25,
         });
 
         return {
-          content: result || "(subagent returned no response)",
+          content: result || "(no response)",
           exitCode: 0,
           isError: false,
         };
