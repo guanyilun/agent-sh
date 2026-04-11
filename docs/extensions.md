@@ -31,18 +31,20 @@ export default function activate(ctx) {
     return { ...payload, intercepted: true, output: "custom output" };
   });
 
-  // Register an MCP server for the agent to discover
-  bus.onPipe("session:configure", (payload) => {
-    return {
-      ...payload,
-      mcpServers: [...payload.mcpServers, {
-        name: "my-tool",
-        command: "node",
-        args: ["/path/to/my-mcp-server.js"],
-        env: [{ name: "MY_VAR", value: "value" }],
-      }],
-    };
-  });
+  // Use the LLM client for fast-path features (null in ACP mode)
+  if (ctx.llmClient) {
+    bus.on("shell:command-done", async ({ command, output, exitCode }) => {
+      if (exitCode === 0) return;
+      const suggestion = await ctx.llmClient!.complete({
+        messages: [
+          { role: "system", content: "Suggest a fix in one line." },
+          { role: "user", content: `$ ${command}\n${output}` },
+        ],
+        max_tokens: 100,
+      });
+      if (suggestion.trim()) bus.emit("ui:suggestion", { text: suggestion.trim() });
+    });
+  }
 }
 ```
 
@@ -52,7 +54,7 @@ export default function activate(ctx) {
 |---|---|---|
 | `bus` | `EventBus` | Subscribe to events, emit events, register pipe handlers |
 | `contextManager` | `ContextManager` | Access exchange history, cwd, search, expand |
-| `getAcpClient` | `() => AcpClient` | Lazy getter for the agent client |
+| `llmClient` | `LlmClient \| null` | LLM client for fast-path features (null in ACP mode) |
 | `quit` | `() => void` | Exit agent-sh |
 | `setPalette` | `(overrides) => void` | Override color palette slots for theming |
 | `createBlockTransform` | `(opts) => void` | Register an inline delimiter transform (e.g. `$$...$$`) |
