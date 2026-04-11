@@ -5,9 +5,9 @@
 
 Not a shell that lives in an agent — an agent that lives in a shell.
 
-agent-sh is a real terminal first. Every keystroke goes to a real PTY. `cd`, pipes, vim, job control — they all just work. But type `?` or `>` at the start of a line, and you're talking to an AI agent that has full context of what you've been doing: your working directory, recent commands, their output.
+I live in a terminal. I don't want an agent that can run shell commands when it needs to — I want my shell, with an agent I can reach for when *I* need to. Most AI tools get this backwards: the LLM drives the experience and the shell is bolted on as an afterthought. No real PTY, no job control, no vim, fragile `cd` tracking. The agent is the main character and your terminal is a prop.
 
-Works with any OpenAI-compatible API: OpenAI, Anthropic (via compatible endpoint), Ollama, OpenRouter, Together, Groq, LM Studio, vLLM, and more.
+agent-sh flips this. It's your shell first — full PTY, your rc config, your aliases, everything just works. But type `?` or `>` at the start of a line, and you're talking to an agent that has full context of what you've been doing.
 
 ```
 ⚡ src $ ls -la                          # real shell command
@@ -17,28 +17,19 @@ Works with any OpenAI-compatible API: OpenAI, Anthropic (via compatible endpoint
 ⚡ src $ > deploy to staging              # execute mode → agent runs it in your live shell
 ```
 
-## Why shell-first?
-
-I live mostly in a terminal. I don't just want an agent that has access to my shell — I want a shell that has access to my agent.
-
-Most AI coding tools get this backwards: the LLM drives the experience and the shell is bolted on. That means no real PTY, no job control, no interactive commands, and fragile `cd` tracking that reimplements what bash gives you for free.
-
-agent-sh starts from the opposite end. The shell is the primary interface — it's your terminal, not the agent's. The agent is a tool you reach for when you need it, not the other way around. Two modes give you fine-grained control: `?` for questions and tasks (agent uses its own tools), `>` for commands that run directly in your live shell.
-
 ## Key Features
 
-- **Real Terminal** — Full PTY, job control, pipes, vim, ssh — everything just works
-- **Zero Latency** — Shell starts instantly, agent connects asynchronously
-- **Any LLM Provider** — OpenAI, Anthropic, Ollama, OpenRouter, or any OpenAI-compatible API
-- **Context Aware** — Agent sees your cwd, recent commands, and their output
-- **Dual Input Modes** — `?` for questions/tasks (agent tools), `>` for live shell execution
-- **Streaming** — Responses stream live with syntax highlighting and thinking display
-- **Built-in Tools** — File read/write/edit, bash, grep, glob, ls — no external setup
-- **Inline Diff Preview** — File writes show syntax-highlighted diffs inline (Ctrl+O to expand)
-- **Command Suggestions** — Failed commands get automatic fix suggestions (when LLM is available)
-- **Token Tracking** — Per-response token usage display
-- **Extensible** — Plugin system with content transforms, custom input modes, theming
-- **Pluggable Backends** — Swap in pi or Claude Code as the agent backend via extensions
+**Real terminal, zero compromise.** Full PTY with your shell config, aliases, and environment. Shell starts instantly — the agent connects asynchronously in the background.
+
+**Context-aware agent.** Every query includes your cwd, recent commands, and their output. Run a failing test, type `? fix this`, and the agent knows exactly what happened. It has built-in tools for file read/write/edit, bash, grep, glob — no external setup needed.
+
+**Two input modes.** `?` for questions and tasks — the agent investigates using its own isolated tools. `>` for commands that run directly in your live shell, affecting your real environment. The agent knows which mode it's in and behaves accordingly.
+
+**Any LLM, any backend.** Works with any OpenAI-compatible API out of the box. Define multiple providers in settings and cycle between models at runtime with Shift+Tab. Or swap in a completely different agent — [Claude Code](examples/extensions/claude-code-bridge.ts) and [pi](examples/extensions/pi-bridge.ts) run as drop-in backend extensions.
+
+**Extensible by design.** The entire system is built on a typed event bus. Extensions can add custom input modes, content transforms (render LaTeX as images, Mermaid as diagrams), themes, slash commands, or replace the agent backend entirely. The built-in TUI renderer is itself just an extension — nothing is special.
+
+**Embeddable as a library.** The core is a headless kernel — `import { createCore } from "agent-sh"` to build WebSocket servers, REST APIs, Electron apps, or test harnesses. No terminal required.
 
 ## Quick Start
 
@@ -49,27 +40,23 @@ npm install -g agent-sh
 # Run with any OpenAI-compatible API
 OPENAI_API_KEY="your-key" agent-sh --model gpt-4o
 
-# Or with a custom provider
-agent-sh --api-key "$KEY" --base-url http://localhost:11434/v1 --model llama3
+# Or with a local model
+agent-sh --api-key dummy --base-url http://localhost:11434/v1 --model llama3
 
-# Or with a backend extension (pi, Claude Code, etc.)
-# See examples/extensions/ for setup instructions
+# Or with a backend extension (Claude Code, pi, etc.)
+agent-sh -e examples/extensions/claude-code-bridge.ts
 ```
 
-Requires Node.js 18+. Works with any OpenAI-compatible API — see the [Usage Guide](docs/usage.md) for provider examples (OpenAI, Ollama, OpenRouter, Together, Groq, LM Studio, vLLM).
+Requires Node.js 18+. See the [Usage Guide](docs/usage.md) for provider examples (OpenAI, Ollama, OpenRouter, Together, Groq, LM Studio, vLLM).
 
 ## Input Modes
-
-agent-sh has two agent input modes, triggered by typing `?` or `>` at the start of an empty line:
 
 - **`?` Query mode** — Agent uses its own tools (bash, file read/write, search) to investigate and answer. Stays in query mode for follow-ups.
 - **`>` Execute mode** — Agent runs a command in your live shell. Your aliases, env vars, and cwd apply. Returns to shell after.
 
-Everything else works as a normal shell — commands go straight to the PTY. `Ctrl-C` cancels an active agent response, `Ctrl-O` expands truncated diffs, `Shift-Tab` cycles models. Modes are extensible — see [Extensions: Custom Input Modes](docs/extensions.md#custom-input-modes).
+Everything else works as a normal shell — commands go straight to the PTY. Modes are extensible — see [Extensions: Custom Input Modes](docs/extensions.md#custom-input-modes).
 
 ### Slash Commands
-
-Type these in either agent mode:
 
 | Command | Description |
 |---|---|
@@ -84,12 +71,11 @@ Type these in either agent mode:
 
 ## Configuration
 
-agent-sh stores settings and history in `~/.agent-sh/`. Configure via `~/.agent-sh/settings.json`:
+Configure via `~/.agent-sh/settings.json`. Define named providers with multiple models:
 
 ```json
 {
   "defaultProvider": "openai",
-  "defaultBackend": "agent-sh",
   "providers": {
     "openai": {
       "apiKey": "$OPENAI_API_KEY",
@@ -106,18 +92,9 @@ agent-sh stores settings and history in `~/.agent-sh/`. Configure via `~/.agent-
 }
 ```
 
-Define named providers with multiple models, then cycle between them at runtime with **Shift+Tab** or `/model`. Switch providers with `/provider <name>`. API keys support `$ENV_VAR` syntax so you don't store secrets in the file.
+Cycle models with **Shift+Tab**, switch providers with `/provider <name>`, switch backends with `/backend <name>`. API keys support `$ENV_VAR` syntax.
 
 See the [Usage Guide](docs/usage.md#configuration) for the full settings reference.
-
-## Development
-
-```bash
-npm run dev                        # development mode (no build step)
-npm run build                      # build
-npm start                          # run built version
-DEBUG=1 npm start                  # debug mode (logs protocol details)
-```
 
 ## Documentation
 
@@ -127,6 +104,15 @@ DEBUG=1 npm start                  # debug mode (logs protocol details)
 - [Extensions](docs/extensions.md) — event bus, content transforms, custom backends, theming
 - [Library Usage](docs/library.md) — embedding agent-sh in your own apps
 - [Troubleshooting](docs/troubleshooting.md) — common errors and debug mode
+
+## Development
+
+```bash
+npm run dev                        # development mode (no build step)
+npm run build                      # build
+npm start                          # run built version
+DEBUG=1 npm start                  # debug mode (logs protocol details)
+```
 
 ## License
 
