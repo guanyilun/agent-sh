@@ -19,7 +19,7 @@ import type { LlmClient } from "../utils/llm-client.js";
 import type { AgentBackend, ToolDefinition } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { ConversationState } from "./conversation-state.js";
-import { buildSystemPrompt } from "./system-prompt.js";
+import { STATIC_SYSTEM_PROMPT, buildDynamicContext } from "./system-prompt.js";
 
 // Core tool factories
 import { createBashTool } from "./tools/bash.js";
@@ -315,13 +315,15 @@ export class AgentLoop implements AgentBackend {
         this.bus.emit("ui:info", { message: "(conversation compacted)" });
       }
 
-      const systemPrompt = buildSystemPrompt(
+      // Dynamic context injected as a context message (not system prompt — keeps it cacheable)
+      const dynamicContext = buildDynamicContext(
         this.toolRegistry.all(),
         this.contextManager,
+        this.bus,
       );
 
       // Stream LLM response with retry
-      const result = await this.streamWithRetry(systemPrompt, signal);
+      const result = await this.streamWithRetry(STATIC_SYSTEM_PROMPT, dynamicContext, signal);
 
       const { text, toolCalls, assistantContent, assistantToolCalls } = result;
 
@@ -446,11 +448,12 @@ export class AgentLoop implements AgentBackend {
    */
   private async streamWithRetry(
     systemPrompt: string,
+    dynamicContext: string,
     signal: AbortSignal,
   ): ReturnType<typeof this.streamResponse> {
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
-        return await this.streamResponse(systemPrompt, signal);
+        return await this.streamResponse(systemPrompt, dynamicContext, signal);
       } catch (e) {
         if (signal.aborted) throw e;
 
@@ -490,6 +493,7 @@ export class AgentLoop implements AgentBackend {
    */
   private async streamResponse(
     systemPrompt: string,
+    dynamicContext: string,
     signal: AbortSignal,
   ): Promise<{
     text: string;
@@ -507,6 +511,8 @@ export class AgentLoop implements AgentBackend {
     const stream = await this.llmClient.stream({
       messages: [
         { role: "system", content: systemPrompt },
+        { role: "user", content: `<context>\n${dynamicContext}\n</context>` },
+        { role: "assistant", content: "Understood." },
         ...messages,
       ],
       tools: this.toolRegistry.toAPITools(),
