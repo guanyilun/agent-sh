@@ -9,3 +9,4 @@ export type { AgentBackend } from "./types.js";
 export type { ToolDefinition, ToolResult, ToolDisplayInfo } from "./types.js";
 export { AgentLoop } from "./agent-loop.js";
 export { ToolRegistry } from "./tool-registry.js";
+export { runSubagent, type SubagentOptions } from "./subagent.js";

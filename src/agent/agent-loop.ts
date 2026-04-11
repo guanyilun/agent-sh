@@ -131,6 +131,11 @@ export class AgentLoop implements AgentBackend {
     this.toolRegistry.register(tool);
   }
 
+  /** Get all registered tools. */
+  getTools(): ToolDefinition[] {
+    return this.toolRegistry.all();
+  }
+
   kill(): void {
     this.cancel();
   }

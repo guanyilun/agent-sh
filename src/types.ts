@@ -57,6 +57,8 @@ export interface ExtensionContext {
   // ── Tool registration (agent-sh backend only) ─────────────
   /** Register a tool for the built-in agent. No-op when using bridge backends. */
   registerTool: (tool: ToolDefinition) => void;
+  /** Get all registered tools (for subagent tool subsets). Returns [] when using bridge backends. */
+  getTools: () => ToolDefinition[];
 
   // ── Named handler registry (Emacs-style advice) ───────────
   /** Register a named handler. */
