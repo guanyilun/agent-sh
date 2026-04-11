@@ -207,12 +207,11 @@ async function main(): Promise<void> {
     shell: config.shell || process.env.SHELL || "/bin/bash",
     cwd: process.cwd(),
     onShowAgentInfo: () => {
-      if (core.llmClient) {
-        const modelName = core.llmClient.model;
-        return { info: `${p.dim}agent-sh (${modelName})${p.reset}` };
-      }
       if (agentInfo) {
         return { info: `${p.dim}${agentInfo.name}${agentInfo.model ? ` (${agentInfo.model})` : ""}${p.reset}` };
+      }
+      if (core.llmClient) {
+        return { info: `${p.dim}agent-sh (${core.llmClient.model})${p.reset}` };
       }
       return { info: "" };
     },
