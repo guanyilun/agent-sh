@@ -88,6 +88,8 @@ interface RenderState {
   toolGroupKind: string | undefined;
   toolGroupCount: number;
   toolGroupAllOk: boolean;
+  /** Number of tools rendered individually in current group. */
+  toolGroupRendered: number;
 
   // ── Thinking ──
   isThinking: boolean;
@@ -119,6 +121,7 @@ function createRenderState(): RenderState {
     toolGroupKind: undefined,
     toolGroupCount: 0,
     toolGroupAllOk: true,
+    toolGroupRendered: 0,
     isThinking: false,
     showThinkingText: false,
     thinkingPending: false,
@@ -230,6 +233,7 @@ export default function activate(ctx: ExtensionContext): void {
 
   // Read-only tool kinds eligible for grouping
   const GROUPABLE_KINDS = new Set(["read", "search"]);
+  const GROUP_MAX_VISIBLE = 5; // show this many tools individually before collapsing
 
   bus.on("agent:tool-started", (e) => {
     fencedTransform.flush();
@@ -249,21 +253,24 @@ export default function activate(ctx: ExtensionContext): void {
     } else if (GROUPABLE_KINDS.has(e.kind ?? "") && e.kind === s.toolGroupKind) {
       // Consecutive same-kind read-only tool
       s.toolGroupCount++;
-      if (s.toolGroupCount <= 2) {
-        // Show the first 2 individually (with normal completion handling)
+      if (s.toolGroupCount <= GROUP_MAX_VISIBLE) {
+        // Show with tree connector
         showToolCall(e.title, "", {
           ...e,
           batchIndex: e.batchIndex,
           batchTotal: e.batchTotal,
+          groupContinuation: true,
         });
+        s.toolGroupRendered++;
       }
-      // 3rd+ are collapsed — rendered as summary in finalizeToolGroup
+      // Beyond max: collapsed, rendered as summary in finalizeToolGroup
     } else {
       finalizeToolGroup();
       if (GROUPABLE_KINDS.has(e.kind ?? "")) {
         s.toolGroupKind = e.kind;
         s.toolGroupCount = 1;
         s.toolGroupAllOk = true;
+        s.toolGroupRendered = 1;
       }
       showToolCall(e.title, "", {
         ...e,
@@ -276,8 +283,8 @@ export default function activate(ctx: ExtensionContext): void {
   bus.on("agent:tool-completed", (e) => {
     s.toolExitCode = e.exitCode;
     if (e.exitCode !== 0) s.toolGroupAllOk = false;
-    if (s.toolGroupCount > 2) {
-      // Collapsed tool (3rd+) — just track success/failure
+    if (s.toolGroupCount > GROUP_MAX_VISIBLE) {
+      // Collapsed tool — just track success/failure
       s.currentToolKind = undefined;
       s.spinnerStartTime = 0;
       startThinkingSpinner();
@@ -542,13 +549,15 @@ export default function activate(ctx: ExtensionContext): void {
       rawInput?: unknown;
       batchIndex?: number;
       batchTotal?: number;
+      groupContinuation?: boolean;
     },
   ): void {
     closeToolLine();
     stopCurrentSpinner();
     if (!s.renderer) startAgentResponse();
     showCollapsedThinking();
-    contentGap("tool");
+    // No gap between grouped tools — they're visually connected
+    if (!extra?.groupContinuation) contentGap("tool");
     s.renderer!.flush();
     drain();
     const lines = renderToolCall({
@@ -559,6 +568,14 @@ export default function activate(ctx: ExtensionContext): void {
       locations: extra?.locations,
       rawInput: extra?.rawInput,
     }, writer.columns);
+
+    // Replace the kind icon with a tree connector for grouped tools
+    if (extra?.groupContinuation && lines.length > 0) {
+      // Line starts with: \x1b[33m◆\x1b[0m — swap the colored icon for muted ├
+      lines[0] = lines[0]!.replace(
+        /^\x1b\[[^m]*m.\x1b\[0m/, `${p.muted}├${p.reset}`,
+      );
+    }
 
     // Prepend batch progress indicator when multiple tools in a batch
     const batchPrefix = extra?.batchTotal && extra.batchTotal > 1
@@ -643,27 +660,32 @@ export default function activate(ctx: ExtensionContext): void {
 
   /** Finalize a group of collapsed tool calls, rendering the summary. */
   function finalizeToolGroup(): void {
-    if (s.toolGroupCount <= 2) {
-      // 0–2 tools: all were rendered individually, nothing to summarize
+    if (s.toolGroupCount <= 1) {
+      // 0–1 tools: standalone, nothing to finalize
       s.toolGroupKind = undefined;
       s.toolGroupCount = 0;
+      s.toolGroupRendered = 0;
       return;
     }
     closeToolLine();
     if (!s.renderer) startAgentResponse();
-    const icon = s.toolGroupKind === "read" ? "◆" : "⌕";
-    const label = s.toolGroupKind === "read" ? "files read" : "searches";
-    const mark = s.toolGroupAllOk
-      ? `${p.success}✓${p.reset}`
-      : `${p.error}✗${p.reset}`;
-    const collapsed = s.toolGroupCount - 2; // first 2 were shown individually
-    s.renderer!.writeLine(
-      `${p.warning}${icon}${p.reset} ${p.dim}… +${collapsed} more ${label}${p.reset} ${mark}`,
-    );
+    const collapsed = s.toolGroupCount - s.toolGroupRendered;
+    if (collapsed > 0) {
+      const mark = s.toolGroupAllOk
+        ? `${p.success}✓${p.reset}`
+        : `${p.error}✗${p.reset}`;
+      s.renderer!.writeLine(
+        `  ${p.muted}⎿${p.reset} ${p.dim}+${collapsed} more${p.reset} ${mark}`,
+      );
+    } else {
+      // All were shown — close with end bracket
+      s.renderer!.writeLine(`  ${p.muted}⎿${p.reset}`);
+    }
     drain();
     s.toolGroupKind = undefined;
     s.toolGroupCount = 0;
     s.toolGroupAllOk = true;
+    s.toolGroupRendered = 0;
   }
 
   function writeCommandOutput(chunk: string): void {
