@@ -62,39 +62,7 @@ Everything else works as a normal shell — commands go straight to the PTY. Inp
 
 ## Configuration
 
-Configure via `~/.agent-sh/settings.json`. Define named providers with multiple models:
-
-```json
-{
-  "defaultProvider": "openai",
-  "providers": {
-    "openai": {
-      "apiKey": "$OPENAI_API_KEY",
-      "defaultModel": "gpt-4o",
-      "models": ["gpt-4o", "gpt-4o-mini"]
-    },
-    "ollama": {
-      "apiKey": "not-needed",
-      "baseURL": "http://localhost:11434/v1",
-      "defaultModel": "llama3",
-      "models": ["llama3", "mistral"]
-    }
-  }
-}
-```
-
-Cycle models with **Shift+Tab**, switch providers with `/provider <name>`, switch backends with `/backend <name>`. API keys support `$ENV_VAR` syntax.
-
-Additional options:
-
-| Key | Default | Description |
-|---|---|---|
-| `startupBanner` | `true` | Show startup banner with model info and usage hints |
-| `promptIndicator` | `true` | Show `⚡ agent-sh` in terminal tab/window title |
-
-Set either to `false` to disable.
-
-See the [Usage Guide](docs/usage.md#configuration) for the full settings reference.
+Configure via `~/.agent-sh/settings.json`. See the [Usage Guide](docs/usage.md#configuration) for the full settings reference (providers, models, extensions, skills, and more).
 
 ## Documentation
 
