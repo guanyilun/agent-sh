@@ -267,21 +267,19 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     llmClient,
 
     activateBackend() {
+      // Silent — backend info is shown in the startup banner.
+      // Runtime switches (config:switch-backend) still emit ui:info.
       const preferred = settings.defaultBackend;
       if (preferred && backends.has(preferred)) {
-        activateByName(preferred);
+        activateByName(preferred, true);
       } else if (backends.size > 0 && !agentLoop) {
-        activateByName(backends.keys().next().value!);
+        activateByName(backends.keys().next().value!, true);
       } else if (agentLoop) {
         agentLoop.wire();
         activeBackendName = "agent-sh";
         bus.emit("agent:info", { name: "agent-sh", version: "0.4", model: llmClient?.model, provider: activeProvider?.id, contextWindow: activeProvider?.contextWindow });
       } else if (backends.size > 0) {
-        activateByName(backends.keys().next().value!);
-      }
-
-      if (activeBackendName) {
-        bus.emit("ui:info", { message: `Backend: ${activeBackendName}` });
+        activateByName(backends.keys().next().value!, true);
       }
     },
 

@@ -179,7 +179,7 @@ async function main(): Promise<void> {
   const { bus } = core;
 
   // Track agent info from bus events (populated by extension backends)
-  let agentInfo: { name: string; version: string; model?: string } | null = null;
+  let agentInfo: { name: string; version: string; model?: string; provider?: string } | null = null;
   bus.on("agent:info", (info) => { agentInfo = info; });
 
   // ── Interactive frontend ──────────────────────────────────────
@@ -280,35 +280,44 @@ async function main(): Promise<void> {
   // ── Startup banner ───────────────────────────────────────────
   const settings = getSettings();
   if (settings.startupBanner !== false) {
-    const titleParts = [`${p.accent}${p.bold}agent-sh${p.reset}`];
-    const info = agentInfo as { name: string; version: string; model?: string } | null;
-    if (info && info.name !== "agent-sh") {
-      titleParts.push(`${p.dim}backend: ${info.name}${p.reset}`);
-    }
-    if (info?.model) {
-      titleParts.push(`${p.dim}${info.model}${p.reset}`);
-    } else if (core.llmClient) {
-      titleParts.push(`${p.dim}${core.llmClient.model}${p.reset}`);
-    }
-    const title = titleParts.join(`${p.muted} · ${p.reset}`);
+    const termW = process.stdout.columns || 80;
+    const bannerW = Math.min(termW, 60);
 
-    let details = "";
+    const productName = `${p.accent}${p.bold}agent-sh${p.reset}`;
+
+    const info = agentInfo as { name: string; version: string; model?: string; provider?: string } | null;
+    const backendName = info?.name ?? "agent-sh";
+    const model = info?.model ?? core.llmClient?.model;
+    const provider = info?.provider;
+    const modelValue = model
+      ? provider ? `${model} [${provider}]` : model
+      : null;
+
+    let sections = "";
+    sections += `\n\n  ${p.muted}Backend:${p.reset} ${p.dim}${backendName}${p.reset}`;
+    if (modelValue) {
+      sections += `\n  ${p.muted}Model:${p.reset} ${p.dim}${modelValue}${p.reset}`;
+    }
     if (loadedExtensions.length > 0) {
-      details += `\n  ${p.muted}Extensions: ${p.reset}${p.dim}${loadedExtensions.join(", ")}${p.reset}`;
+      sections += `\n\n  ${p.muted}Extensions:${p.reset}`;
+      for (const name of loadedExtensions) {
+        sections += `\n    ${p.dim}${name}${p.reset}`;
+      }
     }
     if (skills.length > 0) {
-      details += `\n  ${p.muted}Skills: ${p.reset}${p.dim}${skills.map(s => s.name).join(", ")}${p.reset}`;
+      sections += `\n\n  ${p.muted}Skills:${p.reset}`;
+      for (const s of skills) {
+        sections += `\n    ${p.dim}${s.name}${p.reset}`;
+      }
     }
 
     const hint = `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}>/help${p.muted} for commands${p.reset}`;
-
-    const termW = process.stdout.columns || 80;
-    const borderLine = `${p.muted}${"─".repeat(Math.min(termW, 60))}${p.reset}`;
+    const borderLine = `${p.muted}${"─".repeat(bannerW)}${p.reset}`;
 
     process.stdout.write(
       "\n" + borderLine + "\n" +
-      "  " + title +
-      details + "\n" +
+      "  " + productName +
+      sections + "\n" +
       "\n  " + hint + "\n" +
       borderLine + "\n\n",
     );
