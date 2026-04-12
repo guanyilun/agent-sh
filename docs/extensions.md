@@ -383,7 +383,7 @@ ctx.advise("conversation:prepare", (next, messages) => {
 });
 ```
 
-**`tool:execute`** — Wraps every tool call. The `ctx` argument contains `{ name, id, args, tool }`. Extensions can block tools, add logging, implement custom permission policies, retry on failure, or run tools in a sandbox:
+**`tool:execute`** — Wraps every tool call. The `ctx` argument contains `{ name, id, args, tool, onChunk }`. Extensions can block tools, add logging, implement custom permission policies, retry on failure, run tools in a sandbox, or intercept/transform streamed output:
 
 ```typescript
 // Safe mode — block all file-modifying tools
@@ -411,7 +411,19 @@ ctx.advise("tool:execute", async (next, ctx) => {
   }
   return next(ctx);
 });
+
+// Secret redaction — wrap onChunk to scrub streaming output + final result
+ctx.advise("tool:execute", async (next, ctx) => {
+  const origOnChunk = ctx.onChunk;
+  if (origOnChunk) {
+    ctx.onChunk = (chunk) => origOnChunk(redact(chunk));
+  }
+  const result = await next(ctx);
+  return { ...result, content: redact(result.content) };
+});
 ```
+
+The `onChunk` callback controls what the user sees during tool execution (streamed to terminal). Wrapping it lets extensions transform output in real time — for example, redacting secrets before they hit the screen. See `examples/extensions/secret-guard.ts` for a complete implementation.
 
 #### Rendering handlers
 
