@@ -245,6 +245,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
       } else if (agentLoop) {
         agentLoop.wire();
         activeBackendName = "agent-sh";
+        bus.emit("agent:info", { name: "agent-sh", version: "0.4", model: llmClient?.model, provider: activeProvider?.id });
       } else if (backends.size > 0) {
         activateByName(backends.keys().next().value!);
       }
