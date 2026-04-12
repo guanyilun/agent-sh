@@ -343,6 +343,9 @@ export default function activate(ctx: ExtensionContext): void {
     if (!s.renderer) return;
     for (const line of s.renderer.drainLines()) {
       writer.write(line + "\n");
+      // Track whether we just emitted a blank line (for contentGap dedup).
+      // Lines from the renderer are indented ("  "), so a blank line is "  " or empty.
+      lastEmittedLineBlank = line.trimEnd() === "" || line.trimEnd().replace(/\x1b\[[^m]*m/g, "").trim() === "";
     }
   }
 
@@ -357,9 +360,12 @@ export default function activate(ctx: ExtensionContext): void {
   /**
    * Insert an empty line when transitioning between different content kinds
    * (e.g., text → tool, tool → text, diff → tool) for visual breathing room.
+   * Avoids double-blanks by checking if the last emitted line was already empty.
    */
+  let lastEmittedLineBlank = false;
+
   function contentGap(kind: "text" | "tool" | "diff" | "code" | "info"): void {
-    if (s.lastContentKind && s.lastContentKind !== kind && s.renderer) {
+    if (s.lastContentKind && s.lastContentKind !== kind && s.renderer && !lastEmittedLineBlank) {
       s.renderer.writeLine("");
       drain();
     }

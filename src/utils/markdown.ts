@@ -86,6 +86,7 @@ export class MarkdownRenderer {
   private buffer = "";
   private contentWidth: number;
   private firstLine = true;
+  private lastLineBlank = false;
   private pendingLines: string[] = [];
   private width: number;
   private tableRows: string[][] = [];
@@ -307,8 +308,12 @@ export class MarkdownRenderer {
    * The line is accumulated internally — call drainLines() to extract.
    */
   writeLine(text: string): void {
-    if (this.firstLine && visibleLen(text) === 0) return;
+    const isBlank = visibleLen(text) === 0;
+    if (this.firstLine && isBlank) return;
+    // Collapse consecutive blank lines to a single one
+    if (isBlank && this.lastLineBlank) return;
     this.firstLine = false;
+    this.lastLineBlank = isBlank;
     this.pendingLines.push(`  ${text}`);
   }
 }

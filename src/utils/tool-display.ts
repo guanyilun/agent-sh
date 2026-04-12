@@ -138,12 +138,20 @@ export function renderToolCall(
     }
   }
 
-  // Render as single line: icon + detail (icon implies the tool type)
-  // Falls back to icon + title when no detail is available
+  // Render as single line: icon + detail
+  // For well-known tool kinds (read, search, execute), the icon is enough context.
+  // For extension/unknown tools, always include the tool name so the user knows what ran.
+  const isWellKnown = tool.kind && ["read", "edit", "delete", "move", "search", "execute"].includes(tool.kind);
   const maxDetailW = Math.max(1, width - 4);
-  if (detail) {
+  if (detail && isWellKnown) {
     if (detail.length > maxDetailW) detail = detail.slice(0, maxDetailW - 1) + "…";
     lines.push(`${p.warning}${icon}${p.reset} ${p.dim}${detail}${p.reset}`);
+  } else if (detail) {
+    // Extension tool — show name: detail
+    const prefix = `${tool.title}: `;
+    const combined = prefix + detail;
+    const truncated = combined.length > maxDetailW ? combined.slice(0, maxDetailW - 1) + "…" : combined;
+    lines.push(`${p.warning}${icon}${p.reset} ${p.dim}${truncated}${p.reset}`);
   } else {
     lines.push(`${p.warning}${icon} ${tool.title}${p.reset}`);
   }
