@@ -64,6 +64,12 @@ export interface Settings {
   // ── Agent integration ─────────────────────────────────────
   /** Additional directories to scan for skills (supports ~ expansion). */
   skillPaths?: string[];
+
+  // ── Identity & startup ───────────────────────────────────
+  /** Show a startup banner when agent-sh launches. */
+  startupBanner?: boolean;
+  /** Show a subtle agent-sh indicator in the shell prompt. */
+  promptIndicator?: boolean;
 }
 
 const DEFAULTS: Required<Settings> = {
@@ -82,6 +88,8 @@ const DEFAULTS: Required<Settings> = {
   readOutputMaxLines: 0,
   diffMaxLines: 20,
   skillPaths: [],
+  startupBanner: true,
+  promptIndicator: true,
 };
 
 let cached: Settings | null = null;

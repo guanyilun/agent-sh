@@ -10,6 +10,7 @@ import fileAutocomplete from "./extensions/file-autocomplete.js";
 import shellRecall from "./extensions/shell-recall.js";
 import commandSuggest from "./extensions/command-suggest.js";
 import { loadExtensions } from "./extension-loader.js";
+import { getSettings } from "./settings.js";
 import type { AgentShellConfig } from "./types.js";
 
 /**
@@ -295,6 +296,28 @@ async function main(): Promise<void> {
   // Extensions had their chance to register via agent:register-backend.
   // If none did, the built-in AgentLoop gets wired to bus events.
   core.activateBackend();
+
+  // ── Startup banner ───────────────────────────────────────────
+  const settings = getSettings();
+  if (settings.startupBanner !== false) {
+    const termW = process.stdout.columns || 80;
+    const lines: string[] = [];
+
+    const info = agentInfo as { name: string; version: string; model?: string } | null;
+    if (info) {
+      const modelPart = info.model ? ` · ${info.model}` : "";
+      lines.push(`${p.accent}${p.bold}agent-sh${p.reset}${p.dim} v${info.version}${modelPart}${p.reset}`);
+    } else if (core.llmClient) {
+      lines.push(`${p.accent}${p.bold}agent-sh${p.reset}${p.dim} · ${core.llmClient.model}${p.reset}`);
+    } else {
+      lines.push(`${p.accent}${p.bold}agent-sh${p.reset}`);
+    }
+
+    const hint = `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}?${p.muted} to run in shell · ${p.warning}/help${p.muted} for commands${p.reset}`;
+    lines.push(hint);
+
+    process.stdout.write("\n" + lines.join("\n") + "\n");
+  }
 
   // ── Terminal lifecycle ────────────────────────────────────────
   process.on("SIGTERM", cleanup);
