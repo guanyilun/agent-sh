@@ -1,20 +1,36 @@
 import type { EventBus, ContentBlock } from "./event-bus.js";
 import type { ContextManager } from "./context-manager.js";
-import type { AcpClient } from "./acp-client.js";
+import type { LlmClient } from "./utils/llm-client.js";
 import type { ColorPalette } from "./utils/palette.js";
 import type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
+import type { ToolDefinition } from "./agent/types.js";
 
 export type { ContentBlock } from "./event-bus.js";
 export type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
 
+/** A model entry in the cycling list, optionally tied to a provider. */
+export interface AgentMode {
+  model: string;
+  /** Provider id — when cycling changes provider, LlmClient is reconfigured. */
+  provider?: string;
+  /** Provider-specific config for reconfiguring LlmClient on switch. */
+  providerConfig?: { apiKey: string; baseURL?: string };
+  /** Context window size in tokens (for usage display). */
+  contextWindow?: number;
+}
+
 export interface AgentShellConfig {
-  agentCommand: string;
-  agentArgs: string[];
   shell?: string;
   model?: string;
   extensions?: string[];
-  /** Full shell environment (from user's rc files) for agent subprocess. */
-  shellEnv?: Record<string, string>;
+
+  // ── LLM provider ─────────────────────────────────────────────
+  /** API key for OpenAI-compatible provider. */
+  apiKey?: string;
+  /** Base URL for OpenAI-compatible API. */
+  baseURL?: string;
+  /** Named provider to use from settings.json. */
+  provider?: string;
 }
 
 /**
@@ -26,7 +42,8 @@ export interface AgentShellConfig {
 export interface ExtensionContext {
   bus: EventBus;
   contextManager: ContextManager;
-  getAcpClient: () => AcpClient;
+  /** LLM client for fast-path features (null in ACP mode). */
+  llmClient: LlmClient | null;
   quit: () => void;
   /** Override color palette slots for theming. */
   setPalette: (overrides: Partial<ColorPalette>) => void;
@@ -38,6 +55,12 @@ export interface ExtensionContext {
   createFencedBlockTransform: (opts: FencedBlockTransformOptions) => void;
   /** Read extension-namespaced settings from ~/.agent-sh/settings.json. */
   getExtensionSettings: <T extends Record<string, unknown>>(namespace: string, defaults: T) => T;
+
+  // ── Tool registration (agent-sh backend only) ─────────────
+  /** Register a tool for the built-in agent. No-op when using bridge backends. */
+  registerTool: (tool: ToolDefinition) => void;
+  /** Get all registered tools (for subagent tool subsets). Returns [] when using bridge backends. */
+  getTools: () => ToolDefinition[];
 
   // ── Named handler registry (Emacs-style advice) ───────────
   /** Register a named handler. */

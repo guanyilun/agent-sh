@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { AgentMode } from "./types.js";
 
 /**
  * Typed event map — every event has a known payload shape.
@@ -19,7 +20,7 @@ export interface ShellEvents {
 
   // Agent input (frontend → core: user submitted a query or wants to cancel)
   "agent:submit": { query: string; modeInstruction?: string; modeLabel?: string };
-  "agent:cancel-request": Record<string, never>;
+  "agent:cancel-request": { silent?: boolean };
 
   // Input mode registration (extensions → InputHandler)
   "input-mode:register": import("./types.js").InputModeConfig;
@@ -27,8 +28,11 @@ export interface ShellEvents {
   // Agent interaction
   "agent:query": { query: string; modeLabel?: string };
   "agent:thinking-chunk": { text: string };
-  "agent:response-chunk": { text: string; blocks?: ContentBlock[] };
+  "agent:response-chunk": { blocks: ContentBlock[] };
   "agent:response-done": { response: string };
+
+  // Token usage (emitted after each LLM call, when available)
+  "agent:usage": { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 
   // Agent lifecycle
   "agent:processing-start": Record<string, never>;
@@ -56,6 +60,7 @@ export interface ShellEvents {
     toolCallId?: string;
     exitCode: number | null;
     rawOutput?: unknown;
+    kind?: string;
   };
   "agent:tool-output-chunk": { chunk: string };
 
@@ -78,6 +83,7 @@ export interface ShellEvents {
   // UI feedback (TUI subscribes to render; silently ignored without TUI)
   "ui:info": { message: string };
   "ui:error": { message: string };
+  "ui:suggestion": { text: string };
 
   // Generic keypress forwarding (control chars not handled by input-handler)
   "input:keypress": { key: string };
@@ -105,17 +111,45 @@ export interface ShellEvents {
     done: boolean;
   };
 
-  // Session configure (sync pipe: extensions can add MCP servers before newSession)
-  "session:configure": {
-    cwd: string;
-    mcpServers: { name: string; command: string; args: string[]; env: { name: string; value: string }[] }[];
+  // Agent info (backend → frontend: connection established, info available)
+  "agent:info": { name: string; version: string; model?: string; provider?: string; contextWindow?: number };
+
+  // Session reset (slash command → backend: clear conversation state)
+  "agent:reset-session": Record<string, never>;
+
+  // Extension registers itself as agent backend (extension → core)
+  "agent:register-backend": {
+    name: string;
+    kill: () => void;
+    start?: () => Promise<void>;
   };
 
-  // Session mode/config updated (from ACP agent)
+  // Switch agent backend at runtime (slash command → core)
+  "config:switch-backend": { name: string };
+
+  // List registered backends (slash command → core, returns via ui:info)
+  "config:list-backends": Record<string, never>;
+
+  // Session mode/config updated (from agent backend)
   "config:changed": Record<string, never>;
 
-  // Cycle session mode (input-handler → core)
+  // Cycle session mode (input-handler → backend: cycles models within provider)
   "config:cycle": Record<string, never>;
+
+  // Switch provider at runtime (slash command → core)
+  "config:switch-provider": { provider: string };
+
+  // Set modes (core → agent loop: after provider switch)
+  "config:set-modes": { modes: AgentMode[] };
+
+  // Register a provider at runtime (extensions → core)
+  "provider:register": {
+    id: string;
+    apiKey?: string;
+    baseURL?: string;
+    defaultModel: string;
+    models?: string[];
+  };
 
   // Autocomplete (sync pipe: extensions inspect buffer and append items)
   "autocomplete:request": {

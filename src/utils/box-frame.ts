@@ -37,8 +37,10 @@ export interface BoxFrameOptions {
   style?: BorderStyle;
   /** Border color (ANSI escape). Default DIM. */
   borderColor?: string;
-  /** Title text shown in the top border. */
+  /** Title text shown on the left of the top border. */
   title?: string;
+  /** Title text shown on the right of the top border. */
+  titleRight?: string;
   /** Footer lines shown below a divider, inside the box. */
   footer?: string[];
 }
@@ -63,12 +65,21 @@ export function renderBoxFrame(content: string[], opts: BoxFrameOptions): string
   const innerW = Math.max(1, width - 4);
   const output: string[] = [];
 
-  // Top border (with optional title)
-  if (opts.title) {
-    const titleVis = visibleLen(opts.title);
-    const afterDashes = Math.max(1, width - titleVis - 4);
+  // Top border (with optional left/right titles)
+  if (opts.title || opts.titleRight) {
+    const leftPart = opts.title
+      ? `${p.reset} ${opts.title} ${bc}`
+      : "";
+    const leftVis = opts.title ? visibleLen(opts.title) + 2 : 0; // +2 for spaces
+
+    const rightPart = opts.titleRight
+      ? `${p.reset} ${opts.titleRight} ${bc}`
+      : "";
+    const rightVis = opts.titleRight ? visibleLen(opts.titleRight) + 2 : 0;
+
+    const dashCount = Math.max(1, width - 2 - leftVis - rightVis);
     output.push(
-      `${bc}${b.tl}${p.reset} ${opts.title} ${bc}${b.h.repeat(afterDashes)}${b.tr}${p.reset}`,
+      `${bc}${b.tl}${leftPart}${b.h.repeat(dashCount)}${rightPart}${b.tr}${p.reset}`,
     );
   } else {
     output.push(`${bc}${b.tl}${b.h.repeat(width - 2)}${b.tr}${p.reset}`);

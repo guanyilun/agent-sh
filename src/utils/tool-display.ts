@@ -116,6 +116,13 @@ export function renderToolCall(
       if (raw && typeof raw === "object") {
         if (typeof raw.command === "string") {
           detail = `$ ${raw.command}`;
+        } else if (typeof raw.pattern === "string") {
+          // grep/glob — show the search pattern
+          const target = typeof raw.path === "string" ? ` ${shortenPath(raw.path, cwd)}` : "";
+          detail = `${raw.pattern}${target}`;
+        } else if (typeof raw.path === "string") {
+          // read_file, write_file, etc.
+          detail = shortenPath(raw.path, cwd);
         } else if (typeof raw.operation === "string") {
           detail = raw.operation;
           if (raw.ids && Array.isArray(raw.ids)) {
@@ -125,19 +132,20 @@ export function renderToolCall(
             detail += ` "${raw.query}"`;
           }
         } else {
-          detail = formatRawInput(tool.rawInput, width - tool.title.length - 6);
+          detail = formatRawInput(tool.rawInput, width - 4);
         }
       }
     }
   }
 
-  // Render as single line: ► title: detail
-  const maxDetailW = Math.max(1, width - tool.title.length - 6);
+  // Render as single line: icon + detail (icon implies the tool type)
+  // Falls back to icon + title when no detail is available
+  const maxDetailW = Math.max(1, width - 4);
   if (detail) {
     if (detail.length > maxDetailW) detail = detail.slice(0, maxDetailW - 1) + "…";
-    lines.push(`${p.warning}${p.bold}${icon} ${tool.title}${p.reset}${p.dim}: ${detail}${p.reset}`);
+    lines.push(`${p.warning}${icon}${p.reset} ${p.dim}${detail}${p.reset}`);
   } else {
-    lines.push(`${p.warning}${p.bold}${icon} ${tool.title}${p.reset}`);
+    lines.push(`${p.warning}${icon} ${tool.title}${p.reset}`);
   }
 
   // Show additional file locations on separate lines (if more than one)

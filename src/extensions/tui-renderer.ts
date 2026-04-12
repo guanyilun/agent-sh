@@ -72,7 +72,6 @@ interface RenderState {
   spinnerStartTime: number;
 
   // ── Tool output ──
-  lastCommand: string;
   toolLineOpen: boolean;
   currentToolKind: string | undefined;
   commandOutputBuffer: string;
@@ -97,7 +96,6 @@ function createRenderState(): RenderState {
     spinnerOpts: {},
     spinnerInterval: null,
     spinnerStartTime: 0,
-    lastCommand: "",
     toolLineOpen: false,
     currentToolKind: undefined,
     commandOutputBuffer: "",
@@ -111,9 +109,13 @@ function createRenderState(): RenderState {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, getAcpClient, define } = ctx;
+  const { bus, llmClient, define } = ctx;
   const writer = new StdoutWriter();
   const s = createRenderState();
+
+  // Track backend/model info for display on response border
+  let backendInfo: { name: string; model?: string; provider?: string; contextWindow?: number } | null = null;
+  bus.on("agent:info", (info) => { backendInfo = info; });
 
   // ── Register fenced block transform (code blocks → ContentBlock) ──
   // Nobody is special — tui-renderer uses the same primitive as any extension.
@@ -157,44 +159,55 @@ export default function activate(ctx: ExtensionContext): void {
   });
 
   bus.on("agent:response-chunk", (e) => {
-    if (e.blocks) {
-      // Inject spacing: append \n to text blocks that precede non-text blocks
-      const blocks = e.blocks;
-      for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i]!;
-        const next = blocks[i + 1];
-        if (block.type === "text" && next && next.type !== "text") {
-          block.text += "\n";
-        }
+    const { blocks } = e;
+    // Inject spacing: append \n to text blocks that precede non-text blocks
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i]!;
+      const next = blocks[i + 1];
+      if (block.type === "text" && next && next.type !== "text") {
+        block.text += "\n";
       }
-      for (const block of blocks) {
-        switch (block.type) {
-          case "text":
-            if (block.text) writeAgentText(block.text);
-            break;
-          case "code-block":
-            writeCodeBlock(block.language, block.code);
-            break;
-          case "image":
-            writeInlineImage(block.data);
-            break;
-          case "raw":
-            flushForRaw();
-            writer.write(block.escape);
-            break;
-        }
+    }
+    for (const block of blocks) {
+      switch (block.type) {
+        case "text":
+          if (block.text) writeAgentText(block.text);
+          break;
+        case "code-block":
+          writeCodeBlock(block.language, block.code);
+          break;
+        case "image":
+          writeInlineImage(block.data);
+          break;
+        case "raw":
+          flushForRaw();
+          writer.write(block.escape);
+          break;
       }
-    } else {
-      writeAgentText(e.text);
     }
   });
+  // Track token usage for display
+  let pendingUsage: { prompt_tokens: number; completion_tokens: number } | null = null;
+  bus.on("agent:usage", (e) => { pendingUsage = e; });
+
   bus.on("agent:response-done", () => {
     s.isThinking = false;
+    if (pendingUsage && s.renderer) {
+      const { prompt_tokens, completion_tokens } = pendingUsage;
+      const maxTokens = backendInfo?.contextWindow ?? 128_000;
+      // prompt_tokens of the latest call = current context usage
+      // (it includes the full conversation history)
+      const ctxK = (prompt_tokens / 1000).toFixed(1);
+      const maxK = (maxTokens / 1000).toFixed(0);
+      const pct = Math.min(100, (prompt_tokens / maxTokens) * 100).toFixed(0);
+      s.renderer.writeLine("");
+      s.renderer.writeLine(
+        `${p.dim}⬆ ${prompt_tokens}  ⬇ ${completion_tokens}  ctx: ${ctxK}k/${maxK}k (${pct}%)${p.reset}`,
+      );
+      drain();
+      pendingUsage = null;
+    }
     endAgentResponse();
-  });
-
-  bus.on("agent:tool-call", (e) => {
-    s.lastCommand = e.tool;
   });
 
   bus.on("agent:tool-started", (e) => {
@@ -210,9 +223,8 @@ export default function activate(ctx: ExtensionContext): void {
       drain();
       s.hadToolCalls = true;
     } else {
-      showToolCall(e.title, s.lastCommand, e);
+      showToolCall(e.title, "", e);
     }
-    s.lastCommand = "";
   });
 
   bus.on("agent:tool-completed", (e) => {
@@ -260,6 +272,9 @@ export default function activate(ctx: ExtensionContext): void {
   });
   bus.on("ui:info", (e) => showInfo(e.message));
   bus.on("ui:error", (e) => showError(e.message));
+  bus.on("ui:suggestion", (e) => {
+    writer.write(`${p.dim}💡 ${e.text}${p.reset}\n`);
+  });
 
   // ── Rendering functions ─────────────────────────────────────
 
@@ -281,6 +296,7 @@ export default function activate(ctx: ExtensionContext): void {
     if (s.thinkingPending && !s.showThinkingText) {
       if (!s.renderer) startAgentResponse();
       s.renderer!.writeLine(`${p.muted}… thinking${p.reset}`);
+      s.renderer!.writeLine("");
       s.thinkingPending = false;
     }
   }
@@ -292,12 +308,13 @@ export default function activate(ctx: ExtensionContext): void {
       s.renderer.flush();
       s.renderer.printBottomBorder();
       drain();
+      writer.write("\n");
       s.renderer = null;
     }
   }
 
   function showUserQuery(query: string, modeLabel?: string): void {
-    const boxW = Math.min(84, writer.columns);
+    const boxW = writer.columns;
     const contentW = boxW - 4;
 
     const lines: string[] = [];
@@ -323,11 +340,24 @@ export default function activate(ctx: ExtensionContext): void {
       ? `${borderColor}${p.bold} ${modeLabel} ${p.reset}`
       : `${p.accent}${p.bold}❯${p.reset}`;
 
+    // Backend/model label on the right (backend/model, highlighted)
+    const model = backendInfo?.model ?? llmClient?.model;
+    const backend = backendInfo?.name;
+    let modelLabel: string | undefined;
+    if (backend && model) {
+      modelLabel = `${p.dim}${backend}/${p.reset}${p.bold}${model}${p.reset}`;
+    } else if (model) {
+      modelLabel = `${p.bold}${model}${p.reset}`;
+    } else if (backend) {
+      modelLabel = `${p.bold}${backend}${p.reset}`;
+    }
+
     const framed = renderBoxFrame(lines, {
       width: boxW,
       style: "rounded",
       borderColor,
       title,
+      titleRight: modelLabel,
     });
     writer.write("\n");
     for (const line of framed) {
@@ -461,9 +491,10 @@ export default function activate(ctx: ExtensionContext): void {
     }
   }
 
+  // Thinking is always assumed available — the TUI renders thinking
+  // tokens whenever they arrive, regardless of backend.
   function hasThinkingMode(): boolean {
-    const mode = getAcpClient().getCurrentMode();
-    return !mode || mode.id !== "off";
+    return true;
   }
 
   function startThinkingSpinner(): void {

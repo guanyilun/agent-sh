@@ -333,10 +333,15 @@ export class InputHandler {
     if (this.autocompleteLines > 0) {
       process.stdout.write(`\x1b[${this.autocompleteLines}A`);
     }
+    // Reposition cursor: must match the layout in writeModePromptLine()
     const agentInfo = this.onShowAgentInfo();
-    const infoLength = visibleLen(agentInfo.info);
+    const indicator = this.activeMode?.indicator ?? "●";
+    const infoPrefix = agentInfo.info
+      ? `${agentInfo.info} ${indicator} `
+      : `${indicator} `;
     const icon = this.activeMode?.promptIcon ?? "❯";
-    const col = infoLength + visibleLen(icon) + 1 + this.editor.cursor;
+    const promptVisLen = visibleLen(infoPrefix) + visibleLen(icon) + 1;
+    const col = promptVisLen + this.editor.cursor;
     process.stdout.write(`\r\x1b[${col}C`);
   }
 
@@ -444,7 +449,7 @@ export class InputHandler {
             const name = spaceIdx === -1 ? query : query.slice(0, spaceIdx);
             const args = spaceIdx === -1 ? "" : query.slice(spaceIdx + 1).trim();
             this.bus.emit("command:execute", { name, args });
-            this.ctx.redrawPrompt();
+            this.ctx.freshPrompt();
           } else if (query) {
             this.pendingReturnMode = currentMode.returnToSelf ? currentMode.id : null;
             currentMode.onSubmit(query, this.bus);

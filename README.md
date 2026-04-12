@@ -5,9 +5,9 @@
 
 Not a shell that lives in an agent — an agent that lives in a shell.
 
-agent-sh is a real terminal first. Every keystroke goes to a real PTY. `cd`, pipes, vim, job control — they all just work. But type `?` or `>` at the start of a line, and you're talking to an AI agent that has full context of what you've been doing: your working directory, recent commands, their output.
+I live in a terminal. I don't want an agent that can run shell commands when it needs to — I want my shell, with an agent I can reach for when *I* need to. Most AI tools get this backwards: the LLM drives the experience and the shell is bolted on as an afterthought. No real PTY, no job control, no vim, fragile `cd` tracking. The agent is the main character and your terminal is a prop.
 
-The agent connects via the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/), so you can plug in **any** ACP-compatible agent: [pi](https://github.com/svkozak/pi-acp), claude-code, codex, gemini-cli, goose, etc.
+agent-sh flips this. It's your shell first — full PTY, your rc config, your aliases, everything just works. But type `?` or `>` at the start of a line, and you're talking to an agent that has full context of what you've been doing.
 
 ```
 ⚡ src $ ls -la                          # real shell command
@@ -17,116 +17,44 @@ The agent connects via the [Agent Client Protocol (ACP)](https://agentclientprot
 ⚡ src $ > deploy to staging              # execute mode → agent runs it in your live shell
 ```
 
-## Why shell-first?
-
-I live mostly in a terminal. I don't just want an agent that has access to my shell — I want a shell that has access to my agent.
-
-Most AI coding tools get this backwards: the LLM drives the experience and the shell is bolted on. That means no real PTY, no job control, no interactive commands, and fragile `cd` tracking that reimplements what bash gives you for free.
-
-agent-sh starts from the opposite end. The shell is the primary interface — it's your terminal, not the agent's. The agent is a tool you reach for when you need it, not the other way around. Two modes give you fine-grained control: `?` for questions and tasks (agent uses its own tools), `>` for commands that run directly in your live shell.
-
-### Why ACP?
-
-The [Agent Client Protocol](https://agentclientprotocol.com/) decouples the shell from any specific agent:
-
-- **Pluggable agents** — swap between pi-acp, claude-code, codex with a CLI flag
-- **Standard protocol** — JSON-RPC 2.0 over stdio, well-specified capability negotiation
-- **Agent handles LLM details** — no API keys, tool definitions, or context windows to manage
-- **Terminal delegation** — ACP defines `terminal/create`, `terminal/output`, `terminal/wait_for_exit` — exactly what an agent needs to run commands in your shell
-
 ## Key Features
 
-- **Instant Start** — Shell starts immediately, no waiting for agent connection
-- **Smart Connection** — Agent connects asynchronously in the background
-- **Auto-Wait** — Queries automatically wait for agent to finish connecting
-- **Real-time Streaming** — Agent responses stream live with syntax highlighting
-- **Zero Latency** — Direct PTY access, full terminal compatibility
-- **Context Aware** — Agent sees your cwd, recent commands, and their output
-- **Dual Input Modes** — `?` for questions/tasks (agent tools), `>` for live shell execution
-- **Extensible Modes** — Extensions can register custom input modes with their own triggers
-- **Multiple Agents** — Easy switching between pi-acp, claude, and other ACP agents
-- **Inline Diff Preview** — File writes show syntax-highlighted diffs inline (Ctrl+O to expand)
-- **Thinking Display** — Toggle agent thinking/reasoning text with Ctrl+T
-- **Themeable** — Semantic color palette, swappable via [extensions](docs/extensions.md)
+**Real terminal, zero compromise.** Full PTY with your shell config, aliases, and environment. Shell starts instantly — the agent connects asynchronously in the background.
+
+**Context-aware agent.** Every query includes your cwd, recent commands, and their output. Run a failing test, type `? fix this`, and the agent knows exactly what happened. It has built-in tools for file read/write/edit, bash, grep, glob — no external setup needed.
+
+**Two input modes.** `?` for questions and tasks — the agent investigates using its own isolated tools. `>` for commands that run directly in your live shell, affecting your real environment. The agent knows which mode it's in and behaves accordingly.
+
+**Any LLM, any backend.** Works with any OpenAI-compatible API out of the box. Define multiple providers in settings and cycle between models at runtime with Shift+Tab. Or swap in a completely different agent — [Claude Code](examples/extensions/claude-code-bridge.ts) and [pi](examples/extensions/pi-bridge.ts) run as drop-in backend extensions.
+
+**Extensible by design.** The entire system is built on a typed event bus. Extensions can add custom input modes, content transforms (render LaTeX as images, Mermaid as diagrams), themes, slash commands, or replace the agent backend entirely. The built-in TUI renderer is itself just an extension — nothing is special.
+
+**Embeddable as a library.** The core is a headless kernel — `import { createCore } from "agent-sh"` to build WebSocket servers, REST APIs, Electron apps, or test harnesses. No terminal required.
 
 ## Quick Start
 
 ```bash
-# 1. Install agent-sh and an ACP-compatible agent
-npm install -g agent-sh pi-acp
+# Install
+npm install -g agent-sh
 
-# 2. Set API keys
-export ANTHROPIC_API_KEY="your-key"
+# Run with any OpenAI-compatible API
+OPENAI_API_KEY="your-key" agent-sh --model gpt-4o
 
-# 3. Start
-agent-sh                           # default agent (pi-acp)
-agent-sh --agent claude-agent-acp  # use a different agent
+# Or with a local model
+agent-sh --api-key dummy --base-url http://localhost:11434/v1 --model llama3
+
+# Or with a backend extension (Claude Code, pi, etc.)
+agent-sh -e examples/extensions/claude-code-bridge.ts
 ```
 
-Requires Node.js 18+. Other ACP agents: `npm install -g @agentclientprotocol/claude-agent-acp`
-
-> **Note**: The `claude` CLI tool (Claude Code) does **not** support ACP. Use `claude-agent-acp` or `pi-acp` with Anthropic models.
-
-See the [Usage Guide](docs/usage.md) for all options, model configuration, and environment variables.
+Requires Node.js 18+. See the [Usage Guide](docs/usage.md) for provider examples (OpenAI, Ollama, OpenRouter, Together, Groq, LM Studio, vLLM).
 
 ## Input Modes
 
-agent-sh has two agent input modes, each triggered by a single character at the start of an empty line:
+- **`?` Query mode** — Agent uses its own tools (bash, file read/write, search) to investigate and answer. Stays in query mode for follow-ups.
+- **`>` Execute mode** — Agent runs a command in your live shell. Your aliases, env vars, and cwd apply. Returns to shell after.
 
-| Trigger | Mode | Behavior |
-|---|---|---|
-| `?` | **Query** | Agent uses its own tools (bash, file read/write, search) to investigate and answer. Stays in query mode after each response. |
-| `>` | **Execute** | Agent runs a command in your live shell via `user_shell`. Your aliases, env vars, and cwd apply. Returns to shell after execution. |
-
-Regular shell input works as before — commands go straight to the PTY:
-
-| Input | Behavior |
-|---|---|
-| `ls -la` | Runs in real shell (PTY), output displayed normally |
-| `cd src && make` | Real shell — cd, env, aliases all just work |
-| `vim file.ts` | Opens vim in the same PTY, no hacks needed |
-| `? refactor this fn` | Query mode — agent investigates and responds |
-| `> restart the server` | Execute mode — agent runs it in your live shell |
-| `? /help` | Shows available slash commands (works in either mode) |
-| `Ctrl-C` | Standard signal to shell, or cancels active agent response |
-| `Ctrl-O` | Expand/collapse truncated diff preview |
-| `Ctrl-T` | Toggle thinking/reasoning text display |
-| `Shift-Tab` | Cycle thinking level (off → minimal → low → medium → high → xhigh) |
-| `Escape` | Exit agent input mode |
-
-Modes are extensible — extensions can register new modes via the `input-mode:register` event (see [Extensions](docs/extensions.md#custom-input-modes)).
-
-### Agent Input Keybindings
-
-When typing in either agent mode (`?` or `>`), full readline-style keybindings are available:
-
-| Key | Action |
-|---|---|
-| `↑` / `↓` | Browse query history (persisted across sessions) |
-| `Shift-Enter` | Insert newline (multiline input) |
-| `Shift-Tab` | Cycle thinking level |
-| `Ctrl-D` | Exit agent input mode (on empty line) |
-| `Ctrl-A` / `Home` | Move to start of line |
-| `Ctrl-E` / `End` | Move to end of line |
-| `Ctrl-B` / `←` | Move back one character |
-| `Ctrl-F` / `→` | Move forward one character |
-| `Option-B` / `Option-←` | Move back one word |
-| `Option-F` / `Option-→` | Move forward one word |
-| `Ctrl-U` | Delete to start of line |
-| `Ctrl-K` | Delete to end of line |
-| `Ctrl-W` / `Option-Backspace` | Delete word backward |
-| `Option-D` | Delete word forward |
-
-### Thinking Level
-
-The agent prompt shows the current thinking level next to the model name, with a mode-specific indicator:
-
-```
-pi (claude-sonnet-4-6) [medium] ❓ ❯    # query mode
-pi (claude-sonnet-4-6) [medium] ● ⟩     # execute mode
-```
-
-Press **Shift-Tab** in agent input mode to cycle through levels. The levels are advertised by the agent via ACP session modes — different agents may offer different options. The spinner label reflects the mode: "Thinking" when thinking is enabled, "Working" when it's off.
+Everything else works as a normal shell — commands go straight to the PTY. Modes are extensible — see [Extensions: Custom Input Modes](docs/extensions.md#custom-input-modes).
 
 ### Slash Commands
 
@@ -135,14 +63,47 @@ Press **Shift-Tab** in agent input mode to cycle through levels. The levels are 
 | `/help` | Show available commands |
 | `/clear` | Start a new agent session |
 | `/copy` | Copy last agent response to clipboard |
-| `/compact` | Ask agent to summarize the conversation |
+| `/compact` | Summarize the conversation to free context |
+| `/model` | Cycle to the next model (same as Shift+Tab) |
+| `/provider <name>` | Switch to a different provider |
+| `/backend [name]` | List backends, or switch to a named backend |
 | `/quit` | Exit agent-sh |
 
 ## Configuration
 
-agent-sh stores settings and history in `~/.agent-sh/`. Behavior is configurable via `~/.agent-sh/settings.json` — context window size, truncation thresholds, display limits, and more. All fields are optional with sensible defaults.
+Configure via `~/.agent-sh/settings.json`. Define named providers with multiple models:
+
+```json
+{
+  "defaultProvider": "openai",
+  "providers": {
+    "openai": {
+      "apiKey": "$OPENAI_API_KEY",
+      "defaultModel": "gpt-4o",
+      "models": ["gpt-4o", "gpt-4o-mini"]
+    },
+    "ollama": {
+      "apiKey": "not-needed",
+      "baseURL": "http://localhost:11434/v1",
+      "defaultModel": "llama3",
+      "models": ["llama3", "mistral"]
+    }
+  }
+}
+```
+
+Cycle models with **Shift+Tab**, switch providers with `/provider <name>`, switch backends with `/backend <name>`. API keys support `$ENV_VAR` syntax.
 
 See the [Usage Guide](docs/usage.md#configuration) for the full settings reference.
+
+## Documentation
+
+- [Usage Guide](docs/usage.md) — providers, models, configuration, provider profiles
+- [Internal Agent](docs/agent.md) — how the agent loop works: tools, context, streaming
+- [Architecture](docs/architecture.md) — design philosophy, component overview, project structure
+- [Extensions](docs/extensions.md) — event bus, content transforms, custom backends, theming
+- [Library Usage](docs/library.md) — embedding agent-sh in your own apps
+- [Troubleshooting](docs/troubleshooting.md) — common errors and debug mode
 
 ## Development
 
@@ -150,16 +111,8 @@ See the [Usage Guide](docs/usage.md#configuration) for the full settings referen
 npm run dev                        # development mode (no build step)
 npm run build                      # build
 npm start                          # run built version
-DEBUG=1 npm start                  # debug mode (logs ACP protocol details)
+DEBUG=1 npm start                  # debug mode (logs protocol details)
 ```
-
-## Documentation
-
-- [Usage Guide](docs/usage.md) — models, providers, API keys, environment config
-- [Architecture](docs/architecture.md) — design philosophy, protocol details, project structure
-- [Extensions](docs/extensions.md) — writing extensions, theming, yolo mode
-- [Library Usage](docs/library.md) — using agent-sh as a Node.js library
-- [Troubleshooting](docs/troubleshooting.md) — common errors and debug mode
 
 ## License
 

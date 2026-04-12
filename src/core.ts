@@ -1,28 +1,30 @@
 /**
  * Core kernel — the minimum viable agent-sh.
  *
- * Wires up EventBus + ContextManager + AcpClient without any frontend.
+ * Wires up EventBus + ContextManager + AgentBackend without any frontend.
  * Consumers attach their own I/O (Shell, WebSocket, REST, tests) by
- * subscribing to bus events and calling client methods.
+ * subscribing to bus events.
  *
- * The core listens for `agent:submit` and `agent:cancel-request` events
- * from any frontend, routing them to the AcpClient. This means frontends
- * never need a direct reference to AcpClient — they just emit events.
+ * The default backend (AgentLoop) is created eagerly but wired lazily —
+ * extensions can register alternative backends via agent:register-backend
+ * before activateBackend() is called.
  *
  * Usage:
  *   import { createCore } from "agent-sh";
- *   const core = createCore({ agentCommand: "pi-acp" });
- *   core.bus.on("agent:response-chunk", ({ text }) => ws.send(text));
- *   await core.start();
- *   core.bus.emit("agent:submit", { query: "hello" });
+ *   const core = createCore({ apiKey: "...", model: "gpt-4o" });
+ *   core.bus.on("agent:response-chunk", ({ blocks }) => { ... });
+ *   core.activateBackend();
+ *   const response = await core.query("hello");
  */
-import { EventBus } from "./event-bus.js";
+import { EventBus, type ContentBlock } from "./event-bus.js";
 import { ContextManager } from "./context-manager.js";
-import { AcpClient } from "./acp-client.js";
-import type { AgentShellConfig, ExtensionContext } from "./types.js";
+import { AgentLoop } from "./agent/agent-loop.js";
+import { LlmClient } from "./utils/llm-client.js";
+import type { AgentShellConfig, AgentMode, ExtensionContext } from "./types.js";
 import { setPalette } from "./utils/palette.js";
 import * as streamTransform from "./utils/stream-transform.js";
 import * as settingsMod from "./settings.js";
+import { resolveProvider, getProviderNames, type ResolvedProvider } from "./settings.js";
 import { HandlerRegistry } from "./utils/handler-registry.js";
 
 // Re-export types that library consumers need
@@ -31,16 +33,24 @@ export type { ShellEvents } from "./event-bus.js";
 export type { AgentShellConfig, ExtensionContext } from "./types.js";
 export { palette, setPalette, resetPalette } from "./utils/palette.js";
 export type { ColorPalette } from "./utils/palette.js";
+export type { AgentBackend, ToolDefinition } from "./agent/types.js";
+export { runSubagent, type SubagentOptions } from "./agent/subagent.js";
+export { LlmClient } from "./utils/llm-client.js";
 
 export interface AgentShellCore {
   bus: EventBus;
   contextManager: ContextManager;
-  client: AcpClient;
-  /** Connect to the agent subprocess. Call after wiring up bus listeners. */
-  start(): Promise<void>;
+  /** LLM client for fast-path features (null when no provider configured). */
+  llmClient: LlmClient | null;
+  /** Activate the agent backend (call after extensions load). */
+  activateBackend(): void;
+  /** Convenience: emit agent:submit and await the response. */
+  query(text: string, opts?: { mode?: string }): Promise<string>;
+  /** Convenience: emit agent:cancel-request. */
+  cancel(): void;
   /** Build an ExtensionContext for loading extensions against this core. */
   extensionContext(opts: { quit: () => void }): ExtensionContext;
-  /** Tear down the agent process and clean up. */
+  /** Tear down the agent and clean up. */
   kill(): void;
 }
 
@@ -48,56 +58,259 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   const bus = new EventBus();
   const handlers = new HandlerRegistry();
   const contextManager = new ContextManager(bus);
-  const client = new AcpClient({ bus, contextManager, config });
 
-  let connected = false;
+  // ── Resolve provider ─────────────────────────────────────────
+  const settings = settingsMod.getSettings();
+  let activeProvider: ResolvedProvider | null = null;
 
-  // Route frontend events to the agent — any frontend (Shell, WebSocket,
-  // REST handler, test harness) can emit these without knowing about AcpClient.
-  bus.on("agent:submit", ({ query, modeInstruction, modeLabel }) => {
-    (async () => {
-      // Wait briefly for agent connection if start() is still in progress
-      if (!connected) {
-        for (let i = 0; i < 30 && !connected; i++) {
-          await new Promise((r) => setTimeout(r, 100));
-        }
+  const providerRegistry = new Map<string, ResolvedProvider>();
+
+  for (const name of getProviderNames()) {
+    const p = resolveProvider(name);
+    if (p) providerRegistry.set(name, p);
+  }
+
+  const providerName = config.provider ?? settings.defaultProvider;
+  if (providerName) {
+    activeProvider = providerRegistry.get(providerName) ?? null;
+  }
+
+  // Build flat modes list across all providers
+  const buildModes = (): AgentMode[] => {
+    const allModes: AgentMode[] = [];
+    for (const [id, p] of providerRegistry) {
+      if (!p.apiKey) continue;
+      for (const model of p.models) {
+        allModes.push({
+          model,
+          provider: id,
+          providerConfig: { apiKey: p.apiKey, baseURL: p.baseURL },
+          contextWindow: p.contextWindow,
+        });
       }
-      if (!connected) {
-        bus.emit("ui:error", { message: "Agent not connected. Please wait a moment and try again." });
+    }
+    return allModes;
+  };
+
+  const effectiveApiKey = config.apiKey ?? activeProvider?.apiKey;
+  const effectiveBaseURL = config.baseURL ?? activeProvider?.baseURL;
+  const effectiveModel = config.model ?? activeProvider?.defaultModel;
+
+  let modes = buildModes();
+  if (modes.length === 0 && effectiveApiKey && effectiveModel) {
+    modes = [{ model: effectiveModel }];
+  }
+
+  const initialModeIndex = Math.max(0, modes.findIndex(
+    (m) => m.model === effectiveModel && (!activeProvider || m.provider === activeProvider.id)
+  ));
+
+  // Shared LLM client — used by agent loop AND fast-path features
+  let llmClient: LlmClient | null = null;
+  if (effectiveApiKey) {
+    if (!effectiveModel) {
+      throw new Error("No model specified. Use --model or configure a provider with defaultModel in ~/.agent-sh/settings.json");
+    }
+    llmClient = new LlmClient({
+      apiKey: effectiveApiKey,
+      baseURL: effectiveBaseURL,
+      model: effectiveModel,
+    });
+  }
+
+  // Create AgentLoop (unwired — tools only, no bus subscriptions yet)
+  const agentLoop = llmClient
+    ? new AgentLoop(bus, contextManager, llmClient, handlers, modes, initialModeIndex)
+    : null;
+
+  // ── Multi-backend registry ───────────────────────────────────
+  type Backend = { name: string; kill: () => void; start?: () => Promise<void> };
+  const backends = new Map<string, Backend>();
+  let activeBackendName: string | null = null;
+
+  const activateByName = async (name: string, silent = false) => {
+    const backend = name === "agent-sh" ? null : backends.get(name);
+    if (name !== "agent-sh" && !backend) {
+      bus.emit("ui:error", { message: `Unknown backend: ${name}` });
+      return;
+    }
+
+    // Deactivate current backend
+    if (activeBackendName === "agent-sh") {
+      agentLoop?.unwire();
+    } else if (activeBackendName) {
+      backends.get(activeBackendName)?.kill();
+    }
+
+    // Activate new backend
+    if (name === "agent-sh") {
+      if (!agentLoop) {
+        bus.emit("ui:error", { message: "No LLM provider configured for built-in backend" });
         return;
       }
-      await client.sendPrompt(query, { modeInstruction, modeLabel });
-    })().catch((err) => {
-      bus.emit("agent:error", {
-        message: err instanceof Error ? err.message : String(err),
-      });
+      agentLoop.wire();
+      activeBackendName = "agent-sh";
+      bus.emit("agent:info", { name: "agent-sh", version: "0.4", model: llmClient?.model, provider: activeProvider?.id, contextWindow: activeProvider?.contextWindow });
+    } else {
+      await backend!.start?.();
+      activeBackendName = name;
+    }
+
+    if (!silent) {
+      bus.emit("ui:info", { message: `Backend: ${name}` });
+    }
+    bus.emit("config:changed", {});
+  };
+
+  bus.on("agent:register-backend", (backend) => {
+    backends.set(backend.name, backend);
+  });
+
+  bus.on("config:switch-backend", ({ name }) => {
+    activateByName(name);
+  });
+
+  bus.on("config:list-backends", () => {
+    const names: string[] = [];
+    if (agentLoop) names.push("agent-sh");
+    for (const name of backends.keys()) names.push(name);
+    const list = names
+      .map((n) => n === activeBackendName ? `${n} (active)` : n)
+      .join(", ");
+    bus.emit("ui:info", { message: `Backends: ${list}` });
+  });
+
+  // ── Runtime provider management ──────────────────────────────
+
+  bus.on("provider:register", (p) => {
+    providerRegistry.set(p.id, {
+      id: p.id,
+      apiKey: p.apiKey,
+      baseURL: p.baseURL,
+      defaultModel: p.defaultModel,
+      models: p.models ?? (p.defaultModel ? [p.defaultModel] : []),
     });
   });
 
-  bus.on("agent:cancel-request", () => {
-    client.cancel().catch(() => {});
+  bus.on("config:switch-provider", ({ provider: name }) => {
+    const p = providerRegistry.get(name);
+    if (!p) {
+      bus.emit("ui:error", { message: `Unknown provider: ${name}` });
+      return;
+    }
+    if (!llmClient) {
+      bus.emit("ui:error", { message: `Provider switching requires internal agent mode` });
+      return;
+    }
+
+    const newApiKey = p.apiKey;
+    if (!newApiKey) {
+      bus.emit("ui:error", { message: `Provider "${name}" has no API key configured` });
+      return;
+    }
+    const switchModel = p.defaultModel ?? p.models[0];
+    if (!switchModel) {
+      bus.emit("ui:error", { message: `Provider "${name}" has no models configured` });
+      return;
+    }
+    llmClient.reconfigure({
+      apiKey: newApiKey,
+      baseURL: p.baseURL,
+      model: switchModel,
+    });
+
+    const newModes: AgentMode[] = p.models.map((m) => ({
+      model: m,
+      provider: name,
+      providerConfig: { apiKey: newApiKey, baseURL: p.baseURL },
+      contextWindow: p.contextWindow,
+    }));
+    bus.emit("config:set-modes", { modes: newModes });
+
+    activeProvider = p;
+    bus.emit("agent:info", { name: "agent-sh", version: "0.4", model: switchModel, provider: name, contextWindow: p.contextWindow });
+    bus.emit("ui:info", { message: `Switched to ${name} (${switchModel})` });
+    bus.emit("config:changed", {});
   });
 
   return {
     bus,
     contextManager,
-    client,
+    llmClient,
 
-    async start() {
-      await client.start();
-      connected = true;
+    activateBackend() {
+      const preferred = settings.defaultBackend;
+      if (preferred && backends.has(preferred)) {
+        activateByName(preferred);
+      } else if (backends.size > 0 && !agentLoop) {
+        activateByName(backends.keys().next().value!);
+      } else if (agentLoop) {
+        agentLoop.wire();
+        activeBackendName = "agent-sh";
+        bus.emit("agent:info", { name: "agent-sh", version: "0.4", model: llmClient?.model, provider: activeProvider?.id, contextWindow: activeProvider?.contextWindow });
+      } else if (backends.size > 0) {
+        activateByName(backends.keys().next().value!);
+      }
+
+      if (activeBackendName) {
+        bus.emit("ui:info", { message: `Backend: ${activeBackendName}` });
+      }
+    },
+
+    async query(text, opts) {
+      return new Promise((resolve, reject) => {
+        let response = "";
+        let settled = false;
+
+        const onChunk = (e: { blocks: ContentBlock[] }) => {
+          for (const b of e.blocks) if (b.type === "text") response += b.text;
+        };
+        const onDone = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(response);
+        };
+        const onError = (e: { message: string }) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(new Error(e.message));
+        };
+        const cleanup = () => {
+          bus.off("agent:response-chunk", onChunk);
+          bus.off("agent:processing-done", onDone);
+          bus.off("agent:error", onError);
+        };
+
+        bus.on("agent:response-chunk", onChunk);
+        bus.on("agent:processing-done", onDone);
+        bus.on("agent:error", onError);
+
+        bus.emit("agent:submit", {
+          query: text,
+          modeInstruction: opts?.mode,
+        });
+      });
+    },
+
+    cancel() {
+      bus.emit("agent:cancel-request", {});
     },
 
     extensionContext(opts) {
       return {
         bus,
         contextManager,
-        getAcpClient: () => client,
+        llmClient,
         quit: opts.quit,
         setPalette,
         createBlockTransform: (o) => streamTransform.createBlockTransform(bus, o),
-        createFencedBlockTransform: (o) => streamTransform.createFencedBlockTransform(bus, o),
+        createFencedBlockTransform: (o) =>
+          streamTransform.createFencedBlockTransform(bus, o),
         getExtensionSettings: settingsMod.getExtensionSettings,
+        registerTool: (tool) => agentLoop?.registerTool(tool),
+        getTools: () => agentLoop?.getTools() ?? [],
         define: (name, fn) => handlers.define(name, fn),
         advise: (name, wrapper) => handlers.advise(name, wrapper),
         call: (name, ...args) => handlers.call(name, ...args),
@@ -105,7 +318,11 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     },
 
     kill() {
-      client.kill();
+      if (activeBackendName === "agent-sh") {
+        agentLoop?.kill();
+      } else if (activeBackendName) {
+        backends.get(activeBackendName)?.kill();
+      }
     },
   };
 }

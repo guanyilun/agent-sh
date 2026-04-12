@@ -1,7 +1,7 @@
 {
   "name": "agent-sh",
   "version": "0.4.0",
-  "description": "A shell-first terminal where any ACP-compatible AI agent is one keystroke away",
+  "description": "A shell-first terminal where AI is one keystroke away",
   "type": "module",
   "main": "dist/core.js",
   "types": "dist/core.d.ts",
@@ -67,10 +67,10 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.18.1",
     "cli-highlight": "^2.1.11",
     "marked": "^17.0.6",
     "node-pty": "^1.2.0-beta.12",
+    "openai": "^6.34.0",
     "tsx": "^4.19.0"
   },
   "devDependencies": {

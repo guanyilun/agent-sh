@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as path from "node:path";
 import { Shell } from "./shell.js";
 import { createCore } from "./core.js";
@@ -8,7 +8,7 @@ import tuiRenderer from "./extensions/tui-renderer.js";
 import slashCommands from "./extensions/slash-commands.js";
 import fileAutocomplete from "./extensions/file-autocomplete.js";
 import shellRecall from "./extensions/shell-recall.js";
-import shellExec from "./extensions/shell-exec.js";
+import commandSuggest from "./extensions/command-suggest.js";
 import { loadExtensions } from "./extension-loader.js";
 import type { AgentShellConfig } from "./types.js";
 
@@ -16,10 +16,6 @@ import type { AgentShellConfig } from "./types.js";
  * Capture the user's full shell environment.
  * This picks up env vars exported in .zshrc/.bashrc that the
  * Node.js process doesn't have (e.g. when launched from an IDE).
- *
- * Uses -l (login shell) to get .zprofile/.bash_profile vars, then
- * explicitly sources the interactive rc file (.zshrc/.bashrc) which
- * -l alone doesn't load (that requires -i, which blocks on TTY).
  */
 async function captureShellEnvAsync(shell: string): Promise<Record<string, string>> {
   return new Promise((resolve) => {
@@ -42,7 +38,7 @@ async function captureShellEnvAsync(shell: string): Promise<Record<string, strin
 
       child.on("close", (code) => {
         if (code !== 0 || !output) {
-          resolve({}); // Return empty to trigger fallback
+          resolve({});
           return;
         }
         const env: Record<string, string> = {};
@@ -54,10 +50,9 @@ async function captureShellEnvAsync(shell: string): Promise<Record<string, strin
       });
 
       child.on("error", () => {
-        resolve({}); // Return empty to trigger fallback
+        resolve({});
       });
 
-      // Safety timeout
       setTimeout(() => {
         child.kill("SIGTERM");
         resolve({});
@@ -68,14 +63,9 @@ async function captureShellEnvAsync(shell: string): Promise<Record<string, strin
   });
 }
 
-/**
- * Merge captured shell env into base env, only adding keys that don't exist.
- * This preserves any runtime modifications while adding missing shell vars.
- */
 function mergeShellEnv(baseEnv: Record<string, string>, shellEnv: Record<string, string>): Record<string, string> {
   const merged = { ...baseEnv };
   for (const [key, value] of Object.entries(shellEnv)) {
-    // Only add if key doesn't exist or is empty in base env
     if (!(key in merged) || !merged[key]) {
       merged[key] = value;
     }
@@ -84,119 +74,92 @@ function mergeShellEnv(baseEnv: Record<string, string>, shellEnv: Record<string,
 }
 
 function parseArgs(argv: string[]): AgentShellConfig {
-  // Priority: CLI args > Environment variables > Config file > Defaults
-  const defaultAgent = process.env.AGENT_SH_AGENT || "pi-acp";
-  let agentCommand = defaultAgent;
-  let agentArgs: string[] = [];
   let model: string | undefined;
   let extensions: string[] | undefined;
+  let provider: string | undefined;
   const shell = process.env.SHELL || "/bin/bash";
+
+  let apiKey: string | undefined = process.env.OPENAI_API_KEY;
+  let baseURL: string | undefined = process.env.OPENAI_BASE_URL;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--agent" && argv[i + 1]) {
-      agentCommand = argv[++i]!;
-    } else if (arg === "--agent-args" && argv[i + 1]) {
-      const argsString = argv[++i]!;
-      agentArgs = argsString.split(" ");
-      // Extract model from agent args if provided
-      const modelArgIndex = agentArgs.findIndex(a => a === "--model" || a === "-m");
-      if (modelArgIndex !== -1 && agentArgs[modelArgIndex + 1]) {
-        model = agentArgs[modelArgIndex + 1];
-      }
+    if (arg === "--model" && argv[i + 1]) {
+      model = argv[++i]!;
+    } else if (arg === "--api-key" && argv[i + 1]) {
+      apiKey = argv[++i]!;
+    } else if (arg === "--base-url" && argv[i + 1]) {
+      baseURL = argv[++i]!;
+    } else if (arg === "--provider" && argv[i + 1]) {
+      provider = argv[++i]!;
     } else if (arg === "--shell" && argv[i + 1]) {
-      return { agentCommand, agentArgs, shell: argv[++i]!, model, extensions };
+      return { shell: argv[++i]!, model, extensions, apiKey, baseURL, provider };
     } else if ((arg === "--extensions" || arg === "-e") && argv[i + 1]) {
       const exts = argv[++i]!.split(",").map(s => s.trim());
       extensions = extensions ? [...extensions, ...exts] : exts;
     } else if (arg === "--help" || arg === "-h") {
-      console.log(`agent-sh — a shell-first terminal with ACP agent access
+      console.log(`agent-sh — a shell-first terminal where AI is one keystroke away
 
 Usage: agent-sh [options]
 
-Quick Start:
-  npm start           Start with default agent (pi-acp)
-  npm run pi          Start with pi-acp agent
-  npm run claude      Start with Claude agent
+Provider Profiles:
+  --provider <name>   Use a provider from ~/.agent-sh/settings.json
+  --model <name>      Override default model
 
-Options:
-  --agent <cmd>       Agent command to launch (default: $AGENT_SH_AGENT or "pi-acp")
-  --agent-args <args> Arguments for the agent (space-separated, quoted)
+Direct LLM API:
+  --api-key <key>     API key for OpenAI-compatible provider (or set OPENAI_API_KEY)
+  --base-url <url>    Base URL for API (or set OPENAI_BASE_URL)
+
+General Options:
   --shell <path>      Shell to use (default: $SHELL or /bin/bash)
   -e, --extensions    Extensions to load (comma-separated, repeatable)
   -h, --help          Show this help
 
-Extensions:
-  Extensions are loaded from (in order):
-    1. -e flags:  npm packages or file paths
-    2. settings:  ~/.agent-sh/settings.json → "extensions": [...]
-    3. directory:  ~/.agent-sh/extensions/ (files or dirs with index.ts)
-
 Environment Variables:
-  AGENT_SH_AGENT   Default agent to use (e.g., "pi-acp", "claude")
+  OPENAI_API_KEY     API key for LLM provider
+  OPENAI_BASE_URL    Base URL override (e.g., http://localhost:11434/v1 for Ollama)
 
 Examples:
-  npm start --agent pi-acp
-  npm start -- -e my-extension-package
-  npm start -- -e ./local-ext.ts -e another-package
+  # Use a configured provider
+  agent-sh --provider openai
+
+  # Direct API access
+  agent-sh --api-key "$KEY" --model gpt-4o
+
+  # Local model via Ollama
+  agent-sh --base-url http://localhost:11434/v1 --model llama3
 
 Inside the shell:
   Type normally        Commands run in your real shell
-  > <query>           Send query to the AI agent
-  > /help             Show available slash commands
+  ? <query>           Ask the AI agent a question (query mode)
+  > <command>         Have the agent run a command (execute mode)
+  ? /help             Show available slash commands
   Ctrl-C              Cancel agent response (or signal shell as usual)
 `);
       process.exit(0);
     }
   }
 
-  return { agentCommand, agentArgs, shell, model, extensions };
-}
-
-function formatAgentInfo(
-  agentInfo: { name: string; version: string },
-  model?: string,
-  thoughtLevel?: string | null,
-): string {
-  const name = agentInfo.name.replace(/-acp$/, "").replace(/-/g, " ");
-  let infoStr = `${p.dim}${name}${p.reset}`;
-  if (model) {
-    const cleanModel = model
-      .replace(/^openai\//i, "")
-      .replace(/^anthropic\//i, "")
-      .replace(/^google\//i, "");
-    infoStr += ` ${p.dim}(${cleanModel})${p.reset}`;
-  }
-  if (thoughtLevel) {
-    // Clean up verbose mode names like "Thinking: medium" → "medium"
-    const label = thoughtLevel.replace(/^Thinking:\s*/i, "");
-    infoStr += ` ${p.dim}[${label}]${p.reset}`;
-  }
-  return infoStr;
+  return { shell, model, extensions, apiKey, baseURL, provider };
 }
 
 async function main(): Promise<void> {
-  // Set up signal handlers before any terminal operations.
-  // Ignore SIGTTOU to prevent suspension when modifying terminal settings.
   process.on("SIGTTOU", () => {});
-  // Also ignore SIGTTIN which can occur when reading from terminal while backgrounded.
   process.on("SIGTTIN", () => {});
 
   const config = parseArgs(process.argv.slice(2));
 
-  // Capture user's full shell environment (from .zshrc/.bashrc etc.)
-  // This must complete before spawning the agent so it sees all env vars.
+  // Capture user's full shell environment
   const baseEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined) baseEnv[k] = v;
   }
-  config.shellEnv = baseEnv;
 
   const shellPath = config.shell || process.env.SHELL || "/bin/bash";
   try {
     const shellEnv = await captureShellEnvAsync(shellPath);
     if (Object.keys(shellEnv).length > 0) {
-      config.shellEnv = mergeShellEnv(config.shellEnv, shellEnv);
+      Object.assign(baseEnv, mergeShellEnv(baseEnv, shellEnv));
       if (process.env.DEBUG) {
         console.error('[agent-sh] Shell environment captured');
       }
@@ -207,7 +170,11 @@ async function main(): Promise<void> {
 
   // ── Core (frontend-agnostic) ──────────────────────────────────
   const core = createCore(config);
-  const { bus, client } = core;
+  const { bus } = core;
+
+  // Track agent info from bus events (populated by extension backends)
+  let agentInfo: { name: string; version: string; model?: string } | null = null;
+  bus.on("agent:info", (info) => { agentInfo = info; });
 
   // ── Interactive frontend ──────────────────────────────────────
   if (process.env.DEBUG) {
@@ -231,8 +198,6 @@ async function main(): Promise<void> {
     console.error('[agent-sh] Creating Shell...');
   }
 
-  // Small delay on macOS to ensure we're fully in the foreground process group
-  // before spawning the PTY. This prevents SIGTTOU suspension.
   await new Promise(resolve => setTimeout(resolve, 100));
 
   const shell = new Shell({
@@ -242,13 +207,11 @@ async function main(): Promise<void> {
     shell: config.shell || process.env.SHELL || "/bin/bash",
     cwd: process.cwd(),
     onShowAgentInfo: () => {
-      if (client.isConnected()) {
-        const agentInfo = client.getAgentInfo();
-        const model = client.getModel();
-        if (agentInfo) {
-          const mode = client.getCurrentMode();
-          return { info: formatAgentInfo(agentInfo, model, mode?.name ?? null) };
-        }
+      if (agentInfo) {
+        return { info: `${p.dim}${agentInfo.name}${agentInfo.model ? ` (${agentInfo.model})` : ""}${p.reset}` };
+      }
+      if (core.llmClient) {
+        return { info: `${p.dim}agent-sh (${core.llmClient.model})${p.reset}` };
       }
       return { info: "" };
     },
@@ -277,6 +240,18 @@ async function main(): Promise<void> {
     promptIcon: "⟩",
     indicator: "●",
     onSubmit(query, b) {
+      const onToolDone = (e: { kind?: string }) => {
+        if (e.kind === "execute") {
+          b.emit("agent:cancel-request", { silent: true });
+        }
+      };
+      const cleanup = () => {
+        b.off("agent:tool-completed", onToolDone);
+        b.off("agent:processing-done", cleanup);
+      };
+      b.on("agent:tool-completed", onToolDone);
+      b.on("agent:processing-done", cleanup);
+
       b.emit("agent:submit", { query, modeLabel: "Execute", modeInstruction: "[mode: execute]" });
     },
     returnToSelf: false,
@@ -292,22 +267,13 @@ async function main(): Promise<void> {
   slashCommands(extCtx);
   fileAutocomplete(extCtx);
   shellRecall(extCtx);
+  commandSuggest(extCtx);
 
-  // Shell-exec: start the Unix domain socket bridge so agent extensions
-  // and MCP servers can route tool calls to the PTY via the EventBus.
-  const tmpDir = shell.getTmpDir();
-  if (tmpDir) {
-    if (process.env.DEBUG) {
-      console.error('[agent-sh] Starting shell-exec socket server...');
-    }
-    shellExec(extCtx, { socketPath: `${tmpDir}/shell.sock` });
-  }
-
-  // Load extensions with timeout to prevent blocking startup
+  // Load user extensions (may register alternative agent backends)
   if (process.env.DEBUG) {
     console.error('[agent-sh] Loading extensions...');
   }
-  const loadExtensionsTimeoutMs = 10000; // 10 seconds
+  const loadExtensionsTimeoutMs = 10000;
   await Promise.race([
     loadExtensions(extCtx, config.extensions),
     new Promise<void>((_, reject) =>
@@ -320,25 +286,16 @@ async function main(): Promise<void> {
     console.error('[agent-sh] Extensions loaded');
   }
 
-  // ── Agent connection (async — don't block shell startup) ──────
-  const agentStartTimeoutMs = 35000; // 35 seconds (slightly longer than internal timeouts)
-  Promise.race([
-    core.start(),
-    new Promise<void>((_, reject) =>
-      setTimeout(() => reject(new Error(`Agent connection timeout`)), agentStartTimeoutMs)
-    ),
-  ]).catch((err) => {
-    console.error(`Failed to connect to ${config.agentCommand}:`, err);
-  });
+  // ── Activate agent backend ────────────────────────────────────
+  // Extensions had their chance to register via agent:register-backend.
+  // If none did, the built-in AgentLoop gets wired to bus events.
+  core.activateBackend();
 
   // ── Terminal lifecycle ────────────────────────────────────────
   process.on("SIGTERM", cleanup);
   process.on("SIGHUP", cleanup);
 
-  // Handle terminal stop/resume signals properly
   process.on("SIGTSTP", () => {
-    // Handle Ctrl+Z - suspend the entire process group
-    // Restore terminal state before suspending
     if (process.stdin.isTTY) {
       try {
         process.stdin.setRawMode(false);
@@ -346,15 +303,12 @@ async function main(): Promise<void> {
         // Ignore
       }
     }
-    // Re-send SIGSTOP to actually suspend
     process.kill(process.pid!, "SIGSTOP");
   });
 
   process.on("SIGCONT", () => {
-    // Re-acquire terminal when brought back to foreground
     if (process.stdin.isTTY) {
       try {
-        // Ensure we reacquire controlling terminal
         process.stdin.setRawMode(true);
       } catch {
         // May fail if stdin is not a TTY
@@ -374,18 +328,15 @@ async function main(): Promise<void> {
     process.exit(e.exitCode);
   });
 
-  // Set up stdin - resume after all event listeners are in place
   if (process.env.DEBUG) {
     console.error('[agent-sh] Resuming stdin...');
   }
   process.stdin.resume();
 
-  // Set raw mode after resume to avoid SIGTTOU issues
   if (process.stdin.isTTY) {
     if (process.env.DEBUG) {
       console.error('[agent-sh] Setting raw mode...');
     }
-    // Use setImmediate to ensure we're in the next tick
     setImmediate(() => {
       try {
         process.stdin.setRawMode(true);
@@ -396,7 +347,6 @@ async function main(): Promise<void> {
         if (process.env.DEBUG) {
           console.error(`[agent-sh] Failed to set raw mode: ${err}`);
         }
-        // May fail if process is in background; SIGTTOU handler prevents suspension
       }
     });
   }

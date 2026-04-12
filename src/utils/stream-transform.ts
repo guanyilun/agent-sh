@@ -43,40 +43,25 @@ export function createBlockTransform(
   let buffer = "";
 
   bus.onPipe("agent:response-chunk", (e) => {
-    // Process text from e.text and from text blocks in e.blocks
     const outBlocks: ContentBlock[] = [];
 
-    if (e.blocks) {
-      for (const block of e.blocks) {
-        if (block.type === "text") {
-          // Run delimiter detection on text blocks
-          buffer += block.text;
-          const { blocks: parsed, pending } = processBuffer(buffer, opts);
-          buffer = pending;
-          outBlocks.push(...parsed);
-        } else {
-          // Pass through non-text blocks unchanged
-          outBlocks.push(block);
-        }
+    for (const block of e.blocks) {
+      if (block.type === "text") {
+        buffer += block.text;
+        const { blocks: parsed, pending } = processBuffer(buffer, opts);
+        buffer = pending;
+        outBlocks.push(...parsed);
+      } else {
+        outBlocks.push(block);
       }
     }
 
-    // Also process any raw text not yet in blocks
-    if (e.text) {
-      buffer += e.text;
-      const { blocks: parsed, pending } = processBuffer(buffer, opts);
-      buffer = pending;
-      outBlocks.push(...parsed);
-    }
-
-    return { ...e, text: "", blocks: outBlocks };
+    return { blocks: outBlocks };
   });
 
   bus.onPipe("agent:response-done", (e) => {
     if (buffer) {
-      // Unclosed pattern — flush as text
       bus.emitTransform("agent:response-chunk", {
-        text: buffer,
         blocks: [{ type: "text", text: buffer }],
       });
       buffer = "";
@@ -133,35 +118,25 @@ export function createFencedBlockTransform(
 
   bus.onPipe("agent:response-chunk", (e) => {
     if (flushing) return e; // pass through during flush to avoid re-buffering
-    // Collect text from blocks or raw text
+
+    // Separate text blocks (to buffer) from non-text blocks (pass through)
     let incoming = "";
-    if (e.blocks) {
-      // Process text blocks, pass through non-text blocks
-      const passthrough: ContentBlock[] = [];
-      for (const block of e.blocks) {
-        if (block.type === "text") {
-          incoming += block.text;
-        } else {
-          passthrough.push(block);
-        }
+    const passthrough: ContentBlock[] = [];
+    for (const block of e.blocks) {
+      if (block.type === "text") {
+        incoming += block.text;
+      } else {
+        passthrough.push(block);
       }
-      const { blocks, pending } = processFencedBuffer(buffer + incoming, opts, inFence, fenceMatch, fenceLines);
-      buffer = pending.text;
-      inFence = pending.inFence;
-      fenceMatch = pending.fenceMatch;
-      fenceLines = pending.fenceLines;
-      return { ...e, text: "", blocks: [...passthrough, ...blocks] };
     }
 
-    // No blocks yet — work with raw text
-    incoming = buffer + e.text;
-    const { blocks, pending } = processFencedBuffer(incoming, opts, inFence, fenceMatch, fenceLines);
+    const { blocks, pending } = processFencedBuffer(buffer + incoming, opts, inFence, fenceMatch, fenceLines);
     buffer = pending.text;
     inFence = pending.inFence;
     fenceMatch = pending.fenceMatch;
     fenceLines = pending.fenceLines;
-    const existing = e.blocks ?? [];
-    return { ...e, text: "", blocks: [...existing, ...blocks] };
+
+    return { blocks: [...passthrough, ...blocks] };
   });
 
   function flushBuffer(): void {
@@ -177,7 +152,6 @@ export function createFencedBlockTransform(
     if (remaining) {
       flushing = true;
       bus.emitTransform("agent:response-chunk", {
-        text: "",
         blocks: [{ type: "text", text: remaining }],
       });
       flushing = false;
