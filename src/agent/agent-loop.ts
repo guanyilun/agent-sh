@@ -230,6 +230,42 @@ export class AgentLoop implements AgentBackend {
     return Math.min(1000 * Math.pow(2, attempt), 30_000);
   }
 
+  /** Format an error with provider context for user-facing display. */
+  private formatError(e: unknown): string {
+    const raw = e instanceof Error ? e.message : String(e);
+    const status = (e as any).status;
+    const model = this.currentModel;
+    const baseURL = (this.llmClient as any).config?.baseURL;
+    const provider = this.currentMode.provider;
+
+    // Connection errors — most likely misconfigured provider
+    if (raw.includes("ECONNREFUSED") || raw.includes("ECONNRESET") ||
+        raw.includes("ETIMEDOUT") || raw.includes("fetch failed") ||
+        raw.includes("socket hang up")) {
+      const target = baseURL ?? provider ?? "provider";
+      return `Could not connect to ${target} (${raw}). Check that the API endpoint is reachable.`;
+    }
+
+    // Auth errors
+    if (status === 401 || raw.toLowerCase().includes("auth")) {
+      return `Authentication failed for ${provider ?? "provider"} (model: ${model}). Check your API key.`;
+    }
+
+    // Model not found
+    if (status === 404) {
+      return `Model "${model}" not found at ${provider ?? baseURL ?? "provider"}. Check the model name.`;
+    }
+
+    // Rate limit (after retries exhausted)
+    if (status === 429) {
+      return `Rate limited by ${provider ?? "provider"} (model: ${model}). Try again in a moment.`;
+    }
+
+    // Generic with context
+    const context = provider ? ` (${provider}, model: ${model})` : ` (model: ${model})`;
+    return `${raw}${context}`;
+  }
+
   private registerCoreTools(): void {
     const getCwd = () => this.contextManager.getCwd();
     const getEnv = () => {
@@ -394,7 +430,7 @@ export class AgentLoop implements AgentBackend {
       if (signal.aborted && signal.reason !== "silent") {
         this.bus.emit("agent:cancelled", {});
       } else if (!signal.aborted) {
-        const msg = e instanceof Error ? e.message : String(e);
+        const msg = this.formatError(e);
         this.bus.emit("agent:error", { message: msg });
       }
     } finally {

@@ -249,7 +249,14 @@ export default function activate(ctx: ExtensionContext): void {
     endAgentResponse();
   });
 
-  bus.on("agent:error", (e) => showError(e.message));
+  bus.on("agent:error", (e) => {
+    stopCurrentSpinner();
+    showCollapsedThinking();
+    if (!s.renderer) startAgentResponse();
+    s.renderer!.writeLine(`${p.error}Error: ${e.message}${p.reset}`);
+    s.renderer!.writeLine("");
+    drain();
+  });
 
   bus.on("permission:request", (e) => {
     stopCurrentSpinner();
@@ -272,7 +279,12 @@ export default function activate(ctx: ExtensionContext): void {
     if (e.key === "\x0f") expandLastDiff();       // Ctrl+O
     if (e.key === "\x14") toggleThinkingDisplay(); // Ctrl+T
   });
-  bus.on("ui:info", (e) => showInfo(e.message));
+  bus.on("ui:info", (e) => {
+    stopCurrentSpinner();
+    showInfo(e.message);
+    // Restart spinner if agent is still processing
+    if (s.renderer) startThinkingSpinner();
+  });
   bus.on("ui:error", (e) => showError(e.message));
   bus.on("ui:suggestion", (e) => {
     writer.write(`${p.dim}💡 ${e.text}${p.reset}\n`);
