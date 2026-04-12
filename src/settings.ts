@@ -85,7 +85,7 @@ const DEFAULTS: Required<Settings> = {
   shellTailLines: 5,
   recallExpandMaxLines: 100,
   maxCommandOutputLines: 3,
-  readOutputMaxLines: 0,
+  readOutputMaxLines: 10,
   diffMaxLines: 20,
   skillPaths: [],
   startupBanner: true,

@@ -28,13 +28,14 @@ import { STATIC_SYSTEM_PROMPT, buildDynamicContext } from "./system-prompt.js";
 
 // Core tool factories
 import { createBashTool } from "./tools/bash.js";
-import { createReadFileTool } from "./tools/read-file.js";
+import { createReadFileTool, type FileReadCache } from "./tools/read-file.js";
 import { createWriteFileTool } from "./tools/write-file.js";
 import { createEditFileTool } from "./tools/edit-file.js";
 import { createGrepTool } from "./tools/grep.js";
 import { createGlobTool } from "./tools/glob.js";
 import { createLsTool } from "./tools/ls.js";
 import { createUserShellTool } from "./tools/user-shell.js";
+import { createDisplayTool } from "./tools/display.js";
 import { createListSkillsTool } from "./tools/list-skills.js";
 import { discoverProjectSkills } from "./skills.js";
 
@@ -48,6 +49,7 @@ export class AgentLoop implements AgentBackend {
   private abortController: AbortController | null = null;
   private toolRegistry = new ToolRegistry();
   private conversation = new ConversationState();
+  private fileReadCache: FileReadCache = new Map();
   private modes: AgentMode[];
   private currentModeIndex = 0;
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
@@ -87,8 +89,8 @@ export class AgentLoop implements AgentBackend {
       this.boundListeners.push({ event, fn });
     };
 
-    on("agent:submit", ({ query, modeInstruction, modeLabel }) => {
-      this.handleQuery(query, modeInstruction, modeLabel).catch(() => {});
+    on("agent:submit", ({ query }) => {
+      this.handleQuery(query).catch(() => {});
     });
     on("agent:cancel-request", (e) => {
       this.abortController?.abort(e.silent ? "silent" : undefined);
@@ -337,7 +339,7 @@ export class AgentLoop implements AgentBackend {
     this.toolRegistry.register(
       createBashTool({ getCwd, getEnv, bus: this.bus }),
     );
-    this.toolRegistry.register(createReadFileTool(getCwd));
+    this.toolRegistry.register(createReadFileTool(getCwd, this.fileReadCache));
     this.toolRegistry.register(createWriteFileTool(getCwd));
     this.toolRegistry.register(createEditFileTool(getCwd));
     this.toolRegistry.register(createGrepTool(getCwd));
@@ -345,6 +347,9 @@ export class AgentLoop implements AgentBackend {
     this.toolRegistry.register(createLsTool(getCwd));
     this.toolRegistry.register(
       createUserShellTool({ getCwd, bus: this.bus }),
+    );
+    this.toolRegistry.register(
+      createDisplayTool({ getCwd, bus: this.bus }),
     );
     this.toolRegistry.register(createListSkillsTool(getCwd));
   }
@@ -368,10 +373,15 @@ export class AgentLoop implements AgentBackend {
 
     // Wraps each tool call: permission → execute → emit events.
     // Extensions advise to add safe-mode, logging, metrics, custom policies.
+    // The ctx.onChunk callback is exposed so advisors can wrap it to
+    // intercept/transform streamed tool output (e.g. secret redaction).
     h.define("tool:execute", async (ctx: {
       name: string; id: string;
       args: Record<string, unknown>;
       tool: ToolDefinition;
+      onChunk?: (chunk: string) => void;
+      batchIndex?: number;
+      batchTotal?: number;
     }) => {
       const { name, id, args, tool } = ctx;
       const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" as const };
@@ -380,7 +390,9 @@ export class AgentLoop implements AgentBackend {
       // Permission gating
       if (tool.requiresPermission) {
         let permKind = "tool-call";
-        let permTitle = name;
+        let permTitle = typeof args.description === "string"
+          ? `${name}: ${args.description}`
+          : name;
         let metadata: Record<string, unknown> = { args };
 
         // For file-modifying tools, pre-compute diff for display
@@ -432,22 +444,37 @@ export class AgentLoop implements AgentBackend {
       }
 
       // Emit tool-started for TUI
+      const label = tool.displayName ?? name;
       this.bus.emit("agent:tool-started", {
-        title: name, toolCallId: id,
-        kind: display.kind, locations: display.locations, rawInput: args,
+        title: typeof args.description === "string" ? `${label}: ${args.description}` : label,
+        toolCallId: id,
+        kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
+        displayDetail: tool.formatCall?.(args),
+        batchIndex: ctx.batchIndex, batchTotal: ctx.batchTotal,
       });
       this.bus.emit("agent:tool-call", { tool: name, args });
 
-      // Execute — suppress streaming output if diff was already shown
+      // Execute — use ctx.onChunk so advisors can wrap the streaming callback.
+      // Suppress streaming output if diff was already shown.
       const onChunk = (tool.showOutput !== false && !diffShown)
-        ? (chunk: string) => { this.bus.emit("agent:tool-output-chunk", { chunk }); }
+        ? ctx.onChunk
         : undefined;
       const result = await tool.execute(args, onChunk);
 
-      // Emit completion events
-      this.bus.emit("agent:tool-completed", {
+      // Invalidate read cache when a file is modified
+      if (tool.modifiesFiles && typeof args.path === "string" && !result.isError) {
+        const absPath = path.resolve(process.cwd(), args.path);
+        this.fileReadCache.delete(absPath);
+      }
+
+      // Compute result display: tool-provided → default (none)
+      const resultDisplay = tool.formatResult?.(args, result);
+
+      // Emit completion events (via transform pipe so extensions can override)
+      this.bus.emitTransform("agent:tool-completed", {
         toolCallId: id, exitCode: result.exitCode,
         rawOutput: result.content, kind: display.kind,
+        resultDisplay,
       });
       this.bus.emit("agent:tool-output", {
         tool: name, output: result.content, exitCode: result.exitCode,
@@ -457,11 +484,7 @@ export class AgentLoop implements AgentBackend {
     });
   }
 
-  private async handleQuery(
-    query: string,
-    modeInstruction?: string,
-    modeLabel?: string,
-  ): Promise<void> {
+  private async handleQuery(query: string): Promise<void> {
     // Cancel any in-flight loop (concurrent prompt handling)
     if (this.abortController) {
       this.abortController.abort();
@@ -472,16 +495,12 @@ export class AgentLoop implements AgentBackend {
     // raise the limit to avoid spurious warnings on multi-tool queries.
     setMaxListeners(50, signal);
 
-    this.bus.emit("agent:query", { query, modeLabel });
+    this.bus.emit("agent:query", { query });
     this.bus.emit("agent:processing-start", {});
     let responseText = "";
 
     try {
-      // Prepend mode instruction to the user message
-      const userMessage = modeInstruction
-        ? `${modeInstruction}\n${query}`
-        : query;
-      this.conversation.addUserMessage(userMessage);
+      this.conversation.addUserMessage(query);
 
       responseText = await this.executeLoop(signal);
     } catch (e) {
@@ -546,17 +565,33 @@ export class AgentLoop implements AgentBackend {
       // No tool calls → agent is done
       if (toolCalls.length === 0) break;
 
-      // Execute each tool call
-      for (const tc of toolCalls) {
-        if (signal.aborted) break;
+      // Emit batch info so the TUI can render group headers upfront
+      {
+        const groupMap = new Map<string, Array<{ name: string; displayDetail?: string }>>();
+        for (const tc of toolCalls) {
+          const tool = this.toolRegistry.get(tc.name);
+          const kind = tool?.getDisplayInfo?.((() => { try { return JSON.parse(tc.argumentsJson); } catch { return {}; } })())?.kind ?? "execute";
+          let args: Record<string, unknown> = {};
+          try { args = JSON.parse(tc.argumentsJson); } catch {}
+          const detail = tool?.formatCall?.(args);
+          if (!groupMap.has(kind)) groupMap.set(kind, []);
+          groupMap.get(kind)!.push({ name: tc.name, displayDetail: detail });
+        }
+        const groups = Array.from(groupMap.entries()).map(([kind, tools]) => ({ kind, tools }));
+        this.bus.emit("agent:tool-batch", { groups });
+      }
 
+      // Execute tool calls — run read-only tools in parallel, permission-
+      // requiring tools sequentially (to avoid overlapping permission prompts).
+      const batchTotal = toolCalls.length;
+      const executeSingle = async (tc: PendingToolCall, batchIndex?: number) => {
         const tool = this.toolRegistry.get(tc.name);
         if (!tool) {
           this.conversation.addToolResult(
             tc.id,
             `Error: Unknown tool "${tc.name}"`,
           );
-          continue;
+          return;
         }
 
         let args: Record<string, unknown>;
@@ -567,21 +602,75 @@ export class AgentLoop implements AgentBackend {
             tc.id,
             `Error: Invalid JSON arguments for ${tc.name}`,
           );
-          continue;
+          return;
         }
 
         // Execute via handler — extensions can advise to add safe-mode,
         // logging, metrics, custom permission policies, etc.
+        const defaultOnChunk = (chunk: string) => {
+          this.bus.emit("agent:tool-output-chunk", { chunk });
+        };
         const result = await this.handlers.call(
           "tool:execute",
-          { name: tc.name, id: tc.id, args, tool },
+          { name: tc.name, id: tc.id, args, tool, onChunk: defaultOnChunk,
+            batchIndex, batchTotal: batchTotal > 1 ? batchTotal : undefined },
         );
 
-        // Add tool result to conversation
-        const content = result.isError
+        // Add tool result to conversation (truncate large outputs to avoid
+        // blowing through the context window on a single tool call)
+        let content = result.isError
           ? `Error: ${result.content}`
           : result.content;
+        const maxBytes = 16_384; // ~4k tokens
+        if (content.length > maxBytes) {
+          const headBytes = Math.floor(maxBytes * 0.6);
+          const tailBytes = maxBytes - headBytes;
+          const lines = content.split("\n");
+          let headEnd = 0, headLen = 0;
+          for (let i = 0; i < lines.length && headLen + lines[i].length + 1 <= headBytes; i++) {
+            headLen += lines[i].length + 1;
+            headEnd = i + 1;
+          }
+          let tailStart = lines.length, tailLen = 0;
+          for (let i = lines.length - 1; i >= headEnd && tailLen + lines[i].length + 1 <= tailBytes; i--) {
+            tailLen += lines[i].length + 1;
+            tailStart = i;
+          }
+          const omitted = tailStart - headEnd;
+          content = [
+            ...lines.slice(0, headEnd),
+            `\n[… ${omitted} lines omitted (output truncated to ${Math.round(maxBytes / 1024)}KB) …]\n`,
+            ...lines.slice(tailStart),
+          ].join("\n");
+        }
         this.conversation.addToolResult(tc.id, content);
+      };
+
+      // Partition into parallel-safe (read-only) and sequential (needs permission)
+      const parallel: PendingToolCall[] = [];
+      const sequential: PendingToolCall[] = [];
+      for (const tc of toolCalls) {
+        const tool = this.toolRegistry.get(tc.name);
+        if (tool && !tool.requiresPermission && !tool.modifiesFiles) {
+          parallel.push(tc);
+        } else {
+          sequential.push(tc);
+        }
+      }
+
+      // Run read-only tools in parallel
+      let batchIdx = 0;
+      if (parallel.length > 0 && !signal.aborted) {
+        await Promise.all(parallel.map(tc => {
+          const idx = ++batchIdx;
+          return signal.aborted ? Promise.resolve() : executeSingle(tc, idx);
+        }));
+      }
+
+      // Run permission-requiring tools sequentially
+      for (const tc of sequential) {
+        if (signal.aborted) break;
+        await executeSingle(tc, ++batchIdx);
       }
 
       // Loop back — LLM sees tool results

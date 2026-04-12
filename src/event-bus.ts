@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { AgentMode } from "./types.js";
+import type { ToolResultDisplay } from "./agent/types.js";
 
 /**
  * Typed event map — every event has a known payload shape.
@@ -19,14 +20,14 @@ export interface ShellEvents {
   "shell:agent-exec-done": Record<string, never>;
 
   // Agent input (frontend → core: user submitted a query or wants to cancel)
-  "agent:submit": { query: string; modeInstruction?: string; modeLabel?: string };
+  "agent:submit": { query: string };
   "agent:cancel-request": { silent?: boolean };
 
   // Input mode registration (extensions → InputHandler)
   "input-mode:register": import("./types.js").InputModeConfig;
 
   // Agent interaction
-  "agent:query": { query: string; modeLabel?: string };
+  "agent:query": { query: string };
   "agent:thinking-chunk": { text: string };
   "agent:response-chunk": { blocks: ContentBlock[] };
   "agent:response-done": { response: string };
@@ -48,19 +49,34 @@ export interface ShellEvents {
     exitCode: number | null;
   };
 
+  // Tool batch — emitted before execution with all tool calls grouped by kind
+  "agent:tool-batch": {
+    groups: Array<{
+      kind: string;
+      tools: Array<{ name: string; displayDetail?: string }>;
+    }>;
+  };
+
   // Tool rendering (used by TUI for display — distinct data shape from above)
   "agent:tool-started": {
     title: string;
     toolCallId?: string;
     kind?: string;
+    icon?: string;
     locations?: { path: string; line?: number | null }[];
     rawInput?: unknown;
+    /** Pre-formatted display detail from tool's formatCall(). */
+    displayDetail?: string;
+    batchIndex?: number;
+    batchTotal?: number;
   };
   "agent:tool-completed": {
     toolCallId?: string;
     exitCode: number | null;
     rawOutput?: unknown;
     kind?: string;
+    /** Structured result display — set by formatResult or defaults, overridable via onPipe. */
+    resultDisplay?: ToolResultDisplay;
   };
   "agent:tool-output-chunk": { chunk: string };
 
@@ -115,6 +131,7 @@ export interface ShellEvents {
     command: string;
     output: string;
     cwd: string;
+    exitCode: number | null;
     done: boolean;
   };
 

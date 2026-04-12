@@ -5,7 +5,12 @@ export function createGrepTool(getCwd: () => string): ToolDefinition {
   return {
     name: "grep",
     description:
-      "Search file contents using ripgrep (rg). Returns matching lines with file paths and line numbers.",
+      "Search file contents using ripgrep. ALWAYS use this instead of running grep/rg via bash. " +
+      "Supports three output modes: " +
+      "'files_with_matches' (default, returns file paths only — use this to find which files contain a pattern), " +
+      "'content' (matching lines with optional context_before/context_after), and " +
+      "'count' (match counts per file). " +
+      "Use head_limit and offset for pagination.",
     input_schema: {
       type: "object",
       properties: {
@@ -22,14 +27,60 @@ export function createGrepTool(getCwd: () => string): ToolDefinition {
           description:
             "Glob pattern for files to include (e.g., '*.ts')",
         },
+        output_mode: {
+          type: "string",
+          enum: ["files_with_matches", "content", "count"],
+          description:
+            "Output mode: 'files_with_matches' (default, file paths only), " +
+            "'content' (matching lines), 'count' (match counts per file)",
+        },
+        case_insensitive: {
+          type: "boolean",
+          description: "Case insensitive search (default: false)",
+        },
+        context_before: {
+          type: "number",
+          description: "Lines to show before each match (content mode only)",
+        },
+        context_after: {
+          type: "number",
+          description: "Lines to show after each match (content mode only)",
+        },
+        head_limit: {
+          type: "number",
+          description:
+            "Max lines/entries to return (default: 200 for files_with_matches, 150 for content/count). Pass 0 for unlimited.",
+        },
+        offset: {
+          type: "number",
+          description:
+            "Skip first N lines/entries before applying head_limit. Use with head_limit for pagination.",
+        },
       },
       required: ["pattern"],
     },
 
     showOutput: false,
 
+    formatResult: (args, result) => {
+      if (result.isError || result.content === "No matches found.") return { summary: "0 matches" };
+      const lines = result.content.split("\n").filter(Boolean);
+      // Strip pagination info line from count
+      const resultLines = lines.filter(l => !l.startsWith("[Showing "));
+      const mode = (args.output_mode as string) ?? "files_with_matches";
+      if (mode === "files_with_matches") {
+        return { summary: `${resultLines.length} files` };
+      }
+      if (mode === "count") {
+        const total = resultLines.reduce((sum, l) => sum + (parseInt(l.split(":").pop() ?? "0", 10) || 0), 0);
+        return { summary: `${total} matches` };
+      }
+      return { summary: `${resultLines.length} lines` };
+    },
+
     getDisplayInfo: (args) => ({
       kind: "search",
+      icon: "⌕",
       locations: args.path
         ? [{ path: args.path as string }]
         : [],
@@ -39,18 +90,43 @@ export function createGrepTool(getCwd: () => string): ToolDefinition {
       const pattern = args.pattern as string;
       const searchPath = (args.path as string) ?? ".";
       const include = args.include as string | undefined;
+      const mode = (args.output_mode as string) ?? "files_with_matches";
+      const caseInsensitive = args.case_insensitive as boolean | undefined;
+      const contextBefore = args.context_before as number | undefined;
+      const contextAfter = args.context_after as number | undefined;
+      const headLimit = args.head_limit as number | undefined;
+      const offset = (args.offset as number) ?? 0;
 
-      const parts = [
-        "rg",
-        "--line-number",
-        "--no-heading",
-        "--color=never",
-        "--max-count=200",
-      ];
-      if (include) {
-        parts.push("--glob", JSON.stringify(include));
+      const shellEsc = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
+      const parts = ["rg", "--color=never"];
+
+      // Mode-specific flags
+      if (mode === "files_with_matches") {
+        parts.push("--files-with-matches");
+      } else if (mode === "count") {
+        parts.push("--count");
+      } else {
+        // content mode
+        parts.push("--line-number", "--no-heading");
+        if (contextBefore != null && contextBefore > 0) {
+          parts.push(`-B${contextBefore}`);
+        }
+        if (contextAfter != null && contextAfter > 0) {
+          parts.push(`-A${contextAfter}`);
+        }
+        // If neither -A nor -B specified, use --max-count to limit per-file
+        if (contextBefore == null && contextAfter == null) {
+          parts.push("--max-count=50");
+        }
       }
-      parts.push(JSON.stringify(pattern), JSON.stringify(searchPath));
+
+      if (caseInsensitive) {
+        parts.push("-i");
+      }
+      if (include) {
+        parts.push("--glob", shellEsc(include));
+      }
+      parts.push("-e", shellEsc(pattern), shellEsc(searchPath));
 
       const { session, done } = executeCommand({
         command: parts.join(" "),
@@ -68,20 +144,45 @@ export function createGrepTool(getCwd: () => string): ToolDefinition {
         };
       }
 
-      // Truncate to ~100 lines
-      const lines = session.output.split("\n");
-      if (lines.length > 100) {
-        return {
-          content:
-            lines.slice(0, 100).join("\n") +
-            `\n[${lines.length - 100} more lines truncated]`,
-          exitCode: 0,
-          isError: false,
-        };
+      let output = session.output;
+
+      // Cap individual line lengths to 500 chars to prevent minified/base64 flood
+      if (mode === "content") {
+        const MAX_LINE_LEN = 500;
+        output = output
+          .split("\n")
+          .map((line) =>
+            line.length > MAX_LINE_LEN
+              ? line.slice(0, MAX_LINE_LEN) + "… [truncated]"
+              : line,
+          )
+          .join("\n");
+      }
+
+      // Apply pagination (offset + head_limit)
+      const defaultLimit = mode === "files_with_matches" ? 200 : 150;
+      const limit = headLimit === 0 ? Infinity : (headLimit ?? defaultLimit);
+      const lines = output.split("\n");
+      const total = lines.length;
+
+      // Apply offset then limit
+      const sliced = lines.slice(offset, offset + limit);
+      const paginated = sliced.join("\n");
+
+      const parts2: string[] = [];
+      if (paginated) parts2.push(paginated);
+
+      // Show pagination info when offset is used or results were truncated
+      if (offset > 0 || offset + limit < total) {
+        const shown = sliced.length;
+        const remaining = Math.max(0, total - offset - shown);
+        parts2.push(
+          `\n[Showing ${shown} results (offset=${offset}, limit=${limit === Infinity ? "unlimited" : limit})${remaining > 0 ? `, ${remaining} more available` : ""}]`,
+        );
       }
 
       return {
-        content: session.output || "No matches found.",
+        content: parts2.join("\n") || "No matches found.",
         exitCode: 0,
         isError: false,
       };

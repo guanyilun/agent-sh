@@ -10,7 +10,11 @@ export function createBashTool(opts: {
   return {
     name: "bash",
     description:
-      "Execute a bash command in an isolated subprocess. Output is captured and returned to you. Does not affect the user's shell state.",
+      "Execute a bash command in an isolated subprocess. Output is captured and returned. " +
+      "Does not affect the user's shell state (use user_shell for cd, export, source). " +
+      "Do NOT use bash for file searching — use grep/glob instead. " +
+      "Do NOT use bash for reading files — use read_file instead. " +
+      "Provide a description parameter to explain what the command does.",
     input_schema: {
       type: "object",
       properties: {
@@ -22,6 +26,11 @@ export function createBashTool(opts: {
           type: "number",
           description: "Timeout in seconds (default: 60)",
         },
+        description: {
+          type: "string",
+          description:
+            "Short description of what this command does (e.g., 'Install dependencies', 'Run test suite')",
+        },
       },
       required: ["command"],
     },
@@ -32,6 +41,7 @@ export function createBashTool(opts: {
 
     getDisplayInfo: (args) => ({
       kind: "execute",
+      icon: "▶",
       locations: [],
     }),
 

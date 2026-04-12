@@ -123,11 +123,13 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
 
       if (bus) {
         const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" };
-        bus.emit("agent:tool-completed", {
+        const resultDisplay = tool.formatResult?.(args, result);
+        bus.emitTransform("agent:tool-completed", {
           toolCallId: tc.id,
           exitCode: result.exitCode,
           rawOutput: result.content,
           kind: display.kind,
+          resultDisplay,
         });
       }
 

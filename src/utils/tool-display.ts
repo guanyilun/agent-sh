@@ -19,10 +19,14 @@ export interface ToolCallRender {
   command?: string;
   /** Tool kind from ACP (read, edit, execute, search, etc.). */
   kind?: string;
+  /** Custom icon character — when set, tool name is omitted (icon implies tool). */
+  icon?: string;
   /** File locations affected by the tool call. */
   locations?: { path: string; line?: number | null }[];
   /** Raw input parameters sent to the tool. */
   rawInput?: unknown;
+  /** Pre-formatted display detail from tool's formatCall(). Takes precedence over rawInput extraction. */
+  displayDetail?: string;
 }
 
 export interface ToolResultRender {
@@ -76,6 +80,7 @@ const KIND_ICONS: Record<string, string> = {
   move: "↗",
   search: "⌕",
   execute: "▶",
+  display: "◇",
   think: "◇",
   fetch: "↓",
   switch_mode: "⇄",
@@ -92,7 +97,10 @@ export function renderToolCall(
   width: number,
 ): string[] {
   const mode = selectToolDisplayMode(width);
-  const icon = kindIcon(tool.kind);
+  const icon = tool.icon ?? kindIcon(tool.kind);
+  // If the tool registered a custom icon, it's self-describing — omit the name.
+  // Otherwise, include the tool name so the user knows what ran.
+  const hasCustomIcon = !!tool.icon;
 
   if (mode === "summary") {
     const text = truncateVisible(`${icon} ${tool.title}`, width);
@@ -104,7 +112,9 @@ export function renderToolCall(
   // Build a compact detail string to append after the title
   let detail = "";
   const cwd = process.cwd();
-  if (mode === "full") {
+  if (mode === "full" && tool.displayDetail) {
+    detail = tool.displayDetail;
+  } else if (mode === "full") {
     if (tool.command) {
       detail = `$ ${tool.command}`;
     } else if (tool.locations && tool.locations.length > 0) {
@@ -138,12 +148,20 @@ export function renderToolCall(
     }
   }
 
-  // Render as single line: icon + detail (icon implies the tool type)
-  // Falls back to icon + title when no detail is available
+  // Render as single line: icon + kind + detail
   const maxDetailW = Math.max(1, width - 4);
-  if (detail) {
+  if (detail && hasCustomIcon && tool.kind) {
+    const combined = `${tool.kind} ${detail}`;
+    const truncated = combined.length > maxDetailW ? combined.slice(0, maxDetailW - 1) + "…" : combined;
+    lines.push(`${p.warning}${icon}${p.reset} ${p.dim}${truncated}${p.reset}`);
+  } else if (detail && hasCustomIcon) {
     if (detail.length > maxDetailW) detail = detail.slice(0, maxDetailW - 1) + "…";
     lines.push(`${p.warning}${icon}${p.reset} ${p.dim}${detail}${p.reset}`);
+  } else if (detail) {
+    const prefix = `${tool.title}: `;
+    const combined = prefix + detail;
+    const truncated = combined.length > maxDetailW ? combined.slice(0, maxDetailW - 1) + "…" : combined;
+    lines.push(`${p.warning}${icon}${p.reset} ${p.dim}${truncated}${p.reset}`);
   } else {
     lines.push(`${p.warning}${icon} ${tool.title}${p.reset}`);
   }

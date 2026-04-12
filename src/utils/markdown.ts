@@ -86,6 +86,7 @@ export class MarkdownRenderer {
   private buffer = "";
   private contentWidth: number;
   private firstLine = true;
+  private lastLineBlank = false;
   private pendingLines: string[] = [];
   private width: number;
   private tableRows: string[][] = [];
@@ -210,6 +211,11 @@ export class MarkdownRenderer {
 
     // Render rows
     const hasHeader = sepIdx.includes(1) && dataRows.length > 1;
+
+    // Top border
+    const topBorder = colWidths.map((w) => "─".repeat(w)).join(`─┬─`);
+    this.writeLine(`${p.dim}┌─${topBorder}─┐${p.reset}`);
+
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i]!;
       const isHeader = hasHeader && i === 0;
@@ -226,6 +232,10 @@ export class MarkdownRenderer {
         this.writeLine(`${p.dim}├─${sep}─┤${p.reset}`);
       }
     }
+
+    // Bottom border
+    const bottomBorder = colWidths.map((w) => "─".repeat(w)).join(`─┴─`);
+    this.writeLine(`${p.dim}└─${bottomBorder}─┘${p.reset}`);
   }
 
   private renderLine(line: string): string {
@@ -252,6 +262,17 @@ export class MarkdownRenderer {
     // Blockquote
     const bq = line.match(/^>\s?(.*)/);
     if (bq) return `${p.muted}│${p.reset} ${p.dim}${p.italic}${this.renderInline(bq[1] || "")}${p.reset}`;
+
+    // Task list (checkbox items) — must come before generic unordered list
+    const task = line.match(/^(\s*)[*\-+]\s+\[([ xX])\]\s+(.*)/);
+    if (task) {
+      const indent = task[1] || "";
+      const checked = task[2] !== " ";
+      const box = checked
+        ? `${p.success}☑${p.reset}`
+        : `${p.dim}☐${p.reset}`;
+      return `${indent}  ${box} ${this.renderInline(task[3] || "")}`;
+    }
 
     // Unordered list
     const ul = line.match(/^(\s*)[*\-+]\s+(.*)/);
@@ -296,8 +317,12 @@ export class MarkdownRenderer {
    * The line is accumulated internally — call drainLines() to extract.
    */
   writeLine(text: string): void {
-    if (this.firstLine && visibleLen(text) === 0) return;
+    const isBlank = visibleLen(text) === 0;
+    if (this.firstLine && isBlank) return;
+    // Collapse consecutive blank lines to a single one
+    if (isBlank && this.lastLineBlank) return;
     this.firstLine = false;
+    this.lastLineBlank = isBlank;
     this.pendingLines.push(`  ${text}`);
   }
 }

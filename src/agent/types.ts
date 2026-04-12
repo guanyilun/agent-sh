@@ -25,13 +25,30 @@ export interface ToolResult {
   isError: boolean;
 }
 
+/** Structured result display — returned by formatResult or computed by defaults. */
+export interface ToolResultDisplay {
+  /** One-line summary shown next to ✓/✗ (e.g. "42 papers found", "+3/-1"). */
+  summary?: string;
+  /** Structured content to render below the status line. */
+  body?: ToolResultBody;
+}
+
+export type ToolResultBody =
+  | { kind: "diff"; diff: unknown; filePath: string }
+  | { kind: "lines"; lines: string[]; maxLines?: number }
+
 export interface ToolDisplayInfo {
-  kind: "read" | "write" | "execute" | "search";
+  kind: "read" | "write" | "execute" | "search" | "display";
   locations?: { path: string; line?: number | null }[];
+  /** Custom icon character for TUI display (e.g., "◆", "⌕"). When set, the TUI shows
+   *  icon + detail only. When absent, the tool name is shown alongside the detail. */
+  icon?: string;
 }
 
 export interface ToolDefinition {
   name: string;
+  /** Short label for TUI display (e.g. "search" instead of "ads_search"). Defaults to name. */
+  displayName?: string;
   description: string;
   input_schema: Record<string, unknown>;
 
@@ -51,4 +68,19 @@ export interface ToolDefinition {
 
   /** Derive display metadata (icon kind, file paths) for the TUI. */
   getDisplayInfo?: (args: Record<string, unknown>) => ToolDisplayInfo;
+
+  /**
+   * Format a short display string for the TUI when this tool is called.
+   * Return a concise summary of the args (e.g. the query, the file path).
+   * When absent, the TUI derives the detail from common arg fields (command, path, pattern).
+   */
+  formatCall?: (args: Record<string, unknown>) => string;
+
+  /**
+   * Format result display for the TUI after execution completes.
+   * Return a summary string and/or structured body to render.
+   * When absent, defaults are computed based on tool kind.
+   * Extensions can further override via bus.onPipe("agent:tool-completed", ...).
+   */
+  formatResult?: (args: Record<string, unknown>, result: ToolResult) => ToolResultDisplay;
 }

@@ -45,7 +45,7 @@ export interface AgentShellCore {
   /** Activate the agent backend (call after extensions load). */
   activateBackend(): void;
   /** Convenience: emit agent:submit and await the response. */
-  query(text: string, opts?: { mode?: string }): Promise<string>;
+  query(text: string): Promise<string>;
   /** Convenience: emit agent:cancel-request. */
   cancel(): void;
   /** Build an ExtensionContext for loading extensions against this core. */
@@ -267,25 +267,23 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     llmClient,
 
     activateBackend() {
+      // Silent — backend info is shown in the startup banner.
+      // Runtime switches (config:switch-backend) still emit ui:info.
       const preferred = settings.defaultBackend;
       if (preferred && backends.has(preferred)) {
-        activateByName(preferred);
+        activateByName(preferred, true);
       } else if (backends.size > 0 && !agentLoop) {
-        activateByName(backends.keys().next().value!);
+        activateByName(backends.keys().next().value!, true);
       } else if (agentLoop) {
         agentLoop.wire();
         activeBackendName = "agent-sh";
         bus.emit("agent:info", { name: "agent-sh", version: "0.4", model: llmClient?.model, provider: activeProvider?.id, contextWindow: activeProvider?.contextWindow });
       } else if (backends.size > 0) {
-        activateByName(backends.keys().next().value!);
-      }
-
-      if (activeBackendName) {
-        bus.emit("ui:info", { message: `Backend: ${activeBackendName}` });
+        activateByName(backends.keys().next().value!, true);
       }
     },
 
-    async query(text, opts) {
+    async query(text) {
       return new Promise((resolve, reject) => {
         let response = "";
         let settled = false;
@@ -315,10 +313,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         bus.on("agent:processing-done", onDone);
         bus.on("agent:error", onError);
 
-        bus.emit("agent:submit", {
-          query: text,
-          modeInstruction: opts?.mode,
-        });
+        bus.emit("agent:submit", { query: text });
       });
     },
 

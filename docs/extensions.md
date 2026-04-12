@@ -55,7 +55,7 @@ TypeScript and JavaScript are both supported (`.ts`, `.tsx`, `.mts`, `.js`, `.mj
 | `createBlockTransform` | `(opts) => void` | Register an inline delimiter transform (e.g. `$$...$$`) |
 | `createFencedBlockTransform` | `(opts) => void` | Register a fenced block transform (e.g. ` ```lang...``` `) |
 | `getExtensionSettings` | `(namespace, defaults) => T` | Read extension settings from `~/.agent-sh/settings.json` |
-| `registerTool` | `(tool: ToolDefinition) => void` | Register a tool for the built-in agent (no-op for bridge backends) |
+| `registerTool` | `(tool: ToolDefinition) => void` | Register a tool for the built-in agent (no-op for bridge backends). Tools can include optional `getDisplayInfo`, `formatCall`, and `formatResult` for TUI integration — see [Internal Agent: Tool interface](agent.md#tool-interface) |
 | `getTools` | `() => ToolDefinition[]` | Get all registered tools (for subagent tool subsets) |
 | `define` | `(name, fn) => void` | Register a named handler |
 | `advise` | `(name, wrapper) => void` | Wrap a named handler (receives `next` + args) |
@@ -209,7 +209,7 @@ A backend listens for input events and emits output events. The TUI and all exte
 
 | Event | Payload | Description |
 |---|---|---|
-| `agent:submit` | `{ query, modeInstruction?, modeLabel? }` | User submitted a query |
+| `agent:submit` | `{ query }` | User submitted a query |
 | `agent:cancel-request` | `{ silent? }` | User requested cancellation |
 | `agent:reset-session` | `{}` | User issued reset — clear conversation state |
 
@@ -218,7 +218,7 @@ A backend listens for input events and emits output events. The TUI and all exte
 | Step | Event | Payload | Notes |
 |---|---|---|---|
 | 1 | `agent:processing-start` | `{}` | Starts spinner in TUI |
-| 2 | `agent:query` | `{ query, modeLabel? }` | Echoes the query for display |
+| 2 | `agent:query` | `{ query }` | Echoes the query for display |
 | 3 | `agent:response-chunk` | `{ blocks: ContentBlock[] }` | Use `emitTransform` so content pipeline runs. Emit 0+ times |
 | 4 | `agent:response-done` | `{ response }` | Full response text |
 | 5 | `agent:processing-done` | `{}` | Stops spinner, returns control to prompt |
@@ -228,11 +228,14 @@ A backend listens for input events and emits output events. The TUI and all exte
 | Event | Payload | When |
 |---|---|---|
 | `agent:thinking-chunk` | `{ text }` | Reasoning tokens (e.g. DeepSeek-r1) |
-| `agent:tool-started` | `{ title, toolCallId?, kind? }` | Tool execution beginning |
+| `agent:tool-batch` | `{ groups: [{ kind, tools: [{ name, displayDetail? }] }] }` | Before tool execution — all tools grouped by kind |
+| `agent:tool-started` | `{ title, toolCallId?, kind?, icon?, displayDetail?, locations?, batchIndex?, batchTotal? }` | Tool execution beginning |
 | `agent:tool-output-chunk` | `{ chunk }` | Streamed tool output |
-| `agent:tool-completed` | `{ toolCallId?, exitCode }` | Tool execution finished |
+| `agent:tool-completed` | `{ toolCallId?, exitCode, kind?, resultDisplay? }` | Tool execution finished |
 | `agent:error` | `{ message }` | Error during processing |
 | `agent:usage` | `{ prompt_tokens, completion_tokens, total_tokens }` | Token usage stats |
+
+The `agent:tool-batch` event lets the TUI prepare group headers before tools execute. `agent:tool-started` now carries display metadata (`icon`, `displayDetail` from `formatCall()`, batch position). `agent:tool-completed` includes a `resultDisplay` (from `formatResult()`) with an optional `summary` string and structured `body`.
 
 ### Switching backends at runtime
 
@@ -383,7 +386,7 @@ ctx.advise("conversation:prepare", (next, messages) => {
 });
 ```
 
-**`tool:execute`** — Wraps every tool call. The `ctx` argument contains `{ name, id, args, tool }`. Extensions can block tools, add logging, implement custom permission policies, retry on failure, or run tools in a sandbox:
+**`tool:execute`** — Wraps every tool call. The `ctx` argument contains `{ name, id, args, tool, onChunk }`. Extensions can block tools, add logging, implement custom permission policies, retry on failure, run tools in a sandbox, or intercept/transform streamed output:
 
 ```typescript
 // Safe mode — block all file-modifying tools
@@ -411,7 +414,19 @@ ctx.advise("tool:execute", async (next, ctx) => {
   }
   return next(ctx);
 });
+
+// Secret redaction — wrap onChunk to scrub streaming output + final result
+ctx.advise("tool:execute", async (next, ctx) => {
+  const origOnChunk = ctx.onChunk;
+  if (origOnChunk) {
+    ctx.onChunk = (chunk) => origOnChunk(redact(chunk));
+  }
+  const result = await next(ctx);
+  return { ...result, content: redact(result.content) };
+});
 ```
+
+The `onChunk` callback controls what the user sees during tool execution (streamed to terminal). Wrapping it lets extensions transform output in real time — for example, redacting secrets before they hit the screen. See `examples/extensions/secret-guard.ts` for a complete implementation.
 
 #### Rendering handlers
 
@@ -421,6 +436,16 @@ These are registered by the tui-renderer and let extensions customize how conten
 |---|---|---|
 | `render:code-block` | `(language: string, code: string, width: number) → void` | Render a fenced code block (default: syntax highlighting) |
 | `render:image` | `(data: Buffer) → void` | Display an image in the terminal (default: iTerm2/Kitty protocol) |
+| `render:result-body` | `(body: ToolResultBody, width: number) → string[]` | Render structured tool result body (default: diffs or line lists) |
+
+The `render:result-body` handler is called when a tool's `formatResult()` returns a structured `body`. Extensions can advise it to customize how specific result types are displayed:
+
+```typescript
+ctx.advise("render:result-body", (next, body, width) => {
+  if (body.kind === "diff") return myCustomDiffRenderer(body.diff, body.filePath, width);
+  return next(body, width);
+});
+```
 
 #### Custom handlers
 
@@ -516,9 +541,9 @@ agent-sh -e ./examples/extensions/latex-images.ts
 
 ## Custom Input Modes
 
-Input modes change what happens when the user types and presses Enter. Each mode binds a trigger character (typed at the start of an empty line) to a custom `onSubmit` handler. The built-in modes (`>` for execute, `?` for help) are registered this way — they're not special.
+Input modes change what happens when the user types and presses Enter. Each mode binds a trigger character (typed at the start of an empty line) to a custom `onSubmit` handler. The built-in mode (`>` for agent) is registered this way — it's not special.
 
-The flow: user types trigger → prompt changes to show the mode → user types their input → presses Enter → `onSubmit` fires → your handler emits `agent:submit` with a `modeInstruction` that gets prepended to the agent's system prompt, telling it how to behave in this mode.
+The flow: user types trigger → prompt changes to show the mode → user types their input → presses Enter → `onSubmit` fires → your handler emits `agent:submit`. You can optionally include a `modeInstruction` that gets prepended to the user message.
 
 ```typescript
 bus.emit("input-mode:register", {
@@ -528,11 +553,8 @@ bus.emit("input-mode:register", {
   promptIcon: "⟩",           // chevron/icon character
   indicator: "🌐",           // status indicator before the icon
   onSubmit(query, bus) {
-    // This is where you control what the agent sees.
-    // modeInstruction is prepended to the prompt — it's how you steer the agent.
     bus.emit("agent:submit", {
       query,                 // what the user typed
-      modeLabel: "Translate",
       modeInstruction: "[mode: translate] Translate the following to Spanish.",
     });
   },
@@ -547,7 +569,7 @@ bus.emit("input-mode:register", {
 | `label` | `string` | Shown in the prompt area |
 | `promptIcon` | `string` | Chevron/icon character in the prompt |
 | `indicator` | `string` | Status indicator before the icon |
-| `onSubmit` | `(query, bus) => void` | Called on Enter. Emits `agent:submit` with `query` + `modeInstruction` |
+| `onSubmit` | `(query, bus) => void` | Called on Enter. Emits `agent:submit` with `query` + optional `modeInstruction` |
 | `returnToSelf` | `boolean` | Re-enter this mode after the agent finishes |
 
 Each trigger character can only be claimed by one mode. Slash commands and readline keybindings work in every mode.

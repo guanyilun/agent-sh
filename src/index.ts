@@ -11,6 +11,7 @@ import shellRecall from "./extensions/shell-recall.js";
 import commandSuggest from "./extensions/command-suggest.js";
 import { loadExtensions } from "./extension-loader.js";
 import { getSettings } from "./settings.js";
+import { discoverSkills } from "./agent/skills.js";
 import type { AgentShellConfig } from "./types.js";
 
 /**
@@ -132,8 +133,7 @@ Examples:
 
 Inside the shell:
   Type normally        Commands run in your real shell
-  > <query>           Ask the AI agent a question (execute mode)
-  ? <command>         Have the agent run a command in your shell (help mode)
+  > <query>           Ask the AI agent (it decides how to help)
   > /help             Show available slash commands
   Ctrl-C              Cancel agent response (or signal shell as usual)
 `);
@@ -179,7 +179,7 @@ async function main(): Promise<void> {
   const { bus } = core;
 
   // Track agent info from bus events (populated by extension backends)
-  let agentInfo: { name: string; version: string; model?: string } | null = null;
+  let agentInfo: { name: string; version: string; model?: string; provider?: string } | null = null;
   bus.on("agent:info", (info) => { agentInfo = info; });
 
   // ── Interactive frontend ──────────────────────────────────────
@@ -226,41 +226,17 @@ async function main(): Promise<void> {
     console.error('[agent-sh] Shell created');
   }
 
-  // ── Input modes ──────────────────────────────────────────────
+  // ── Input mode ───────────────────────────────────────────────
   bus.emit("input-mode:register", {
-    id: "execute",
+    id: "agent",
     trigger: ">",
-    label: "execute",
+    label: "agent",
     promptIcon: "❯",
     indicator: "●",
     onSubmit(query, b) {
-      b.emit("agent:submit", { query, modeLabel: "Execute", modeInstruction: "[mode: execute]" });
+      b.emit("agent:submit", { query });
     },
     returnToSelf: true,
-  });
-
-  bus.emit("input-mode:register", {
-    id: "help",
-    trigger: "?",
-    label: "help",
-    promptIcon: "❯",
-    indicator: "❓",
-    onSubmit(query, b) {
-      const onToolDone = (e: { kind?: string }) => {
-        if (e.kind === "execute") {
-          b.emit("agent:cancel-request", { silent: true });
-        }
-      };
-      const cleanup = () => {
-        b.off("agent:tool-completed", onToolDone);
-        b.off("agent:processing-done", cleanup);
-      };
-      b.on("agent:tool-completed", onToolDone);
-      b.on("agent:processing-done", cleanup);
-
-      b.emit("agent:submit", { query, modeLabel: "Help", modeInstruction: "[mode: help]" });
-    },
-    returnToSelf: false,
   });
 
   // ── Extensions ────────────────────────────────────────────────
@@ -280,8 +256,9 @@ async function main(): Promise<void> {
     console.error('[agent-sh] Loading extensions...');
   }
   const loadExtensionsTimeoutMs = 10000;
+  let loadedExtensions: string[] = [];
   await Promise.race([
-    loadExtensions(extCtx, config.extensions),
+    loadExtensions(extCtx, config.extensions).then((names) => { loadedExtensions = names; }),
     new Promise<void>((_, reject) =>
       setTimeout(() => reject(new Error(`Extension loading timeout after ${loadExtensionsTimeoutMs}ms`)), loadExtensionsTimeoutMs)
     ),
@@ -292,6 +269,9 @@ async function main(): Promise<void> {
     console.error('[agent-sh] Extensions loaded');
   }
 
+  // ── Discover skills ───────────────────────────────────────────
+  const skills = discoverSkills(process.cwd());
+
   // ── Activate agent backend ────────────────────────────────────
   // Extensions had their chance to register via agent:register-backend.
   // If none did, the built-in AgentLoop gets wired to bus events.
@@ -300,18 +280,45 @@ async function main(): Promise<void> {
   // ── Startup banner ───────────────────────────────────────────
   const settings = getSettings();
   if (settings.startupBanner !== false) {
-    const title = core.llmClient
-      ? `${p.accent}${p.bold}agent-sh${p.reset}${p.dim} · ${core.llmClient.model}${p.reset}`
-      : `${p.accent}${p.bold}agent-sh${p.reset}`;
-    const hint = `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}?${p.muted} to run in shell · ${p.warning}/help${p.muted} for commands${p.reset}`;
-
     const termW = process.stdout.columns || 80;
-    const borderLine = `${p.muted}${"─".repeat(Math.min(termW, 60))}${p.reset}`;
+    const bannerW = Math.min(termW, 60);
+
+    const productName = `${p.accent}${p.bold}agent-sh${p.reset}`;
+
+    const info = agentInfo as { name: string; version: string; model?: string; provider?: string } | null;
+    const backendName = info?.name ?? "agent-sh";
+    const model = info?.model ?? core.llmClient?.model;
+    const provider = info?.provider;
+    const modelValue = model
+      ? provider ? `${model} [${provider}]` : model
+      : null;
+
+    let sections = "";
+    sections += `\n\n  ${p.muted}Backend:${p.reset} ${p.dim}${backendName}${p.reset}`;
+    if (modelValue) {
+      sections += `\n  ${p.muted}Model:${p.reset} ${p.dim}${modelValue}${p.reset}`;
+    }
+    if (loadedExtensions.length > 0) {
+      sections += `\n\n  ${p.muted}Extensions:${p.reset}`;
+      for (const name of loadedExtensions) {
+        sections += `\n    ${p.dim}${name}${p.reset}`;
+      }
+    }
+    if (skills.length > 0) {
+      sections += `\n\n  ${p.muted}Skills:${p.reset}`;
+      for (const s of skills) {
+        sections += `\n    ${p.dim}${s.name}${p.reset}`;
+      }
+    }
+
+    const hint = `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}>/help${p.muted} for commands${p.reset}`;
+    const borderLine = `${p.muted}${"─".repeat(bannerW)}${p.reset}`;
 
     process.stdout.write(
       "\n" + borderLine + "\n" +
-      "  " + title + "\n" +
-      "  " + hint + "\n" +
+      "  " + productName +
+      sections + "\n" +
+      "\n  " + hint + "\n" +
       borderLine + "\n\n",
     );
   }
