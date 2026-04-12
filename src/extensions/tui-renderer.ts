@@ -260,10 +260,12 @@ export default function activate(ctx: ExtensionContext): void {
     }
 
     if (e.kind === "file-write" && e.metadata?.diff) {
+      showCollapsedThinking();
       showFileDiff(e.title, e.metadata.diff as DiffResult);
-    } else {
-      endAgentResponse();
     }
+    // Don't endAgentResponse() here — permission requests that aren't
+    // file-write diffs are handled inline (auto-approved or by extensions).
+    // Closing the response prematurely causes double separator borders.
   });
 
   bus.on("input:keypress", (e) => {
@@ -584,7 +586,7 @@ export default function activate(ctx: ExtensionContext): void {
   function showFileDiff(filePath: string, diff: DiffResult): void {
     if (diff.isIdentical) return;
 
-    const boxW = Math.min(84, writer.columns);
+    const boxW = Math.min(120, writer.columns);
     const contentW = boxW - 4;
 
     const diffLines = renderDiff(diff, {
@@ -592,7 +594,6 @@ export default function activate(ctx: ExtensionContext): void {
       filePath,
       maxLines: getSettings().diffMaxLines,
       trueColor: true,
-      mode: "unified",
     });
 
     const lastLine = diffLines[diffLines.length - 1] ?? "";
@@ -667,7 +668,7 @@ export default function activate(ctx: ExtensionContext): void {
 
   function showFileDiffCached(entry: TruncatedDiff): void {
     const { filePath, diff } = entry;
-    const boxW = Math.min(84, writer.columns);
+    const boxW = Math.min(120, writer.columns);
     const contentW = boxW - 4;
 
     const diffLines = renderDiff(diff, {
@@ -675,7 +676,6 @@ export default function activate(ctx: ExtensionContext): void {
       filePath,
       maxLines: getSettings().diffMaxLines,
       trueColor: true,
-      mode: "unified",
     });
 
     const body = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
