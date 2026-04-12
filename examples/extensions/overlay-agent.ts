@@ -190,8 +190,9 @@ export default function activate({ bus, advise }: ExtensionContext): void {
   }
 
   function restoreScreen(): void {
-    // Just clear and let the foreground program redraw itself
-    process.stdout.write(`${SYNC_START}\x1b[2J\x1b[H${SYNC_END}`);
+    // Leave alternate screen buffer — terminal automatically restores
+    // the original screen content (vim, shell, whatever was running)
+    process.stdout.write("\x1b[?1049l");
   }
 
   // ── Phase transitions ─────────────────────────────────────
@@ -206,6 +207,12 @@ export default function activate({ bus, advise }: ExtensionContext): void {
 
     // Hold stdout — suppresses PTY and TUI
     bus.emit("shell:stdout-hold", {});
+
+    // Switch to alternate screen buffer — nothing we draw here
+    // affects the main terminal or scrollback. On dismiss, the
+    // terminal automatically restores the original screen.
+    process.stdout.write("\x1b[?1049h");
+
     compositeAndRender();
   }
 
