@@ -96,6 +96,15 @@ Configure via `~/.agent-sh/settings.json`. Define named providers with multiple 
 
 Cycle models with **Shift+Tab**, switch providers with `/provider <name>`, switch backends with `/backend <name>`. API keys support `$ENV_VAR` syntax.
 
+Additional options:
+
+| Key | Default | Description |
+|---|---|---|
+| `startupBanner` | `true` | Show startup banner with model info and usage hints |
+| `promptIndicator` | `true` | Show `⚡ agent-sh` badge in shell prompt |
+
+Set either to `false` to disable.
+
 See the [Usage Guide](docs/usage.md#configuration) for the full settings reference.
 
 ## Documentation
