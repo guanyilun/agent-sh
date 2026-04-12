@@ -111,16 +111,17 @@ export default function activate({ bus, advise }: ExtensionContext): void {
     }
     const visibleContent = responseLines.slice(scrollOffset, scrollOffset + contentH);
 
-    // Build the composited frame
-    const out: string[] = [SYNC_START, `\x1b[H`]; // home cursor
+    // Build the composited frame — use absolute cursor positioning per row
+    const out: string[] = [SYNC_START];
 
     for (let row = 0; row < rows; row++) {
+      out.push(`\x1b[${row + 1};1H`); // move to row (1-indexed)
       const bgLine = (bgLines[row] || "").padEnd(cols).slice(0, cols);
       const relRow = row - boxTop;
 
       if (relRow < 0 || relRow >= boxH) {
         // Background row — render dimmed
-        out.push(`${DIM}${bgLine}${RESET}`);
+        out.push(`${DIM}${bgLine}${RESET}\x1b[K`);
       } else if (relRow === 0) {
         // Top border
         const title = phase === "input" ? " agent " : phase === "done" ? " done " : " ... ";
@@ -175,8 +176,6 @@ export default function activate({ bus, advise }: ExtensionContext): void {
       }
     }
 
-    out.push(SYNC_END);
-
     // Position cursor for input
     if (phase === "input") {
       const cursorRow = boxTop + 1;
@@ -184,19 +183,15 @@ export default function activate({ bus, advise }: ExtensionContext): void {
       out.push(`\x1b[${cursorRow + 1};${cursorCol + 1}H`);
     }
 
-    process.stdout.write(out.join("\x1b[K\n").replace(/\n$/, ""));
+    out.push(SYNC_END);
+
+    // Write using absolute cursor positioning per row — no \n to avoid scrollback pollution
+    process.stdout.write(out.join(""));
   }
 
   function restoreScreen(): void {
-    // Re-render the original screen from the buffer
-    const bgLines = getScreenLines();
-    const rows = process.stdout.rows || 24;
-    const out = [SYNC_START, `\x1b[H`];
-    for (let row = 0; row < rows; row++) {
-      out.push(bgLines[row] || "");
-    }
-    out.push(SYNC_END);
-    process.stdout.write(out.join("\x1b[K\n").replace(/\n$/, ""));
+    // Just clear and let the foreground program redraw itself
+    process.stdout.write(`${SYNC_START}\x1b[2J\x1b[H${SYNC_END}`);
   }
 
   // ── Phase transitions ─────────────────────────────────────
