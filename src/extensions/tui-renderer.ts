@@ -188,19 +188,18 @@ export default function activate(ctx: ExtensionContext): void {
   });
   // Track token usage for display
   let pendingUsage: { prompt_tokens: number; completion_tokens: number } | null = null;
-  let totalTokens = 0;
   bus.on("agent:usage", (e) => { pendingUsage = e; });
-  bus.on("agent:reset-session", () => { totalTokens = 0; });
 
   bus.on("agent:response-done", () => {
     s.isThinking = false;
     if (pendingUsage && s.renderer) {
       const { prompt_tokens, completion_tokens } = pendingUsage;
-      totalTokens += prompt_tokens + completion_tokens;
       const maxTokens = backendInfo?.contextWindow ?? 128_000;
-      const ctxK = (totalTokens / 1000).toFixed(1);
+      // prompt_tokens of the latest call = current context usage
+      // (it includes the full conversation history)
+      const ctxK = (prompt_tokens / 1000).toFixed(1);
       const maxK = (maxTokens / 1000).toFixed(0);
-      const pct = Math.min(100, (totalTokens / maxTokens) * 100).toFixed(0);
+      const pct = Math.min(100, (prompt_tokens / maxTokens) * 100).toFixed(0);
       s.renderer.writeLine("");
       s.renderer.writeLine(
         `${p.dim}⬆ ${prompt_tokens}  ⬇ ${completion_tokens}  ctx: ${ctxK}k/${maxK}k (${pct}%)${p.reset}`,
