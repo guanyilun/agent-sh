@@ -20,6 +20,21 @@
 
 **Solution**: Some models have limited or no tool/function calling support. Try a more capable model (e.g., gpt-4o, claude-sonnet-4-6 via OpenRouter).
 
+**Problem**: Garbled output, startup banner overwritten, or messy prompt rendering
+
+**Cause**: Powerlevel10k's **instant prompt** feature races with agent-sh's TUI. Instant prompt caches the previous prompt, displays it immediately, redirects stdout/stderr during shell init, then redraws the prompt using cursor-movement sequences — all of which can overwrite agent-sh's output.
+
+**Solution**: Guard the instant prompt block in your `~/.zshrc` so it's skipped inside agent-sh:
+
+```zsh
+# Disable p10k instant prompt inside agent-sh (it races with TUI rendering)
+if [[ -z "$AGENT_SH" && -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+```
+
+Your normal p10k prompt still works — only the "flash cached prompt then redraw" behavior is disabled.
+
 ## Common Errors
 
 **Error**: "API key not found" or "401 Unauthorized"

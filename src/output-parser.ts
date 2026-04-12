@@ -21,6 +21,7 @@ export class OutputParser {
   /** Process a chunk of PTY output data. */
   processData(data: string): void {
     this.parseOSC7(data);
+    data = this.handlePreexec(data);
     this.parsePromptMarker(data);
     this.parsePromptEnd(data);
   }
@@ -50,6 +51,36 @@ export class OutputParser {
   }
 
   // ── Parsing ─────────────────────────────────────────────────
+
+  /**
+   * Detect preexec marker (OSC 9997) emitted by the shell's preexec hook.
+   * This carries the actual command text from the shell — more reliable than
+   * the InputHandler's lineBuffer which can't track history recall or tab
+   * completion. Returns data with the OSC stripped out.
+   */
+  private handlePreexec(data: string): string {
+    const marker = "\x1b]9997;";
+    const idx = data.indexOf(marker);
+    if (idx === -1) return data;
+
+    const endIdx = data.indexOf("\x07", idx + marker.length);
+    if (endIdx === -1) return data; // incomplete OSC, wait for next chunk
+
+    const command = data.slice(idx + marker.length, endIdx);
+
+    // Authoritative command from the shell — override any lineBuffer guess
+    this.lastCommand = command;
+    this.currentOutputCapture = ""; // discard echoed text accumulated before preexec
+
+    if (!this.foregroundBusy) {
+      this.foregroundBusy = true;
+      this.bus.emit("shell:foreground-busy", { busy: true });
+    }
+    this.bus.emit("shell:command-start", { command, cwd: this.cwd });
+
+    // Return only data after the OSC — everything before was the echo
+    return data.slice(endIdx + 1);
+  }
 
   private parseOSC7(data: string): void {
     const match = data.match(/\x1b\]7;file:\/\/[^/]*(\/[^\x07\x1b]*)/);
