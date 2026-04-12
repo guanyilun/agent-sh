@@ -253,6 +253,17 @@ export class MarkdownRenderer {
     const bq = line.match(/^>\s?(.*)/);
     if (bq) return `${p.muted}│${p.reset} ${p.dim}${p.italic}${this.renderInline(bq[1] || "")}${p.reset}`;
 
+    // Task list (checkbox items) — must come before generic unordered list
+    const task = line.match(/^(\s*)[*\-+]\s+\[([ xX])\]\s+(.*)/);
+    if (task) {
+      const indent = task[1] || "";
+      const checked = task[2] !== " ";
+      const box = checked
+        ? `${p.success}☑${p.reset}`
+        : `${p.dim}☐${p.reset}`;
+      return `${indent}  ${box} ${this.renderInline(task[3] || "")}`;
+    }
+
     // Unordered list
     const ul = line.match(/^(\s*)[*\-+]\s+(.*)/);
     if (ul) {

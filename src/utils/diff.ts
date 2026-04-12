@@ -64,6 +64,17 @@ export function computeDiff(
   // Build LCS table and backtrack to produce diff lines
   const a = oldText.split("\n");
   const b = newText.split("\n");
+
+  // Bail out if LCS table would be too large (avoids OOM / hang)
+  if (a.length * b.length > 10_000_000) {
+    return {
+      hunks: [],
+      added: b.length,
+      removed: a.length,
+      isIdentical: false,
+      isNewFile: false,
+    };
+  }
   const dp = buildLcs(a, b);
   const raw = backtrack(dp, a, b);
 

@@ -18,6 +18,7 @@ import {
   renderToolCall,
   createSpinner,
   renderSpinnerLine,
+  formatElapsed,
   type SpinnerState,
   type SpinnerOpts,
 } from "../utils/tool-display.js";
@@ -63,6 +64,8 @@ interface RenderState {
   // ── Response rendering ──
   renderer: MarkdownRenderer | null;
   hadToolCalls: boolean;
+  /** Tracks the last content kind rendered for gap injection. */
+  lastContentKind: "text" | "tool" | "diff" | "code" | "info" | null;
 
   // ── Spinner ──
   spinner: SpinnerState | null;
@@ -74,9 +77,17 @@ interface RenderState {
   // ── Tool output ──
   toolLineOpen: boolean;
   currentToolKind: string | undefined;
+  toolStartTime: number;
+  toolExitCode: number | null;
   commandOutputBuffer: string;
   commandOutputLineCount: number;
   commandOutputOverflow: number;
+  commandOverflowLines: string[];
+
+  // ── Tool grouping (collapse sequential same-type read-only tools) ──
+  toolGroupKind: string | undefined;
+  toolGroupCount: number;
+  toolGroupAllOk: boolean;
 
   // ── Thinking ──
   isThinking: boolean;
@@ -91,6 +102,7 @@ function createRenderState(): RenderState {
   return {
     renderer: null,
     hadToolCalls: false,
+    lastContentKind: null,
     spinner: null,
     spinnerLabel: "",
     spinnerOpts: {},
@@ -98,9 +110,15 @@ function createRenderState(): RenderState {
     spinnerStartTime: 0,
     toolLineOpen: false,
     currentToolKind: undefined,
+    toolStartTime: 0,
+    toolExitCode: null,
     commandOutputBuffer: "",
     commandOutputLineCount: 0,
     commandOutputOverflow: 0,
+    commandOverflowLines: [],
+    toolGroupKind: undefined,
+    toolGroupCount: 0,
+    toolGroupAllOk: true,
     isThinking: false,
     showThinkingText: false,
     thinkingPending: false,
@@ -210,28 +228,56 @@ export default function activate(ctx: ExtensionContext): void {
     endAgentResponse();
   });
 
+  // Read-only tool kinds eligible for grouping
+  const GROUPABLE_KINDS = new Set(["read", "search"]);
+
   bus.on("agent:tool-started", (e) => {
     fencedTransform.flush();
     stopCurrentSpinner();
     s.currentToolKind = e.kind;
+    s.toolStartTime = Date.now();
     if (e.title === "user_shell") {
+      finalizeToolGroup();
       closeToolLine();
       if (!s.renderer) startAgentResponse();
+      contentGap("tool");
       s.renderer!.flush();
       const cmd = (e.rawInput as any)?.command || "";
       s.renderer!.writeLine(`${p.dim}▶ user_shell: ${cmd}${p.reset}`);
       drain();
       s.hadToolCalls = true;
+    } else if (GROUPABLE_KINDS.has(e.kind ?? "") && e.kind === s.toolGroupKind) {
+      // Consecutive same-kind read-only tool — collapse into group
+      s.toolGroupCount++;
     } else {
-      showToolCall(e.title, "", e);
+      finalizeToolGroup();
+      if (GROUPABLE_KINDS.has(e.kind ?? "")) {
+        s.toolGroupKind = e.kind;
+        s.toolGroupCount = 1;
+        s.toolGroupAllOk = true;
+      }
+      showToolCall(e.title, "", {
+        ...e,
+        batchIndex: e.batchIndex,
+        batchTotal: e.batchTotal,
+      });
     }
   });
 
   bus.on("agent:tool-completed", (e) => {
-    showToolComplete(e.exitCode);
-    s.currentToolKind = undefined;
-    s.spinnerStartTime = 0;
-    startThinkingSpinner();
+    s.toolExitCode = e.exitCode;
+    if (s.toolGroupCount > 1) {
+      // Grouped tool — just track success/failure, don't render individually
+      if (e.exitCode !== 0) s.toolGroupAllOk = false;
+      s.currentToolKind = undefined;
+      s.spinnerStartTime = 0;
+      startThinkingSpinner();
+    } else {
+      showToolComplete(e.exitCode);
+      s.currentToolKind = undefined;
+      s.spinnerStartTime = 0;
+      startThinkingSpinner();
+    }
   });
   bus.on("agent:tool-output-chunk", (e) => writeCommandOutput(e.chunk));
   bus.on("agent:tool-output", () => flushCommandOutput());
@@ -253,6 +299,7 @@ export default function activate(ctx: ExtensionContext): void {
     stopCurrentSpinner();
     showCollapsedThinking();
     if (!s.renderer) startAgentResponse();
+    contentGap("info");
     s.renderer!.writeLine(`${p.error}Error: ${e.message}${p.reset}`);
     s.renderer!.writeLine("");
     drain();
@@ -302,8 +349,21 @@ export default function activate(ctx: ExtensionContext): void {
   function startAgentResponse(): void {
     s.renderer = new MarkdownRenderer(writer.columns);
     s.hadToolCalls = false;
+    s.lastContentKind = null;
     s.renderer.printTopBorder();
     drain();
+  }
+
+  /**
+   * Insert an empty line when transitioning between different content kinds
+   * (e.g., text → tool, tool → text, diff → tool) for visual breathing room.
+   */
+  function contentGap(kind: "text" | "tool" | "diff" | "code" | "info"): void {
+    if (s.lastContentKind && s.lastContentKind !== kind && s.renderer) {
+      s.renderer.writeLine("");
+      drain();
+    }
+    s.lastContentKind = kind;
   }
 
   function showCollapsedThinking(): void {
@@ -316,6 +376,7 @@ export default function activate(ctx: ExtensionContext): void {
   }
 
   function endAgentResponse(): void {
+    finalizeToolGroup();
     closeToolLine();
     stopCurrentSpinner();
     if (s.renderer) {
@@ -331,7 +392,7 @@ export default function activate(ctx: ExtensionContext): void {
     const boxW = writer.columns;
     const contentW = boxW - 4;
 
-    const lines: string[] = [];
+    let lines: string[] = [];
     for (const raw of query.split("\n")) {
       if (raw.length <= contentW) {
         lines.push(`${p.accent}${raw}${p.reset}`);
@@ -345,6 +406,16 @@ export default function activate(ctx: ExtensionContext): void {
         }
         if (remaining) lines.push(`${p.accent}${remaining}${p.reset}`);
       }
+    }
+
+    // Truncate very long queries to keep the response visible
+    const MAX_QUERY_LINES = 20;
+    if (lines.length > MAX_QUERY_LINES) {
+      const overflow = lines.length - MAX_QUERY_LINES;
+      lines = [
+        ...lines.slice(0, MAX_QUERY_LINES),
+        `${p.dim}… ${overflow} more lines${p.reset}`,
+      ];
     }
 
     // Mode-specific border color and title
@@ -380,8 +451,8 @@ export default function activate(ctx: ExtensionContext): void {
   }
 
   function writeAgentText(text: string): void {
+    finalizeToolGroup();
     closeToolLine();
-    const needsGap = s.hadToolCalls;
     s.hadToolCalls = false;
     if (s.isThinking) {
       s.isThinking = false;
@@ -395,26 +466,24 @@ export default function activate(ctx: ExtensionContext): void {
     showCollapsedThinking();
     stopCurrentSpinner();
     if (!s.renderer) startAgentResponse();
-    if (needsGap) writer.write("\n");
+    contentGap("text");
     s.renderer!.push(text);
     drain();
   }
 
   define("render:code-block", (language: string, code: string, width: number) => {
     flushForRaw();
+    contentGap("code");
     if (language) {
       s.renderer!.writeLine(`${p.dim}${language}${p.reset}`);
     }
     let highlighted: string;
-    if (!language) {
-      // No language specified — render as plain text to avoid false syntax detection
+    try {
+      highlighted = language
+        ? highlight(code, { language })
+        : highlight(code);  // auto-detect
+    } catch {
       highlighted = code;
-    } else {
-      try {
-        highlighted = highlight(code, { language });
-      } catch {
-        highlighted = `${p.success}${code}${p.reset}`;
-      }
     }
     const contentWidth = Math.min(90, width - 2);
     for (const line of highlighted.split("\n")) {
@@ -458,12 +527,15 @@ export default function activate(ctx: ExtensionContext): void {
       kind?: string;
       locations?: { path: string; line?: number | null }[];
       rawInput?: unknown;
+      batchIndex?: number;
+      batchTotal?: number;
     },
   ): void {
     closeToolLine();
     stopCurrentSpinner();
     if (!s.renderer) startAgentResponse();
     showCollapsedThinking();
+    contentGap("tool");
     s.renderer!.flush();
     drain();
     const lines = renderToolCall({
@@ -473,12 +545,18 @@ export default function activate(ctx: ExtensionContext): void {
       locations: extra?.locations,
       rawInput: extra?.rawInput,
     }, writer.columns);
+
+    // Prepend batch progress indicator when multiple tools in a batch
+    const batchPrefix = extra?.batchTotal && extra.batchTotal > 1
+      ? `${p.dim}[${extra.batchIndex}/${extra.batchTotal}]${p.reset} `
+      : "";
+
     for (let i = 0; i < lines.length - 1; i++) {
       s.renderer!.writeLine(lines[i]!);
     }
     drain();
     if (lines.length > 0) {
-      writer.write(`  ${lines[lines.length - 1]}`);
+      writer.write(`  ${batchPrefix}${lines[lines.length - 1]}`);
       s.toolLineOpen = true;
     }
     s.hadToolCalls = true;
@@ -488,11 +566,13 @@ export default function activate(ctx: ExtensionContext): void {
 
   function showToolComplete(exitCode: number | null): void {
     if (!s.renderer) return;
+    const elapsed = s.toolStartTime ? formatElapsed(Date.now() - s.toolStartTime) : "";
+    const timer = elapsed ? ` ${p.dim}${elapsed}${p.reset}` : "";
     const mark = exitCode === null
       ? `${p.muted}(timed out)${p.reset}`
       : exitCode === 0
-        ? `${p.success}✓${p.reset}`
-        : `${p.error}✗ exit ${exitCode}${p.reset}`;
+        ? `${p.success}✓${p.reset}${timer}`
+        : `${p.error}✗ exit ${exitCode}${p.reset}${timer}`;
 
     if (s.toolLineOpen && s.commandOutputLineCount === 0) {
       writer.write(` ${mark}\n`);
@@ -547,6 +627,29 @@ export default function activate(ctx: ExtensionContext): void {
     }
   }
 
+  /** Finalize a group of collapsed tool calls, rendering the summary. */
+  function finalizeToolGroup(): void {
+    if (s.toolGroupCount <= 1) {
+      s.toolGroupKind = undefined;
+      s.toolGroupCount = 0;
+      return;
+    }
+    closeToolLine();
+    if (!s.renderer) startAgentResponse();
+    const icon = s.toolGroupKind === "read" ? "◆" : "⌕";
+    const label = s.toolGroupKind === "read" ? "files read" : "searches";
+    const mark = s.toolGroupAllOk
+      ? `${p.success}✓${p.reset}`
+      : `${p.error}✗${p.reset}`;
+    s.renderer!.writeLine(
+      `${p.warning}${icon}${p.reset} ${p.dim}… +${s.toolGroupCount - 1} more ${label}${p.reset} ${mark}`,
+    );
+    drain();
+    s.toolGroupKind = undefined;
+    s.toolGroupCount = 0;
+    s.toolGroupAllOk = true;
+  }
+
   function writeCommandOutput(chunk: string): void {
     if (!s.renderer) return;
     closeToolLine();
@@ -562,10 +665,14 @@ export default function activate(ctx: ExtensionContext): void {
         s.commandOutputLineCount++;
       } else {
         s.commandOutputOverflow++;
+        s.commandOverflowLines.push(line);
       }
     }
     drain();
   }
+
+  /** Max overflow lines to show when a command fails. */
+  const FAIL_OVERFLOW_MAX = 20;
 
   function flushCommandOutput(): void {
     if (!s.renderer) return;
@@ -578,13 +685,29 @@ export default function activate(ctx: ExtensionContext): void {
         s.commandOutputLineCount++;
       } else {
         s.commandOutputOverflow++;
+        s.commandOverflowLines.push(s.commandOutputBuffer);
       }
       s.commandOutputBuffer = "";
     }
-    if (s.commandOutputOverflow > 0 && maxLines > 0) {
+
+    // On failure, show the tail of the overflow so the user can see the error
+    const failed = s.toolExitCode !== null && s.toolExitCode !== 0;
+    if (failed && s.commandOverflowLines.length > 0) {
+      const tail = s.commandOverflowLines.slice(-FAIL_OVERFLOW_MAX);
+      const skipped = s.commandOverflowLines.length - tail.length;
+      if (skipped > 0) {
+        s.renderer.writeLine(`${p.dim}  … ${skipped} lines hidden${p.reset}`);
+      }
+      for (const line of tail) {
+        s.renderer.writeLine(`${p.dim}  ${line}${p.reset}`);
+      }
+    } else if (s.commandOutputOverflow > 0 && maxLines > 0) {
       s.renderer.writeLine(`${p.dim}  … ${s.commandOutputOverflow} more lines${p.reset}`);
     }
+
     s.commandOutputOverflow = 0;
+    s.commandOverflowLines = [];
+    s.toolExitCode = null;
     drain();
   }
 
@@ -597,6 +720,7 @@ export default function activate(ctx: ExtensionContext): void {
 
   function showFileDiff(filePath: string, diff: DiffResult): void {
     if (diff.isIdentical) return;
+    contentGap("diff");
 
     const boxW = Math.min(120, writer.columns);
     const contentW = boxW - 4;

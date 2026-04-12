@@ -55,6 +55,8 @@ export interface ShellEvents {
     kind?: string;
     locations?: { path: string; line?: number | null }[];
     rawInput?: unknown;
+    batchIndex?: number;
+    batchTotal?: number;
   };
   "agent:tool-completed": {
     toolCallId?: string;

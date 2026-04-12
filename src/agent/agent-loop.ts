@@ -28,7 +28,7 @@ import { STATIC_SYSTEM_PROMPT, buildDynamicContext } from "./system-prompt.js";
 
 // Core tool factories
 import { createBashTool } from "./tools/bash.js";
-import { createReadFileTool } from "./tools/read-file.js";
+import { createReadFileTool, type FileReadCache } from "./tools/read-file.js";
 import { createWriteFileTool } from "./tools/write-file.js";
 import { createEditFileTool } from "./tools/edit-file.js";
 import { createGrepTool } from "./tools/grep.js";
@@ -48,6 +48,7 @@ export class AgentLoop implements AgentBackend {
   private abortController: AbortController | null = null;
   private toolRegistry = new ToolRegistry();
   private conversation = new ConversationState();
+  private fileReadCache: FileReadCache = new Map();
   private modes: AgentMode[];
   private currentModeIndex = 0;
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
@@ -337,7 +338,7 @@ export class AgentLoop implements AgentBackend {
     this.toolRegistry.register(
       createBashTool({ getCwd, getEnv, bus: this.bus }),
     );
-    this.toolRegistry.register(createReadFileTool(getCwd));
+    this.toolRegistry.register(createReadFileTool(getCwd, this.fileReadCache));
     this.toolRegistry.register(createWriteFileTool(getCwd));
     this.toolRegistry.register(createEditFileTool(getCwd));
     this.toolRegistry.register(createGrepTool(getCwd));
@@ -375,6 +376,8 @@ export class AgentLoop implements AgentBackend {
       args: Record<string, unknown>;
       tool: ToolDefinition;
       onChunk?: (chunk: string) => void;
+      batchIndex?: number;
+      batchTotal?: number;
     }) => {
       const { name, id, args, tool } = ctx;
       const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" as const };
@@ -383,7 +386,9 @@ export class AgentLoop implements AgentBackend {
       // Permission gating
       if (tool.requiresPermission) {
         let permKind = "tool-call";
-        let permTitle = name;
+        let permTitle = typeof args.description === "string"
+          ? `${name}: ${args.description}`
+          : name;
         let metadata: Record<string, unknown> = { args };
 
         // For file-modifying tools, pre-compute diff for display
@@ -436,8 +441,10 @@ export class AgentLoop implements AgentBackend {
 
       // Emit tool-started for TUI
       this.bus.emit("agent:tool-started", {
-        title: name, toolCallId: id,
+        title: typeof args.description === "string" ? `${name}: ${args.description}` : name,
+        toolCallId: id,
         kind: display.kind, locations: display.locations, rawInput: args,
+        batchIndex: ctx.batchIndex, batchTotal: ctx.batchTotal,
       });
       this.bus.emit("agent:tool-call", { tool: name, args });
 
@@ -447,6 +454,12 @@ export class AgentLoop implements AgentBackend {
         ? ctx.onChunk
         : undefined;
       const result = await tool.execute(args, onChunk);
+
+      // Invalidate read cache when a file is modified
+      if (tool.modifiesFiles && typeof args.path === "string" && !result.isError) {
+        const absPath = path.resolve(process.cwd(), args.path);
+        this.fileReadCache.delete(absPath);
+      }
 
       // Emit completion events
       this.bus.emit("agent:tool-completed", {
@@ -552,7 +565,8 @@ export class AgentLoop implements AgentBackend {
 
       // Execute tool calls — run read-only tools in parallel, permission-
       // requiring tools sequentially (to avoid overlapping permission prompts).
-      const executeSingle = async (tc: PendingToolCall) => {
+      const batchTotal = toolCalls.length;
+      const executeSingle = async (tc: PendingToolCall, batchIndex?: number) => {
         const tool = this.toolRegistry.get(tc.name);
         if (!tool) {
           this.conversation.addToolResult(
@@ -580,7 +594,8 @@ export class AgentLoop implements AgentBackend {
         };
         const result = await this.handlers.call(
           "tool:execute",
-          { name: tc.name, id: tc.id, args, tool, onChunk: defaultOnChunk },
+          { name: tc.name, id: tc.id, args, tool, onChunk: defaultOnChunk,
+            batchIndex, batchTotal: batchTotal > 1 ? batchTotal : undefined },
         );
 
         // Add tool result to conversation (truncate large outputs to avoid
@@ -626,14 +641,18 @@ export class AgentLoop implements AgentBackend {
       }
 
       // Run read-only tools in parallel
+      let batchIdx = 0;
       if (parallel.length > 0 && !signal.aborted) {
-        await Promise.all(parallel.map(tc => signal.aborted ? Promise.resolve() : executeSingle(tc)));
+        await Promise.all(parallel.map(tc => {
+          const idx = ++batchIdx;
+          return signal.aborted ? Promise.resolve() : executeSingle(tc, idx);
+        }));
       }
 
       // Run permission-requiring tools sequentially
       for (const tc of sequential) {
         if (signal.aborted) break;
-        await executeSingle(tc);
+        await executeSingle(tc, ++batchIdx);
       }
 
       // Loop back — LLM sees tool results
