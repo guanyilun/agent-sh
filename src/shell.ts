@@ -77,6 +77,13 @@ export class Shell implements InputContext {
         ...(showIndicator ? [`  ${titleCmd}`] : []),
         "}",
         "precmd_functions+=(__agent_sh_precmd)",
+        "",
+        "# Preexec hook: emit actual command text so agent-sh can track",
+        "# history-recalled and tab-completed commands accurately",
+        "__agent_sh_preexec() {",
+        '  printf "\\e]9997;%s\\a" "$1"',
+        "}",
+        "preexec_functions+=(__agent_sh_preexec)",
       ];
 
       zshrcLines.push(
@@ -117,7 +124,20 @@ export class Shell implements InputContext {
         `[ -f "${userHome}/.bashrc" ] && source "${userHome}/.bashrc"`,
         "",
         "# agent-sh hooks (invisible OSC sequences for cwd + prompt detection)",
-        `PROMPT_COMMAND="\${PROMPT_COMMAND:+\$PROMPT_COMMAND;}${osc7Cmd}; ${promptMarker}${showIndicator ? `; ${titleCmd}` : ""}"`,
+        `PROMPT_COMMAND="\${PROMPT_COMMAND:+\$PROMPT_COMMAND;}__agent_sh_preexec_ran=0; ${osc7Cmd}; ${promptMarker}${showIndicator ? `; ${titleCmd}` : ""}"`,
+        "",
+        "# Preexec hook via DEBUG trap: emit actual command text so agent-sh",
+        "# can track history-recalled and tab-completed commands accurately",
+        "__agent_sh_preexec_ran=0",
+        "__agent_sh_emit_preexec() {",
+        '  [[ $__agent_sh_preexec_ran == 1 ]] && return',
+        '  [[ -n $COMP_LINE ]] && return',
+        "  __agent_sh_preexec_ran=1",
+        "  local this_cmd",
+        `  this_cmd=$(HISTTIMEFORMAT='' builtin history 1 | command sed 's/^ *[0-9]* *//')`,
+        `  printf '\\e]9997;%s\\a' "$this_cmd"`,
+        "}",
+        "trap '__agent_sh_emit_preexec' DEBUG",
         "",
         "# End-of-prompt marker: append to PS1 (\\[...\\] marks it zero-width)",
         'case "$PS1" in *9998*) ;; *) PS1="${PS1}\\[\\e]9998;READY\\a\\]";; esac',
@@ -302,6 +322,7 @@ export class Shell implements InputContext {
       this.echoSkip = true;
       this.paused = false;
       process.stdout.write("\n");
+      this.bus.emit("shell:agent-exec-start", {});
 
       const output = await new Promise<{ output: string; cwd: string }>((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -323,6 +344,7 @@ export class Shell implements InputContext {
 
       this.paused = true;
       this.echoSkip = false;
+      this.bus.emit("shell:agent-exec-done", {});
 
       return { ...payload, output: output.output, cwd: output.cwd, done: true };
     });

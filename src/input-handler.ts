@@ -221,8 +221,31 @@ export class InputHandler {
       } else if (ch === "\x04") {
         this.lineBuffer = "";
         this.ctx.writeToPty(ch);
+      } else if (ch === "\x1b") {
+        // Escape sequence — forward the entire sequence to the PTY but
+        // don't let it corrupt lineBuffer.  Skip CSI (ESC [ ... final)
+        // and SS3 (ESC O <char>) sequences; anything else: just ESC.
+        let seq = ch;
+        if (i + 1 < data.length) {
+          const next = data[i + 1]!;
+          if (next === "[") {
+            // CSI: ESC [ (params) (intermediates) final_byte
+            seq += next; i++;
+            while (i + 1 < data.length && data[i + 1]!.charCodeAt(0) < 0x40) {
+              i++; seq += data[i]!;
+            }
+            if (i + 1 < data.length) { i++; seq += data[i]!; } // final byte
+          } else if (next === "O") {
+            // SS3: ESC O <char>
+            seq += next; i++;
+            if (i + 1 < data.length) { i++; seq += data[i]!; }
+          } else {
+            // ESC + single char (alt-key, etc.)
+            seq += next; i++;
+          }
+        }
+        this.ctx.writeToPty(seq);
       } else if (ch.charCodeAt(0) < 32 && ch !== "\t") {
-        this.lineBuffer = "";
         this.ctx.writeToPty(ch);
       } else {
         // Check if trigger char at start of empty line → enter that mode
@@ -450,7 +473,10 @@ export class InputHandler {
           if (this.autocompleteActive) {
             this.applyAutocomplete();
           }
-          const query = act.buffer.trim();
+          // Use editor.buffer (not act.buffer) so autocomplete selections
+          // take effect — act.buffer is a stale snapshot from before
+          // applyAutocomplete() updated the buffer.
+          const query = this.editor.buffer.trim();
           if (query) {
             // Add to history (avoid consecutive duplicates)
             if (this.history.length === 0 || this.history[this.history.length - 1] !== query) {

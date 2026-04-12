@@ -239,7 +239,15 @@ export class EventBus {
     event: K,
     payload: ShellEvents[K],
   ): void {
-    const transformed = this.emitPipe(event, payload);
+    let transformed: ShellEvents[K];
+    try {
+      transformed = this.emitPipe(event, payload);
+    } catch (err) {
+      if (process.env.DEBUG) {
+        process.stderr.write(`[event-bus] pipe error on ${String(event)}: ${err}\n`);
+      }
+      transformed = payload; // fall back to untransformed
+    }
     this.emitter.emit(event, transformed);
   }
 
