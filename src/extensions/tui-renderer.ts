@@ -331,17 +331,16 @@ export default function activate(ctx: ExtensionContext): void {
       ? `${borderColor}${p.bold} ${modeLabel} ${p.reset}`
       : `${p.accent}${p.bold}❯${p.reset}`;
 
-    // Backend/model label on the right (provider/model, highlighted)
+    // Backend/model label on the right (backend/model, highlighted)
     const model = backendInfo?.model ?? llmClient?.model;
-    const provider = backendInfo?.provider;
-    const backendName = backendInfo?.name && backendInfo.name !== "agent-sh" ? backendInfo.name : undefined;
+    const backend = backendInfo?.name;
     let modelLabel: string | undefined;
-    if (provider && model) {
-      modelLabel = `${p.dim}${provider}/${p.reset}${p.bold}${model}${p.reset}`;
+    if (backend && model) {
+      modelLabel = `${p.dim}${backend}/${p.reset}${p.bold}${model}${p.reset}`;
     } else if (model) {
       modelLabel = `${p.bold}${model}${p.reset}`;
-    } else if (backendName) {
-      modelLabel = `${p.bold}${backendName}${p.reset}`;
+    } else if (backend) {
+      modelLabel = `${p.bold}${backend}${p.reset}`;
     }
 
     const framed = renderBoxFrame(lines, {
