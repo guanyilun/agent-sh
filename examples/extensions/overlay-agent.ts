@@ -2,16 +2,10 @@
  * Overlay agent extension.
  *
  * Provides a hotkey (Ctrl+]) to summon the agent from anywhere — even
- * inside vim, htop, or ssh. Renders a full-screen response view by
- * holding stdout (suppresses both PTY and TUI output), then returns
- * to the previous program on dismiss.
+ * inside vim, htop, or ssh. Composites a floating response box on top
+ * of the current terminal content using a headless xterm.js buffer.
  *
- * Flow:
- *   1. Ctrl+] → input bar at bottom of screen
- *   2. Type query, Enter → hold stdout, clear screen, submit
- *   3. Response streams directly to stdout (TUI renderer is suppressed)
- *   4. On completion → "Ctrl+] to dismiss" prompt
- *   5. Ctrl+] → release stdout, Ctrl+L to PTY to force program redraw
+ * Requires: npm install @xterm/headless@5.5.0 @xterm/addon-serialize@0.13.0
  *
  * Usage:
  *   agent-sh -e ./examples/extensions/overlay-agent.ts
@@ -19,94 +13,232 @@
  *   # Or copy to ~/.agent-sh/extensions/ for permanent use:
  *   cp examples/extensions/overlay-agent.ts ~/.agent-sh/extensions/
  */
+import { createRequire } from "module";
 import type { ExtensionContext } from "agent-sh/types";
+
+const require = createRequire(import.meta.url);
+const { Terminal } = require("@xterm/headless") as typeof import("@xterm/headless");
+const { SerializeAddon } = require("@xterm/addon-serialize") as typeof import("@xterm/addon-serialize");
 
 const TRIGGER = "\x1d"; // Ctrl+]
 const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
 const CYAN = "\x1b[36m";
+const INVERSE = "\x1b[7m";
+
+// Synchronized output (prevents flicker)
+const SYNC_START = "\x1b[?2026h";
+const SYNC_END = "\x1b[?2026l";
 
 type Phase = "idle" | "input" | "responding" | "done";
 
-export default function activate({ bus }: ExtensionContext): void {
+/** Strip all ANSI escape sequences. */
+function stripAnsi(str: string): string {
+  return str
+    .replace(/\x1b\][^\x07]*\x07/g, "")
+    .replace(/\x1b\[[^m]*m/g, "")
+    .replace(/\x1b\[\?[^a-zA-Z]*[a-zA-Z]/g, "")
+    .replace(/\x1b\[[^a-zA-Z]*[a-zA-Z]/g, "")
+    .replace(/\r/g, "");
+}
+
+export default function activate({ bus, advise }: ExtensionContext): void {
+  // ── Headless terminal (shared with terminal-buffer context) ──
+  const term = new Terminal({
+    cols: process.stdout.columns || 80,
+    rows: process.stdout.rows || 24,
+    allowProposedApi: true,
+    scrollback: 200,
+  });
+  const serialize = new SerializeAddon();
+  term.loadAddon(serialize);
+
+  bus.on("shell:pty-data", ({ raw }) => { term.write(raw); });
+
+  // Also inject clean buffer into agent context (like terminal-buffer.ts)
+  advise("context:build-extra", (next: () => string) => {
+    const base = next();
+    const raw = serialize.serialize().trim();
+    if (!raw) return base;
+    const clean = stripAnsi(raw).trim();
+    if (!clean) return base;
+    const lines = clean.split("\n");
+    const capped = lines.length > 80 ? lines.slice(-80).join("\n") : clean;
+    const isAlt = term.buffer.active.type === "alternate";
+    const header = isAlt ? "<terminal_buffer mode=\"alternate\">" : "<terminal_buffer>";
+    const section = `${header}\n${capped}\n</terminal_buffer>`;
+    return base ? base + "\n" + section : section;
+  });
+
+  // ── Overlay state ─────────────────────────────────────────
   let phase: Phase = "idle";
-  let buffer = "";
-  let cursor = 0;
+  let inputBuffer = "";
+  let inputCursor = 0;
   let renderTimer: ReturnType<typeof setTimeout> | null = null;
+  let responseLines: string[] = [];
+  let currentResponseLine = "";
+  let scrollOffset = 0;
 
-  // ── Input bar rendering ───────────────────────────────────
+  // ── Screen snapshot & compositing ─────────────────────────
 
-  function renderInputBar(): void {
-    const cols = process.stdout.columns || 80;
+  function getScreenLines(): string[] {
+    const raw = serialize.serialize();
+    const lines = stripAnsi(raw).split("\n");
     const rows = process.stdout.rows || 24;
-
-    process.stdout.write("\x1b7"); // save cursor
-    process.stdout.write(`\x1b[${rows};1H`); // move to bottom
-
-    const label = "\x1b[7m agent \x1b[0m ";
-    const maxInput = cols - 9;
-    const displayBuf = buffer.length > maxInput
-      ? buffer.slice(buffer.length - maxInput)
-      : buffer;
-
-    process.stdout.write("\x1b[2K" + label + displayBuf);
-
-    const displayCursor = cursor - (buffer.length - displayBuf.length);
-    process.stdout.write(`\x1b[${rows};${9 + displayCursor}H`);
+    // Pad or trim to exactly terminal height
+    while (lines.length < rows) lines.push("");
+    return lines.slice(0, rows);
   }
 
-  function clearInputBar(): void {
+  function compositeAndRender(): void {
+    const cols = process.stdout.columns || 80;
     const rows = process.stdout.rows || 24;
-    process.stdout.write(`\x1b[${rows};1H\x1b[2K`);
-    process.stdout.write("\x1b8"); // restore cursor
+    const bgLines = getScreenLines();
+
+    // Box dimensions
+    const boxW = Math.min(cols - 4, 100);
+    const boxH = Math.min(rows - 4, Math.max(8, Math.floor(rows * 0.6)));
+    const boxTop = Math.floor((rows - boxH) / 2);
+    const boxLeft = Math.floor((cols - boxW) / 2);
+
+    // Box content: response lines with scroll
+    const contentH = boxH - 2; // minus top/bottom border
+    const totalContent = responseLines.length;
+    // Auto-scroll to bottom
+    if (totalContent > contentH) {
+      scrollOffset = totalContent - contentH;
+    }
+    const visibleContent = responseLines.slice(scrollOffset, scrollOffset + contentH);
+
+    // Build the composited frame
+    const out: string[] = [SYNC_START, `\x1b[H`]; // home cursor
+
+    for (let row = 0; row < rows; row++) {
+      const bgLine = (bgLines[row] || "").padEnd(cols).slice(0, cols);
+      const relRow = row - boxTop;
+
+      if (relRow < 0 || relRow >= boxH) {
+        // Background row — render dimmed
+        out.push(`${DIM}${bgLine}${RESET}`);
+      } else if (relRow === 0) {
+        // Top border
+        const title = phase === "input" ? " agent " : phase === "done" ? " done " : " ... ";
+        const titleStr = `${INVERSE}${title}${RESET}`;
+        const borderAfter = boxW - title.length - 1;
+        const border = "─" + "─".repeat(title.length > 0 ? 0 : boxW - 2) + "─";
+        // Compose: dim bg left, box border, dim bg right
+        const left = `${DIM}${bgLine.slice(0, boxLeft)}${RESET}`;
+        const boxBorder = `╭${"─".repeat(boxW - 2)}╮`;
+        // Overlay title in the border
+        const titleInBorder = `╭─${titleStr}${"─".repeat(Math.max(0, boxW - title.length - 3))}╮`;
+        const right = `${DIM}${bgLine.slice(boxLeft + boxW)}${RESET}`;
+        out.push(left + titleInBorder + right);
+      } else if (relRow === boxH - 1) {
+        // Bottom border
+        const left = `${DIM}${bgLine.slice(0, boxLeft)}${RESET}`;
+        let footer = "";
+        if (phase === "done") {
+          footer = ` Ctrl+] to return `;
+        } else if (phase === "responding") {
+          footer = ` streaming... `;
+        } else if (phase === "input") {
+          footer = ` Enter to send, Esc to cancel `;
+        }
+        const footerPad = Math.max(0, boxW - footer.length - 3);
+        const boxBorder = `╰${"─".repeat(footerPad)}${DIM}${footer}${RESET}${"─"}╯`;
+        const right = `${DIM}${bgLine.slice(boxLeft + boxW)}${RESET}`;
+        out.push(left + boxBorder + right);
+      } else {
+        // Content row
+        const contentIdx = relRow - 1;
+        let content = "";
+        if (phase === "input") {
+          if (contentIdx === 0) {
+            content = `${CYAN}❯${RESET} ${inputBuffer}`;
+          }
+        } else {
+          content = visibleContent[contentIdx] || "";
+        }
+        // Truncate content to box width
+        const plainContent = stripAnsi(content);
+        const contentW = boxW - 4; // 2 border + 2 padding
+        const displayContent = plainContent.length > contentW
+          ? content.slice(0, contentW - 1) + "…"
+          : content;
+        const pad = Math.max(0, contentW - stripAnsi(displayContent).length);
+
+        const left = `${DIM}${bgLine.slice(0, boxLeft)}${RESET}`;
+        const boxLine = `│ ${displayContent}${" ".repeat(pad)} │`;
+        const right = `${DIM}${bgLine.slice(boxLeft + boxW)}${RESET}`;
+        out.push(left + boxLine + right);
+      }
+    }
+
+    out.push(SYNC_END);
+
+    // Position cursor for input
+    if (phase === "input") {
+      const cursorRow = boxTop + 1;
+      const cursorCol = boxLeft + 4 + inputCursor; // "│ ❯ " = 4 chars
+      out.push(`\x1b[${cursorRow + 1};${cursorCol + 1}H`);
+    }
+
+    process.stdout.write(out.join("\x1b[K\n").replace(/\n$/, ""));
+  }
+
+  function restoreScreen(): void {
+    // Re-render the original screen from the buffer
+    const bgLines = getScreenLines();
+    const rows = process.stdout.rows || 24;
+    const out = [SYNC_START, `\x1b[H`];
+    for (let row = 0; row < rows; row++) {
+      out.push(bgLines[row] || "");
+    }
+    out.push(SYNC_END);
+    process.stdout.write(out.join("\x1b[K\n").replace(/\n$/, ""));
   }
 
   // ── Phase transitions ─────────────────────────────────────
 
-  function activate_overlay(): void {
+  function activateOverlay(): void {
     phase = "input";
-    buffer = "";
-    cursor = 0;
-    renderInputBar();
+    inputBuffer = "";
+    inputCursor = 0;
+    responseLines = [];
+    currentResponseLine = "";
+    scrollOffset = 0;
+
+    // Hold stdout — suppresses PTY and TUI
+    bus.emit("shell:stdout-hold", {});
+    compositeAndRender();
   }
 
   function submit(): void {
-    const query = buffer.trim();
+    const query = inputBuffer.trim();
     if (!query) { dismiss(); return; }
 
     phase = "responding";
-    clearInputBar();
+    responseLines = [`${CYAN}${BOLD}❯${RESET} ${query}`, ""];
+    currentResponseLine = "";
+    scrollOffset = 0;
 
-    // Hold stdout — suppresses both PTY output AND TUI renderer
-    bus.emit("shell:stdout-hold", {});
-
-    // Clear screen and show query header
-    const cols = process.stdout.columns || 80;
-    process.stdout.write("\x1b[2J\x1b[H");
-    process.stdout.write(`${CYAN}${BOLD}❯${RESET} ${query}\n`);
-    process.stdout.write(`${DIM}${"─".repeat(cols)}${RESET}\n`);
-
+    compositeAndRender();
     bus.emit("agent:submit", { query });
   }
 
   function dismiss(): void {
     if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
-
-    const wasActive = phase === "responding" || phase === "done";
     phase = "idle";
-    buffer = "";
-    cursor = 0;
+    inputBuffer = "";
+    inputCursor = 0;
 
-    if (wasActive) {
-      // Release stdout — TUI renderer and PTY output resume
-      bus.emit("shell:stdout-release", {});
+    // Restore screen from buffer then release
+    restoreScreen();
+    bus.emit("shell:stdout-release", {});
 
-      // Force the foreground program to redraw (Ctrl+L)
-      bus.emit("shell:pty-write", { data: "\x0c" });
-    } else {
-      clearInputBar();
-    }
+    // Force foreground program to redraw
+    bus.emit("shell:pty-write", { data: "\x0c" });
   }
 
   // ── Input handling ────────────────────────────────────────
@@ -117,14 +249,10 @@ export default function activate({ bus }: ExtensionContext): void {
       const ch = data[i]!;
       const code = ch.charCodeAt(0);
 
-      // Escape (bare) → cancel
       if (ch === "\x1b" && data[i + 1] == null) { dismiss(); return; }
-      // Ctrl+] → cancel
       if (ch === TRIGGER) { dismiss(); return; }
-      // Ctrl+C → cancel
       if (code === 0x03) { dismiss(); return; }
 
-      // Escape sequence → arrows
       if (ch === "\x1b") {
         i++;
         const next = data[i];
@@ -132,119 +260,107 @@ export default function activate({ bus }: ExtensionContext): void {
           i++;
           while (i < data.length && data.charCodeAt(i) >= 0x20 && data.charCodeAt(i) < 0x40) i++;
           const final = data[i]; i++;
-          if (final === "C" && cursor < buffer.length) { cursor++; renderInputBar(); }
-          if (final === "D" && cursor > 0) { cursor--; renderInputBar(); }
-          if (final === "H") { cursor = 0; renderInputBar(); }
-          if (final === "F") { cursor = buffer.length; renderInputBar(); }
+          if (final === "C" && inputCursor < inputBuffer.length) { inputCursor++; compositeAndRender(); }
+          if (final === "D" && inputCursor > 0) { inputCursor--; compositeAndRender(); }
         } else { i++; }
         continue;
       }
 
-      // Enter → submit
       if (ch === "\r") { submit(); return; }
 
-      // Backspace
       if (ch === "\x7f" || ch === "\b") {
-        if (cursor > 0) {
-          buffer = buffer.slice(0, cursor - 1) + buffer.slice(cursor);
-          cursor--;
-          renderInputBar();
+        if (inputCursor > 0) {
+          inputBuffer = inputBuffer.slice(0, inputCursor - 1) + inputBuffer.slice(inputCursor);
+          inputCursor--;
+          compositeAndRender();
         }
         i++; continue;
       }
 
-      // Readline shortcuts
-      if (code === 0x01) { cursor = 0; renderInputBar(); i++; continue; }
-      if (code === 0x05) { cursor = buffer.length; renderInputBar(); i++; continue; }
-      if (code === 0x15) { buffer = ""; cursor = 0; renderInputBar(); i++; continue; }
-      if (code === 0x0b) { buffer = buffer.slice(0, cursor); renderInputBar(); i++; continue; }
-
-      // Other control → ignore
+      if (code === 0x01) { inputCursor = 0; compositeAndRender(); i++; continue; }
+      if (code === 0x05) { inputCursor = inputBuffer.length; compositeAndRender(); i++; continue; }
+      if (code === 0x15) { inputBuffer = ""; inputCursor = 0; compositeAndRender(); i++; continue; }
       if (code < 0x20) { i++; continue; }
 
-      // Printable
-      buffer = buffer.slice(0, cursor) + ch + buffer.slice(cursor);
-      cursor++;
-      renderInputBar();
+      inputBuffer = inputBuffer.slice(0, inputCursor) + ch + inputBuffer.slice(inputCursor);
+      inputCursor++;
+      compositeAndRender();
       i++;
     }
   }
 
   // ── Bus wiring ────────────────────────────────────────────
 
-  // Re-render input bar after PTY output (foreground program redraws over it)
-  bus.on("shell:pty-data", () => {
-    if (phase !== "input") return;
-    if (renderTimer) clearTimeout(renderTimer);
-    renderTimer = setTimeout(() => {
-      renderTimer = null;
-      if (phase === "input") renderInputBar();
-    }, 16);
-  });
-
-  // Stream response text directly to stdout (TUI renderer is suppressed)
   bus.on("agent:response-chunk", (e) => {
     if (phase !== "responding") return;
     for (const block of e.blocks) {
       if (block.type === "text" && block.text) {
-        process.stdout.write(block.text);
+        for (const ch of block.text) {
+          if (ch === "\n") {
+            responseLines.push(currentResponseLine);
+            currentResponseLine = "";
+          } else {
+            currentResponseLine += ch;
+          }
+        }
       }
     }
+    // Debounce re-render for streaming
+    if (renderTimer) clearTimeout(renderTimer);
+    renderTimer = setTimeout(() => {
+      renderTimer = null;
+      // Include current partial line for display
+      const displayLines = [...responseLines, currentResponseLine];
+      const savedLines = responseLines;
+      responseLines = displayLines;
+      compositeAndRender();
+      responseLines = savedLines;
+    }, 32);
   });
 
-  // Tool call status — show compact one-liners
   bus.on("agent:tool-started", (e) => {
     if (phase !== "responding") return;
-    process.stdout.write(`\n${DIM}▶ ${e.title}${RESET}`);
-    if (e.displayDetail) process.stdout.write(`${DIM} ${e.displayDetail}${RESET}`);
+    if (currentResponseLine) { responseLines.push(currentResponseLine); currentResponseLine = ""; }
+    responseLines.push(`▶ ${e.title}${e.displayDetail ? " " + e.displayDetail : ""}`);
+    compositeAndRender();
   });
 
   bus.on("agent:tool-completed", (e) => {
     if (phase !== "responding") return;
     const mark = e.exitCode === 0 ? " ✓" : ` ✗ exit ${e.exitCode}`;
-    process.stdout.write(`${DIM}${mark}${RESET}\n`);
+    if (responseLines.length > 0) {
+      responseLines[responseLines.length - 1] += mark;
+    }
+    compositeAndRender();
   });
 
-  // When agent finishes, show dismiss prompt
   bus.on("agent:processing-done", () => {
     if (phase === "responding") {
+      if (currentResponseLine) { responseLines.push(currentResponseLine); currentResponseLine = ""; }
       phase = "done";
-      const cols = process.stdout.columns || 80;
-      process.stdout.write(`\n${DIM}${"─".repeat(cols)}${RESET}\n`);
-      process.stdout.write(`${DIM}  Press Ctrl+] to return${RESET}\n`);
+      compositeAndRender();
     }
   });
 
-  // Intercept input: activate on trigger, capture while active
   bus.onPipe("input:intercept", (payload) => {
-    // Done phase: any dismiss key returns to program
     if (phase === "done") {
       if (payload.data === TRIGGER || payload.data === "\x1b" || payload.data === "\x03") {
         dismiss();
       }
       return { ...payload, consumed: true };
     }
-
-    // Input phase: editing
     if (phase === "input") {
       handleKey(payload.data);
       return { ...payload, consumed: true };
     }
-
-    // Responding phase: only Ctrl+C to cancel agent
     if (phase === "responding") {
-      if (payload.data === "\x03") {
-        bus.emit("agent:cancel-request", {});
-      }
+      if (payload.data === "\x03") bus.emit("agent:cancel-request", {});
       return { ...payload, consumed: true };
     }
-
-    // Idle: trigger activates overlay
     if (payload.data === TRIGGER) {
-      activate_overlay();
+      activateOverlay();
       return { ...payload, consumed: true };
     }
-
     return payload;
   });
 }
