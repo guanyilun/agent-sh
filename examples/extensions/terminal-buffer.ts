@@ -198,14 +198,15 @@ export default function activate({ bus, advise, registerTool }: ExtensionContext
       const keys = interpretEscapes(raw);
       const settleMs = (args.settle_ms as number) ?? 150;
 
-      // Temporarily show PTY output so the user sees the program's response
+      // Force PTY output visible so the user sees the program's response.
+      // Stays visible for the rest of agent processing — Shell resets
+      // paused=false on processing-done anyway.
       bus.emit("shell:stdout-show", {});
       process.stdout.write("\n");
       bus.emit("shell:pty-write", { data: keys });
 
       // Wait for the terminal to process the keystrokes and render
       await settle(settleMs);
-      bus.emit("shell:stdout-hide", {});
 
       // Return the screen state after the keystrokes
       const { text, altScreen, cursorX, cursorY } = readScreen();
