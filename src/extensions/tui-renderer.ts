@@ -308,6 +308,7 @@ export default function activate(ctx: ExtensionContext): void {
       s.renderer.flush();
       s.renderer.printBottomBorder();
       drain();
+      writer.write("\n");
       s.renderer = null;
     }
   }
