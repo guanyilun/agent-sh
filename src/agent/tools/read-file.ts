@@ -49,6 +49,13 @@ export function createReadFileTool(
       locations: [{ path: args.path as string }],
     }),
 
+    formatResult: (_args, result) => {
+      if (result.isError) return {};
+      if (result.content.startsWith("File unchanged")) return { summary: "cached" };
+      const lines = result.content.split("\n").filter(l => !l.startsWith("["));
+      return { summary: `${lines.length} lines` };
+    },
+
     async execute(args) {
       const filePath = args.path as string;
       const absPath = path.resolve(getCwd(), filePath);

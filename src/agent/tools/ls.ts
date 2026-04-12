@@ -35,6 +35,12 @@ export function createLsTool(getCwd: () => string): ToolDefinition {
         : [],
     }),
 
+    formatResult: (_args, result) => {
+      if (result.isError || result.content === "(empty directory)") return { summary: "0 entries" };
+      const lines = result.content.split("\n").filter(Boolean);
+      return { summary: `${lines.length} entries` };
+    },
+
     async execute(args) {
       const dirPath = (args.path as string) ?? ".";
       const absPath = path.resolve(getCwd(), dirPath);

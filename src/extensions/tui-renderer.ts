@@ -27,6 +27,7 @@ import { renderBoxFrame } from "../utils/box-frame.js";
 import type { DiffResult } from "../utils/diff.js";
 import { getSettings } from "../settings.js";
 import type { ExtensionContext } from "../types.js";
+import type { ToolResultDisplay, ToolResultBody } from "../agent/types.js";
 import { StdoutWriter } from "../utils/output-writer.js";
 
 /** Encode a PNG buffer as a terminal inline image escape sequence. */
@@ -90,6 +91,8 @@ interface RenderState {
   toolGroupAllOk: boolean;
   /** Number of tools rendered individually in current group. */
   toolGroupRendered: number;
+  /** Accumulated result summaries from grouped tools. */
+  toolGroupSummaries: string[];
 
   // ── Thinking ──
   isThinking: boolean;
@@ -122,6 +125,7 @@ function createRenderState(): RenderState {
     toolGroupCount: 0,
     toolGroupAllOk: true,
     toolGroupRendered: 0,
+    toolGroupSummaries: [],
     isThinking: false,
     showThinkingText: false,
     thinkingPending: false,
@@ -231,15 +235,33 @@ export default function activate(ctx: ExtensionContext): void {
     endAgentResponse();
   });
 
-  // Read-only tool kinds eligible for grouping
+  // ── Tool batch grouping ──────────────────────────────────────────
   const GROUPABLE_KINDS = new Set(["read", "search"]);
-  const GROUP_MAX_VISIBLE = 5; // show this many tools individually before collapsing
+  const GROUP_MAX_VISIBLE = 5;
+  const KIND_ICONS: Record<string, string> = { read: "◆", search: "⌕" };
+
+  // Batch groups: kind → { total, rendered, headerShown }
+  let batchGroups = new Map<string, { total: number; rendered: number; headerShown: boolean }>();
+
+  bus.on("agent:tool-batch", (e) => {
+    fencedTransform.flush();
+    finalizeToolGroup();
+    batchGroups = new Map();
+    for (const group of e.groups) {
+      batchGroups.set(group.kind, {
+        total: group.tools.length,
+        rendered: 0,
+        headerShown: false,
+      });
+    }
+  });
 
   bus.on("agent:tool-started", (e) => {
     fencedTransform.flush();
     stopCurrentSpinner();
     s.currentToolKind = e.kind;
     s.toolStartTime = Date.now();
+
     if (e.title === "user_shell") {
       finalizeToolGroup();
       closeToolLine();
@@ -250,11 +272,39 @@ export default function activate(ctx: ExtensionContext): void {
       s.renderer!.writeLine(`${p.dim}▶ user_shell: ${cmd}${p.reset}`);
       drain();
       s.hadToolCalls = true;
-    } else if (GROUPABLE_KINDS.has(e.kind ?? "") && e.kind === s.toolGroupKind) {
-      // Consecutive same-kind read-only tool
+      return;
+    }
+
+    const kind = e.kind ?? "execute";
+    const group = batchGroups.get(kind);
+    const isGrouped = group && group.total > 1 && GROUPABLE_KINDS.has(kind);
+
+    if (isGrouped) {
+      // Render group header on first tool of this kind in the batch
+      if (!group.headerShown) {
+        finalizeToolGroup();
+        closeToolLine();
+        if (!s.renderer) startAgentResponse();
+        showCollapsedThinking();
+        contentGap("tool");
+        s.renderer!.flush();
+        drain();
+
+        const icon = KIND_ICONS[kind] ?? "▶";
+        s.renderer!.writeLine(`${p.warning}${icon}${p.reset} ${kind}`);
+        drain();
+
+        group.headerShown = true;
+        s.toolGroupKind = kind;
+        s.toolGroupCount = 0;
+        s.toolGroupRendered = 0;
+        s.toolGroupAllOk = true;
+        s.toolGroupSummaries = [];
+      }
+
       s.toolGroupCount++;
-      if (s.toolGroupCount <= GROUP_MAX_VISIBLE) {
-        // Show with tree connector
+
+      if (s.toolGroupRendered < GROUP_MAX_VISIBLE) {
         showToolCall(e.title, "", {
           ...e,
           batchIndex: e.batchIndex,
@@ -263,15 +313,9 @@ export default function activate(ctx: ExtensionContext): void {
         });
         s.toolGroupRendered++;
       }
-      // Beyond max: collapsed, rendered as summary in finalizeToolGroup
     } else {
+      // Standalone tool — single in its batch kind, or not groupable
       finalizeToolGroup();
-      if (GROUPABLE_KINDS.has(e.kind ?? "")) {
-        s.toolGroupKind = e.kind;
-        s.toolGroupCount = 1;
-        s.toolGroupAllOk = true;
-        s.toolGroupRendered = 1;
-      }
       showToolCall(e.title, "", {
         ...e,
         batchIndex: e.batchIndex,
@@ -283,13 +327,14 @@ export default function activate(ctx: ExtensionContext): void {
   bus.on("agent:tool-completed", (e) => {
     s.toolExitCode = e.exitCode;
     if (e.exitCode !== 0) s.toolGroupAllOk = false;
-    if (s.toolGroupCount > GROUP_MAX_VISIBLE) {
-      // Collapsed tool — just track success/failure
+
+    if (s.toolGroupKind) {
+      // Grouped tool — track success/failure and summaries, show aggregate on ⎿ line.
+      // Don't restart spinner between grouped tools — it's already running from group start.
+      if (e.resultDisplay?.summary) s.toolGroupSummaries.push(e.resultDisplay.summary);
       s.currentToolKind = undefined;
-      s.spinnerStartTime = 0;
-      startThinkingSpinner();
     } else {
-      showToolComplete(e.exitCode);
+      showToolComplete(e.exitCode, e.resultDisplay);
       s.currentToolKind = undefined;
       s.spinnerStartTime = 0;
       startThinkingSpinner();
@@ -368,7 +413,7 @@ export default function activate(ctx: ExtensionContext): void {
   function startAgentResponse(): void {
     s.renderer = new MarkdownRenderer(writer.columns);
     s.hadToolCalls = false;
-    s.lastContentKind = null;
+    // Preserve lastContentKind across responses so text→tool gaps work
     s.renderer.printTopBorder();
     drain();
   }
@@ -381,18 +426,20 @@ export default function activate(ctx: ExtensionContext): void {
   let lastEmittedLineBlank = false;
 
   function contentGap(kind: "text" | "tool" | "diff" | "code" | "info"): void {
-    if (s.lastContentKind && s.lastContentKind !== kind && s.renderer && !lastEmittedLineBlank) {
-      s.renderer.writeLine("");
-      drain();
+    if (s.lastContentKind && s.lastContentKind !== kind) {
+      if (s.renderer) {
+        s.renderer.flush();
+        drain();
+      }
+      writer.write("\n");
     }
     s.lastContentKind = kind;
   }
 
   function showCollapsedThinking(): void {
     if (s.thinkingPending && !s.showThinkingText) {
-      if (!s.renderer) startAgentResponse();
-      s.renderer!.writeLine(`${p.muted}… thinking${p.reset}`);
-      s.renderer!.writeLine("");
+      // Just clear the pending flag — the spinner already indicates thinking.
+      // No need for a separate "… thinking" label that clutters the output.
       s.thinkingPending = false;
     }
   }
@@ -539,6 +586,104 @@ export default function activate(ctx: ExtensionContext): void {
     ctx.call("render:image", data);
   }
 
+  /**
+   * Default renderer for tool result bodies. Extensions can advise this handler
+   * to override rendering for specific body kinds or add new ones:
+   *
+   *   ctx.advise("render:result-body", (next, body, width) => {
+   *     if (body.kind === "diff") return myCustomDiffRenderer(body, width);
+   *     return next(body, width);
+   *   });
+   */
+  define("render:result-body", (body: ToolResultBody, width: number): string[] => {
+    if (body.kind === "diff") {
+      return renderDiffBody(body.diff as DiffResult, body.filePath, width);
+    }
+    if (body.kind === "lines") {
+      return renderLinesBody(body.lines, width, body.maxLines);
+    }
+    return [];
+  });
+
+  /** Render a diff as framed box lines (pure — no TUI state side effects). */
+  function renderDiffBody(diff: DiffResult, filePath: string, width: number): string[] {
+    if (diff.isIdentical) return [];
+    const boxW = Math.min(120, width);
+    const contentW = boxW - 4;
+
+    const diffLines = renderDiff(diff, {
+      width: contentW,
+      filePath,
+      maxLines: getSettings().diffMaxLines,
+      trueColor: true,
+    });
+
+    const lastLine = diffLines[diffLines.length - 1] ?? "";
+    const isTruncated = lastLine.includes("… ");
+
+    if (isTruncated) {
+      s.lastTruncatedDiff = { filePath, diff, expanded: false };
+    } else {
+      s.lastTruncatedDiff = null;
+    }
+
+    const body = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
+    const footer = isTruncated
+      ? [`  ${p.dim}ctrl+o to expand${p.reset}`]
+      : undefined;
+
+    return renderBoxFrame(body, {
+      width: boxW,
+      style: "rounded",
+      borderColor: p.dim,
+      title: diffTitle(filePath, diff),
+      footer,
+    });
+  }
+
+  /** Render output lines with truncation. */
+  function renderLinesBody(lines: string[], width: number, maxLines?: number): string[] {
+    const max = maxLines ?? 10;
+    const shown = lines.slice(0, max);
+    const contentW = Math.max(1, width - 6);
+    const output: string[] = [];
+    for (const line of shown) {
+      const text = line.length > contentW ? line.slice(0, contentW - 1) + "…" : line;
+      output.push(`  ${p.dim}  ${text}${p.reset}`);
+    }
+    if (lines.length > max) {
+      output.push(`  ${p.dim}  … ${lines.length - max} more lines${p.reset}`);
+    }
+    return output;
+  }
+
+  /** Extract a detail string from tool args for group continuation display. */
+  function extractDetail(extra: { rawInput?: unknown; locations?: { path: string; line?: number | null }[] }): string {
+    if (extra.locations && extra.locations.length > 0) {
+      const loc = extra.locations[0]!;
+      const cwd = process.cwd();
+      const home = process.env.HOME;
+      let fp = loc.path;
+      if (fp.startsWith(cwd + "/")) fp = fp.slice(cwd.length + 1);
+      else if (home && fp.startsWith(home + "/")) fp = "~/" + fp.slice(home.length + 1);
+      return loc.line ? `${fp}:${loc.line}` : fp;
+    }
+    const raw = extra.rawInput as Record<string, unknown> | undefined;
+    if (!raw) return "";
+    if (typeof raw.command === "string") return `$ ${raw.command}`;
+    if (typeof raw.pattern === "string") return raw.pattern;
+    if (typeof raw.path === "string") {
+      const cwd = process.cwd();
+      const home = process.env.HOME;
+      let fp = raw.path as string;
+      if (fp.startsWith(cwd + "/")) fp = fp.slice(cwd.length + 1);
+      else if (home && fp.startsWith(home + "/")) fp = "~/" + fp.slice(home.length + 1);
+      return fp;
+    }
+    if (typeof raw.query === "string") return `"${raw.query}"`;
+    return "";
+  }
+
   function showToolCall(
     title: string,
     command?: string,
@@ -547,6 +692,7 @@ export default function activate(ctx: ExtensionContext): void {
       icon?: string;
       locations?: { path: string; line?: number | null }[];
       rawInput?: unknown;
+      displayDetail?: string;
       batchIndex?: number;
       batchTotal?: number;
       groupContinuation?: boolean;
@@ -567,43 +713,53 @@ export default function activate(ctx: ExtensionContext): void {
       icon: extra?.icon,
       locations: extra?.locations,
       rawInput: extra?.rawInput,
+      displayDetail: extra?.displayDetail,
     }, writer.columns);
 
-    // Replace the kind icon with a tree connector for grouped tools
     if (extra?.groupContinuation && lines.length > 0) {
-      // Line starts with: \x1b[33m◆\x1b[0m — swap the colored icon for muted ├
-      lines[0] = lines[0]!.replace(
-        /^\x1b\[[^m]*m.\x1b\[0m/, `${p.muted}├${p.reset}`,
-      );
+      // Swap the colored kind icon for a muted tree connector,
+      // and strip the tool name prefix — show detail only.
+      const detail = extra.displayDetail || extractDetail(extra);
+      const maxW = Math.max(1, writer.columns - 6);
+      const text = detail.length > maxW ? detail.slice(0, maxW - 1) + "…" : detail;
+      lines[0] = detail
+        ? `${p.muted}├${p.reset} ${p.dim}${text}${p.reset}`
+        : lines[0]!.replace(/^\x1b\[[^m]*m.\x1b\[0m/, `${p.muted}├${p.reset}`);
     }
 
-    // Prepend batch progress indicator when multiple tools in a batch
-    const batchPrefix = extra?.batchTotal && extra.batchTotal > 1
-      ? `${p.dim}[${extra.batchIndex}/${extra.batchTotal}]${p.reset} `
-      : "";
+    const batchPrefix = "";
 
     for (let i = 0; i < lines.length - 1; i++) {
       s.renderer!.writeLine(lines[i]!);
     }
     drain();
     if (lines.length > 0) {
-      writer.write(`  ${batchPrefix}${lines[lines.length - 1]}`);
-      s.toolLineOpen = true;
+      if (extra?.groupContinuation) {
+        // Grouped tools: close the line immediately — checkmarks go on the ⎿ summary
+        s.renderer!.writeLine(`  ${batchPrefix}${lines[lines.length - 1]}`);
+        drain();
+        s.toolLineOpen = false;
+      } else {
+        writer.write(`  ${batchPrefix}${lines[lines.length - 1]}`);
+        s.toolLineOpen = true;
+      }
     }
     s.hadToolCalls = true;
     s.commandOutputLineCount = 0;
     s.commandOutputOverflow = 0;
   }
 
-  function showToolComplete(exitCode: number | null): void {
+  function showToolComplete(exitCode: number | null, resultDisplay?: ToolResultDisplay): void {
     if (!s.renderer) return;
+    stopCurrentSpinner();
     const elapsed = s.toolStartTime ? formatElapsed(Date.now() - s.toolStartTime) : "";
     const timer = elapsed ? ` ${p.dim}${elapsed}${p.reset}` : "";
+    const summary = resultDisplay?.summary ? ` ${p.dim}${resultDisplay.summary}${p.reset}` : "";
     const mark = exitCode === null
       ? `${p.muted}(timed out)${p.reset}`
       : exitCode === 0
-        ? `${p.success}✓${p.reset}${timer}`
-        : `${p.error}✗ exit ${exitCode}${p.reset}${timer}`;
+        ? `${p.success}✓${p.reset}${summary}${timer}`
+        : `${p.error}✗ exit ${exitCode}${p.reset}${summary}${timer}`;
 
     if (s.toolLineOpen && s.commandOutputLineCount === 0) {
       writer.write(` ${mark}\n`);
@@ -614,6 +770,20 @@ export default function activate(ctx: ExtensionContext): void {
       s.renderer.writeLine(`  ${mark}`);
       drain();
     }
+
+    // Render structured body if present
+    if (resultDisplay?.body) {
+      renderResultBody(resultDisplay.body);
+    }
+  }
+
+  function renderResultBody(body: ToolResultBody): void {
+    if (!s.renderer) return;
+    const lines: string[] = ctx.call("render:result-body", body, writer.columns) ?? [];
+    for (const line of lines) {
+      s.renderer!.writeLine(line);
+    }
+    if (lines.length > 0) drain();
   }
 
   // Thinking is always assumed available — the TUI renders thinking
@@ -665,27 +835,32 @@ export default function activate(ctx: ExtensionContext): void {
       s.toolGroupKind = undefined;
       s.toolGroupCount = 0;
       s.toolGroupRendered = 0;
+      s.toolGroupSummaries = [];
       return;
     }
     closeToolLine();
     if (!s.renderer) startAgentResponse();
+    const mark = s.toolGroupAllOk
+      ? `${p.success}✓${p.reset}`
+      : `${p.error}✗${p.reset}`;
+    const summary = s.toolGroupSummaries.length > 0
+      ? ` ${p.dim}${s.toolGroupSummaries.join(", ")}${p.reset}`
+      : "";
     const collapsed = s.toolGroupCount - s.toolGroupRendered;
     if (collapsed > 0) {
-      const mark = s.toolGroupAllOk
-        ? `${p.success}✓${p.reset}`
-        : `${p.error}✗${p.reset}`;
       s.renderer!.writeLine(
-        `  ${p.muted}⎿${p.reset} ${p.dim}+${collapsed} more${p.reset} ${mark}`,
+        `  ${p.muted}└${p.reset} ${p.dim}+${collapsed} more${p.reset} ${mark}${summary}`,
       );
     } else {
-      // All were shown — close with end bracket
-      s.renderer!.writeLine(`  ${p.muted}⎿${p.reset}`);
+      // All items visible — close the tree with └ mark + summary
+      s.renderer!.writeLine(`  ${p.muted}└${p.reset} ${mark}${summary}`);
     }
     drain();
     s.toolGroupKind = undefined;
     s.toolGroupCount = 0;
     s.toolGroupAllOk = true;
     s.toolGroupRendered = 0;
+    s.toolGroupSummaries = [];
   }
 
   function writeCommandOutput(chunk: string): void {
@@ -760,41 +935,14 @@ export default function activate(ctx: ExtensionContext): void {
     if (diff.isIdentical) return;
     contentGap("diff");
 
-    const boxW = Math.min(120, writer.columns);
-    const contentW = boxW - 4;
-
-    const diffLines = renderDiff(diff, {
-      width: contentW,
-      filePath,
-      maxLines: getSettings().diffMaxLines,
-      trueColor: true,
-    });
-
-    const lastLine = diffLines[diffLines.length - 1] ?? "";
-    const isTruncated = lastLine.includes("… ");
-
-    if (isTruncated) {
-      s.lastTruncatedDiff = { filePath, diff, expanded: false };
-    } else {
-      s.lastTruncatedDiff = null;
-    }
-
-    const body = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
-
-    const footer = isTruncated
-      ? [`  ${p.dim}ctrl+o to expand${p.reset}`]
-      : undefined;
-
-    const framed = renderBoxFrame(body, {
-      width: boxW,
-      style: "rounded",
-      borderColor: p.dim,
-      title: diffTitle(filePath, diff),
-      footer,
-    });
+    const lines: string[] = ctx.call(
+      "render:result-body",
+      { kind: "diff", diff, filePath } satisfies ToolResultBody,
+      writer.columns,
+    ) ?? [];
 
     if (!s.renderer) startAgentResponse();
-    for (const line of framed) {
+    for (const line of lines) {
       s.renderer!.writeLine(line);
     }
     drain();
@@ -841,29 +989,14 @@ export default function activate(ctx: ExtensionContext): void {
   }
 
   function showFileDiffCached(entry: TruncatedDiff): void {
-    const { filePath, diff } = entry;
-    const boxW = Math.min(120, writer.columns);
-    const contentW = boxW - 4;
-
-    const diffLines = renderDiff(diff, {
-      width: contentW,
-      filePath,
-      maxLines: getSettings().diffMaxLines,
-      trueColor: true,
-    });
-
-    const body = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
-
-    const framed = renderBoxFrame(body, {
-      width: boxW,
-      style: "rounded",
-      borderColor: p.dim,
-      title: diffTitle(filePath, diff),
-      footer: [`  ${p.dim}ctrl+o to expand${p.reset}`],
-    });
+    const lines: string[] = ctx.call(
+      "render:result-body",
+      { kind: "diff", diff: entry.diff, filePath: entry.filePath } satisfies ToolResultBody,
+      writer.columns,
+    ) ?? [];
 
     writer.write("\n");
-    for (const line of framed) {
+    for (const line of lines) {
       writer.write(line + "\n");
     }
   }

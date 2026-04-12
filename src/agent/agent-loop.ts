@@ -444,10 +444,12 @@ export class AgentLoop implements AgentBackend {
       }
 
       // Emit tool-started for TUI
+      const label = tool.displayName ?? name;
       this.bus.emit("agent:tool-started", {
-        title: typeof args.description === "string" ? `${name}: ${args.description}` : name,
+        title: typeof args.description === "string" ? `${label}: ${args.description}` : label,
         toolCallId: id,
         kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
+        displayDetail: tool.formatCall?.(args),
         batchIndex: ctx.batchIndex, batchTotal: ctx.batchTotal,
       });
       this.bus.emit("agent:tool-call", { tool: name, args });
@@ -465,10 +467,14 @@ export class AgentLoop implements AgentBackend {
         this.fileReadCache.delete(absPath);
       }
 
-      // Emit completion events
-      this.bus.emit("agent:tool-completed", {
+      // Compute result display: tool-provided → default (none)
+      const resultDisplay = tool.formatResult?.(args, result);
+
+      // Emit completion events (via transform pipe so extensions can override)
+      this.bus.emitTransform("agent:tool-completed", {
         toolCallId: id, exitCode: result.exitCode,
         rawOutput: result.content, kind: display.kind,
+        resultDisplay,
       });
       this.bus.emit("agent:tool-output", {
         tool: name, output: result.content, exitCode: result.exitCode,
@@ -558,6 +564,22 @@ export class AgentLoop implements AgentBackend {
 
       // No tool calls → agent is done
       if (toolCalls.length === 0) break;
+
+      // Emit batch info so the TUI can render group headers upfront
+      {
+        const groupMap = new Map<string, Array<{ name: string; displayDetail?: string }>>();
+        for (const tc of toolCalls) {
+          const tool = this.toolRegistry.get(tc.name);
+          const kind = tool?.getDisplayInfo?.((() => { try { return JSON.parse(tc.argumentsJson); } catch { return {}; } })())?.kind ?? "execute";
+          let args: Record<string, unknown> = {};
+          try { args = JSON.parse(tc.argumentsJson); } catch {}
+          const detail = tool?.formatCall?.(args);
+          if (!groupMap.has(kind)) groupMap.set(kind, []);
+          groupMap.get(kind)!.push({ name: tc.name, displayDetail: detail });
+        }
+        const groups = Array.from(groupMap.entries()).map(([kind, tools]) => ({ kind, tools }));
+        this.bus.emit("agent:tool-batch", { groups });
+      }
 
       // Execute tool calls — run read-only tools in parallel, permission-
       // requiring tools sequentially (to avoid overlapping permission prompts).

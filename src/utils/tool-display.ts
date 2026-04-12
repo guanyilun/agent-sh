@@ -25,6 +25,8 @@ export interface ToolCallRender {
   locations?: { path: string; line?: number | null }[];
   /** Raw input parameters sent to the tool. */
   rawInput?: unknown;
+  /** Pre-formatted display detail from tool's formatCall(). Takes precedence over rawInput extraction. */
+  displayDetail?: string;
 }
 
 export interface ToolResultRender {
@@ -110,7 +112,9 @@ export function renderToolCall(
   // Build a compact detail string to append after the title
   let detail = "";
   const cwd = process.cwd();
-  if (mode === "full") {
+  if (mode === "full" && tool.displayDetail) {
+    detail = tool.displayDetail;
+  } else if (mode === "full") {
     if (tool.command) {
       detail = `$ ${tool.command}`;
     } else if (tool.locations && tool.locations.length > 0) {
@@ -144,11 +148,13 @@ export function renderToolCall(
     }
   }
 
-  // Render as single line: icon + detail
-  // Tools with a registered icon are self-describing — show icon + detail only.
-  // Tools without a custom icon show tool name alongside detail for identification.
+  // Render as single line: icon + kind + detail
   const maxDetailW = Math.max(1, width - 4);
-  if (detail && hasCustomIcon) {
+  if (detail && hasCustomIcon && tool.kind) {
+    const combined = `${tool.kind} ${detail}`;
+    const truncated = combined.length > maxDetailW ? combined.slice(0, maxDetailW - 1) + "…" : combined;
+    lines.push(`${p.warning}${icon}${p.reset} ${p.dim}${truncated}${p.reset}`);
+  } else if (detail && hasCustomIcon) {
     if (detail.length > maxDetailW) detail = detail.slice(0, maxDetailW - 1) + "…";
     lines.push(`${p.warning}${icon}${p.reset} ${p.dim}${detail}${p.reset}`);
   } else if (detail) {

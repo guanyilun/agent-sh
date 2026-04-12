@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { AgentMode } from "./types.js";
+import type { ToolResultDisplay } from "./agent/types.js";
 
 /**
  * Typed event map — every event has a known payload shape.
@@ -48,6 +49,14 @@ export interface ShellEvents {
     exitCode: number | null;
   };
 
+  // Tool batch — emitted before execution with all tool calls grouped by kind
+  "agent:tool-batch": {
+    groups: Array<{
+      kind: string;
+      tools: Array<{ name: string; displayDetail?: string }>;
+    }>;
+  };
+
   // Tool rendering (used by TUI for display — distinct data shape from above)
   "agent:tool-started": {
     title: string;
@@ -56,6 +65,8 @@ export interface ShellEvents {
     icon?: string;
     locations?: { path: string; line?: number | null }[];
     rawInput?: unknown;
+    /** Pre-formatted display detail from tool's formatCall(). */
+    displayDetail?: string;
     batchIndex?: number;
     batchTotal?: number;
   };
@@ -64,6 +75,8 @@ export interface ShellEvents {
     exitCode: number | null;
     rawOutput?: unknown;
     kind?: string;
+    /** Structured result display — set by formatResult or defaults, overridable via onPipe. */
+    resultDisplay?: ToolResultDisplay;
   };
   "agent:tool-output-chunk": { chunk: string };
 

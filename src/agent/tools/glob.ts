@@ -27,6 +27,12 @@ export function createGlobTool(getCwd: () => string): ToolDefinition {
 
     showOutput: false,
 
+    formatResult: (_args, result) => {
+      if (result.isError || result.content === "No files matched.") return { summary: "0 files" };
+      const lines = result.content.split("\n").filter(l => l && !l.startsWith("["));
+      return { summary: `${lines.length} files` };
+    },
+
     getDisplayInfo: (args) => ({
       kind: "search",
       icon: "⌕",

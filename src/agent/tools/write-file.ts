@@ -34,6 +34,12 @@ export function createWriteFileTool(getCwd: () => string): ToolDefinition {
       locations: [{ path: args.path as string }],
     }),
 
+    formatResult: (_args, result) => {
+      if (result.isError) return {};
+      const m = result.content.match(/\((\+\d+(?:\s-\d+)?)\)/);
+      return m ? { summary: m[1] } : {};
+    },
+
     async execute(args, onChunk) {
       const filePath = args.path as string;
       const content = args.content as string;

@@ -62,6 +62,22 @@ export function createGrepTool(getCwd: () => string): ToolDefinition {
 
     showOutput: false,
 
+    formatResult: (args, result) => {
+      if (result.isError || result.content === "No matches found.") return { summary: "0 matches" };
+      const lines = result.content.split("\n").filter(Boolean);
+      // Strip pagination info line from count
+      const resultLines = lines.filter(l => !l.startsWith("[Showing "));
+      const mode = (args.output_mode as string) ?? "files_with_matches";
+      if (mode === "files_with_matches") {
+        return { summary: `${resultLines.length} files` };
+      }
+      if (mode === "count") {
+        const total = resultLines.reduce((sum, l) => sum + (parseInt(l.split(":").pop() ?? "0", 10) || 0), 0);
+        return { summary: `${total} matches` };
+      }
+      return { summary: `${resultLines.length} lines` };
+    },
+
     getDisplayInfo: (args) => ({
       kind: "search",
       icon: "⌕",
