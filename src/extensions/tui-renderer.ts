@@ -188,15 +188,18 @@ export default function activate(ctx: ExtensionContext): void {
   });
   // Track token usage for display
   let pendingUsage: { prompt_tokens: number; completion_tokens: number } | null = null;
+  let totalTokens = 0;
   bus.on("agent:usage", (e) => { pendingUsage = e; });
+  bus.on("agent:reset-session", () => { totalTokens = 0; });
 
   bus.on("agent:response-done", () => {
     s.isThinking = false;
     if (pendingUsage && s.renderer) {
       const { prompt_tokens, completion_tokens } = pendingUsage;
+      totalTokens += prompt_tokens + completion_tokens;
       s.renderer.writeLine("");
       s.renderer.writeLine(
-        `${p.dim}tokens: ${prompt_tokens} in / ${completion_tokens} out${p.reset}`,
+        `${p.dim}📥 ${prompt_tokens}  📤 ${completion_tokens}  Σ ${totalTokens}${p.reset}`,
       );
       drain();
       pendingUsage = null;
