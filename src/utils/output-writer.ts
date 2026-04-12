@@ -13,7 +13,15 @@ export interface OutputWriter {
 
 /** Default writer that forwards to process.stdout. */
 export class StdoutWriter implements OutputWriter {
+  /** When > 0, all writes are silently dropped. Ref-counted. */
+  private _holdCount = 0;
+
+  hold(): void { this._holdCount++; }
+  release(): void { this._holdCount = Math.max(0, this._holdCount - 1); }
+  get held(): boolean { return this._holdCount > 0; }
+
   write(text: string): void {
+    if (this._holdCount > 0) return;
     if (process.stdout.writable) {
       try { process.stdout.write(text); } catch {}
     }

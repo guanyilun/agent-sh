@@ -2,15 +2,16 @@
  * Overlay agent extension.
  *
  * Provides a hotkey (Ctrl+]) to summon the agent from anywhere — even
- * inside vim, htop, or ssh. Renders a full-screen response view,
- * then returns to the previous program on dismiss.
+ * inside vim, htop, or ssh. Renders a full-screen response view by
+ * holding stdout (suppresses both PTY and TUI output), then returns
+ * to the previous program on dismiss.
  *
  * Flow:
  *   1. Ctrl+] → input bar at bottom of screen
- *   2. Type query, Enter → clear screen, hold PTY stdout, submit
- *   3. Agent response renders on the clear screen (TUI renderer)
+ *   2. Type query, Enter → hold stdout, clear screen, submit
+ *   3. Response streams directly to stdout (TUI renderer is suppressed)
  *   4. On completion → "Ctrl+] to dismiss" prompt
- *   5. Ctrl+] → release stdout, force program redraw (Ctrl+L to PTY)
+ *   5. Ctrl+] → release stdout, Ctrl+L to PTY to force program redraw
  *
  * Usage:
  *   agent-sh -e ./examples/extensions/overlay-agent.ts
@@ -21,6 +22,10 @@
 import type { ExtensionContext } from "agent-sh/types";
 
 const TRIGGER = "\x1d"; // Ctrl+]
+const DIM = "\x1b[2m";
+const RESET = "\x1b[0m";
+const BOLD = "\x1b[1m";
+const CYAN = "\x1b[36m";
 
 type Phase = "idle" | "input" | "responding" | "done";
 
@@ -57,15 +62,9 @@ export default function activate({ bus }: ExtensionContext): void {
     process.stdout.write("\x1b8"); // restore cursor
   }
 
-  function showDismissPrompt(): void {
-    process.stdout.write(
-      `\n\x1b[2m  Press Ctrl+] to return\x1b[0m\n`
-    );
-  }
-
   // ── Phase transitions ─────────────────────────────────────
 
-  function activate(): void {
+  function activate_overlay(): void {
     phase = "input";
     buffer = "";
     cursor = 0;
@@ -79,11 +78,14 @@ export default function activate({ bus }: ExtensionContext): void {
     phase = "responding";
     clearInputBar();
 
-    // Hold PTY stdout so vim doesn't redraw over the response
+    // Hold stdout — suppresses both PTY output AND TUI renderer
     bus.emit("shell:stdout-hold", {});
 
-    // Clear screen for response
+    // Clear screen and show query header
+    const cols = process.stdout.columns || 80;
     process.stdout.write("\x1b[2J\x1b[H");
+    process.stdout.write(`${CYAN}${BOLD}❯${RESET} ${query}\n`);
+    process.stdout.write(`${DIM}${"─".repeat(cols)}${RESET}\n`);
 
     bus.emit("agent:submit", { query });
   }
@@ -91,13 +93,13 @@ export default function activate({ bus }: ExtensionContext): void {
   function dismiss(): void {
     if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
 
-    const wasResponding = phase === "responding" || phase === "done";
+    const wasActive = phase === "responding" || phase === "done";
     phase = "idle";
     buffer = "";
     cursor = 0;
 
-    if (wasResponding) {
-      // Release PTY stdout
+    if (wasActive) {
+      // Release stdout — TUI renderer and PTY output resume
       bus.emit("shell:stdout-release", {});
 
       // Force the foreground program to redraw (Ctrl+L)
@@ -170,7 +172,7 @@ export default function activate({ bus }: ExtensionContext): void {
 
   // ── Bus wiring ────────────────────────────────────────────
 
-  // Re-render input bar after PTY output (vim redraws over it)
+  // Re-render input bar after PTY output (foreground program redraws over it)
   bus.on("shell:pty-data", () => {
     if (phase !== "input") return;
     if (renderTimer) clearTimeout(renderTimer);
@@ -180,17 +182,42 @@ export default function activate({ bus }: ExtensionContext): void {
     }, 16);
   });
 
+  // Stream response text directly to stdout (TUI renderer is suppressed)
+  bus.on("agent:response-chunk", (e) => {
+    if (phase !== "responding") return;
+    for (const block of e.blocks) {
+      if (block.type === "text" && block.text) {
+        process.stdout.write(block.text);
+      }
+    }
+  });
+
+  // Tool call status — show compact one-liners
+  bus.on("agent:tool-started", (e) => {
+    if (phase !== "responding") return;
+    process.stdout.write(`\n${DIM}▶ ${e.title}${RESET}`);
+    if (e.displayDetail) process.stdout.write(`${DIM} ${e.displayDetail}${RESET}`);
+  });
+
+  bus.on("agent:tool-completed", (e) => {
+    if (phase !== "responding") return;
+    const mark = e.exitCode === 0 ? " ✓" : ` ✗ exit ${e.exitCode}`;
+    process.stdout.write(`${DIM}${mark}${RESET}\n`);
+  });
+
   // When agent finishes, show dismiss prompt
   bus.on("agent:processing-done", () => {
     if (phase === "responding") {
       phase = "done";
-      showDismissPrompt();
+      const cols = process.stdout.columns || 80;
+      process.stdout.write(`\n${DIM}${"─".repeat(cols)}${RESET}\n`);
+      process.stdout.write(`${DIM}  Press Ctrl+] to return${RESET}\n`);
     }
   });
 
   // Intercept input: activate on trigger, capture while active
   bus.onPipe("input:intercept", (payload) => {
-    // During "done" phase, any Ctrl+] or Escape dismisses
+    // Done phase: any dismiss key returns to program
     if (phase === "done") {
       if (payload.data === TRIGGER || payload.data === "\x1b" || payload.data === "\x03") {
         dismiss();
@@ -198,13 +225,13 @@ export default function activate({ bus }: ExtensionContext): void {
       return { ...payload, consumed: true };
     }
 
-    // During input phase, handle editing
+    // Input phase: editing
     if (phase === "input") {
       handleKey(payload.data);
       return { ...payload, consumed: true };
     }
 
-    // During responding phase, only allow Ctrl+C to cancel
+    // Responding phase: only Ctrl+C to cancel agent
     if (phase === "responding") {
       if (payload.data === "\x03") {
         bus.emit("agent:cancel-request", {});
@@ -212,9 +239,9 @@ export default function activate({ bus }: ExtensionContext): void {
       return { ...payload, consumed: true };
     }
 
-    // Idle: check for trigger
+    // Idle: trigger activates overlay
     if (payload.data === TRIGGER) {
-      activate();
+      activate_overlay();
       return { ...payload, consumed: true };
     }
 
