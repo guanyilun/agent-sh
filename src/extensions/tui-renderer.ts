@@ -425,11 +425,8 @@ export default function activate(ctx: ExtensionContext): void {
     }
 
     // Mode-specific border color and title
-    const isExecute = modeLabel === "Execute";
-    const borderColor = isExecute ? p.success : p.accent;
-    const title = modeLabel
-      ? `${borderColor}${p.bold} ${modeLabel} ${p.reset}`
-      : `${p.accent}${p.bold}❯${p.reset}`;
+    const borderColor = p.accent;
+    const title = `${p.accent}${p.bold}❯${p.reset}`;
 
     // Backend/model label on the right (backend/model, highlighted)
     const model = backendInfo?.model ?? llmClient?.model;

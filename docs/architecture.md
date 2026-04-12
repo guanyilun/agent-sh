@@ -44,8 +44,8 @@ All components communicate exclusively through typed bus events. The backend has
 1. agent-sh spawns a real PTY running your shell (zsh or bash, with your full rc config) and sets up raw stdin passthrough
 2. It creates the agent backend (AgentLoop or extension-provided) which self-wires to bus events
 3. All keyboard input goes directly to the PTY — zero latency, full terminal compatibility
-4. When you type `>` or `?` at the start of a line, agent-sh intercepts and enters an agent input mode
-5. On Enter, the query is emitted as `agent:submit` with a mode instruction (`[mode: execute]` or `[mode: help]`)
+4. When you type `>` at the start of a line, agent-sh intercepts and enters agent input mode
+5. On Enter, the query is emitted as `agent:submit` and the agent decides which tools to use
 6. The backend handles the query — streaming LLM responses, executing tools, emitting events
 7. The TUI renderer extension renders streamed content inline (markdown, diffs, tool calls)
 8. When the backend finishes (`agent:processing-done`), normal shell operation resumes
@@ -58,7 +58,7 @@ The connection between them is **context**: each query includes shell context (r
 
 ### user_shell — The Bridge
 
-For commands that *should* affect the live shell (`cd`, `export`, `source`, user-facing commands), the agent uses `user_shell`. This tool writes the command to the actual PTY via bus events:
+For commands that *should* affect the live shell (`cd`, `export`, `source`, installing packages) or that the user wants to see (`cat`, `git log`), the agent uses `user_shell` or `display`. These tools write commands to the actual PTY via bus events:
 
 ```
 agent calls user_shell({ command: "cd src" })
@@ -122,7 +122,7 @@ agent-sh/
 │   │   ├── system-prompt.ts       # System prompt builder
 │   │   └── tools/          # Built-in tool implementations
 │   │       ├── bash.ts, read-file.ts, write-file.ts, edit-file.ts
-│   │       ├── grep.ts, glob.ts, ls.ts, user-shell.ts
+│   │       ├── grep.ts, glob.ts, ls.ts, user-shell.ts, display.ts
 │   │
 │   ├── utils/              # Shared primitives
 │   │   ├── llm-client.ts   # OpenAI SDK wrapper (shared by agent loop + extensions)

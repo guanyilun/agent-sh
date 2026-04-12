@@ -11,6 +11,7 @@ import shellRecall from "./extensions/shell-recall.js";
 import commandSuggest from "./extensions/command-suggest.js";
 import { loadExtensions } from "./extension-loader.js";
 import { getSettings } from "./settings.js";
+import { discoverSkills } from "./agent/skills.js";
 import type { AgentShellConfig } from "./types.js";
 
 /**
@@ -132,8 +133,7 @@ Examples:
 
 Inside the shell:
   Type normally        Commands run in your real shell
-  > <query>           Ask the AI agent a question (execute mode)
-  ? <command>         Have the agent run a command in your shell (help mode)
+  > <query>           Ask the AI agent (it decides how to help)
   > /help             Show available slash commands
   Ctrl-C              Cancel agent response (or signal shell as usual)
 `);
@@ -226,41 +226,17 @@ async function main(): Promise<void> {
     console.error('[agent-sh] Shell created');
   }
 
-  // ── Input modes ──────────────────────────────────────────────
+  // ── Input mode ───────────────────────────────────────────────
   bus.emit("input-mode:register", {
-    id: "execute",
+    id: "agent",
     trigger: ">",
-    label: "execute",
+    label: "agent",
     promptIcon: "❯",
     indicator: "●",
     onSubmit(query, b) {
-      b.emit("agent:submit", { query, modeLabel: "Execute", modeInstruction: "[mode: execute]" });
+      b.emit("agent:submit", { query });
     },
     returnToSelf: true,
-  });
-
-  bus.emit("input-mode:register", {
-    id: "help",
-    trigger: "?",
-    label: "help",
-    promptIcon: "❯",
-    indicator: "❓",
-    onSubmit(query, b) {
-      const onToolDone = (e: { kind?: string }) => {
-        if (e.kind === "execute") {
-          b.emit("agent:cancel-request", { silent: true });
-        }
-      };
-      const cleanup = () => {
-        b.off("agent:tool-completed", onToolDone);
-        b.off("agent:processing-done", cleanup);
-      };
-      b.on("agent:tool-completed", onToolDone);
-      b.on("agent:processing-done", cleanup);
-
-      b.emit("agent:submit", { query, modeLabel: "Help", modeInstruction: "[mode: help]" });
-    },
-    returnToSelf: false,
   });
 
   // ── Extensions ────────────────────────────────────────────────
@@ -292,6 +268,12 @@ async function main(): Promise<void> {
     console.error('[agent-sh] Extensions loaded');
   }
 
+  // ── Show discovered skills ─────────────────────────────────────
+  const skills = discoverSkills(process.cwd());
+  if (skills.length > 0) {
+    bus.emit("ui:info", { message: `Skills: ${skills.map(s => s.name).join(", ")}` });
+  }
+
   // ── Activate agent backend ────────────────────────────────────
   // Extensions had their chance to register via agent:register-backend.
   // If none did, the built-in AgentLoop gets wired to bus events.
@@ -303,7 +285,7 @@ async function main(): Promise<void> {
     const title = core.llmClient
       ? `${p.accent}${p.bold}agent-sh${p.reset}${p.dim} · ${core.llmClient.model}${p.reset}`
       : `${p.accent}${p.bold}agent-sh${p.reset}`;
-    const hint = `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}?${p.muted} to run in shell · ${p.warning}/help${p.muted} for commands${p.reset}`;
+    const hint = `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}/help${p.muted} for commands${p.reset}`;
 
     const termW = process.stdout.columns || 80;
     const borderLine = `${p.muted}${"─".repeat(Math.min(termW, 60))}${p.reset}`;

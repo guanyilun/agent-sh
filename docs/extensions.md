@@ -528,9 +528,9 @@ agent-sh -e ./examples/extensions/latex-images.ts
 
 ## Custom Input Modes
 
-Input modes change what happens when the user types and presses Enter. Each mode binds a trigger character (typed at the start of an empty line) to a custom `onSubmit` handler. The built-in modes (`>` for execute, `?` for help) are registered this way — they're not special.
+Input modes change what happens when the user types and presses Enter. Each mode binds a trigger character (typed at the start of an empty line) to a custom `onSubmit` handler. The built-in mode (`>` for agent) is registered this way — it's not special.
 
-The flow: user types trigger → prompt changes to show the mode → user types their input → presses Enter → `onSubmit` fires → your handler emits `agent:submit` with a `modeInstruction` that gets prepended to the agent's system prompt, telling it how to behave in this mode.
+The flow: user types trigger → prompt changes to show the mode → user types their input → presses Enter → `onSubmit` fires → your handler emits `agent:submit`. You can optionally include a `modeInstruction` that gets prepended to the user message.
 
 ```typescript
 bus.emit("input-mode:register", {
@@ -540,11 +540,8 @@ bus.emit("input-mode:register", {
   promptIcon: "⟩",           // chevron/icon character
   indicator: "🌐",           // status indicator before the icon
   onSubmit(query, bus) {
-    // This is where you control what the agent sees.
-    // modeInstruction is prepended to the prompt — it's how you steer the agent.
     bus.emit("agent:submit", {
       query,                 // what the user typed
-      modeLabel: "Translate",
       modeInstruction: "[mode: translate] Translate the following to Spanish.",
     });
   },
@@ -559,7 +556,7 @@ bus.emit("input-mode:register", {
 | `label` | `string` | Shown in the prompt area |
 | `promptIcon` | `string` | Chevron/icon character in the prompt |
 | `indicator` | `string` | Status indicator before the icon |
-| `onSubmit` | `(query, bus) => void` | Called on Enter. Emits `agent:submit` with `query` + `modeInstruction` |
+| `onSubmit` | `(query, bus) => void` | Called on Enter. Emits `agent:submit` with `query` + optional `modeInstruction` |
 | `returnToSelf` | `boolean` | Re-enter this mode after the agent finishes |
 
 Each trigger character can only be claimed by one mode. Slash commands and readline keybindings work in every mode.

@@ -7,7 +7,7 @@ The internal agent (AgentLoop) is the default backend when you provide `--api-ke
 Here's what happens when you submit a query:
 
 ```
-User types "? fix the failing test"
+User types "> fix the failing test"
   │
   ├─ 1. Context assembly — gather recent shell commands, output, cwd
   ├─ 2. System prompt — tools + context + guidelines, rebuilt every call
@@ -54,13 +54,11 @@ Shell output can be large. The context manager applies a budget to keep things r
 The system prompt is rebuilt on **every LLM call** (not cached), so context is always fresh. It includes:
 
 1. **Identity** — "You are an AI coding assistant in agent-sh..."
-2. **Input modes** — instructions for execute mode vs help mode
+2. **Tool decision guide** — when to use scratchpad tools vs display vs user_shell
 3. **Available tools** — name + description of every registered tool
 4. **Tool usage guidelines** — read before editing, prefer edit over write, use grep/glob to find files, etc.
 5. **Shell context** — the assembled context from above
 6. **Metadata** — current date, working directory
-
-The per-query **mode instruction** (e.g. `[mode: execute]` or `[mode: help]`) is prepended to the user message, not the system prompt. This tells the agent how to behave for this specific query.
 
 ## Project Conventions
 
@@ -131,8 +129,8 @@ This keeps the system prompt small regardless of how many skills you have.
 Users can force-load a skill directly:
 
 ```
-? /skill:docker-deploy
-? /skill:docker-deploy deploy the staging branch
+> /skill:docker-deploy
+> /skill:docker-deploy deploy the staging branch
 ```
 
 This injects the full skill content into the conversation. Tab completion works for skill names.
@@ -178,26 +176,27 @@ Tools that require permission: **bash**, **write_file**, **edit_file** (anything
 
 ## Built-in Tools
 
-The agent has 8 built-in tools. The most important distinction is between `bash` and `user_shell` — they look similar but work completely differently.
+The agent has 9 built-in tools. The most important distinction is between `bash`, `display`, and `user_shell` — they all run shell commands but in different ways:
 
-### bash vs user_shell
-
-These two tools both run shell commands, but in **different worlds**:
+### bash vs display vs user_shell
 
 - **`bash`** — runs in an **isolated subprocess** (`/bin/bash -c`). The agent uses this for investigation: reading files, running tests, checking state. A `cd` here doesn't affect your shell. Output is captured and returned to the LLM.
-- **`user_shell`** — runs in **your live PTY**. The agent uses this for commands that should affect your shell: `cd`, `export`, `source`, `npm install`, anything the user needs to see. Output appears in your terminal directly.
+- **`display`** — runs in **your live PTY** but for **read-only display**. The agent uses this when the user asks to see something (`cat`, `git log`, `diff`). Output appears in your terminal but is NOT returned to the LLM.
+- **`user_shell`** — runs in **your live PTY** for commands with **lasting effects**: `cd`, `export`, `source`, `npm install`. Output appears in your terminal directly.
 
-Why the split? Two reasons:
+The agent decides which tool to use based on intent — no user mode selection needed. The three-way split provides:
 
-1. **Safety** — bash runs in isolation, so the agent can't accidentally break your shell state. user_shell is the explicit "touch the user's environment" action.
-2. **Token efficiency** — user_shell returns `"Command executed"` by default instead of the full output. The user already sees it in the terminal; sending it back to the LLM wastes tokens. The agent can pass `return_output: true` when it actually needs to read the result.
+1. **Safety** — bash runs in isolation, so the agent can't accidentally break your shell state.
+2. **Clarity** — display vs user_shell makes the agent's intent explicit (showing vs acting).
+3. **Token efficiency** — display and user_shell return minimal text by default instead of the full output. The user already sees it in the terminal; sending it back to the LLM wastes tokens.
 
 ### All tools
 
 | Tool | Purpose | Permission | Modifies files |
 |---|---|---|---|
 | `bash` | Run commands in isolated subprocess | Yes | Yes |
-| `user_shell` | Run commands in user's live PTY | No | Yes |
+| `display` | Show command output to user in live PTY | No | No |
+| `user_shell` | Run commands with lasting effects in user's live PTY | No | Yes |
 | `read_file` | Read file contents (line-numbered, with offset/limit) | No | No |
 | `write_file` | Create or overwrite a file | Yes | Yes |
 | `edit_file` | Find-and-replace in a file (old_text → new_text) | Yes | Yes |

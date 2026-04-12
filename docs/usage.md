@@ -194,4 +194,4 @@ The agent automatically receives structured context about your shell session wit
 - **Recent commands and output** — truncated summaries of recent shell activity
 - **Full history access** — the agent can recall full output of truncated exchanges
 
-This means you can run a failing command, then type `? fix this` and the agent knows exactly what happened. Context size is tunable via settings.
+This means you can run a failing command, then type `> fix this` and the agent knows exactly what happened. Context size is tunable via settings.
