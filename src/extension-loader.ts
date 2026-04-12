@@ -39,7 +39,7 @@ async function ensureTsSupport(): Promise<void> {
 export async function loadExtensions(
   ctx: ExtensionContext,
   cliExtensions?: string[],
-): Promise<void> {
+): Promise<string[]> {
   const specifiers: string[] = [];
 
   // 1. CLI -e / --extensions
@@ -113,9 +113,7 @@ export async function loadExtensions(
     }
   }
 
-  if (loaded.length > 0) {
-    ctx.bus.emit("ui:info", { message: `Extensions: ${loaded.join(", ")}` });
-  }
+  return loaded;
 }
 
 /**

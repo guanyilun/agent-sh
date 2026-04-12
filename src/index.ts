@@ -256,8 +256,9 @@ async function main(): Promise<void> {
     console.error('[agent-sh] Loading extensions...');
   }
   const loadExtensionsTimeoutMs = 10000;
+  let loadedExtensions: string[] = [];
   await Promise.race([
-    loadExtensions(extCtx, config.extensions),
+    loadExtensions(extCtx, config.extensions).then((names) => { loadedExtensions = names; }),
     new Promise<void>((_, reject) =>
       setTimeout(() => reject(new Error(`Extension loading timeout after ${loadExtensionsTimeoutMs}ms`)), loadExtensionsTimeoutMs)
     ),
@@ -268,11 +269,8 @@ async function main(): Promise<void> {
     console.error('[agent-sh] Extensions loaded');
   }
 
-  // ── Show discovered skills ─────────────────────────────────────
+  // ── Discover skills ───────────────────────────────────────────
   const skills = discoverSkills(process.cwd());
-  if (skills.length > 0) {
-    bus.emit("ui:info", { message: `Skills: ${skills.map(s => s.name).join(", ")}` });
-  }
 
   // ── Activate agent backend ────────────────────────────────────
   // Extensions had their chance to register via agent:register-backend.
@@ -282,18 +280,36 @@ async function main(): Promise<void> {
   // ── Startup banner ───────────────────────────────────────────
   const settings = getSettings();
   if (settings.startupBanner !== false) {
-    const title = core.llmClient
-      ? `${p.accent}${p.bold}agent-sh${p.reset}${p.dim} · ${core.llmClient.model}${p.reset}`
-      : `${p.accent}${p.bold}agent-sh${p.reset}`;
-    const hint = `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}/help${p.muted} for commands${p.reset}`;
+    const titleParts = [`${p.accent}${p.bold}agent-sh${p.reset}`];
+    const info = agentInfo as { name: string; version: string; model?: string } | null;
+    if (info && info.name !== "agent-sh") {
+      titleParts.push(`${p.dim}backend: ${info.name}${p.reset}`);
+    }
+    if (info?.model) {
+      titleParts.push(`${p.dim}${info.model}${p.reset}`);
+    } else if (core.llmClient) {
+      titleParts.push(`${p.dim}${core.llmClient.model}${p.reset}`);
+    }
+    const title = titleParts.join(`${p.muted} · ${p.reset}`);
+
+    let details = "";
+    if (loadedExtensions.length > 0) {
+      details += `\n  ${p.muted}Extensions: ${p.reset}${p.dim}${loadedExtensions.join(", ")}${p.reset}`;
+    }
+    if (skills.length > 0) {
+      details += `\n  ${p.muted}Skills: ${p.reset}${p.dim}${skills.map(s => s.name).join(", ")}${p.reset}`;
+    }
+
+    const hint = `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}>/help${p.muted} for commands${p.reset}`;
 
     const termW = process.stdout.columns || 80;
     const borderLine = `${p.muted}${"─".repeat(Math.min(termW, 60))}${p.reset}`;
 
     process.stdout.write(
       "\n" + borderLine + "\n" +
-      "  " + title + "\n" +
-      "  " + hint + "\n" +
+      "  " + title +
+      details + "\n" +
+      "\n  " + hint + "\n" +
       borderLine + "\n\n",
     );
   }
