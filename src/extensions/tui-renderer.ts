@@ -194,6 +194,7 @@ export default function activate(ctx: ExtensionContext): void {
     s.isThinking = false;
     if (pendingUsage && s.renderer) {
       const { prompt_tokens, completion_tokens } = pendingUsage;
+      s.renderer.writeLine("");
       s.renderer.writeLine(
         `${p.dim}tokens: ${prompt_tokens} in / ${completion_tokens} out${p.reset}`,
       );
@@ -289,6 +290,7 @@ export default function activate(ctx: ExtensionContext): void {
     if (s.thinkingPending && !s.showThinkingText) {
       if (!s.renderer) startAgentResponse();
       s.renderer!.writeLine(`${p.muted}… thinking${p.reset}`);
+      s.renderer!.writeLine("");
       s.thinkingPending = false;
     }
   }
