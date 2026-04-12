@@ -203,7 +203,7 @@ export default function activate(ctx: ExtensionContext): void {
       const pct = Math.min(100, (totalTokens / maxTokens) * 100).toFixed(0);
       s.renderer.writeLine("");
       s.renderer.writeLine(
-        `${p.dim}↓${prompt_tokens} ↑${completion_tokens}  ctx: ${ctxK}k/${maxK}k (${pct}%)${p.reset}`,
+        `${p.dim}⬆ ${prompt_tokens}  ⬇ ${completion_tokens}  ctx: ${ctxK}k/${maxK}k (${pct}%)${p.reset}`,
       );
       drain();
       pendingUsage = null;
