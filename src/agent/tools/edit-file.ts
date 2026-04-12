@@ -42,7 +42,10 @@ export function createEditFileTool(getCwd: () => string): ToolDefinition {
   return {
     name: "edit_file",
     description:
-      "Edit a file by replacing an exact text match with new text. The old_text must appear exactly once in the file. Include enough context to make the match unique.",
+      "Edit a file by replacing an exact text match with new text. " +
+      "The old_text must appear exactly once unless replace_all=true. " +
+      "Include enough context to make the match unique. " +
+      "Use replace_all for variable renames or bulk string replacements.",
     input_schema: {
       type: "object",
       properties: {
@@ -57,6 +60,11 @@ export function createEditFileTool(getCwd: () => string): ToolDefinition {
         new_text: {
           type: "string",
           description: "Replacement text",
+        },
+        replace_all: {
+          type: "boolean",
+          description:
+            "Replace ALL occurrences instead of requiring a unique match. Useful for variable renames.",
         },
       },
       required: ["path", "old_text", "new_text"],
@@ -75,6 +83,7 @@ export function createEditFileTool(getCwd: () => string): ToolDefinition {
       const filePath = args.path as string;
       const oldText = args.old_text as string;
       const newText = args.new_text as string;
+      const replaceAll = (args.replace_all as boolean) ?? false;
       const absPath = path.resolve(getCwd(), filePath);
 
       try {
@@ -95,19 +104,18 @@ export function createEditFileTool(getCwd: () => string): ToolDefinition {
             isError: true,
           };
         }
-        if (occurrences > 1) {
+        if (occurrences > 1 && !replaceAll) {
           return {
-            content: `Error: old_text found ${occurrences} times, must be unique. Add more surrounding context.`,
+            content: `Error: old_text found ${occurrences} times, must be unique. Add more surrounding context or use replace_all=true.`,
             exitCode: 1,
             isError: true,
           };
         }
 
         const normalizedNew = newText.replace(/\r\n/g, "\n");
-        const newContent = normalized.replace(
-          normalizedOld,
-          normalizedNew,
-        );
+        const newContent = replaceAll
+          ? normalized.split(normalizedOld).join(normalizedNew)
+          : normalized.replace(normalizedOld, normalizedNew);
 
         // Restore original line endings — only convert if the file was
         // predominantly CRLF (>50% of line endings), to avoid corrupting

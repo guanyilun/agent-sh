@@ -7,7 +7,8 @@ export function createWriteFileTool(getCwd: () => string): ToolDefinition {
   return {
     name: "write_file",
     description:
-      "Create or overwrite a file with the given content. Creates parent directories if needed. Prefer edit_file for modifying existing files.",
+      "Create a new file or completely overwrite an existing one. Creates parent directories if needed. " +
+      "ALWAYS prefer edit_file for modifying existing files — only use write_file for new files or complete rewrites.",
     input_schema: {
       type: "object",
       properties: {

@@ -13,7 +13,8 @@ export function createLsTool(getCwd: () => string): ToolDefinition {
   return {
     name: "ls",
     description:
-      "List files and directories in a given path.",
+      "List files and directories with timestamps and sizes. " +
+      "Use for exploring a single directory. Use glob for recursive file search by pattern.",
     input_schema: {
       type: "object",
       properties: {
