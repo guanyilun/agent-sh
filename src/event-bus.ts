@@ -53,6 +53,7 @@ export interface ShellEvents {
     title: string;
     toolCallId?: string;
     kind?: string;
+    icon?: string;
     locations?: { path: string; line?: number | null }[];
     rawInput?: unknown;
     batchIndex?: number;

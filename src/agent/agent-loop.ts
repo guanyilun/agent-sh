@@ -443,7 +443,7 @@ export class AgentLoop implements AgentBackend {
       this.bus.emit("agent:tool-started", {
         title: typeof args.description === "string" ? `${name}: ${args.description}` : name,
         toolCallId: id,
-        kind: display.kind, locations: display.locations, rawInput: args,
+        kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
         batchIndex: ctx.batchIndex, batchTotal: ctx.batchTotal,
       });
       this.bus.emit("agent:tool-call", { tool: name, args });

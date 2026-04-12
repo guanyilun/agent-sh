@@ -41,6 +41,7 @@ export function createBashTool(opts: {
 
     getDisplayInfo: (args) => ({
       kind: "execute",
+      icon: "▶",
       locations: [],
     }),
 

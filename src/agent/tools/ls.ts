@@ -29,6 +29,7 @@ export function createLsTool(getCwd: () => string): ToolDefinition {
 
     getDisplayInfo: (args) => ({
       kind: "read",
+      icon: "◆",
       locations: args.path
         ? [{ path: args.path as string }]
         : [],

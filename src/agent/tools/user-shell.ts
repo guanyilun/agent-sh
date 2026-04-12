@@ -42,6 +42,7 @@ export function createUserShellTool(opts: {
 
     getDisplayInfo: () => ({
       kind: "execute",
+      icon: "▷",
       locations: [],
     }),
 

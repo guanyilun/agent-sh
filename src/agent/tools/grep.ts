@@ -64,6 +64,7 @@ export function createGrepTool(getCwd: () => string): ToolDefinition {
 
     getDisplayInfo: (args) => ({
       kind: "search",
+      icon: "⌕",
       locations: args.path
         ? [{ path: args.path as string }]
         : [],

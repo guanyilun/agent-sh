@@ -531,6 +531,7 @@ export default function activate(ctx: ExtensionContext): void {
     command?: string,
     extra?: {
       kind?: string;
+      icon?: string;
       locations?: { path: string; line?: number | null }[];
       rawInput?: unknown;
       batchIndex?: number;
@@ -548,6 +549,7 @@ export default function activate(ctx: ExtensionContext): void {
       title,
       command: command || undefined,
       kind: extra?.kind,
+      icon: extra?.icon,
       locations: extra?.locations,
       rawInput: extra?.rawInput,
     }, writer.columns);

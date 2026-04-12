@@ -76,6 +76,7 @@ export function createEditFileTool(getCwd: () => string): ToolDefinition {
 
     getDisplayInfo: (args) => ({
       kind: "write",
+      icon: "✎",
       locations: [{ path: args.path as string }],
     }),
 

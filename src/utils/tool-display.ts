@@ -19,6 +19,8 @@ export interface ToolCallRender {
   command?: string;
   /** Tool kind from ACP (read, edit, execute, search, etc.). */
   kind?: string;
+  /** Custom icon character — when set, tool name is omitted (icon implies tool). */
+  icon?: string;
   /** File locations affected by the tool call. */
   locations?: { path: string; line?: number | null }[];
   /** Raw input parameters sent to the tool. */
@@ -92,7 +94,10 @@ export function renderToolCall(
   width: number,
 ): string[] {
   const mode = selectToolDisplayMode(width);
-  const icon = kindIcon(tool.kind);
+  const icon = tool.icon ?? kindIcon(tool.kind);
+  // If the tool registered a custom icon, it's self-describing — omit the name.
+  // Otherwise, include the tool name so the user knows what ran.
+  const hasCustomIcon = !!tool.icon;
 
   if (mode === "summary") {
     const text = truncateVisible(`${icon} ${tool.title}`, width);
@@ -139,15 +144,13 @@ export function renderToolCall(
   }
 
   // Render as single line: icon + detail
-  // For well-known tool kinds (read, search, execute), the icon is enough context.
-  // For extension/unknown tools, always include the tool name so the user knows what ran.
-  const isWellKnown = tool.kind && ["read", "edit", "delete", "move", "search", "execute"].includes(tool.kind);
+  // Tools with a registered icon are self-describing — show icon + detail only.
+  // Tools without a custom icon show tool name alongside detail for identification.
   const maxDetailW = Math.max(1, width - 4);
-  if (detail && isWellKnown) {
+  if (detail && hasCustomIcon) {
     if (detail.length > maxDetailW) detail = detail.slice(0, maxDetailW - 1) + "…";
     lines.push(`${p.warning}${icon}${p.reset} ${p.dim}${detail}${p.reset}`);
   } else if (detail) {
-    // Extension tool — show name: detail
     const prefix = `${tool.title}: `;
     const combined = prefix + detail;
     const truncated = combined.length > maxDetailW ? combined.slice(0, maxDetailW - 1) + "…" : combined;

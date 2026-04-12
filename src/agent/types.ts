@@ -28,6 +28,9 @@ export interface ToolResult {
 export interface ToolDisplayInfo {
   kind: "read" | "write" | "execute" | "search";
   locations?: { path: string; line?: number | null }[];
+  /** Custom icon character for TUI display (e.g., "◆", "⌕"). When set, the TUI shows
+   *  icon + detail only. When absent, the tool name is shown alongside the detail. */
+  icon?: string;
 }
 
 export interface ToolDefinition {

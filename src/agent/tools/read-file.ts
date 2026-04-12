@@ -45,6 +45,7 @@ export function createReadFileTool(
 
     getDisplayInfo: (args) => ({
       kind: "read",
+      icon: "◆",
       locations: [{ path: args.path as string }],
     }),
 
