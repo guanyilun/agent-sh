@@ -888,14 +888,13 @@ export class FloatingPanel {
 
   private restoreScreen(): void {
     if (this.usedAltScreen) {
-      // Leave alt screen — the terminal restores the saved main buffer.
       process.stdout.write("\x1b[?1049l");
-    } else {
-      // We were already on alt screen (vim, htop, etc.) so we didn't
-      // enter our own.  Restore by rewriting the screen content from
-      // the xterm buffer, which mirrors what the foreground program
-      // had rendered.
-      const raw = this.buffer?.serialize() ?? "";
+    }
+    // Rewrite screen from terminal buffer to ensure it reflects
+    // the latest state (background programs may have drawn while
+    // the overlay was up — the alt screen snapshot would be stale).
+    if (this.buffer) {
+      const raw = this.buffer.serialize() ?? "";
       const rows = process.stdout.rows || 24;
       const lines = raw.split("\n");
       const out: string[] = [SYNC_START];
