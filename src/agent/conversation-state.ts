@@ -116,11 +116,12 @@ export class ConversationState {
    * them with nuclear one-liner summaries that stay in the conversation.
    * Read-only tool results are dropped entirely.
    */
-  compact(targetTokens: number, recentTurnsToKeep = 10): void {
-    if (this.estimateTokens() <= targetTokens) return;
+  compact(targetTokens: number, recentTurnsToKeep = 10): { before: number; after: number } | null {
+    const before = this.estimateTokens();
+    if (before <= targetTokens) return null;
 
     const turns = this.parseTurns();
-    if (turns.length <= 2) return;
+    if (turns.length <= 2) return null;
 
     // Assign priorities
     const pinnedCount = Math.min(recentTurnsToKeep, turns.length - 1);
@@ -164,7 +165,7 @@ export class ConversationState {
       }
     }
 
-    if (evictedIndices.size === 0) return;
+    if (evictedIndices.size === 0) return null;
 
     // Rebuild: first turn + nuclear summary block + remaining turns
     const rebuilt: ChatCompletionMessageParam[] = [];
@@ -188,6 +189,7 @@ export class ConversationState {
     }
 
     this.messages = rebuilt;
+    return { before, after: this.estimateTokens() };
   }
 
   // ── Tier 2 → Tier 3: Flush ───────────────────────────────────

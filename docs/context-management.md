@@ -1,5 +1,25 @@
 # Context Management
 
+## Design Philosophy
+
+Most coding agents treat context as a session problem — you start a chat, work on something, and eventually the context fills up or you start a new session. This works when the agent owns the entire interaction, but agent-sh is different: **we live in a terminal.**
+
+The terminal is continuous. You run commands, switch between tasks, help a colleague, come back to what you were doing. Nobody thinks about "sessions" when using a shell. Shell history is just *there* — always available, always growing, persisting across restarts. You never manage it, but you can always search it.
+
+This is the model agent-sh follows for context management:
+
+**No sessions.** There's no "new session" or "clear." History is continuous and append-only, like `.zsh_history`. Old content naturally rolls through tiers of decreasing resolution — full content, then one-liner summaries, then a persistent file on disk.
+
+**No assumptions about workflow.** We don't try to detect topic changes, time gaps, or "the user has moved on." If someone asks about React after a database discussion, maybe they're helping a colleague for 30 seconds. Any heuristic that guesses intent will be wrong often enough to be annoying. The only reason to evict content is mechanical: the context window is full and we need space.
+
+**Two streams, no duplication.** The user's shell activity and the agent's work are fundamentally different kinds of information. Shell context provides situational awareness ("what has the user been doing?"). Conversation provides task continuity ("what has the agent been working on?"). They should share a budget but never duplicate content.
+
+**Graceful degradation.** When context is evicted, it doesn't vanish — it compresses. Full tool outputs become one-liner summaries that stay in-context. The agent always has a timeline of the entire session at decreasing resolution, and can recover full content on demand via recall tools.
+
+**Model-aware.** A 200k context model should behave differently from an 8k model. The token budget adapts to the model's actual context window, not a hardcoded threshold.
+
+## How It Works
+
 agent-sh manages context like shell history — it's always there, it persists across restarts, there are no explicit sessions. Content flows through three tiers at decreasing resolution, ensuring the agent always has a timeline of what happened while keeping within the model's context window.
 
 ## The Two Streams

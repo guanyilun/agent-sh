@@ -181,9 +181,15 @@ export class AgentLoop implements AgentBackend {
     });
     on("agent:compact-request", () => {
       const budgetTokens = this.tokenBudget.conversationBudgetTokens;
-      this.conversation.compact(budgetTokens);
+      const stats = this.conversation.compact(budgetTokens);
       this.conversation.flush().catch(() => {});
-      this.bus.emit("ui:info", { message: "(conversation compacted)" });
+      if (stats) {
+        this.bus.emit("ui:info", {
+          message: `(compacted: ~${stats.before.toLocaleString()} → ~${stats.after.toLocaleString()} tokens)`,
+        });
+      } else {
+        this.bus.emit("ui:info", { message: "(nothing to compact)" });
+      }
     });
     this.bus.onPipe("context:get-stats", () => {
       return {
@@ -624,9 +630,13 @@ export class AgentLoop implements AgentBackend {
       // Auto-compact if conversation exceeds the model-aware budget
       const budgetTokens = this.tokenBudget.conversationBudgetTokens;
       if (this.conversation.estimateTokens() > budgetTokens) {
-        this.conversation.compact(budgetTokens);
+        const stats = this.conversation.compact(budgetTokens);
         await this.conversation.flush();
-        this.bus.emit("ui:info", { message: "(conversation compacted)" });
+        if (stats) {
+          this.bus.emit("ui:info", {
+            message: `(compacted: ~${stats.before.toLocaleString()} → ~${stats.after.toLocaleString()} tokens)`,
+          });
+        }
       }
 
       // System prompt is static (cacheable); dynamic context uses handler
@@ -787,9 +797,10 @@ export class AgentLoop implements AgentBackend {
         if (this.isContextOverflow(e)) {
           // Use 60% of the budget to leave headroom
           const aggressiveBudget = Math.floor(this.tokenBudget.conversationBudgetTokens * 0.6);
-          this.conversation.compact(aggressiveBudget, 6);
+          const stats = this.conversation.compact(aggressiveBudget, 6);
           await this.conversation.flush();
-          this.bus.emit("ui:info", { message: "(context overflow — compacted, retrying)" });
+          const detail = stats ? ` ~${stats.before.toLocaleString()} → ~${stats.after.toLocaleString()} tokens` : "";
+          this.bus.emit("ui:info", { message: `(context overflow — compacted${detail}, retrying)` });
           continue;
         }
 
