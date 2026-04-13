@@ -62,6 +62,8 @@ export interface Settings {
   shellTailLines?: number;
   /** Max lines for recall expand before requiring line ranges. */
   recallExpandMaxLines?: number;
+  /** Fraction of content budget allocated to shell context (0-1, default 0.35). */
+  shellContextRatio?: number;
 
   // ── Display ───────────────────────────────────────────────
   /** Max command output lines shown inline in TUI. */
@@ -94,6 +96,7 @@ const DEFAULTS: Required<Settings> = {
   shellHeadLines: 5,
   shellTailLines: 5,
   recallExpandMaxLines: 100,
+  shellContextRatio: 0.35,
   maxCommandOutputLines: 3,
   readOutputMaxLines: 10,
   diffMaxLines: 20,

@@ -118,13 +118,10 @@ export interface TerminalSession {
 }
 
 // ── Exchange types (used by ContextManager) ──────────────────────
-
-export interface ToolCallRecord {
-  tool: string;
-  args: Record<string, unknown>;
-  output: string;
-  exitCode: number | null;
-}
+//
+// Shell context tracks only user-initiated activity (shell commands and
+// agent queries). Agent tool outputs and responses live exclusively in
+// the ConversationState messages array to avoid duplication.
 
 export type Exchange =
   | {
@@ -145,22 +142,4 @@ export type Exchange =
       id: number;
       timestamp: number;
       query: string;
-    }
-  | {
-      type: "agent_response";
-      id: number;
-      timestamp: number;
-      response: string;
-      toolCalls: ToolCallRecord[];
-    }
-  | {
-      type: "tool_execution";
-      id: number;
-      timestamp: number;
-      tool: string;
-      args: Record<string, unknown>;
-      output: string;
-      exitCode: number | null;
-      outputLines: number;
-      outputBytes: number;
     };

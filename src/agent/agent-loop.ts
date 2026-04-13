@@ -25,6 +25,7 @@ import type { AgentBackend, ToolDefinition } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { ConversationState } from "./conversation-state.js";
 import { STATIC_SYSTEM_PROMPT, buildDynamicContext } from "./system-prompt.js";
+import { TokenBudget } from "../token-budget.js";
 
 // Core tool factories
 import { createBashTool } from "./tools/bash.js";
@@ -50,6 +51,7 @@ export class AgentLoop implements AgentBackend {
   private toolRegistry = new ToolRegistry();
   private conversation = new ConversationState();
   private fileReadCache: FileReadCache = new Map();
+  private tokenBudget: TokenBudget;
   private modes: AgentMode[];
   private currentModeIndex = 0;
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
@@ -72,8 +74,14 @@ export class AgentLoop implements AgentBackend {
     ];
     this.currentModeIndex = initialModeIndex ?? 0;
 
+    // Unified token budget — adapts to current model's context window
+    this.tokenBudget = new TokenBudget(this.currentMode.contextWindow);
+
     // Register core tools
     this.registerCoreTools();
+
+    // Update token budget with tool count
+    this.tokenBudget.update(undefined, this.toolRegistry.all().length);
 
     // Register handlers — extensions can advise these
     this.registerHandlers();
@@ -109,6 +117,7 @@ export class AgentLoop implements AgentBackend {
       } else {
         this.llmClient.model = m.model;
       }
+      this.tokenBudget.update(m.contextWindow, this.toolRegistry.all().length);
       const label = m.provider ? `${m.provider}: ${m.model}` : m.model;
       this.bus.emit("agent:info", { name: "agent-sh", version: "0.4", model: m.model, provider: m.provider, contextWindow: m.contextWindow });
       this.bus.emit("ui:info", { message: `Model: ${label}` });
@@ -151,6 +160,7 @@ export class AgentLoop implements AgentBackend {
       } else {
         this.llmClient.model = m.model;
       }
+      this.tokenBudget.update(m.contextWindow, this.toolRegistry.all().length);
       this.bus.emit("config:changed", {});
     });
     on("config:add-modes", ({ modes: extra }) => {
@@ -240,6 +250,7 @@ export class AgentLoop implements AgentBackend {
       this.llmClient.model = newMode.model;
     }
 
+    this.tokenBudget.update(newMode.contextWindow, this.toolRegistry.all().length);
     const label = newMode.provider
       ? `${newMode.provider}: ${newMode.model}`
       : newMode.model;
@@ -361,6 +372,45 @@ export class AgentLoop implements AgentBackend {
       createDisplayTool({ getCwd, bus: this.bus }),
     );
     this.toolRegistry.register(createListSkillsTool(getCwd));
+
+    // conversation_recall — search/expand evicted conversation turns
+    this.toolRegistry.register({
+      name: "conversation_recall",
+      description:
+        "Browse, search, or expand evicted conversation turns. " +
+        "Use when you need context from earlier in the conversation that was compacted away.",
+      input_schema: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["browse", "search", "expand"],
+            description: "browse: list evicted turns, search: regex search, expand: show full turn",
+          },
+          query: {
+            type: "string",
+            description: "Search query (for action=search)",
+          },
+          turn_id: {
+            type: "number",
+            description: "Turn ID to expand (for action=expand)",
+          },
+        },
+        required: ["action"],
+      },
+      execute: async (args) => {
+        const action = args.action as string;
+        let content: string;
+        if (action === "search") {
+          content = this.conversation.search((args.query as string) ?? "");
+        } else if (action === "expand") {
+          content = this.conversation.expand(args.turn_id as number);
+        } else {
+          content = this.conversation.browse();
+        }
+        return { content, exitCode: 0, isError: false };
+      },
+    });
   }
 
   /**
@@ -372,7 +422,11 @@ export class AgentLoop implements AgentBackend {
 
     // Extensions compose additional context (git info, project rules, etc.)
     h.define("dynamic-context:build", () =>
-      buildDynamicContext(this.toolRegistry.all(), this.contextManager),
+      buildDynamicContext(
+        this.toolRegistry.all(),
+        this.contextManager,
+        this.tokenBudget.shellBudgetTokens,
+      ),
     );
 
     // Full control over what the LLM sees: takes messages[], returns messages[].
@@ -535,9 +589,6 @@ export class AgentLoop implements AgentBackend {
     }
   }
 
-  /** Max tokens before auto-compaction (conservative default). */
-  private maxContextTokens = 60_000;
-
   /**
    * Core agent loop: stream LLM response → execute tools → repeat.
    * Returns the final accumulated response text.
@@ -546,10 +597,10 @@ export class AgentLoop implements AgentBackend {
     let fullResponseText = "";
 
     while (!signal.aborted) {
-      // Auto-compact if conversation is getting large
-      const estimatedTokens = Math.ceil(JSON.stringify(this.conversation.getMessages()).length / 4);
-      if (estimatedTokens > this.maxContextTokens) {
-        this.conversation.compact(10);
+      // Auto-compact if conversation exceeds the model-aware budget
+      const budgetTokens = this.tokenBudget.conversationBudgetTokens;
+      if (this.conversation.estimateTokens() > budgetTokens) {
+        this.conversation.compact(budgetTokens);
         this.bus.emit("ui:info", { message: "(conversation compacted)" });
       }
 
@@ -707,9 +758,11 @@ export class AgentLoop implements AgentBackend {
       } catch (e) {
         if (signal.aborted) throw e;
 
-        // Context overflow — compact and retry (no backoff needed)
+        // Context overflow — aggressively compact and retry
         if (this.isContextOverflow(e)) {
-          this.conversation.compact(6);
+          // Use 60% of the budget to leave headroom
+          const aggressiveBudget = Math.floor(this.tokenBudget.conversationBudgetTokens * 0.6);
+          this.conversation.compact(aggressiveBudget, 6);
           this.bus.emit("ui:info", { message: "(context overflow — compacted, retrying)" });
           continue;
         }

@@ -107,6 +107,7 @@ a program (vim, ssh, a REPL, etc.) or at a shell prompt. In this mode:
 export function buildDynamicContext(
   tools: ToolDefinition[],
   contextManager: ContextManager,
+  shellBudgetTokens?: number,
 ): string {
   const sections: string[] = [];
 
@@ -130,8 +131,9 @@ export function buildDynamicContext(
     );
   }
 
-  // Shell context
-  const shellContext = contextManager.getContext();
+  // Shell context — pass token budget converted to bytes (~4 chars/token)
+  const shellBudgetBytes = shellBudgetTokens != null ? shellBudgetTokens * 4 : undefined;
+  const shellContext = contextManager.getContext(shellBudgetBytes);
   if (shellContext) {
     sections.push(shellContext);
   }
