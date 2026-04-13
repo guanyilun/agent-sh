@@ -406,6 +406,7 @@ export class AgentLoop implements AgentBackend {
     // conversation_recall — search/expand evicted conversation turns
     this.toolRegistry.register({
       name: "conversation_recall",
+      displayName: "recall",
       description:
         "Browse, search, or expand evicted conversation turns. " +
         "Use when you need context from earlier in the conversation that was compacted away.",

@@ -654,7 +654,7 @@ export default function activate(ctx: ExtensionContext): void {
   /** Render a diff as framed box lines (pure — no TUI state side effects). */
   function renderDiffBody(diff: DiffResult, filePath: string, width: number): string[] {
     if (diff.isIdentical) return [];
-    const boxW = Math.min(120, width);
+    const boxW = Math.min(120, width - 2);  // -2 for writeLine indent
     const contentW = boxW - 4;
 
     const diffLines = renderDiff(diff, {
@@ -998,7 +998,7 @@ export default function activate(ctx: ExtensionContext): void {
 
     if (!entry.expandedLines) {
       const { filePath, diff } = entry;
-      const boxW = Math.min(120, writer.columns);
+      const boxW = Math.min(120, writer.columns - 2);  // -2 for writeLine indent
       const contentW = boxW - 4;
 
       const diffLines = renderDiff(diff, {
