@@ -894,6 +894,7 @@ export class FloatingPanel {
     // the latest state (background programs may have drawn while
     // the overlay was up — the alt screen snapshot would be stale).
     if (this.buffer) {
+      this.buffer.flush();
       const raw = this.buffer.serialize() ?? "";
       const rows = process.stdout.rows || 24;
       const lines = raw.split("\n");
