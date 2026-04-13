@@ -203,8 +203,29 @@ The agent decides which tool to use based on intent — no user mode selection n
 | `grep` | Search file contents with regex (via ripgrep) | No | No |
 | `glob` | Find files by name pattern | No | No |
 | `ls` | List directory contents (with timestamps and sizes) | No | No |
+| `terminal_read` | Read the current terminal screen (ANSI stripped, cursor position, alt screen detection) | No | No |
+| `terminal_keys` | Send keystrokes to the user's live PTY | No | No |
 
 **Common pattern**: all file-based tools resolve relative paths from the current working directory (`contextManager.getCwd()`).
+
+### Interactive program tools
+
+The `terminal_read` and `terminal_keys` tools let the agent operate inside full-screen interactive programs (vim, htop, less, ssh, etc.). They are backed by a headless xterm.js terminal buffer that mirrors the real terminal.
+
+**`terminal_read`** returns:
+- Clean text (ANSI stripped) of the current screen
+- Whether the alternate screen buffer is active (indicates a full-screen program)
+- Cursor position (row, col)
+
+**`terminal_keys`** sends keystrokes to the PTY as if the user typed them. Supports escape sequences:
+- `\x1b` for Escape, `\r` for Enter, `\t` for Tab
+- `\x03` for Ctrl+C, `\x04` for Ctrl+D, `\x1a` for Ctrl+Z
+- `\x1b[A/B/C/D` for arrow keys, `\x7f` for Backspace
+- Example: `\x1b:q!\r` to quit vim without saving (Escape, `:q!`, Enter)
+
+After sending keys, `terminal_keys` waits for the terminal to settle (default 150ms, configurable via `settle_ms`) and returns the screen state.
+
+These tools require `@xterm/headless` and `@xterm/addon-serialize` to be installed. Without them, the tools are silently unavailable.
 
 ### Tool-specific enhancements
 

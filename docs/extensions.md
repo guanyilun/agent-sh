@@ -60,6 +60,8 @@ TypeScript and JavaScript are both supported (`.ts`, `.tsx`, `.mts`, `.js`, `.mj
 | `define` | `(name, fn) => void` | Register a named handler |
 | `advise` | `(name, wrapper) => void` | Wrap a named handler (receives `next` + args) |
 | `call` | `(name, ...args) => any` | Call a named handler |
+| `terminalBuffer` | `TerminalBuffer \| null` | Shared headless xterm.js buffer mirroring PTY output (lazy singleton, null if `@xterm/headless` not installed) |
+| `createFloatingPanel` | `(config: FloatingPanelConfig) => FloatingPanel` | Create a floating panel overlay with composited rendering, input routing, and handler-based customization |
 
 ## Extension Settings
 
@@ -573,6 +575,81 @@ bus.emit("input-mode:register", {
 | `returnToSelf` | `boolean` | Re-enter this mode after the agent finishes |
 
 Each trigger character can only be claimed by one mode. Slash commands and readline keybindings work in every mode.
+
+## Terminal Buffer & Floating Panel
+
+agent-sh exposes two core utilities for building interactive terminal overlays.
+
+### TerminalBuffer
+
+A headless xterm.js terminal that mirrors the real terminal's output. Accessed via `ctx.terminalBuffer` (lazy singleton, shared across extensions). Returns `null` if `@xterm/headless` is not installed.
+
+```typescript
+const tb = ctx.terminalBuffer;
+if (tb) {
+  const { text, altScreen, cursorX, cursorY } = tb.readScreen();
+  console.log(altScreen ? "vim/htop is running" : "normal shell");
+}
+```
+
+Key methods:
+- `readScreen()` — clean text snapshot with cursor position and alt screen detection
+- `getScreenLines(rows?)` — array of viewport lines (for compositing)
+- `serialize()` — raw serialized output including ANSI sequences
+- `altScreen` — whether the alternate screen buffer is active
+- `write(data)` / `resize(cols, rows)` — manual control
+
+The buffer reads from the active viewport (not scrollback), so it works correctly on both the normal and alternate screen buffers.
+
+Install the optional xterm dependency:
+```bash
+npm install @xterm/headless@5.5.0 @xterm/addon-serialize@0.13.0
+```
+
+### FloatingPanel
+
+A composited overlay rendered over the terminal. Handles the full lifecycle: alt screen management, input routing, dimmed background compositing, scroll, and screen restore.
+
+```typescript
+const panel = ctx.createFloatingPanel({
+  trigger: "\x1c",       // Ctrl+\ to toggle
+  dimBackground: true,   // show dimmed terminal behind the panel
+  autoDismissMs: 2000,   // auto-close 2s after setDone()
+  borderStyle: "rounded",
+  width: "80%",
+  height: "60%",
+});
+
+panel.handlers.advise("panel:submit", (_next, query: string) => {
+  panel.setActive();
+  panel.appendLine(`> ${query}`);
+  // process the query...
+});
+```
+
+**Config options**: `trigger`, `width`, `height`, `maxWidth`, `minHeight`, `borderStyle` (`rounded`/`square`/`double`/`heavy`), `dimBackground`, `autoDismissMs`, `promptIcon`, `handlerPrefix`.
+
+**Lifecycle**: `open()` → input phase → `setActive()` → active phase → `setDone()` → done phase → `dismiss()`.
+
+**Content API**: `appendText(text)`, `appendLine(line)`, `updateLastLine(fn)`, `clearContent()`, `setTitle(title)`, `setFooter(footer)`.
+
+**Handler-based rendering** — all rendering is customizable via the handler/advise pattern:
+
+| Handler | Purpose |
+|---|---|
+| `render-frame(ctx: FrameContext) → FrameResult` | Replace the entire frame rendering |
+| `render-border-top(ctx: FrameContext) → string` | Custom title bar |
+| `render-border-bottom(ctx: FrameContext) → string` | Custom footer bar |
+| `composite-row(boxLine, bgLine, ...) → string` | Custom background compositing |
+| `render-content(ctx: RenderContext) → RenderResult` | Content inside the box |
+| `build-row(content, width) → string` | Row truncation/padding |
+| `submit(query) → void` | Handle submitted input |
+| `dismiss() → void` | Handle panel dismissal |
+| `input(data) → boolean` | Custom input handling |
+
+**Alt screen nesting**: FloatingPanel detects when a foreground program (vim, htop) is already on alt screen and avoids entering a second alt screen (which doesn't nest in most terminals). Instead, it renders directly and restores from the xterm buffer on dismiss.
+
+**Keyboard protocol support**: The trigger key is recognized in all encodings — raw control byte, xterm modifyOtherKeys (`\e[27;5;code~`), and kitty keyboard protocol (`\e[code;5u`). This ensures the trigger works inside vim and other programs that enable extended keyboard protocols.
 
 ## Rendering Architecture
 

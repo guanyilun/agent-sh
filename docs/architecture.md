@@ -99,6 +99,7 @@ The extension system provides several composable primitives for customizing agen
 - **[Named Handlers](extensions.md#named-handlers-advice-system)** — `define`/`advise`/`call` registry for wrapping processing steps (e.g. code block rendering)
 - **[Content Transform Pipeline](extensions.md#content-transform-pipeline)** — typed content blocks (`text`, `code-block`, `image`, `raw`) flow through parsers and post-transforms before rendering
 - **[Custom Input Modes](extensions.md#custom-input-modes)** — register trigger characters (`?`, `>`, etc.) with custom `onSubmit` handlers
+- **[Terminal Buffer & Floating Panel](extensions.md#terminal-buffer--floating-panel)** — headless xterm.js terminal mirror + composited overlay with handler-based rendering customization
 - **[Theming](extensions.md#theming)** — semantic color palette overrides via `setPalette()`
 
 ## Project Structure
@@ -131,15 +132,19 @@ agent-sh/
 │   │
 │   ├── utils/              # Shared primitives
 │   │   ├── llm-client.ts   # OpenAI SDK wrapper (shared by agent loop + extensions)
+│   │   ├── terminal-buffer.ts  # Headless xterm.js mirror of the terminal
+│   │   ├── floating-panel.ts   # Composited floating overlay with handler-based rendering
 │   │   ├── palette.ts, ansi.ts, diff.ts, diff-renderer.ts
 │   │   ├── box-frame.ts, tool-display.ts, output-writer.ts
 │   │   ├── stream-transform.ts, markdown.ts, file-watcher.ts
-│   │   └── line-editor.ts, frame-renderer.ts
+│   │   └── line-editor.ts, frame-renderer.ts, handler-registry.ts
 │   │
 │   └── extensions/         # Built-in extensions
 │       ├── tui-renderer.ts, slash-commands.ts
 │       ├── file-autocomplete.ts, shell-recall.ts
 │       ├── shell-exec.ts, command-suggest.ts
+│       ├── terminal-buffer.ts  # terminal_read + terminal_keys tools
+│       └── overlay-agent.ts    # Ctrl+\ floating overlay agent
 │
 ├── examples/               # Example extensions and agent integrations
 ├── docs/                   # Documentation

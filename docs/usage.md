@@ -89,6 +89,17 @@ agent-sh --api-key dummy \
   --model your-model
 ```
 
+## Overlay Agent (Ctrl+\)
+
+Press **Ctrl+\\** anywhere — even inside vim, htop, or ssh — to summon the agent in a floating overlay. Type a query, and the agent's response streams into the panel. The overlay auto-dismisses after completion.
+
+The agent can read the terminal screen and send keystrokes via the built-in `terminal_read` and `terminal_keys` tools, enabling it to operate inside interactive programs.
+
+Requires `@xterm/headless` for the dimmed background compositing:
+```bash
+npm install @xterm/headless@5.5.0 @xterm/addon-serialize@0.13.0
+```
+
 ## Using agent-sh as Your Default Shell
 
 Add to the end of your `~/.zshrc` or `~/.bashrc`:
