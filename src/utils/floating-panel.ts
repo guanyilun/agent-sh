@@ -533,9 +533,8 @@ export class FloatingPanel {
 
     this.restoreScreen();
 
-    // If we restored from the TerminalBuffer, it already has all PTY
-    // data processed — don't replay raw ptyBuffer (would double-apply).
-    // Only replay when there's no buffer (fallback case).
+    // Replay buffered PTY output when no TerminalBuffer is available
+    // (SIGWINCH handles redraw for interactive programs).
     if (!this.buffer && this.ptyBuffer) {
       process.stdout.write(this.ptyBuffer);
     }
@@ -892,17 +891,21 @@ export class FloatingPanel {
     if (this.usedAltScreen) {
       process.stdout.write("\x1b[?1049l");
     }
-    // Rewrite screen from terminal buffer — it has the latest state
-    // including draws from background programs while the overlay was up.
-    // Write the serialized output as a continuous stream (don't split —
-    // it contains cursor positioning and SGR sequences).
+    // The overlay drew composite rows on the terminal. Repaint from
+    // the TerminalBuffer which has the true screen state.
     if (this.buffer) {
       this.buffer.flush();
       const serialized = this.buffer.serialize();
       if (serialized) {
+        // Clear screen then write the full terminal state.
+        // Sync markers prevent tearing during the repaint.
         process.stdout.write(`${SYNC_START}\x1b[H\x1b[2J${serialized}${SYNC_END}`);
+        return;
       }
     }
+    // No buffer — just clear and let SIGWINCH handle it
+    process.stdout.write("\x1b[2J\x1b[H");
+    process.stdout.emit("resize");
   }
 
   private resolveSize(spec: number | string, available: number): number {

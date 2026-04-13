@@ -209,6 +209,11 @@ export class Shell implements InputContext {
       this.ptyProcess.write(data);
     });
 
+    // Allow extensions to resize the PTY (sends SIGWINCH to child)
+    this.bus.on("shell:pty-resize", ({ cols, rows }) => {
+      this.ptyProcess.resize(cols, rows);
+    });
+
     // Ref-counted stdout hold — overlay extensions suppress PTY output
     this.bus.on("shell:stdout-hold", () => { this.stdoutHold.increment(); });
     this.bus.on("shell:stdout-release", () => { this.stdoutHold.decrement(); });

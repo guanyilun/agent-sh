@@ -27,6 +27,9 @@ export interface ShellEvents {
   // Extensions use this to send keystrokes into the user's live shell.
   "shell:pty-write": { data: string };
 
+  // Resize the PTY (triggers SIGWINCH in the child process).
+  "shell:pty-resize": { cols: number; rows: number };
+
   // Terminal buffer snapshot (request/response pattern via bus)
   "shell:buffer-request": Record<string, never>;
   "shell:buffer-snapshot": {
