@@ -531,8 +531,8 @@ export class FloatingPanel {
     this._visible = false;
     this.prevFrame = [];
 
-    if (this.phase !== "idle" && this.buffer) {
-      // Session still active — enter passthrough mode.
+    if (this.phase === "active" && this.buffer) {
+      // Agent still working — enter passthrough mode.
       // Keep alt screen + stdout held. Render TerminalBuffer directly
       // so the background program's screen stays correct without
       // handing rendering control back to ncurses.
@@ -540,7 +540,7 @@ export class FloatingPanel {
       this.ptyBuffer = "";
       this.startPassthrough();
     } else {
-      // No active session or no buffer — full teardown.
+      // Agent idle or done — full teardown, hand back control.
       this.teardownScreen();
     }
 
@@ -660,6 +660,11 @@ export class FloatingPanel {
   }
 
   setDone(): void {
+    if (this._passthrough) {
+      // Agent finished while hidden — session over, hand back control.
+      this.dismiss();
+      return;
+    }
     if (this.config.autoDismissMs > 0) {
       // Legacy behavior: enter done state, auto-dismiss after delay
       this.phase = "done";
