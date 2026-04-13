@@ -63,6 +63,35 @@ export function visibleLen(str: string): number {
   return width;
 }
 
+/**
+ * Truncate a string to fit within `maxWidth` visible columns.
+ * Accounts for CJK double-width characters. Appends `…` if truncated.
+ */
+export function truncateToWidth(str: string, maxWidth: number): string {
+  const clean = str.replace(/\x1b\[[^m]*m/g, "");
+  let width = 0;
+  let i = 0;
+  for (const char of clean) {
+    const cw = charWidth(char.codePointAt(0) ?? 0);
+    if (width + cw > maxWidth - 1) {
+      // Need room for the "…" (1 column wide)
+      return clean.slice(0, i) + "…";
+    }
+    width += cw;
+    i += char.length;
+  }
+  return clean;
+}
+
+/**
+ * Pad a string with spaces to fill `targetWidth` visible columns.
+ * Accounts for CJK double-width characters.
+ */
+export function padEndToWidth(str: string, targetWidth: number): string {
+  const gap = targetWidth - visibleLen(str);
+  return gap > 0 ? str + " ".repeat(gap) : str;
+}
+
 /** Strip all ANSI escape sequences (SGR, OSC, CSI, private mode) and carriage returns. */
 export function stripAnsi(str: string): string {
   return str
