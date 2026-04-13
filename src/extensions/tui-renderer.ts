@@ -17,7 +17,6 @@ import { palette as p } from "../utils/palette.js";
 import {
   renderToolCall,
   createSpinner,
-  renderSpinnerLine,
   formatElapsed,
   SPINNER_FRAMES,
   type SpinnerState,
@@ -195,24 +194,15 @@ export default function activate(ctx: ExtensionContext): void {
   define("tui:render-spinner", (label: string, frame: string, elapsed: string, hint: string | undefined): string => {
     const timer = elapsed ? ` ${p.dim}${elapsed}${p.reset}` : "";
     const hintStr = hint ? ` ${p.dim}${hint}${p.reset}` : "";
-    return `${p.accent}${frame}${p.reset} ${label}...${timer}${hintStr}`;
+    return `${p.accent}${frame} ${label}...${p.reset}${timer}${hintStr}`;
   });
 
   define("tui:render-user-query", (query: string, width: number, modelLabel: string | undefined): string[] => {
     const contentW = width - 4;
     let lines: string[] = [];
     for (const raw of query.split("\n")) {
-      if (raw.length <= contentW) {
-        lines.push(`${p.accent}${raw}${p.reset}`);
-      } else {
-        let remaining = raw;
-        while (remaining.length > contentW) {
-          let breakAt = remaining.lastIndexOf(" ", contentW);
-          if (breakAt <= 0) breakAt = contentW;
-          lines.push(`${p.accent}${remaining.slice(0, breakAt)}${p.reset}`);
-          remaining = remaining.slice(breakAt).trimStart();
-        }
-        if (remaining) lines.push(`${p.accent}${remaining}${p.reset}`);
+      for (const wrapped of wrapLine(`${p.accent}${raw}${p.reset}`, contentW)) {
+        lines.push(wrapped);
       }
     }
     const MAX_QUERY_LINES = 20;
@@ -220,12 +210,11 @@ export default function activate(ctx: ExtensionContext): void {
       const overflow = lines.length - MAX_QUERY_LINES;
       lines = [...lines.slice(0, MAX_QUERY_LINES), `${p.dim}… ${overflow} more lines${p.reset}`];
     }
-    const title = `${p.accent}${p.bold}❯${p.reset}`;
     return renderBoxFrame(lines, {
       width,
       style: "rounded",
       borderColor: p.accent,
-      title,
+      title: `${p.accent}${p.bold}❯${p.reset}`,
       titleRight: modelLabel,
     });
   });
@@ -907,6 +896,10 @@ export default function activate(ctx: ExtensionContext): void {
     s.toolGroupSummaries = [];
   }
 
+  function renderCommandLine(line: string): string {
+    return ctx.call("tui:render-command-output", line, s.currentToolKind) as string;
+  }
+
   function writeCommandOutput(chunk: string): void {
     if (!s.renderer) return;
     closeToolLine();
@@ -916,10 +909,9 @@ export default function activate(ctx: ExtensionContext): void {
     s.commandOutputBuffer += chunk;
     const lines = s.commandOutputBuffer.split("\n");
     s.commandOutputBuffer = lines.pop()!;
-    const renderLine = (l: string) => ctx.call("tui:render-command-output", l, s.currentToolKind) as string;
     for (const line of lines) {
       if (s.commandOutputLineCount < maxLines) {
-        s.renderer.writeLine(renderLine(line));
+        s.renderer.writeLine(renderCommandLine(line));
         s.commandOutputLineCount++;
       } else {
         s.commandOutputOverflow++;
@@ -937,10 +929,9 @@ export default function activate(ctx: ExtensionContext): void {
     const maxLines = s.currentToolKind === "read"
       ? getSettings().readOutputMaxLines
       : getSettings().maxCommandOutputLines;
-    const renderLine = (l: string) => ctx.call("tui:render-command-output", l, s.currentToolKind) as string;
     if (s.commandOutputBuffer) {
       if (s.commandOutputLineCount < maxLines) {
-        s.renderer.writeLine(renderLine(s.commandOutputBuffer));
+        s.renderer.writeLine(renderCommandLine(s.commandOutputBuffer));
         s.commandOutputLineCount++;
       } else {
         s.commandOutputOverflow++;
@@ -955,13 +946,13 @@ export default function activate(ctx: ExtensionContext): void {
       const tail = s.commandOverflowLines.slice(-FAIL_OVERFLOW_MAX);
       const skipped = s.commandOverflowLines.length - tail.length;
       if (skipped > 0) {
-        s.renderer.writeLine(renderLine(`… ${skipped} lines hidden`));
+        s.renderer.writeLine(renderCommandLine(`… ${skipped} lines hidden`));
       }
       for (const line of tail) {
-        s.renderer.writeLine(renderLine(line));
+        s.renderer.writeLine(renderCommandLine(line));
       }
     } else if (s.commandOutputOverflow > 0 && maxLines > 0) {
-      s.renderer.writeLine(renderLine(`… ${s.commandOutputOverflow} more lines`));
+      s.renderer.writeLine(renderCommandLine(`… ${s.commandOutputOverflow} more lines`));
     }
 
     s.commandOutputOverflow = 0;
