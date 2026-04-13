@@ -95,14 +95,7 @@ Press **Ctrl+\\** anywhere — even inside vim, htop, or ssh — to summon the a
 
 The agent can read the terminal screen and send keystrokes via the built-in `terminal_read` and `terminal_keys` tools, enabling it to operate inside interactive programs.
 
-**Session lifecycle**:
-
-- **Ctrl+\\** opens the overlay and shows an input prompt
-- Type a query and press Enter — the agent begins processing
-- **Ctrl+\\** or **Esc** while the agent is working hides the overlay, but the agent keeps running in the background. The terminal screen stays correct via passthrough rendering from the headless terminal buffer.
-- When the agent finishes, control returns to your program automatically (with a full screen redraw via SIGWINCH)
-- If the overlay is still visible when the agent finishes, it shows a follow-up prompt for multi-turn conversation
-- **Ctrl+\\** or **Esc** at the follow-up prompt dismisses the session entirely
+While the agent is working, press **Ctrl+\\** or **Esc** to hide the overlay and continue using your program — the agent keeps running in the background and control returns automatically when it finishes. If the overlay is still visible when the agent finishes, it shows a follow-up prompt for multi-turn conversation.
 
 Requires `@xterm/headless` for the dimmed background compositing:
 ```bash
