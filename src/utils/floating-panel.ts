@@ -533,11 +533,13 @@ export class FloatingPanel {
 
     this.restoreScreen();
 
-    // Replay any PTY output that arrived while the overlay was visible.
-    if (this.ptyBuffer) {
+    // If we restored from the TerminalBuffer, it already has all PTY
+    // data processed — don't replay raw ptyBuffer (would double-apply).
+    // Only replay when there's no buffer (fallback case).
+    if (!this.buffer && this.ptyBuffer) {
       process.stdout.write(this.ptyBuffer);
-      this.ptyBuffer = "";
     }
+    this.ptyBuffer = "";
 
     this.bus.emit("shell:stdout-hide", {});
     this.bus.emit("shell:stdout-release", {});
