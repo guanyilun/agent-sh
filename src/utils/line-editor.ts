@@ -31,6 +31,11 @@ export class LineEditor {
   cursor = 0;
   private pendingSeq = ""; // buffered incomplete escape sequence
 
+  // ── History ──────────────────────────────────────────────────
+  private history: string[] = [];
+  private historyIndex = -1;  // -1 = current input, 0..N = history entries (newest first)
+  private savedBuffer = "";   // saves current input when browsing history
+
   /** Process raw terminal input, return actions for the consumer. */
   feed(data: string): LineEditAction[] {
     // If we had a pending incomplete escape sequence, prepend it
@@ -151,6 +156,43 @@ export class LineEditor {
     this.buffer = "";
     this.cursor = 0;
     this.pendingSeq = "";
+    this.historyIndex = -1;
+    this.savedBuffer = "";
+  }
+
+  /** Add a line to history (most recent first). */
+  pushHistory(line: string): void {
+    if (!line.trim()) return;
+    // Deduplicate: remove if already at top
+    if (this.history.length > 0 && this.history[0] === line) return;
+    this.history.unshift(line);
+    // Cap history size
+    if (this.history.length > 100) this.history.pop();
+  }
+
+  /** Navigate to a previous history entry. Returns changed action or null. */
+  historyBack(): LineEditAction | null {
+    if (this.historyIndex + 1 >= this.history.length) return null;
+    if (this.historyIndex === -1) {
+      this.savedBuffer = this.buffer; // save current input
+    }
+    this.historyIndex++;
+    this.buffer = this.history[this.historyIndex]!;
+    this.cursor = this.buffer.length;
+    return { action: "changed" };
+  }
+
+  /** Navigate to a more recent history entry. Returns changed action or null. */
+  historyForward(): LineEditAction | null {
+    if (this.historyIndex <= -1) return null;
+    this.historyIndex--;
+    if (this.historyIndex === -1) {
+      this.buffer = this.savedBuffer;
+    } else {
+      this.buffer = this.history[this.historyIndex]!;
+    }
+    this.cursor = this.buffer.length;
+    return { action: "changed" };
   }
 
   // ── Key bindings ────────────────────────────────────────────

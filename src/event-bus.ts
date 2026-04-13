@@ -27,6 +27,9 @@ export interface ShellEvents {
   // Extensions use this to send keystrokes into the user's live shell.
   "shell:pty-write": { data: string };
 
+  // Resize the PTY (triggers SIGWINCH in the child process).
+  "shell:pty-resize": { cols: number; rows: number };
+
   // Terminal buffer snapshot (request/response pattern via bus)
   "shell:buffer-request": Record<string, never>;
   "shell:buffer-snapshot": {
@@ -173,6 +176,16 @@ export interface ShellEvents {
   // Session reset (slash command → backend: clear conversation state)
   "agent:reset-session": Record<string, never>;
 
+  // Manual compaction request (slash command → backend)
+  "agent:compact-request": Record<string, never>;
+
+  // Context stats query (sync pipe: slash command → backend)
+  "context:get-stats": {
+    activeTokens: number;
+    nuclearEntries: number;
+    recallArchiveSize: number;
+    budgetTokens: number;
+  };
 
   // Extension registers itself as agent backend (extension → core)
   "agent:register-backend": {
@@ -208,6 +221,8 @@ export interface ShellEvents {
 
   // Set modes (core → agent loop: after provider switch)
   "config:set-modes": { modes: AgentMode[] };
+  // Append modes (core → agent loop: after provider register)
+  "config:add-modes": { modes: AgentMode[] };
 
   // Register a provider at runtime (extensions → core)
   "provider:register": {

@@ -24,7 +24,9 @@ import { computeDiff } from "../utils/diff.js";
 import type { AgentBackend, ToolDefinition } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { ConversationState } from "./conversation-state.js";
+import { HistoryFile } from "./history-file.js";
 import { STATIC_SYSTEM_PROMPT, buildDynamicContext } from "./system-prompt.js";
+import { TokenBudget } from "../token-budget.js";
 
 // Core tool factories
 import { createBashTool } from "./tools/bash.js";
@@ -48,8 +50,10 @@ interface PendingToolCall {
 export class AgentLoop implements AgentBackend {
   private abortController: AbortController | null = null;
   private toolRegistry = new ToolRegistry();
-  private conversation = new ConversationState();
+  private historyFile = new HistoryFile();
+  private conversation = new ConversationState(this.historyFile);
   private fileReadCache: FileReadCache = new Map();
+  private tokenBudget: TokenBudget;
   private modes: AgentMode[];
   private currentModeIndex = 0;
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
@@ -72,8 +76,14 @@ export class AgentLoop implements AgentBackend {
     ];
     this.currentModeIndex = initialModeIndex ?? 0;
 
+    // Unified token budget — adapts to current model's context window
+    this.tokenBudget = new TokenBudget(this.currentMode.contextWindow);
+
     // Register core tools
     this.registerCoreTools();
+
+    // Update token budget with tool count
+    this.tokenBudget.update(undefined, this.toolRegistry.all().length);
 
     // Register handlers — extensions can advise these
     this.registerHandlers();
@@ -109,6 +119,7 @@ export class AgentLoop implements AgentBackend {
       } else {
         this.llmClient.model = m.model;
       }
+      this.tokenBudget.update(m.contextWindow, this.toolRegistry.all().length);
       const label = m.provider ? `${m.provider}: ${m.model}` : m.model;
       this.bus.emit("agent:info", { name: "agent-sh", version: "0.4", model: m.model, provider: m.provider, contextWindow: m.contextWindow });
       this.bus.emit("ui:info", { message: `Model: ${label}` });
@@ -151,13 +162,51 @@ export class AgentLoop implements AgentBackend {
       } else {
         this.llmClient.model = m.model;
       }
+      this.tokenBudget.update(m.contextWindow, this.toolRegistry.all().length);
+      this.bus.emit("config:changed", {});
+    });
+    on("config:add-modes", ({ modes: extra }) => {
+      // Remove any existing modes for the same provider, then append
+      const providers = new Set(extra.map((m) => m.provider).filter(Boolean));
+      this.modes = [
+        ...this.modes.filter((m) => !m.provider || !providers.has(m.provider)),
+        ...extra,
+      ];
       this.bus.emit("config:changed", {});
     });
     on("agent:reset-session", () => {
       this.cancel();
-      this.conversation = new ConversationState();
+      this.conversation = new ConversationState(this.historyFile);
       this.lastProjectSkillNames.clear();
     });
+    on("agent:compact-request", () => {
+      const budgetTokens = this.tokenBudget.conversationBudgetTokens;
+      const stats = this.conversation.compact(budgetTokens);
+      this.conversation.flush().catch(() => {});
+      if (stats) {
+        this.bus.emit("ui:info", {
+          message: `(compacted: ~${stats.before.toLocaleString()} → ~${stats.after.toLocaleString()} tokens)`,
+        });
+      } else {
+        this.bus.emit("ui:info", { message: "(nothing to compact)" });
+      }
+    });
+    this.bus.onPipe("context:get-stats", () => {
+      return {
+        activeTokens: this.conversation.estimateTokens(),
+        nuclearEntries: this.conversation.getNuclearEntryCount(),
+        recallArchiveSize: this.conversation.getRecallArchiveSize(),
+        budgetTokens: this.tokenBudget.conversationBudgetTokens,
+      };
+    });
+
+    // Load prior history from disk (non-blocking)
+    this.historyFile.readRecent().then((entries) => {
+      if (entries.length > 0) {
+        this.conversation.loadPriorHistory(entries);
+      }
+    }).catch(() => {});
+
     on("shell:cwd-change", ({ cwd }) => {
       const projectSkills = discoverProjectSkills(cwd);
       const newNames = new Set(projectSkills.map(s => s.name));
@@ -231,6 +280,7 @@ export class AgentLoop implements AgentBackend {
       this.llmClient.model = newMode.model;
     }
 
+    this.tokenBudget.update(newMode.contextWindow, this.toolRegistry.all().length);
     const label = newMode.provider
       ? `${newMode.provider}: ${newMode.model}`
       : newMode.model;
@@ -352,6 +402,45 @@ export class AgentLoop implements AgentBackend {
       createDisplayTool({ getCwd, bus: this.bus }),
     );
     this.toolRegistry.register(createListSkillsTool(getCwd));
+
+    // conversation_recall — search/expand evicted conversation turns
+    this.toolRegistry.register({
+      name: "conversation_recall",
+      description:
+        "Browse, search, or expand evicted conversation turns. " +
+        "Use when you need context from earlier in the conversation that was compacted away.",
+      input_schema: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["browse", "search", "expand"],
+            description: "browse: list evicted turns, search: regex search, expand: show full turn",
+          },
+          query: {
+            type: "string",
+            description: "Search query (for action=search)",
+          },
+          turn_id: {
+            type: "number",
+            description: "Turn ID to expand (for action=expand)",
+          },
+        },
+        required: ["action"],
+      },
+      execute: async (args) => {
+        const action = args.action as string;
+        let content: string;
+        if (action === "search") {
+          content = await this.conversation.search((args.query as string) ?? "");
+        } else if (action === "expand") {
+          content = await this.conversation.expand(args.turn_id as number);
+        } else {
+          content = await this.conversation.browse();
+        }
+        return { content, exitCode: 0, isError: false };
+      },
+    });
   }
 
   /**
@@ -363,7 +452,11 @@ export class AgentLoop implements AgentBackend {
 
     // Extensions compose additional context (git info, project rules, etc.)
     h.define("dynamic-context:build", () =>
-      buildDynamicContext(this.toolRegistry.all(), this.contextManager),
+      buildDynamicContext(
+        this.toolRegistry.all(),
+        this.contextManager,
+        this.tokenBudget.shellBudgetTokens,
+      ),
     );
 
     // Full control over what the LLM sees: takes messages[], returns messages[].
@@ -526,9 +619,6 @@ export class AgentLoop implements AgentBackend {
     }
   }
 
-  /** Max tokens before auto-compaction (conservative default). */
-  private maxContextTokens = 60_000;
-
   /**
    * Core agent loop: stream LLM response → execute tools → repeat.
    * Returns the final accumulated response text.
@@ -537,11 +627,16 @@ export class AgentLoop implements AgentBackend {
     let fullResponseText = "";
 
     while (!signal.aborted) {
-      // Auto-compact if conversation is getting large
-      const estimatedTokens = Math.ceil(JSON.stringify(this.conversation.getMessages()).length / 4);
-      if (estimatedTokens > this.maxContextTokens) {
-        this.conversation.compact(10);
-        this.bus.emit("ui:info", { message: "(conversation compacted)" });
+      // Auto-compact if conversation exceeds the model-aware budget
+      const budgetTokens = this.tokenBudget.conversationBudgetTokens;
+      if (this.conversation.estimateTokens() > budgetTokens) {
+        const stats = this.conversation.compact(budgetTokens);
+        await this.conversation.flush();
+        if (stats) {
+          this.bus.emit("ui:info", {
+            message: `(compacted: ~${stats.before.toLocaleString()} → ~${stats.after.toLocaleString()} tokens)`,
+          });
+        }
       }
 
       // System prompt is static (cacheable); dynamic context uses handler
@@ -698,10 +793,14 @@ export class AgentLoop implements AgentBackend {
       } catch (e) {
         if (signal.aborted) throw e;
 
-        // Context overflow — compact and retry (no backoff needed)
+        // Context overflow — aggressively compact and retry
         if (this.isContextOverflow(e)) {
-          this.conversation.compact(6);
-          this.bus.emit("ui:info", { message: "(context overflow — compacted, retrying)" });
+          // Use 60% of the budget to leave headroom
+          const aggressiveBudget = Math.floor(this.tokenBudget.conversationBudgetTokens * 0.6);
+          const stats = this.conversation.compact(aggressiveBudget, 6);
+          await this.conversation.flush();
+          const detail = stats ? ` ~${stats.before.toLocaleString()} → ~${stats.after.toLocaleString()} tokens` : "";
+          this.bus.emit("ui:info", { message: `(context overflow — compacted${detail}, retrying)` });
           continue;
         }
 

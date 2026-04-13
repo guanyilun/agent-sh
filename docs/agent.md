@@ -23,31 +23,14 @@ The key insight: **the agent is a loop, not a single call**. The LLM calls tools
 
 ## Context Assembly
 
-Every query includes **shell context** — a structured summary of your recent terminal activity. This is how the agent knows what you've been doing.
+Every query includes two streams of context that share a unified token budget:
 
-```
-Shell Context (from ContextManager):
-  ├─ Current working directory
-  ├─ Recent shell commands + truncated output
-  ├─ Recent agent exchanges (queries + responses)
-  └─ Recent tool executions
-```
+- **Shell context** = user terminal history (commands + outputs), assembled fresh for every LLM call. It's what lets the agent understand "fix this" after you ran a failing command.
+- **Conversation state** = the OpenAI chat messages array (`user`/`assistant`/`tool` messages). This is the LLM's memory of what it already said and did.
 
-Context is **not the same as conversation state**. This is a common source of confusion:
+The two streams don't overlap — agent tool outputs live only in the conversation, while shell context tracks only user-initiated activity. Both streams support recall tools (`shell_recall` and `conversation_recall`) for recovering evicted content.
 
-- **Shell context** = your terminal history, assembled fresh for every LLM call, included in the system prompt. It's what lets the agent understand "fix this" after you ran a failing command.
-- **Conversation state** = the OpenAI chat messages array (`user`/`assistant`/`tool` messages). This is the LLM's memory of the current multi-turn conversation.
-
-They serve different purposes. Context gives the agent situational awareness. Conversation state gives it memory of what it already said and did.
-
-### Truncation and budgeting
-
-Shell output can be large. The context manager applies a budget to keep things reasonable:
-
-- **Windowing** — only the last N exchanges are included (configurable via `contextWindowSize`)
-- **Per-exchange truncation** — long outputs get head+tail with `[... omitted ...]` in the middle
-- **Budget enforcement** — if total context exceeds the byte budget, oldest exchange outputs are stripped first
-- **Recall** — the agent can use `shell_recall` to retrieve full output of truncated exchanges when needed
+See [Context Management](context-management.md) for the full design: token budgeting, truncation pipeline, priority-based compaction, and configuration.
 
 ## System Prompt
 

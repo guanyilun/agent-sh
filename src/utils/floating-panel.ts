@@ -31,6 +31,7 @@
  *   import { FloatingPanel } from "agent-sh/utils/floating-panel.js";
  */
 import { stripAnsi } from "./ansi.js";
+import { wrapLine } from "./markdown.js";
 import { LineEditor } from "./line-editor.js";
 import { TerminalBuffer } from "./terminal-buffer.js";
 import { HandlerRegistry } from "./handler-registry.js";
@@ -97,7 +98,7 @@ export interface FloatingPanelConfig {
    * Requires @xterm/headless — falls back to blank background if unavailable.
    */
   dimBackground?: boolean;
-  /** Auto-dismiss delay in ms when done (0 = disabled). Default: 0. */
+  /** Auto-dismiss delay in ms when done (0 = auto-prompt for follow-up). Default: 0. */
   autoDismissMs?: number;
   /** Icon shown before the input cursor. Default: "\u276f". */
   promptIcon?: string;
@@ -222,6 +223,7 @@ export class FloatingPanel {
    *   - `{prefix}:composite-row(content: string, bgLine: string|null, boxLeft: number, boxW: number, cols: number) -> string`
    *   - `{prefix}:submit(query: string) -> void`
    *   - `{prefix}:dismiss() -> void`
+   *   - `{prefix}:show() -> void`
    *   - `{prefix}:input(data: string) -> boolean`
    *   - `{prefix}:build-row(content: string, width: number) -> string`
    */
@@ -237,19 +239,26 @@ export class FloatingPanel {
 
   // ── State ───────────────────────────────────────────────────
   private phase: Phase = "idle";
+  private _visible = false;  // whether the panel box is shown on screen
+  private _passthrough = false;  // hidden but still rendering TerminalBuffer
   private editor = new LineEditor();
   private contentLines: string[] = [];
   private currentPartialLine = "";
   private scrollOffset = 0;
+  private userScrolled = false;  // true when user manually scrolled away from bottom
   private title = "";
   private footer = "";
   private renderTimer: ReturnType<typeof setTimeout> | null = null;
-  private autoDismissTimer: ReturnType<typeof setTimeout> | null = null;
   private resizeHandler: (() => void) | null = null;
   private prevFrame: string[] = [];
   private suppressNextRedraw = false;
+  private autoDismissTimer: ReturnType<typeof setTimeout> | null = null;
   private ptyBuffer = "";  // PTY output accumulated while overlay is open
   private usedAltScreen = false;  // whether we entered our own alt screen
+  private wrapCache = new Map<string, string[]>();  // line → wrapped lines (invalidated on width change)
+  private wrapCacheWidth = 0;
+  private passthroughTimer: ReturnType<typeof setInterval> | null = null;
+  private prevSerialized = "";
 
   constructor(bus: EventBus, config: FloatingPanelConfig, handlers?: HandlerRegistry) {
     this.bus = bus;
@@ -282,22 +291,57 @@ export class FloatingPanel {
 
     // Default content renderer: uses built-in appendText/appendLine buffer
     this.handlers.define(`${p}:render-content`, (ctx: RenderContext): RenderResult => {
-      if (ctx.phase === "input") {
-        return {
-          lines: [`\x1b[36m${this.config.promptIcon}${RESET} ${ctx.inputBuffer}`],
-          cursor: { row: 0, col: this.config.promptIcon.length + 1 + ctx.inputCursor },
-        };
+      const raw = [...ctx.contentLines, ...(ctx.partialLine ? [ctx.partialLine] : [])];
+
+      // Invalidate wrap cache if width changed
+      if (ctx.width !== this.wrapCacheWidth) {
+        this.wrapCache.clear();
+        this.wrapCacheWidth = ctx.width;
       }
-      const all = [...ctx.contentLines, ...(ctx.partialLine ? [ctx.partialLine] : [])];
-      // Auto-scroll
+
+      const all: string[] = [];
+      for (const line of raw) {
+        let wrapped = this.wrapCache.get(line);
+        if (!wrapped) {
+          wrapped = wrapLine(line, ctx.width);
+          this.wrapCache.set(line, wrapped);
+        }
+        all.push(...wrapped);
+      }
+
+      // In input phase, append the prompt line at the bottom of content
+      if (ctx.phase === "input") {
+        const promptLine = `\x1b[36m${this.config.promptIcon}${RESET} ${ctx.inputBuffer}`;
+        all.push(promptLine);
+      }
+
+      // Scroll: auto-scroll to bottom unless user manually scrolled
       let offset = ctx.scrollOffset;
-      if (all.length > ctx.height) {
-        offset = all.length - ctx.height;
+      const maxOffset = Math.max(0, all.length - ctx.height);
+      if (this.userScrolled) {
+        offset = Math.min(offset, maxOffset);
+        // Resume auto-scroll if user scrolled back to bottom
+        if (offset >= maxOffset) this.userScrolled = false;
       } else {
-        offset = 0;
+        offset = maxOffset;
       }
       this.scrollOffset = offset;
-      return { lines: all.slice(offset, offset + ctx.height) };
+
+      const visible = all.slice(offset, offset + ctx.height);
+
+      // Cursor position for input mode
+      if (ctx.phase === "input") {
+        const promptRow = visible.length - 1;
+        // If prompt is visible, set cursor
+        if (promptRow >= 0) {
+          return {
+            lines: visible,
+            cursor: { row: promptRow, col: this.config.promptIcon.length + 1 + ctx.inputCursor },
+          };
+        }
+      }
+
+      return { lines: visible };
     });
 
     // Default submit: no-op (extension overrides)
@@ -305,6 +349,9 @@ export class FloatingPanel {
 
     // Default dismiss: no-op
     this.handlers.define(`${p}:dismiss`, () => {});
+
+    // Default show: no-op (extension overrides to rebuild content on re-show)
+    this.handlers.define(`${p}:show`, () => {});
 
     // Default custom input handler: don't consume
     this.handlers.define(`${p}:input`, (_data: string): boolean => false);
@@ -333,7 +380,8 @@ export class FloatingPanel {
     this.handlers.define(`${p}:render-border-bottom`, (ctx: FrameContext): string => {
       const { geo, border: b } = ctx;
       if (ctx.footer) {
-        const footerPad = Math.max(0, geo.boxW - ctx.footer.length - 3);
+        const visLen = stripAnsi(ctx.footer).length;
+        const footerPad = Math.max(0, geo.boxW - visLen - 3);
         return `${b.bl}${b.h.repeat(footerPad)}${DIM}${ctx.footer}${RESET}${b.h}${b.br}`;
       }
       return `${b.bl}${b.h.repeat(geo.boxW - 2)}${b.br}`;
@@ -399,15 +447,15 @@ export class FloatingPanel {
   // ── Bus event wiring ───────────────────────────────────────
 
   private wireEvents(): void {
-    // Buffer PTY output while overlay is open so we can replay it on dismiss.
-    // Alt screen restore discards anything written while it was active.
+    // Buffer PTY output while overlay is visible (alt screen discards it).
+    // Don't buffer when hidden — PTY flows to terminal directly via stdout-show.
     this.bus.on("shell:pty-data", ({ raw }) => {
-      if (this.phase !== "idle") this.ptyBuffer += raw;
+      if (this._visible) this.ptyBuffer += raw;
     });
 
     this.bus.onPipe("input:intercept", (payload) => this.handleIntercept(payload));
     this.bus.onPipe("shell:redraw-prompt", (payload) => {
-      if (this.phase !== "idle") {
+      if (this._visible || this._passthrough) {
         return { ...payload, handled: true };
       }
       // After dismiss, suppress one redraw — restoreScreen already
@@ -444,14 +492,21 @@ export class FloatingPanel {
 
   // ── Public lifecycle ────────────────────────────────────────
 
+  /** Whether the panel has an active conversation (may be hidden). */
   get active(): boolean {
     return this.phase !== "idle";
+  }
+
+  /** Whether the panel is currently visible on screen. */
+  get visible(): boolean {
+    return this._visible;
   }
 
   get terminalBuffer(): TerminalBuffer | null {
     return this.buffer;
   }
 
+  /** Open a fresh panel with a new conversation. */
   open(): void {
     if (this.phase !== "idle") return;
     this.ensureBuffer();
@@ -461,17 +516,87 @@ export class FloatingPanel {
     this.contentLines = [];
     this.currentPartialLine = "";
     this.scrollOffset = 0;
+    this.userScrolled = false;
     this.title = "";
     this.footer = "";
     this.prevFrame = [];
 
+    this.enterScreen();
+  }
+
+  /** Hide the panel without destroying conversation state. */
+  hide(): void {
+    if (!this._visible) return;
+    if (this.renderTimer) { clearTimeout(this.renderTimer); this.renderTimer = null; }
+    this._visible = false;
+    this.prevFrame = [];
+
+    if (this.phase === "active" && this.buffer) {
+      // Agent still working — enter passthrough mode.
+      // Keep alt screen + stdout held. Render TerminalBuffer directly
+      // so the background program's screen stays correct without
+      // handing rendering control back to ncurses.
+      this._passthrough = true;
+      this.ptyBuffer = "";
+      this.startPassthrough();
+    } else {
+      // Agent idle or done — full teardown, hand back control.
+      this.teardownScreen();
+    }
+
+    this.handlers.call(`${this.prefix}:dismiss`);
+  }
+
+  /** Show the panel again after hide(), preserving conversation. */
+  show(): void {
+    if (this._visible || this.phase === "idle") return;
+
+    if (this._passthrough) {
+      // Resume from passthrough — alt screen + stdout hold already active.
+      this.stopPassthrough();
+      this._passthrough = false;
+      this._visible = true;
+      this.prevFrame = [];
+      this.render();
+    } else {
+      // Cold show — need full screen setup.
+      this.prevFrame = [];
+      this.enterScreen();
+    }
+    this.handlers.call(`${this.prefix}:show`);
+  }
+
+  /** Fully destroy the panel, resetting all state. */
+  dismiss(): void {
+    if (this.phase === "idle") return;
+    if (this.autoDismissTimer) { clearTimeout(this.autoDismissTimer); this.autoDismissTimer = null; }
+
+    if (this._passthrough) {
+      this.stopPassthrough();
+      this._passthrough = false;
+      this.teardownScreen();
+    } else if (this._visible) {
+      this._visible = false;
+      if (this.renderTimer) { clearTimeout(this.renderTimer); this.renderTimer = null; }
+      this.prevFrame = [];
+      this.teardownScreen();
+    }
+
+    this.phase = "idle";
+    this.editor.clear();
+    this.contentLines = [];
+    this.currentPartialLine = "";
+    this.scrollOffset = 0;
+    this.title = "";
+    this.footer = "";
+  }
+
+  /** Common screen enter logic shared by open() and show(). */
+  private enterScreen(): void {
+    this._visible = true;
     this.ptyBuffer = "";
     this.bus.emit("shell:stdout-hold", {});
 
-    // If a foreground program (vim, htop) is already on alt screen,
-    // don't enter a second alt screen — it doesn't nest.  Instead,
-    // render directly on the current screen and restore from the
-    // xterm buffer on dismiss.
     this.usedAltScreen = !(this.buffer?.altScreen);
     if (this.usedAltScreen) {
       process.stdout.write("\x1b[?1049h");
@@ -481,34 +606,6 @@ export class FloatingPanel {
     process.stdout.on("resize", this.resizeHandler);
 
     this.render();
-  }
-
-  dismiss(): void {
-    if (this.phase === "idle") return;
-    if (this.renderTimer) { clearTimeout(this.renderTimer); this.renderTimer = null; }
-    if (this.autoDismissTimer) { clearTimeout(this.autoDismissTimer); this.autoDismissTimer = null; }
-    if (this.resizeHandler) { process.stdout.off("resize", this.resizeHandler); this.resizeHandler = null; }
-
-    this.suppressNextRedraw = true;
-    this.phase = "idle";
-    this.editor.clear();
-    this.prevFrame = [];
-
-    this.restoreScreen();
-
-    // Replay any PTY output that arrived while the overlay was open.
-    // Alt screen restore discarded it, but it represents real work
-    // the agent did (commands run, output produced).
-    if (this.ptyBuffer) {
-      process.stdout.write(this.ptyBuffer);
-      this.ptyBuffer = "";
-    }
-
-    // Reset any accumulated stdout-show refs, then release hold.
-    this.bus.emit("shell:stdout-hide", {});
-    this.bus.emit("shell:stdout-release", {});
-
-    this.handlers.call(`${this.prefix}:dismiss`);
   }
 
   // ── Public content API ──────────────────────────────────────
@@ -563,13 +660,36 @@ export class FloatingPanel {
   }
 
   setDone(): void {
-    this.phase = "done";
-    this.render();
+    if (this._passthrough) {
+      // Agent finished while hidden — session over, hand back control.
+      this.dismiss();
+      return;
+    }
     if (this.config.autoDismissMs > 0) {
+      // Legacy behavior: enter done state, auto-dismiss after delay
+      this.phase = "done";
+      this.render();
       this.autoDismissTimer = setTimeout(() => {
         if (this.phase === "done") this.dismiss();
       }, this.config.autoDismissMs);
+    } else {
+      // Auto-prompt: transition to input for follow-up conversation
+      this.phase = "input";
+      this.editor.clear();
+      this.render();
     }
+  }
+
+  scrollUp(lines = 3): void {
+    this.scrollOffset = Math.max(0, this.scrollOffset - lines);
+    this.userScrolled = true;
+    this.render();
+  }
+
+  scrollDown(lines = 3): void {
+    this.scrollOffset += lines;
+    this.userScrolled = true;
+    this.render();
   }
 
   getInput(): string {
@@ -586,6 +706,17 @@ export class FloatingPanel {
     const consumed = { ...payload, consumed: true };
     const { data } = payload;
 
+    // Toggle visibility when trigger is pressed and panel is hidden but active
+    if (this.isTrigger(data) && this.phase !== "idle" && !this._visible) {
+      this.show();
+      return consumed;
+    }
+
+    // When not visible, only intercept the trigger key
+    if (!this._visible && this.phase !== "idle") {
+      return payload;
+    }
+
     switch (this.phase) {
       case "done":
         this.dismiss();
@@ -596,9 +727,15 @@ export class FloatingPanel {
         return consumed;
 
       case "active":
-        if (data === "\x03") this.bus.emit("agent:cancel-request", {});
-        else if (data === "\x1b" || this.isTrigger(data)) this.dismiss();
-        else this.handlers.call(`${this.prefix}:input`, data);
+        if (data === "\x03") {
+          this.bus.emit("agent:cancel-request", {});
+        } else if (data === "\x1b" || this.isTrigger(data)) {
+          this.hide();
+        } else if (this.handleScroll(data)) {
+          // scroll handled
+        } else {
+          this.handlers.call(`${this.prefix}:input`, data);
+        }
         return consumed;
 
       default: // idle
@@ -610,35 +747,72 @@ export class FloatingPanel {
     }
   }
 
+  /** Handle scroll input. Returns true if consumed. */
+  private handleScroll(data: string): boolean {
+    // Arrow up / mouse wheel up
+    if (data === "\x1b[A" || data === "\x1bOA") { this.scrollUp(1); return true; }
+    // Arrow down / mouse wheel down
+    if (data === "\x1b[B" || data === "\x1bOB") { this.scrollDown(1); return true; }
+    // Page up (CSI 5~)
+    if (data === "\x1b[5~") { this.scrollUp(this.computeGeometry().contentH - 1); return true; }
+    // Page down (CSI 6~)
+    if (data === "\x1b[6~") { this.scrollDown(this.computeGeometry().contentH - 1); return true; }
+    // Mouse wheel: CSI M followed by button byte (64 = wheel up, 65 = wheel down)
+    if (data.length >= 6 && data.startsWith("\x1b[M")) {
+      const button = data.charCodeAt(3);
+      if (button === 96) { this.scrollUp(3); return true; }   // wheel up
+      if (button === 97) { this.scrollDown(3); return true; }  // wheel down
+    }
+    // SGR mouse: CSI < 64;x;yM (wheel up) / CSI < 65;x;yM (wheel down)
+    const sgr = data.match(/^\x1b\[<(64|65);\d+;\d+M$/);
+    if (sgr) {
+      if (sgr[1] === "64") { this.scrollUp(3); return true; }
+      if (sgr[1] === "65") { this.scrollDown(3); return true; }
+    }
+    return false;
+  }
+
   private handleInputKey(data: string): void {
     // Check full data string against trigger sequences (may be multi-byte)
-    if (this.isTrigger(data)) { this.dismiss(); return; }
+    if (this.isTrigger(data)) { this.hide(); return; }
 
     for (let i = 0; i < data.length; i++) {
       const ch = data[i]!;
-      if (ch === "\x1b" && data[i + 1] == null) { this.dismiss(); return; }
-      if (ch.charCodeAt(0) === 0x03) { this.dismiss(); return; }
+      if (ch === "\x1b" && data[i + 1] == null) { this.hide(); return; }
+      if (ch.charCodeAt(0) === 0x03) { this.hide(); return; }
     }
+
+    // Page Up/Down and mouse wheel scroll even in input phase
+    if (this.handleScroll(data)) return;
 
     const actions = this.editor.feed(data);
     for (const action of actions) {
       switch (action.action) {
         case "submit": {
           const query = this.editor.buffer.trim();
-          if (!query) { this.dismiss(); return; }
+          if (!query) { this.hide(); return; }
+          this.editor.pushHistory(query);
           this.phase = "active";
           this.editor.clear();
           this.handlers.call(`${this.prefix}:submit`, query);
           return;
         }
         case "cancel":
-          this.dismiss();
+          this.hide();
           return;
+        case "arrow-up": {
+          const hist = this.editor.historyBack();
+          if (hist) this.render();
+          break;
+        }
+        case "arrow-down": {
+          const hist = this.editor.historyForward();
+          if (hist) this.render();
+          break;
+        }
         case "changed":
         case "tab":
         case "shift+tab":
-        case "arrow-up":
-        case "arrow-down":
         case "delete-empty":
           this.render();
           break;
@@ -708,7 +882,7 @@ export class FloatingPanel {
   }
 
   private render(): void {
-    if (this.phase === "idle") return;
+    if (this.phase === "idle" || !this._visible) return;
 
     const { rows: frame, cursorSeq } = this.buildFrame();
 
@@ -740,25 +914,59 @@ export class FloatingPanel {
 
   // ── Screen helpers ────────────────────────────────────────
 
-  private restoreScreen(): void {
+  /** Full screen teardown: exit alt screen, release stdout, force redraw. */
+  private teardownScreen(): void {
+    if (this.resizeHandler) {
+      process.stdout.off("resize", this.resizeHandler);
+      this.resizeHandler = null;
+    }
+    this.suppressNextRedraw = true;
+
     if (this.usedAltScreen) {
-      // Leave alt screen — the terminal restores the saved main buffer.
       process.stdout.write("\x1b[?1049l");
-    } else {
-      // We were already on alt screen (vim, htop, etc.) so we didn't
-      // enter our own.  Restore by rewriting the screen content from
-      // the xterm buffer, which mirrors what the foreground program
-      // had rendered.
-      const raw = this.buffer?.serialize() ?? "";
-      const rows = process.stdout.rows || 24;
-      const lines = raw.split("\n");
-      const out: string[] = [SYNC_START];
-      for (let i = 0; i < rows; i++) {
-        out.push(`\x1b[${i + 1};1H\x1b[2K`);
-        if (i < lines.length) out.push(lines[i]!);
-      }
-      out.push(SYNC_END);
-      process.stdout.write(out.join(""));
+    }
+    // ncurses's curscr is stale — only a real dimension change triggers
+    // clearok + full repaint (same-size SIGWINCH is a no-op).
+    const cols = process.stdout.columns || 80;
+    const rows = process.stdout.rows || 24;
+    this.bus.emit("shell:pty-resize", { cols, rows: rows - 1 });
+    setTimeout(() => {
+      this.bus.emit("shell:pty-resize", { cols, rows });
+    }, 50);
+
+    if (!this.buffer && this.ptyBuffer) {
+      process.stdout.write(this.ptyBuffer);
+    }
+    this.ptyBuffer = "";
+    this.bus.emit("shell:stdout-hide", {});
+    this.bus.emit("shell:stdout-release", {});
+  }
+
+  // ── Passthrough rendering ─────────────────────────────────
+
+  /** Start rendering TerminalBuffer directly (no overlay box). */
+  private startPassthrough(): void {
+    this.prevSerialized = "";
+    this.renderPassthrough();
+    this.passthroughTimer = setInterval(() => this.renderPassthrough(), 50);
+  }
+
+  private stopPassthrough(): void {
+    if (this.passthroughTimer) {
+      clearInterval(this.passthroughTimer);
+      this.passthroughTimer = null;
+    }
+    this.prevSerialized = "";
+  }
+
+  /** Render the TerminalBuffer's screen content directly (no overlay). */
+  private renderPassthrough(): void {
+    if (!this.buffer) return;
+    this.buffer.flush();
+    const serialized = this.buffer.serialize();
+    if (serialized && serialized !== this.prevSerialized) {
+      this.prevSerialized = serialized;
+      process.stdout.write(`${SYNC_START}\x1b[H${serialized}${SYNC_END}`);
     }
   }
 

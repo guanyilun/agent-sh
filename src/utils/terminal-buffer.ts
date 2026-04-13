@@ -100,6 +100,9 @@ export class TerminalBuffer {
   private readonly term: any;
   private readonly serializeAddon: any;
 
+  /** Flush pending drip-feed data (set by createWired). */
+  _flushPending: (() => void) | null = null;
+
   private constructor(term: any, serialize: any) {
     this.term = term;
     this.serializeAddon = serialize;
@@ -135,10 +138,18 @@ export class TerminalBuffer {
     setInterval(() => {
       if (pending) { const d = pending; pending = ""; tb.write(d); }
     }, 50);
+    tb._flushPending = () => {
+      if (pending) { const d = pending; pending = ""; tb.write(d); }
+    };
     process.stdout.on("resize", () => {
       tb.resize(process.stdout.columns || 80, process.stdout.rows || 24);
     });
     return tb;
+  }
+
+  /** Flush any pending drip-feed data into the virtual terminal. */
+  flush(): void {
+    this._flushPending?.();
   }
 
   /** Write raw data into the virtual terminal. */

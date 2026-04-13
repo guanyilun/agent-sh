@@ -1,21 +1,13 @@
 import type { EventBus } from "./event-bus.js";
-import type { Exchange, ToolCallRecord } from "./types.js";
+import type { Exchange } from "./types.js";
 import type { HandlerRegistry } from "./utils/handler-registry.js";
 import { getSettings } from "./settings.js";
-
-// Non-configurable thresholds (agent response and tool output follow shell settings)
-const AGENT_RESPONSE_TRUNCATE_THRESHOLD = 20;
-const AGENT_RESPONSE_HEAD_LINES = 15;
-const TOOL_TRUNCATE_THRESHOLD = 20;
-const TOOL_HEAD_LINES = 5;
-const TOOL_TAIL_LINES = 5;
 
 export class ContextManager {
   private exchanges: Exchange[] = [];
   private nextId = 1;
   private currentCwd: string;
   private sessionStart: number;
-  private pendingToolCalls: ToolCallRecord[] = [];
   private firstPrompt = true;
   private agentShellActive = false; // true while user_shell command is executing
   private handlers: HandlerRegistry | null = null;
@@ -53,49 +45,10 @@ export class ContextManager {
     bus.on("shell:agent-exec-done", () => { this.agentShellActive = false; });
 
     // ── Subscribe to agent events ──
+    // Only track queries (as markers). Agent responses and tool outputs
+    // live exclusively in ConversationState to avoid duplication.
     bus.on("agent:query", (e) => {
-      this.pendingToolCalls = [];
       this.addExchange({ type: "agent_query", query: e.query });
-    });
-
-    bus.on("agent:response-done", (e) => {
-      this.addExchange({
-        type: "agent_response",
-        response: e.response,
-        toolCalls: this.pendingToolCalls,
-      });
-      this.pendingToolCalls = [];
-    });
-
-    bus.on("agent:tool-call", (e) => {
-      // Accumulate tool calls for the agent_response summary
-      this.pendingToolCalls.push({
-        tool: e.tool,
-        args: e.args,
-        output: "",
-        exitCode: null,
-      });
-    });
-
-    bus.on("agent:tool-output", (e) => {
-      // Update the last pending tool call with output
-      const last = this.pendingToolCalls[this.pendingToolCalls.length - 1];
-      if (last) {
-        last.output = e.output;
-        last.exitCode = e.exitCode;
-      }
-
-      // Also store as a separate exchange for chronological log
-      const lines = e.output.split("\n");
-      this.addExchange({
-        type: "tool_execution",
-        tool: e.tool,
-        args: {},
-        output: e.output,
-        exitCode: e.exitCode,
-        outputLines: lines.length,
-        outputBytes: e.output.length,
-      });
     });
   }
 
@@ -266,7 +219,6 @@ export class ContextManager {
    */
   clear(): void {
     this.exchanges = [];
-    this.pendingToolCalls = [];
     this.firstPrompt = true;
     // Don't reset nextId — IDs should be globally unique within a session
   }
@@ -299,22 +251,8 @@ export class ContextManager {
           s.shellTailLines,
           ex.id,
         );
-      } else if (ex.type === "agent_response") {
-        ex.response = truncateHead(
-          ex.response,
-          AGENT_RESPONSE_TRUNCATE_THRESHOLD,
-          AGENT_RESPONSE_HEAD_LINES,
-          ex.id,
-        );
-      } else if (ex.type === "tool_execution") {
-        ex.output = truncateOutput(
-          ex.output,
-          TOOL_TRUNCATE_THRESHOLD,
-          TOOL_HEAD_LINES,
-          TOOL_TAIL_LINES,
-          ex.id,
-        );
       }
+      // agent_query has no output to truncate
     }
 
     // Pass 2: budget enforcement — strip output from oldest if over budget
@@ -324,10 +262,6 @@ export class ContextManager {
       const before = this.exchangeSize(ex);
       if (ex.type === "shell_command") {
         ex.output = `[output omitted, use shell_recall tool to expand id ${ex.id}]`;
-      } else if (ex.type === "tool_execution") {
-        ex.output = `[output omitted, use shell_recall tool to expand id ${ex.id}]`;
-      } else if (ex.type === "agent_response") {
-        ex.response = `[response omitted, use shell_recall tool to expand id ${ex.id}]`;
       }
       totalSize -= before - this.exchangeSize(ex);
     }
@@ -351,7 +285,8 @@ export class ContextManager {
       out += `- When the user asks to see, list, view, or display anything, ALWAYS use user_shell. NEVER use internal tools like ls/read/bash for display — the user won't see it.\n`;
       out += `- Only use internal tools when YOU need to reason about content silently (e.g. reading a file to answer a question about it).\n`;
       out += `- After a user_shell command, the user already saw the output. Do NOT repeat or summarize it.\n`;
-      out += `- You can browse or search session history with shell_recall.\n`;
+      out += `- You can browse or search shell history with shell_recall.\n`;
+      out += `- You can browse or search evicted conversation turns with conversation_recall.\n`;
       out += `\n`;
       this.firstPrompt = false;
     }
@@ -393,21 +328,6 @@ export class ContextManager {
       }
       case "agent_query":
         return `#${ex.id} [you] > ${ex.query}\n`;
-      case "agent_response": {
-        let s = `#${ex.id} [agent] `;
-        if (ex.response) s += ex.response.split("\n")[0] + "\n";
-        if (ex.response.includes("\n")) {
-          const rest = ex.response.slice(ex.response.indexOf("\n") + 1);
-          if (rest.trim()) s += indent(rest, "  ") + "\n";
-        }
-        return s;
-      }
-      case "tool_execution": {
-        let s = `#${ex.id} [tool] ${ex.tool}\n`;
-        if (ex.output) s += indent(ex.output, "  ") + "\n";
-        if (ex.exitCode !== null) s += `  exit ${ex.exitCode}\n`;
-        return s;
-      }
     }
   }
 
@@ -423,14 +343,6 @@ export class ContextManager {
       }
       case "agent_query":
         return `#${ex.id} [you] > ${ex.query}`;
-      case "agent_response":
-        return `#${ex.id} [agent]\n${ex.response}`;
-      case "tool_execution": {
-        let s = `#${ex.id} [tool] ${ex.tool} (${ex.outputLines} lines, ${ex.outputBytes} bytes)\n`;
-        if (ex.output) s += ex.output + "\n";
-        if (ex.exitCode !== null) s += `exit ${ex.exitCode}\n`;
-        return s;
-      }
     }
   }
 
@@ -442,12 +354,6 @@ export class ContextManager {
       }
       case "agent_query":
         return `#${ex.id} query: ${ex.query}`;
-      case "agent_response": {
-        const preview = ex.response.split("\n")[0]?.slice(0, 80) ?? "";
-        return `#${ex.id} agent: ${preview}${ex.response.length > 80 ? "..." : ""}`;
-      }
-      case "tool_execution":
-        return `#${ex.id} tool: ${ex.tool} (${ex.outputLines} lines, exit ${ex.exitCode ?? "?"})`;
     }
   }
 
@@ -457,10 +363,6 @@ export class ContextManager {
         return `${ex.command}\n${ex.output}`;
       case "agent_query":
         return ex.query;
-      case "agent_response":
-        return ex.response;
-      case "tool_execution":
-        return `${ex.tool}\n${ex.output}`;
     }
   }
 
@@ -470,10 +372,6 @@ export class ContextManager {
         return ex.command.length + ex.output.length;
       case "agent_query":
         return ex.query.length;
-      case "agent_response":
-        return ex.response.length;
-      case "tool_execution":
-        return ex.tool.length + ex.output.length;
     }
   }
 }
@@ -495,21 +393,6 @@ function truncateOutput(
     ...lines.slice(0, headLines),
     `[... ${omitted} lines truncated, use shell_recall tool with expand and id ${id} to see full output ...]`,
     ...lines.slice(-tailLines),
-  ].join("\n");
-}
-
-function truncateHead(
-  text: string,
-  threshold: number,
-  headLines: number,
-  id: number,
-): string {
-  const lines = text.split("\n");
-  if (lines.length <= threshold) return text;
-
-  return [
-    ...lines.slice(0, headLines),
-    `[... truncated, use shell_recall tool with expand and id ${id} for full response ...]`,
   ].join("\n");
 }
 

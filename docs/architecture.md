@@ -18,7 +18,7 @@ index.ts — interactive terminal frontend:
   │
   ├── Built-in extensions:
   │     tuiRenderer       — markdown rendering, inline diffs, thinking display, spinner
-  │     slashCommands     — /help, /clear, /copy, /compact, /quit
+  │     slashCommands     — /help, /model, /thinking, /compact, /context
   │     fileAutocomplete  — @ file path completion
   │     shellRecall       — shell_recall terminal interception
   │     commandSuggest    — fix suggestions on failed commands (fast-path LLM)
@@ -113,7 +113,8 @@ agent-sh/
 │   ├── shell.ts            # PTY lifecycle + wiring (InputHandler + OutputParser)
 │   ├── input-handler.ts    # Keyboard input, agent mode, bus-driven autocomplete
 │   ├── output-parser.ts    # OSC parsing, command boundary detection
-│   ├── context-manager.ts  # Exchange log, context assembly, recall API
+│   ├── context-manager.ts  # Shell exchange log, context assembly, recall API
+│   ├── token-budget.ts     # Unified token budget (splits context window between streams)
 │   ├── settings.ts         # User settings (~/.agent-sh/settings.json)
 │   ├── extension-loader.ts # Extension loading (-e, settings.json, extensions dir)
 │   ├── executor.ts         # Isolated child process execution (shared by shell + bash tool)
@@ -124,7 +125,9 @@ agent-sh/
 │   │   ├── index.ts        # Factory: config → AgentLoop
 │   │   ├── agent-loop.ts   # Internal agent (OpenAI-compat API, bus-driven)
 │   │   ├── tool-registry.ts       # Map-based tool registry
-│   │   ├── conversation-state.ts  # OpenAI chat messages array
+│   │   ├── conversation-state.ts  # Three-tier conversation: active + nuclear + history
+│   │   ├── nuclear-form.ts       # Nuclear one-liner generation + serialization
+│   │   ├── history-file.ts       # Persistent JSONL history file
 │   │   ├── system-prompt.ts       # System prompt builder
 │   │   └── tools/          # Built-in tool implementations
 │   │       ├── bash.ts, read-file.ts, write-file.ts, edit-file.ts
