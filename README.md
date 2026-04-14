@@ -21,7 +21,7 @@ agent-sh flips this. It's your shell first — full PTY, your rc config, your al
 
 **Real terminal, zero compromise.** Full PTY with your shell config, aliases, and environment. Shell starts instantly — the agent connects asynchronously in the background.
 
-**Built-in agent (ash).** agent-sh ships with ash, a built-in coding agent with tools for file read/write/edit, bash, grep, glob, and more. Every query includes your cwd, recent commands, and their output. Run a failing test, type `> fix this`, and ash knows exactly what happened. Context management works like shell history — continuous, persistent across restarts, no sessions to manage. See [Context Management](docs/context-management.md).
+**Built-in agent (ash).** agent-sh (ash for short) ships with a built-in coding agent with tools for file read/write/edit, bash, grep, glob, and more. Every query includes your cwd, recent commands, and their output. Run a failing test, type `> fix this`, and ash knows exactly what happened. Context management works like shell history — continuous, persistent across restarts, no sessions to manage. See [Context Management](docs/context-management.md).
 
 **Agent decides how to help.** One entry point (`>`), three tool categories. ash uses scratchpad tools to investigate, `display` to show you output, and `user_shell` for commands with lasting effects. No need to pick a mode — the agent reasons about which tools to use based on your intent.
 

@@ -1,12 +1,12 @@
-# MCP Bridge
+# ash-mcp-bridge
 
-Connects any MCP (Model Context Protocol) server to agent-sh. Spawns servers as child processes over stdio, discovers their tools, and registers each as a native agent-sh tool.
+Connects any MCP (Model Context Protocol) server to ash. Spawns servers as child processes over stdio, discovers their tools, and registers each as a native ash tool.
 
 ## Setup
 
 ```bash
-cp -r examples/extensions/mcp-bridge ~/.agent-sh/extensions/
-cd ~/.agent-sh/extensions/mcp-bridge && npm install
+cp -r examples/extensions/ash-mcp-bridge ~/.agent-sh/extensions/
+cd ~/.agent-sh/extensions/ash-mcp-bridge && npm install
 ```
 
 ## Configuration

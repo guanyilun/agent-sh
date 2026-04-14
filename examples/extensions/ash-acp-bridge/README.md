@@ -1,11 +1,11 @@
-# agent-sh-acp
+# ash-acp-bridge
 
-ACP (Agent Client Protocol) server that wraps agent-sh's headless core, allowing [agent-shell](https://github.com/xenodium/agent-shell) (Emacs) to use agent-sh as a backend.
+ACP (Agent Client Protocol) server that wraps agent-sh's headless core, allowing [agent-shell](https://github.com/xenodium/agent-shell) (Emacs) to use ash as a backend.
 
 ## Setup
 
 ```bash
-cd agent-sh-acp
+cd ash-acp-bridge
 npm install
 npm run build    # or use `npx tsx src/index.ts` for dev
 ```
@@ -20,7 +20,7 @@ Add to your config:
 (require 'agent-shell-agentsh)
 
 ;; If not on PATH, set the command explicitly:
-;; (setq agent-shell-agentsh-acp-command '("/path/to/agent-sh-acp"))
+;; (setq agent-shell-agentsh-acp-command '("/path/to/ash-acp-bridge"))
 
 ;; Launch it:
 M-x agent-shell-agentsh-start-agent
@@ -29,9 +29,9 @@ M-x agent-shell-agentsh-start-agent
 ### CLI flags
 
 ```bash
-agent-sh-acp                          # use ~/.agent-sh/settings.json defaults
-agent-sh-acp --model gpt-4o           # override model
-agent-sh-acp --provider anthropic     # override provider
+ash-acp-bridge                          # use ~/.agent-sh/settings.json defaults
+ash-acp-bridge --model gpt-4o           # override model
+ash-acp-bridge --provider anthropic     # override provider
 ```
 
 ## How it works
@@ -39,7 +39,7 @@ agent-sh-acp --provider anthropic     # override provider
 ```
 agent-shell (Emacs)
     ↕ JSON-RPC over stdin/stdout (ACP)
-agent-sh-acp
+ash-acp-bridge
     ↕ EventBus
 agent-sh core (headless)
     ↕ OpenAI-compatible API
