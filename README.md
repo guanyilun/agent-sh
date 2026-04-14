@@ -21,11 +21,11 @@ agent-sh flips this. It's your shell first — full PTY, your rc config, your al
 
 **Real terminal, zero compromise.** Full PTY with your shell config, aliases, and environment. Shell starts instantly — the agent connects asynchronously in the background.
 
-**Context-aware agent.** Every query includes your cwd, recent commands, and their output. Run a failing test, type `> fix this`, and the agent knows exactly what happened. It has built-in tools for file read/write/edit, bash, grep, glob — no external setup needed. Context management works like shell history — continuous, persistent across restarts, no sessions to manage. See [Context Management](docs/context-management.md).
+**Built-in agent (ash).** agent-sh ships with ash, a built-in coding agent with tools for file read/write/edit, bash, grep, glob, and more. Every query includes your cwd, recent commands, and their output. Run a failing test, type `> fix this`, and ash knows exactly what happened. Context management works like shell history — continuous, persistent across restarts, no sessions to manage. See [Context Management](docs/context-management.md).
 
-**Agent decides how to help.** One entry point (`>`), three tool categories. The agent uses scratchpad tools to investigate, `display` to show you output, and `user_shell` for commands with lasting effects. No need to pick a mode — the agent reasons about which tools to use based on your intent.
+**Agent decides how to help.** One entry point (`>`), three tool categories. ash uses scratchpad tools to investigate, `display` to show you output, and `user_shell` for commands with lasting effects. No need to pick a mode — the agent reasons about which tools to use based on your intent.
 
-**Any LLM, any backend.** Works with any OpenAI-compatible API out of the box. Define multiple providers in settings and cycle between models at runtime with Shift+Tab. Or swap in a completely different agent — [Claude Code](examples/extensions/claude-code-bridge/) and [pi](examples/extensions/pi-bridge/) run as drop-in backend extensions.
+**Any LLM, any backend.** ash works with any OpenAI-compatible API out of the box. Define multiple providers in settings and cycle between models at runtime with Shift+Tab. Or swap in a completely different agent — [Claude Code](examples/extensions/claude-code-bridge/) and [pi](examples/extensions/pi-bridge/) run as drop-in backend extensions.
 
 **Extensible by design.** The entire system is built on a typed event bus. Extensions can add custom input modes, content transforms (render LaTeX as images, Mermaid as diagrams), themes, slash commands, or replace the agent backend entirely. The built-in TUI renderer is itself just an extension — nothing is special.
 
