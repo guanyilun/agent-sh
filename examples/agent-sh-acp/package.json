@@ -1,0 +1,23 @@
+{
+  "name": "agent-sh-acp",
+  "version": "0.1.0",
+  "description": "ACP server that wraps agent-sh's headless core for use with agent-shell (Emacs)",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "agent-sh-acp": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "agent-sh": "file:..",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
