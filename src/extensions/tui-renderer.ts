@@ -476,6 +476,9 @@ export default function activate(ctx: ExtensionContext): void {
     if (e.key === "\x0f") expandLastDiff();       // Ctrl+O
     if (e.key === "\x14") toggleThinkingDisplay(); // Ctrl+T
   });
+  // Interactive tool UI — stop spinner while tool has control
+  bus.on("tool:interactive-start", () => { stopCurrentSpinner(); });
+
   bus.on("ui:info", (e) => {
     stopCurrentSpinner();
     showInfo(e.message);

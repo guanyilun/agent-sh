@@ -99,6 +99,10 @@ export interface ShellEvents {
   };
   "agent:tool-output-chunk": { chunk: string };
 
+  // Tool interactive UI (tool has taken over rendering + input)
+  "tool:interactive-start": Record<string, never>;
+  "tool:interactive-end": Record<string, never>;
+
   // Permission request (async pipe — core emits with safe default, extensions override)
   // Generic: `kind` discriminates the scenario, `metadata` carries context,
   // `decision` carries the response. Extensions check `kind` and handle accordingly.

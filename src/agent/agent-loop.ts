@@ -26,6 +26,8 @@ import { ToolRegistry } from "./tool-registry.js";
 import { ConversationState } from "./conversation-state.js";
 import { HistoryFile } from "./history-file.js";
 import { STATIC_SYSTEM_PROMPT, buildDynamicContext } from "./system-prompt.js";
+import type { Compositor } from "../utils/compositor.js";
+import { createToolUI } from "../utils/tool-interactive.js";
 import { TokenBudget } from "../token-budget.js";
 import { getSettings } from "../settings.js";
 
@@ -62,6 +64,7 @@ export class AgentLoop implements AgentBackend {
   private static readonly THINKING_LEVELS = ["off", "low", "medium", "high"];
 
   private thinkingLevel = "off";
+  private compositor: Compositor | null = null;
 
   constructor(
     private bus: EventBus,
@@ -234,6 +237,11 @@ export class AgentLoop implements AgentBackend {
       this.bus.off(event as any, fn);
     }
     this.boundListeners = [];
+  }
+
+  /** Set compositor (called after construction, when compositor is available). */
+  setCompositor(compositor: Compositor): void {
+    this.compositor = compositor;
   }
 
   /** Register a tool (used by extensions via ctx.registerTool). */
@@ -590,7 +598,10 @@ export class AgentLoop implements AgentBackend {
       const onChunk = (tool.showOutput !== false && !diffShown)
         ? ctx.onChunk
         : undefined;
-      const result = await tool.execute(args, onChunk);
+      const toolCtx = this.compositor
+        ? { ui: createToolUI(this.bus, this.compositor.surface("agent")) }
+        : undefined;
+      const result = await tool.execute(args, onChunk, toolCtx);
 
       // Invalidate read cache when a file is modified
       if (tool.modifiesFiles && typeof args.path === "string" && !result.isError) {

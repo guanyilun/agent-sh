@@ -288,6 +288,9 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   compositor.setDefault("query", stdoutSurface);
   compositor.setDefault("status", stdoutSurface);
 
+  // Give the agent loop access to the compositor for interactive tool UI
+  agentLoop?.setCompositor(compositor);
+
   // ── Lazy singleton terminal buffer ──────────────────────────
   let terminalBufferSingleton: TerminalBuffer | null | undefined; // undefined = not yet created
   const getTerminalBuffer = (): TerminalBuffer | null => {

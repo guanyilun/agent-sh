@@ -289,8 +289,9 @@ export class InputHandler {
     this.activeMode = mode;
     this.editor.clear();
     // Enable kitty keyboard protocol (progressive enhancement flag 1)
-    // so Shift+Enter sends \x1b[13;2u instead of plain \r
-    process.stdout.write("\x1b[>1u");
+    // so Shift+Enter sends \x1b[13;2u instead of plain \r.
+    // Enable bracket paste mode so pasted text doesn't trigger submit.
+    process.stdout.write("\x1b[>1u\x1b[?2004h");
     this.writeModePromptLine(false);
   }
 
@@ -298,8 +299,8 @@ export class InputHandler {
     this.dismissAutocomplete();
     this.activeMode = null;
     this.editor.clear();
-    // Disable kitty keyboard protocol
-    process.stdout.write("\x1b[<u");
+    // Disable kitty keyboard protocol and bracket paste mode
+    process.stdout.write("\x1b[<u\x1b[?2004l");
     this.clearPromptArea();
     this.printPrompt();
   }
@@ -512,7 +513,7 @@ export class InputHandler {
           this.savedBuffer = "";
           this.clearAutocompleteLines();
           this.clearPromptArea();
-          process.stdout.write("\x1b[<u"); // disable kitty keyboard protocol
+          process.stdout.write("\x1b[<u\x1b[?2004l"); // disable kitty + bracket paste
           const currentMode = this.activeMode!;
           this.activeMode = null;
           this.editor.clear();
