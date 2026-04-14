@@ -1,8 +1,8 @@
-# Using agent-sh as a Library
+# Using ash as a Library
 
 ## Library vs Extension
 
-agent-sh has two integration points. The difference: **extensions customize the existing TUI**, while **library mode lets you build your own frontend**.
+ash has two integration points. The difference: **extensions customize the existing TUI**, while **library mode lets you build your own frontend**.
 
 | | Extension | Library |
 |---|---|---|

@@ -36,7 +36,7 @@ See [Context Management](context-management.md) for the full design: token budge
 
 The system prompt is rebuilt on **every LLM call** (not cached), so context is always fresh. It includes:
 
-1. **Identity** — "You are an AI coding assistant in agent-sh..."
+1. **Identity** — "You are an AI coding assistant in ash..."
 2. **Tool decision guide** — when to use scratchpad tools vs display vs user_shell
 3. **Available tools** — name + description of every registered tool
 4. **Tool usage guidelines** — read before editing, prefer edit over write, use grep/glob to find files, etc.
@@ -386,6 +386,6 @@ The current model is shown in the TUI prompt. Switching mid-conversation preserv
 
 ## Extension Tools
 
-Extensions can register custom tools via `ctx.registerTool()`. These appear alongside built-in tools and follow the same `ToolDefinition` interface. Only works with the built-in `agent-sh` backend — bridge backends manage their own tools.
+Extensions can register custom tools via `ctx.registerTool()`. These appear alongside built-in tools and follow the same `ToolDefinition` interface. Only works with the built-in `ash` backend — bridge backends manage their own tools.
 
 See [Extensions: ExtensionContext API](extensions.md#extensioncontext-api) for the interface and [Extensions: Custom Agent Backends](extensions.md#custom-agent-backends) for writing backend extensions.

@@ -22,12 +22,12 @@
 
 **Problem**: Garbled output, startup banner overwritten, or messy prompt rendering
 
-**Cause**: Powerlevel10k's **instant prompt** feature races with agent-sh's TUI. Instant prompt caches the previous prompt, displays it immediately, redirects stdout/stderr during shell init, then redraws the prompt using cursor-movement sequences — all of which can overwrite agent-sh's output.
+**Cause**: Powerlevel10k's **instant prompt** feature races with ash's TUI. Instant prompt caches the previous prompt, displays it immediately, redirects stdout/stderr during shell init, then redraws the prompt using cursor-movement sequences — all of which can overwrite ash's output.
 
-**Solution**: Guard the instant prompt block in your `~/.zshrc` so it's skipped inside agent-sh:
+**Solution**: Guard the instant prompt block in your `~/.zshrc` so it's skipped inside ash:
 
 ```zsh
-# Disable p10k instant prompt inside agent-sh (it races with TUI rendering)
+# Disable p10k instant prompt inside ash (it races with TUI rendering)
 if [[ -z "$AGENT_SH" && -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
   source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
 fi

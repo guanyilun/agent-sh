@@ -1,6 +1,6 @@
 # Architecture
 
-agent-sh is a shell with a pluggable AI backend. The shell is the product — the agent is a bus-driven component that self-wires to events.
+ash is a shell with a pluggable AI backend. The shell is the product — the agent is a bus-driven component that self-wires to events.
 
 ## Design Philosophy: Pure Kernel + Everything Is an Extension
 
@@ -43,15 +43,15 @@ All components communicate exclusively through typed bus events. The backend has
 
 Built-in extensions are loaded from a declarative manifest and can be individually disabled via the `disabledBuiltins` setting in `~/.agent-sh/settings.json`. This means even the built-in agent can be disabled (e.g., for users who only use extension backends like Claude Code).
 
-**The core works without any frontend.** See [Library](library.md) for embedding agent-sh in your own apps.
+**The core works without any frontend.** See [Library](library.md) for embedding ash in your own apps.
 
 ## How It Works
 
-1. agent-sh spawns a real PTY running your shell (zsh or bash, with your full rc config) and sets up raw stdin passthrough
+1. ash spawns a real PTY running your shell (zsh or bash, with your full rc config) and sets up raw stdin passthrough
 2. Built-in extensions load (including the agent backend, which registers via `agent:register-backend`), then user extensions
 3. `activateBackend()` wires the chosen backend to bus events
 4. All keyboard input goes directly to the PTY — zero latency, full terminal compatibility
-4. When you type `>` at the start of a line, agent-sh intercepts and enters agent input mode
+4. When you type `>` at the start of a line, ash intercepts and enters agent input mode
 5. On Enter, the query is emitted as `agent:submit` and the agent decides which tools to use
 6. The backend handles the query — streaming LLM responses, executing tools, emitting events. Read-only tools run in parallel; permission-requiring tools run sequentially.
 7. The TUI renderer extension renders streamed content inline (markdown, diffs, tool calls with tree-style grouping)
@@ -101,7 +101,7 @@ All backends emit the same bus events. The TUI, extensions, and library consumer
 
 ## Key Extension Points
 
-The extension system provides several composable primitives for customizing agent-sh. Each is documented in detail in the [Extensions](extensions.md) guide:
+The extension system provides several composable primitives for customizing ash. Each is documented in detail in the [Extensions](extensions.md) guide:
 
 - **[Event Bus](extensions.md#event-bus)** — typed pub/sub (`on`/`emit`), synchronous transform chains (`onPipe`/`emitPipe`), async transform chains (`onPipeAsync`/`emitPipeAsync`), and transform-then-notify (`emitTransform`)
 - **[Custom Agent Backends](extensions.md#custom-agent-backends)** — replace the entire agent backend via `agent:register-backend`

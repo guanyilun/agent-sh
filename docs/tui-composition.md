@@ -1,6 +1,6 @@
 # TUI Composition
 
-How agent-sh routes rendered output to different surfaces (stdout, floating panels, test buffers) and how extensions intercept or redirect that output.
+How ash routes rendered output to different surfaces (stdout, floating panels, test buffers) and how extensions intercept or redirect that output.
 
 ## Overview
 

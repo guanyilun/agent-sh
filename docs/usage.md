@@ -1,8 +1,8 @@
 # Usage Guide
 
-## Running agent-sh
+## Running ash
 
-The simplest way to run agent-sh — just provide an API key and model:
+The simplest way to run ash — just provide an API key and model:
 
 ```bash
 # Using environment variables
@@ -32,7 +32,7 @@ DEBUG=1 agent-sh --api-key "$KEY" --model gpt-4o
 
 ## Provider Examples
 
-agent-sh works with any OpenAI-compatible API. Here are common configurations:
+ash works with any OpenAI-compatible API. Here are common configurations:
 
 ### OpenAI
 
@@ -102,7 +102,7 @@ Requires `@xterm/headless` for the dimmed background compositing:
 npm install @xterm/headless@5.5.0 @xterm/addon-serialize@0.13.0
 ```
 
-## Using agent-sh as Your Default Shell
+## Using ash as Your Default Shell
 
 Add to the end of your `~/.zshrc` or `~/.bashrc`:
 
@@ -116,7 +116,7 @@ The `AGENT_SH` guard prevents infinite recursion. The checks ensure it only laun
 
 ## Configuration
 
-agent-sh stores settings and query history in `~/.agent-sh/`. Configure via `~/.agent-sh/settings.json` — all fields are optional with sensible defaults.
+ash stores settings and query history in `~/.agent-sh/`. Configure via `~/.agent-sh/settings.json` — all fields are optional with sensible defaults.
 
 ### Provider Profiles
 
@@ -200,7 +200,7 @@ When cycling across providers (e.g. from OpenAI to Ollama), the API key and base
 
 ## Startup Banner
 
-On launch, agent-sh displays a structured startup banner showing:
+On launch, ash displays a structured startup banner showing:
 
 - **Backend** — which agent backend is active (`ash`, `claude-code`, `pi`, etc.)
 - **Model** — current model with provider in brackets (e.g. `gpt-4o [openai]`)
