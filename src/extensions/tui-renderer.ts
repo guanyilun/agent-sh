@@ -149,6 +149,9 @@ export default function activate(ctx: ExtensionContext): void {
   // Extensions advise these to customize how the TUI renders content.
   // Each handler receives data and returns rendered strings.
 
+  define("tui:response-border", (position: "top" | "bottom", width: number): string | null => {
+    return `${p.dim}${p.accent}${"─".repeat(width)}${p.reset}`;
+  });
   define("tui:response-start", (): void => {});
   define("tui:response-end", (_hadToolCalls: boolean): void => {});
 
@@ -496,7 +499,8 @@ export default function activate(ctx: ExtensionContext): void {
   function startAgentResponse(): void {
     s.renderer = new MarkdownRenderer(out().columns);
     s.hadToolCalls = false;
-    s.renderer.printTopBorder();
+    const border: string | null = ctx.call("tui:response-border", "top", out().columns);
+    if (border) s.renderer.writeLine(border);
     drain();
     ctx.call("tui:response-start");
   }
@@ -534,7 +538,8 @@ export default function activate(ctx: ExtensionContext): void {
     if (s.renderer) {
       ctx.call("tui:response-end", s.hadToolCalls);
       s.renderer.flush();
-      s.renderer.printBottomBorder();
+      const border: string | null = ctx.call("tui:response-border", "bottom", out().columns);
+      if (border) s.renderer.writeLine(border);
       drain();
       out().write("\n");
       s.renderer = null;
@@ -555,9 +560,11 @@ export default function activate(ctx: ExtensionContext): void {
 
     const querySurface = compositor.surface("query");
     const framed: string[] = ctx.call("tui:render-user-query", query, querySurface.columns, modelLabel);
-    querySurface.write("\n");
-    for (const line of framed) {
-      querySurface.writeLine(line);
+    if (framed.length > 0) {
+      querySurface.write("\n");
+      for (const line of framed) {
+        querySurface.writeLine(line);
+      }
     }
   }
 

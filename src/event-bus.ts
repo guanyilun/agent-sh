@@ -140,6 +140,7 @@ export interface ShellEvents {
   "shell:stdout-hold": Record<string, never>;
   "shell:stdout-release": Record<string, never>;
 
+
   // Temporarily force PTY output visible even while agent is processing
   // (ref-counted). Used by tools like terminal_keys that need the user
   // to see the foreground program's response to injected keystrokes.

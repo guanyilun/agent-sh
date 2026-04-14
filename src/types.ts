@@ -10,6 +10,7 @@ import type { Compositor } from "./utils/compositor.js";
 
 export type { ContentBlock } from "./event-bus.js";
 export type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
+export type { RenderSurface } from "./utils/compositor.js";
 
 /** A model entry in the cycling list, optionally tied to a provider. */
 export interface AgentMode {

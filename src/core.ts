@@ -43,6 +43,8 @@ export { LlmClient } from "./utils/llm-client.js";
 export interface AgentShellCore {
   bus: EventBus;
   contextManager: ContextManager;
+  /** Handler registry for define/advise/call. */
+  handlers: HandlerRegistry;
   /** LLM client for fast-path features (null when no provider configured). */
   llmClient: LlmClient | null;
   /** Activate the agent backend (call after extensions load). */
@@ -297,6 +299,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   return {
     bus,
     contextManager,
+    handlers,
     llmClient,
 
     activateBackend() {

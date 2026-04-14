@@ -72,13 +72,18 @@ export default function activate(ctx: ExtensionContext): void {
     restoreAgent = restoreQuery = restoreStatus = null;
   }
 
-  // Suppress TUI renderer when overlay owns agent output.
-  // TODO: Once tui-renderer fully uses compositor routing, remove this gate
-  // and let the compositor redirect handle everything. The tui-renderer's
-  // full pipeline (markdown, tool grouping, diffs) would then apply to the
-  // overlay too — which is the desired end state.
-  advise("tui:should-render-agent", (next) => {
-    return panel.active ? false : next();
+  // Suppress query box and response borders in overlay — the panel has its own frame.
+  advise("tui:render-user-query", (next, query: string, width: number, modelLabel: string | undefined) => {
+    if (panel.active) return [];
+    return next(query, width, modelLabel);
+  });
+  advise("tui:response-border", (next, position: string, width: number) => {
+    if (panel.active) return null;
+    return next(position, width);
+  });
+  advise("tui:render-usage", (next, prompt: number, completion: number, max: number) => {
+    if (panel.active) return "";
+    return next(prompt, completion, max);
   });
 
   registerInstruction("Interactive Overlay Sessions", [

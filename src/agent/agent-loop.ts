@@ -623,8 +623,8 @@ export class AgentLoop implements AgentBackend {
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
     // Each loop iteration adds an abort listener (via OpenAI SDK stream);
-    // raise the limit to avoid spurious warnings on multi-tool queries.
-    setMaxListeners(50, signal);
+    // disable the limit — long-running tool loops can easily exceed any cap.
+    setMaxListeners(0, signal);
 
     this.bus.emit("agent:query", { query });
     this.bus.emit("agent:processing-start", {});

@@ -217,6 +217,7 @@ async function main(): Promise<void> {
 
   const shell = new Shell({
     bus,
+    handlers: core.handlers,
     cols,
     rows,
     shell: config.shell || process.env.SHELL || "/bin/bash",
