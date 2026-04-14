@@ -30,6 +30,7 @@ export class LineEditor {
   buffer = "";
   cursor = 0;
   private pendingSeq = ""; // buffered incomplete escape sequence
+  private inPaste = false; // bracket paste mode (ESC[200~ … ESC[201~)
 
   // ── History ──────────────────────────────────────────────────
   private history: string[] = [];
@@ -121,6 +122,16 @@ export class LineEditor {
         continue;
       }
 
+      // ── Bracket paste: insert literally (newlines become multi-line input) ──
+      if (this.inPaste) {
+        if (ch === "\r") { i++; continue; } // skip CR (CR+LF → just LF)
+        this.buffer = this.buffer.slice(0, this.cursor) + ch + this.buffer.slice(this.cursor);
+        this.cursor++;
+        actions.push({ action: "changed" });
+        i++;
+        continue;
+      }
+
       // ── Control characters ──────────────────────────────
       if (ch.charCodeAt(0) < 0x20 || ch === "\x7f") {
         const action = this.handleControl(ch);
@@ -156,6 +167,7 @@ export class LineEditor {
     this.buffer = "";
     this.cursor = 0;
     this.pendingSeq = "";
+    this.inPaste = false;
     this.historyIndex = -1;
     this.savedBuffer = "";
   }
@@ -366,13 +378,17 @@ export class LineEditor {
         if (action) actions.push(action);
         break;
       }
-      case "~": // Extended keys: Delete (3~), etc.
+      case "~": // Extended keys: Delete (3~), bracket paste (200~/201~), etc.
         if (params === "3") {
           // Delete key: delete char under cursor
           if (this.cursor < this.buffer.length) {
             this.buffer = this.buffer.slice(0, this.cursor) + this.buffer.slice(this.cursor + 1);
             actions.push({ action: "changed" });
           }
+        } else if (params === "200") {
+          this.inPaste = true;
+        } else if (params === "201") {
+          this.inPaste = false;
         }
         break;
       // All other CSI sequences — silently ignored
