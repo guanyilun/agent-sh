@@ -19,6 +19,7 @@
 import type { ExtensionContext } from "agent-sh/types";
 import type { RenderSurface } from "agent-sh/utils/compositor.js";
 import { formatScreenContext } from "agent-sh/utils/terminal-buffer.js";
+import { palette as p } from "agent-sh/utils/palette.js";
 
 export default function activate({ bus, advise, createFloatingPanel, createRemoteSession, terminalBuffer }: ExtensionContext): void {
   const panel = createFloatingPanel({
@@ -53,7 +54,7 @@ export default function activate({ bus, advise, createFloatingPanel, createRemot
       interactive: true,
     });
     panel.setActive();
-    panel.appendLine(`\x1b[36m\x1b[1m❯\x1b[0m ${query}`);
+    panel.appendLine(`${p.accent}${p.bold}❯${p.reset} ${query}`);
     panel.appendLine("");
     session.submit(query);
   });
