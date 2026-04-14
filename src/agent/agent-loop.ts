@@ -571,10 +571,14 @@ export class AgentLoop implements AgentBackend {
           } catch { /* fall back to generic permission */ }
         }
 
+        const ui = this.compositor
+          ? createToolUI(this.bus, this.compositor.surface("agent"))
+          : undefined;
         const perm = await this.bus.emitPipeAsync("permission:request", {
           kind: permKind,
           title: permTitle,
           metadata,
+          ui,
           decision: { outcome: "approved" },
         });
         if ((perm.decision as { outcome: string }).outcome !== "approved") {

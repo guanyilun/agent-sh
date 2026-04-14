@@ -110,6 +110,8 @@ export interface ShellEvents {
     kind: string;
     title: string;
     metadata: Record<string, unknown>;
+    /** Interactive UI capability — available when the built-in agent is active. */
+    ui?: unknown;
     decision: Record<string, unknown>;
   };
 
