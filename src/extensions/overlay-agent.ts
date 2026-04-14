@@ -88,18 +88,19 @@ export default function activate(ctx: ExtensionContext): void {
     }
   });
 
-  // Restore routing on hide (panel:dismiss is the hide handler)
+  // On dismiss, don't close the session — it keeps the compositor
+  // redirected to the (now invisible) panel surface so agent output
+  // doesn't leak to the main buffer. Session is cleaned up when
+  // processing finishes or on next submit.
   panel.handlers.advise("panel:dismiss", (next) => {
     next();
-    session?.close();
-    session = null;
   });
 
   bus.on("agent:processing-done", () => {
-    if (!panel.active) return;
-    panel.setDone();
-    // setDone() may trigger dismiss() which resets phase to idle.
-    // If that happened, close the session now.
+    if (panel.active) {
+      panel.setDone();
+    }
+    // Panel dismissed (or setDone triggered auto-dismiss) — clean up session
     if (!panel.active) {
       session?.close();
       session = null;
