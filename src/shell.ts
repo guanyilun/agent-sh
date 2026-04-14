@@ -8,9 +8,16 @@ import { OutputParser } from "./output-parser.js";
 import { getSettings } from "./settings.js";
 import { RefCounter } from "./utils/output-writer.js";
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export interface ShellHandlers {
+  define: (name: string, fn: (...args: any[]) => any) => void;
+  call: (name: string, ...args: any[]) => any;
+}
+
 export class Shell implements InputContext {
   private ptyProcess: pty.IPty;
   private bus: EventBus;
+  private handlers: ShellHandlers;
   private inputHandler: InputHandler;
   private outputParser: OutputParser;
   private paused = false;
@@ -23,6 +30,7 @@ export class Shell implements InputContext {
 
   constructor(opts: {
     bus: EventBus;
+    handlers: ShellHandlers;
     onShowAgentInfo?: () => { info: string; model?: string };
     cols: number;
     rows: number;
@@ -183,6 +191,7 @@ export class Shell implements InputContext {
     }
 
     this.bus = opts.bus;
+    this.handlers = opts.handlers;
     this.outputParser = new OutputParser(opts.bus, opts.cwd);
 
     // Ensure temp dir cleanup on abnormal exit (SIGKILL won't fire this,
@@ -325,21 +334,30 @@ export class Shell implements InputContext {
    * zero frontend knowledge; any frontend can subscribe to the same events.
    */
   private setupAgentLifecycle(): void {
-    this.bus.on("agent:processing-start", () => {
+    // Default agent lifecycle: pause the shell while the agent works,
+    // then redraw the prompt when done. Extensions advise these handlers
+    // to change behavior (e.g. tmux split keeps the shell interactive).
+    this.handlers.define("shell:on-processing-start", () => {
       this.agentActive = true;
       this.paused = true;
     });
 
-    this.bus.on("agent:processing-done", () => {
+    this.handlers.define("shell:on-processing-done", () => {
       this.paused = false;
       this.agentActive = false;
       if (!this.inputHandler.handleProcessingDone()) {
-        // echoSkip only when freshPrompt actually wrote \n to the PTY.
-        // When the overlay suppresses freshPrompt, no echo to skip.
         if (this.freshPrompt()) {
           this.echoSkip = true;
         }
       }
+    });
+
+    this.bus.on("agent:processing-start", () => {
+      this.handlers.call("shell:on-processing-start");
+    });
+
+    this.bus.on("agent:processing-done", () => {
+      this.handlers.call("shell:on-processing-done");
     });
 
     // Permission prompts need stdout unpaused so the interactive UI renders,
