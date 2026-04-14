@@ -961,7 +961,15 @@ export default function activate(ctx: ExtensionContext): void {
         s.renderer.writeLine(renderCommandLine(line));
       }
     } else if (s.commandOutputOverflow > 0 && maxLines > 0) {
-      s.renderer.writeLine(renderCommandLine(`… ${s.commandOutputOverflow} more lines`));
+      // Show last line of output so the user sees the tail (often the most useful part)
+      const tail = s.commandOverflowLines[s.commandOverflowLines.length - 1];
+      const hidden = tail ? s.commandOutputOverflow - 1 : s.commandOutputOverflow;
+      if (hidden > 0) {
+        s.renderer.writeLine(renderCommandLine(`… ${hidden} more lines`));
+      }
+      if (tail) {
+        s.renderer.writeLine(renderCommandLine(tail));
+      }
     }
 
     s.commandOutputOverflow = 0;
