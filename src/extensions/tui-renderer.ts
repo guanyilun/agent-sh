@@ -54,13 +54,6 @@ function encodeImageForTerminal(data: Buffer): string | null {
 // All mutable TUI state in one place for clarity and future
 // migration to a frame-based rendering model.
 
-interface TruncatedDiff {
-  filePath: string;
-  diff: DiffResult;
-  expandedLines?: string[];
-  expanded: boolean;
-}
-
 interface RenderState {
   // ── Response rendering ──
   renderer: MarkdownRenderer | null;
@@ -99,8 +92,6 @@ interface RenderState {
   showThinkingText: boolean;
   thinkingPending: boolean;
 
-  // ── Diff expansion ──
-  lastTruncatedDiff: TruncatedDiff | null;
 }
 
 function createRenderState(): RenderState {
@@ -129,7 +120,6 @@ function createRenderState(): RenderState {
     isThinking: false,
     showThinkingText: false,
     thinkingPending: false,
-    lastTruncatedDiff: null,
   };
 }
 
@@ -473,7 +463,6 @@ export default function activate(ctx: ExtensionContext): void {
   });
 
   bus.on("input:keypress", (e) => {
-    if (e.key === "\x0f") expandLastDiff();       // Ctrl+O
     if (e.key === "\x14") toggleThinkingDisplay(); // Ctrl+T
   });
   // Interactive tool UI — stop spinner while tool has control
@@ -676,19 +665,8 @@ export default function activate(ctx: ExtensionContext): void {
       trueColor: true,
     });
 
-    const lastLine = diffLines[diffLines.length - 1] ?? "";
-    const isTruncated = lastLine.includes("… ");
-
-    if (isTruncated) {
-      s.lastTruncatedDiff = { filePath, diff, expanded: false };
-    } else {
-      s.lastTruncatedDiff = null;
-    }
-
     const body = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
-    const footer = isTruncated
-      ? [`  ${p.dim}ctrl+o to expand${p.reset}`]
-      : undefined;
+    const footer = undefined;
 
     return renderBoxFrame(body, {
       width: boxW,
@@ -1003,59 +981,6 @@ export default function activate(ctx: ExtensionContext): void {
       s.renderer!.writeLine(line);
     }
     drain();
-  }
-
-  function expandLastDiff(): void {
-    if (!s.lastTruncatedDiff) return;
-
-    const entry = s.lastTruncatedDiff;
-    entry.expanded = !entry.expanded;
-
-    if (!entry.expanded) {
-      showFileDiffCached(entry);
-      return;
-    }
-
-    if (!entry.expandedLines) {
-      const { filePath, diff } = entry;
-      const boxW = Math.min(cappedW() - 2, out().columns - 2);  // -2 for writeLine indent
-      const contentW = boxW - 4;
-
-      const diffLines = renderDiff(diff, {
-        width: contentW,
-        filePath,
-        maxLines: 500,
-        trueColor: true,
-      });
-
-      const body = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
-
-      entry.expandedLines = renderBoxFrame(body, {
-        width: boxW,
-        style: "rounded",
-        borderColor: p.dim,
-        title: diffTitle(filePath, diff),
-        footer: [`  ${p.dim}ctrl+o to collapse${p.reset}`],
-      });
-    }
-
-    out().write("\n");
-    for (const line of entry.expandedLines) {
-      out().write(line + "\n");
-    }
-  }
-
-  function showFileDiffCached(entry: TruncatedDiff): void {
-    const lines: string[] = ctx.call(
-      "render:result-body",
-      { kind: "diff", diff: entry.diff, filePath: entry.filePath } satisfies ToolResultBody,
-      cappedW(),
-    ) ?? [];
-
-    out().write("\n");
-    for (const line of lines) {
-      out().write(line + "\n");
-    }
   }
 
   function toggleThinkingDisplay(): void {

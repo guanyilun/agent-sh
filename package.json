@@ -17,7 +17,7 @@
       "types": "./dist/core.d.ts",
       "default": "./dist/core.js"
     },
-    "./utils/*": "./dist/utils/*.js",
+    "./utils/*": "./dist/utils/*",
     "./types": {
       "types": "./dist/types.d.ts",
       "default": "./dist/types.js"
