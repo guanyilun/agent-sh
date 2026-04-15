@@ -611,9 +611,21 @@ export default function activate(ctx: ExtensionContext): void {
     }
     let highlighted: string;
     try {
-      highlighted = language
-        ? highlight(code, { language })
-        : highlight(code);  // auto-detect
+      // highlight.js warns to console.error for unsupported languages (elisp, org, etc).
+      // Suppress so it doesn't leak into the terminal.
+      const origError = console.error;
+      console.error = (...args: unknown[]) => {
+        const msg = args.join(" ");
+        if (msg.includes("Could not find the language")) return;
+        origError.apply(console, args);
+      };
+      try {
+        highlighted = language
+          ? highlight(code, { language })
+          : highlight(code);  // auto-detect
+      } finally {
+        console.error = origError;
+      }
     } catch {
       highlighted = code;
     }
