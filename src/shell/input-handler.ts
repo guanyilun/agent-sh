@@ -39,7 +39,7 @@ export class InputHandler {
   private history: string[] = [];
   private historyIndex = -1; // -1 = not browsing history
   private savedBuffer = ""; // buffer saved when entering history
-  private promptWrappedLines = 0; // extra lines from terminal wrapping
+  private cursorRowsBelow = 0; // rows between cursor and bottom of prompt area
   private escapeTimer: ReturnType<typeof setTimeout> | null = null;
   private bus: EventBus;
   private onShowAgentInfo: () => { info: string; model?: string };
@@ -100,9 +100,10 @@ export class InputHandler {
   private writeModePromptLine(showBuffer = true): void {
     const termW = process.stdout.columns || 80;
 
-    // Move cursor to the start of the prompt area (first line of wrapped content)
-    if (this.promptWrappedLines > 0) {
-      process.stdout.write(`\x1b[${this.promptWrappedLines}A`);
+    // Move cursor to the start of the prompt area.
+    // We know exactly how many rows below the top the cursor currently sits.
+    if (this.cursorRowsBelow > 0) {
+      process.stdout.write(`\x1b[${this.cursorRowsBelow}A`);
     }
     // Clear from here to end of screen — removes current + all wrapped lines below
     process.stdout.write("\r\x1b[J");
@@ -126,16 +127,13 @@ export class InputHandler {
 
       const bufferVisLen = display.length;
       const totalVisLen = promptVisLen + bufferVisLen;
-      this.promptWrappedLines = totalVisLen > 0 ? Math.floor((totalVisLen - 1) / termW) : 0;
+      const totalRows = totalVisLen > 0 ? Math.ceil(totalVisLen / termW) : 1;
 
-      // Position cursor — must account for wrapping (same logic as multi-line branch)
+      // Position cursor
       if (showBuffer) {
         const cursorColAbs = promptVisLen + dCursor;
         const cursorTermRow = Math.floor(cursorColAbs / termW);
         const cursorCol = cursorColAbs % termW;
-
-        // Total terminal rows occupied by the prompt
-        const totalRows = totalVisLen > 0 ? Math.ceil(totalVisLen / termW) : 1;
         const rowsFromEnd = totalRows - 1 - cursorTermRow;
 
         if (rowsFromEnd > 0) {
@@ -146,6 +144,11 @@ export class InputHandler {
         } else {
           process.stdout.write(`\r`);
         }
+
+        // Track how many rows below top the cursor sits (for next move-up)
+        this.cursorRowsBelow = cursorTermRow;
+      } else {
+        this.cursorRowsBelow = totalRows - 1;
       }
     } else {
       // Multi-line: render each line with continuation indent
@@ -164,9 +167,7 @@ export class InputHandler {
         const lineVisLen = prefixVisLen + lineText.length;
         totalTermLines += lineVisLen > 0 ? Math.ceil(lineVisLen / termW) : 1;
       }
-      this.promptWrappedLines = totalTermLines - 1;
-
-      // Position cursor: find which display line and column the cursor is on
+      // Position cursor: find which logical line and offset the cursor is on
       let charsRemaining = dCursor;
       let cursorLine = 0;
       for (let li = 0; li < lines.length; li++) {
@@ -178,26 +179,21 @@ export class InputHandler {
         cursorLine = li + 1;
       }
 
-      // Compute terminal rows for cursor positioning (not logical lines)
-      // Each logical line may wrap across multiple terminal rows.
-      const cursorColAbs = promptVisLen + charsRemaining;
-      const cursorTermRow = Math.floor(cursorColAbs / termW);
-
-      // Count terminal rows occupied by lines after cursor's logical line
-      let termRowsAfterCursor = 0;
-      for (let li = cursorLine + 1; li < lines.length; li++) {
+      // Count terminal rows above cursor's logical line
+      let termRowsAboveCursor = 0;
+      for (let li = 0; li < cursorLine; li++) {
         const lineVisLen = promptVisLen + lines[li]!.length;
-        termRowsAfterCursor += lineVisLen > 0 ? Math.ceil(lineVisLen / termW) : 1;
+        termRowsAboveCursor += lineVisLen > 0 ? Math.ceil(lineVisLen / termW) : 1;
       }
 
-      // Also count remaining terminal rows on cursor's own logical line
-      const cursorLineVisLen = promptVisLen + lines[cursorLine]!.length;
-      const cursorLineTotalRows = cursorLineVisLen > 0 ? Math.ceil(cursorLineVisLen / termW) : 1;
-      const rowsAfterCursorInLine = cursorLineTotalRows - 1 - cursorTermRow;
+      // Within cursor's logical line, which terminal row is the cursor on?
+      const cursorColAbs = promptVisLen + charsRemaining;
+      const cursorTermRowInLine = Math.floor(cursorColAbs / termW);
+      const cursorGlobalTermRow = termRowsAboveCursor + cursorTermRowInLine;
+      const rowsFromBottom = totalTermLines - 1 - cursorGlobalTermRow;
 
-      const totalRowsFromEnd = termRowsAfterCursor + rowsAfterCursorInLine;
-      if (totalRowsFromEnd > 0) {
-        process.stdout.write(`\x1b[${totalRowsFromEnd}A`);
+      if (rowsFromBottom > 0) {
+        process.stdout.write(`\x1b[${rowsFromBottom}A`);
       }
       const cursorCol = cursorColAbs % termW;
       if (cursorCol > 0) {
@@ -205,6 +201,9 @@ export class InputHandler {
       } else {
         process.stdout.write(`\r`);
       }
+
+      // Track how many rows below top the cursor sits (for next move-up)
+      this.cursorRowsBelow = cursorGlobalTermRow;
     }
   }
 
@@ -324,11 +323,11 @@ export class InputHandler {
 
   /** Move to the start of the prompt area and clear everything below. */
   private clearPromptArea(): void {
-    if (this.promptWrappedLines > 0) {
-      process.stdout.write(`\x1b[${this.promptWrappedLines}A`);
+    if (this.cursorRowsBelow > 0) {
+      process.stdout.write(`\x1b[${this.cursorRowsBelow}A`);
     }
     process.stdout.write("\r\x1b[J");
-    this.promptWrappedLines = 0;
+    this.cursorRowsBelow = 0;
   }
 
   printPrompt(): void {

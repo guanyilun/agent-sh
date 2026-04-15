@@ -24,6 +24,12 @@ npm install -g agent-sh
 agent-sh
 ```
 
+Tip: add an alias to your shell config for quick access:
+
+```bash
+alias ash="agent-sh"
+```
+
 Set `OPENAI_API_KEY` in your environment (or configure providers in `~/.agent-sh/settings.json`). Works with any OpenAI-compatible API — see the [Usage Guide](docs/usage.md) for provider examples (OpenAI, Ollama, OpenRouter, Together, Groq, LM Studio, vLLM).
 
 Requires Node.js 18+.
