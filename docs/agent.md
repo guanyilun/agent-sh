@@ -159,7 +159,7 @@ Tools that require permission: **bash**, **write_file**, **edit_file** (anything
 
 ## Built-in Tools
 
-The agent has 9 built-in tools. The most important distinction is between `bash`, `display`, and `user_shell` — they all run shell commands but in different ways:
+The agent registers core tools on startup, with additional tools contributed by built-in extensions. The most important distinction is between `bash`, `display`, and `user_shell` — they all run shell commands but in different ways:
 
 ### bash vs display vs user_shell
 
@@ -186,8 +186,11 @@ The agent decides which tool to use based on intent — no user mode selection n
 | `grep` | Search file contents with regex (via ripgrep) | No | No |
 | `glob` | Find files by name pattern | No | No |
 | `ls` | List directory contents (with timestamps and sizes) | No | No |
-| `terminal_read` | Read the current terminal screen (ANSI stripped, cursor position, alt screen detection) | No | No |
-| `terminal_keys` | Send keystrokes to the user's live PTY | No | No |
+| `list_skills` | List available skills (name, description, path) | No | No |
+| `conversation_recall` | Search or expand evicted conversation turns | No | No |
+| `shell_recall` | Browse or search truncated shell context (extension: shell-recall) | No | No |
+| `terminal_read` | Read the current terminal screen (extension: terminal-buffer) | No | No |
+| `terminal_keys` | Send keystrokes to the user's live PTY (extension: terminal-buffer) | No | No |
 
 **Common pattern**: all file-based tools resolve relative paths from the current working directory (`contextManager.getCwd()`).
 

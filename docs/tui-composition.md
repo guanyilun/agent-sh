@@ -136,10 +136,12 @@ The tui-renderer writes to the appropriate sub-stream. If no override exists for
 The overlay agent redirects *all* render streams to a floating panel when active. This is the simplest pattern — whole-sale capture:
 
 ```typescript
-export default function activate(ctx: ExtensionContext): void {
-  const { bus, compositor, createFloatingPanel } = ctx;
+import { FloatingPanel } from "agent-sh/utils/floating-panel";
 
-  const panel = createFloatingPanel({ trigger: "\x1c" });
+export default function activate(ctx: ExtensionContext): void {
+  const { bus, compositor, terminalBuffer } = ctx;
+
+  const panel = new FloatingPanel(bus, { trigger: "\x1c", terminalBuffer: terminalBuffer ?? undefined });
   const panelSurface = createPanelSurface(panel);
 
   let restoreAgent: (() => void) | null = null;
@@ -167,10 +169,12 @@ Because the full tui-renderer pipeline still runs — it just writes to the pane
 An extension that captures just diff output into a separate panel:
 
 ```typescript
-export default function activate(ctx: ExtensionContext): void {
-  const { compositor, createFloatingPanel } = ctx;
+import { FloatingPanel } from "agent-sh/utils/floating-panel";
 
-  const panel = createFloatingPanel({ trigger: "\x04" }); // Ctrl+D
+export default function activate(ctx: ExtensionContext): void {
+  const { bus, compositor, terminalBuffer } = ctx;
+
+  const panel = new FloatingPanel(bus, { trigger: "\x04", terminalBuffer: terminalBuffer ?? undefined });
   const surface = createPanelSurface(panel);
 
   panel.handlers.advise("panel:show", (_next) => {
@@ -188,7 +192,7 @@ A panel that shows a subagent's work separately from the main agent:
 
 ```typescript
 function onSubagentSpawn(id: string, ctx: ExtensionContext): void {
-  const panel = ctx.createFloatingPanel({ dimBackground: false });
+  const panel = new FloatingPanel(ctx.bus, { dimBackground: false });
   const surface = createPanelSurface(panel);
 
   // This subagent's output goes to its own panel

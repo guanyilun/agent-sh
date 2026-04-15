@@ -55,8 +55,12 @@ TypeScript and JavaScript are both supported (`.ts`, `.tsx`, `.mts`, `.js`, `.mj
 | `createBlockTransform` | `(opts) => void` | Register an inline delimiter transform (e.g. `$$...$$`) |
 | `createFencedBlockTransform` | `(opts) => void` | Register a fenced block transform (e.g. ` ```lang...``` `) |
 | `getExtensionSettings` | `(namespace, defaults) => T` | Read extension settings from `~/.agent-sh/settings.json` |
-| `registerTool` | `(tool: ToolDefinition) => void` | Register a tool with the active agent backend (routed via bus events). No-op if no backend is loaded. Tools can include optional `getDisplayInfo`, `formatCall`, and `formatResult` for TUI integration — see [Internal Agent: Tool interface](agent.md#tool-interface) |
-| `getTools` | `() => ToolDefinition[]` | Get all registered tools (for subagent tool subsets) |
+| `registerTool` | `(tool: ToolDefinition) => void` | Register a tool with the active agent backend. See [Internal Agent: Tool interface](agent.md#tool-interface) |
+| `unregisterTool` | `(name: string) => void` | Remove a previously registered tool |
+| `getTools` | `() => ToolDefinition[]` | Get all registered tools |
+| `registerCommand` | `(name, description, handler) => void` | Register a slash command (e.g. `/mycommand`) |
+| `registerInstruction` | `(name, text) => void` | Inject a named instruction block into the system prompt |
+| `removeInstruction` | `(name) => void` | Remove a named instruction block |
 | `define` | `(name, fn) => void` | Register a named handler |
 | `advise` | `(name, wrapper) => void` | Wrap a named handler (receives `next` + args) |
 | `call` | `(name, ...args) => any` | Call a named handler |
@@ -397,31 +401,13 @@ ctx.advise("conversation:prepare", (next, messages) => {
 });
 ```
 
-**`tool:execute`** — Wraps every tool call. The `ctx` argument contains `{ name, id, args, tool, onChunk }`. Extensions can block tools, add logging, implement custom permission policies, retry on failure, run tools in a sandbox, or intercept/transform streamed output:
+**`tool:execute`** — Wraps every tool call. The `ctx` argument contains `{ name, id, args, tool, onChunk }`. Use cases: blocking tools, logging, custom permission policies, output redaction.
 
 ```typescript
 // Safe mode — block all file-modifying tools
 ctx.advise("tool:execute", async (next, ctx) => {
   if (ctx.tool.modifiesFiles) {
     return { content: "Blocked: read-only mode", exitCode: 1, isError: true };
-  }
-  return next(ctx);
-});
-
-// Audit log — record every tool execution
-ctx.advise("tool:execute", async (next, ctx) => {
-  const start = Date.now();
-  const result = await next(ctx);
-  log(`${ctx.name}: ${Date.now() - start}ms, exit=${result.exitCode}`);
-  return result;
-});
-
-// Custom permission policy — auto-approve reads, deny /etc access
-ctx.advise("tool:execute", async (next, ctx) => {
-  const kind = ctx.tool.getDisplayInfo?.(ctx.args)?.kind;
-  if (kind === "read") return next(ctx);  // skip permission prompt
-  if (ctx.name === "bash" && String(ctx.args.command).includes("/etc")) {
-    return { content: "Blocked: /etc access", exitCode: 1, isError: true };
   }
   return next(ctx);
 });
@@ -437,7 +423,7 @@ ctx.advise("tool:execute", async (next, ctx) => {
 });
 ```
 
-The `onChunk` callback controls what the user sees during tool execution (streamed to terminal). Wrapping it lets extensions transform output in real time — for example, redacting secrets before they hit the screen. See `examples/extensions/secret-guard.ts` for a complete implementation.
+The `onChunk` callback controls what the user sees during tool execution (streamed to terminal). See `examples/extensions/secret-guard.ts` for a complete implementation.
 
 #### Rendering handlers
 
@@ -585,11 +571,7 @@ bus.emit("input-mode:register", {
 
 Each trigger character can only be claimed by one mode. Slash commands and readline keybindings work in every mode.
 
-## Terminal Buffer & Floating Panel
-
-agent-sh exposes two core utilities for building interactive terminal overlays.
-
-### TerminalBuffer
+## Terminal Buffer
 
 A headless xterm.js terminal that mirrors the real terminal's output. Accessed via `ctx.terminalBuffer` (lazy singleton, shared across extensions). Returns `null` if `@xterm/headless` is not installed.
 
@@ -608,94 +590,34 @@ Key methods:
 - `altScreen` — whether the alternate screen buffer is active
 - `write(data)` / `resize(cols, rows)` — manual control
 
-The buffer reads from the active viewport (not scrollback), so it works correctly on both the normal and alternate screen buffers.
-
 Install the optional xterm dependency:
 ```bash
 npm install @xterm/headless@5.5.0 @xterm/addon-serialize@0.13.0
 ```
 
-### FloatingPanel
+## FloatingPanel
 
-A composited overlay rendered over the terminal. Handles the full lifecycle: alt screen management, input routing, dimmed background compositing, scroll, and screen restore.
+> **Note**: FloatingPanel is an internal utility in `src/utils/floating-panel.ts`, not part of the public ExtensionContext API. It's used by the [overlay-agent](../examples/extensions/overlay-agent.ts) example extension. Import it directly if you need it.
+
+A composited overlay rendered over the terminal. Handles alt screen management, input routing, dimmed background compositing, scroll, and screen restore.
 
 ```typescript
-const panel = ctx.createFloatingPanel({
-  trigger: "\x1c",       // Ctrl+\ to toggle
-  dimBackground: true,   // show dimmed terminal behind the panel
-  autoDismissMs: 2000,   // auto-close 2s after setDone()
-  borderStyle: "rounded",
-  width: "80%",
-  height: "60%",
-});
+import { FloatingPanel } from "agent-sh/utils/floating-panel";
 
-panel.handlers.advise("panel:submit", (_next, query: string) => {
-  panel.setActive();
-  panel.appendLine(`> ${query}`);
-  // process the query...
+const panel = new FloatingPanel(bus, {
+  trigger: "\x1c",       // Ctrl+\ to toggle
+  dimBackground: true,
+  terminalBuffer: ctx.terminalBuffer ?? undefined,
 });
 ```
 
 **Config options**: `trigger`, `width`, `height`, `maxWidth`, `minHeight`, `borderStyle` (`rounded`/`square`/`double`/`heavy`), `dimBackground`, `autoDismissMs`, `promptIcon`, `handlerPrefix`.
 
-**Lifecycle** — the panel has four phases and three rendering states:
-
-```
-open() → [input] → submit → [active] → setDone() → [input] (follow-up)
-                                │                         │
-                              hide()                    hide()
-                                │                         │
-                          [passthrough]                dismiss()
-                       (agent still working,        (session over,
-                        TerminalBuffer renders       teardown + SIGWINCH)
-                        screen at 50ms interval)
-                                │
-                          setDone() while
-                          passthrough
-                                │
-                           auto-dismiss()
-                        (hand back control)
-```
-
-| Phase | Description |
-|-------|-------------|
-| **input** | Waiting for user query (or follow-up after agent finishes) |
-| **active** | Agent is processing — hide enters passthrough mode |
-| **done** | Legacy: used with `autoDismissMs > 0` only |
-| **idle** | Panel fully dismissed, no state retained |
-
-**Passthrough mode**: When the user hides the panel while the agent is still working (`active` phase), the panel enters passthrough mode instead of handing rendering back to the foreground program. It stays on alt screen with stdout held, and renders the TerminalBuffer content directly at 50ms intervals. This avoids ncurses curscr desync — the program's screen stays correct because we do full repaints, not differential updates. When the agent finishes (`setDone()`), passthrough auto-dismisses and hands back control via a SIGWINCH double-resize that forces ncurses to do a clean full repaint.
-
-**Session lifecycle with RemoteSession**: When using a FloatingPanel with `createRemoteSession` (as in the [overlay agent](../examples/extensions/overlay-agent.ts) example), the session controls compositor routing — all agent output goes to the panel surface while the session is active. Session lifetime follows these rules:
-
-- **Created** on first submit (or re-created on show if previously closed)
-- **Stays alive** when the panel is hidden during `active` phase — the agent keeps processing in the background, output buffers in the panel, and the agent can still execute tools (terminal keys, shell commands)
-- **Closed** when the panel is dismissed and the agent is NOT processing (`panel.processing === false`) — this restores compositor routing to the main terminal
-- **Closed** when `setDone()` triggers auto-dismiss from passthrough mode
-
-The `processing` getter distinguishes "agent actively working" from "waiting for follow-up input". This prevents the main agent's output from being routed to a hidden panel after the overlay agent has finished.
-
 **Content API**: `appendText(text)`, `appendLine(line)`, `updateLastLine(fn)`, `clearContent()`, `setTitle(title)`, `setFooter(footer)`.
 
-**Handler-based rendering** — all rendering is customizable via the handler/advise pattern:
+**Lifecycle**: `open()` → input → `submit` → `setActive()` → agent processes → `setDone()` → input (follow-up) or `dismiss()`. When hidden during active processing, the panel enters passthrough mode (renders TerminalBuffer content directly) until the agent finishes.
 
-| Handler | Purpose |
-|---|---|
-| `render-frame(ctx: FrameContext) → FrameResult` | Replace the entire frame rendering |
-| `render-border-top(ctx: FrameContext) → string` | Custom title bar |
-| `render-border-bottom(ctx: FrameContext) → string` | Custom footer bar |
-| `composite-row(boxLine, bgLine, ...) → string` | Custom background compositing |
-| `render-content(ctx: RenderContext) → RenderResult` | Content inside the box |
-| `build-row(content, width) → string` | Row truncation/padding |
-| `submit(query) → void` | Handle submitted input |
-| `dismiss() → void` | Handle panel dismissal |
-| `input(data) → boolean` | Custom input handling |
-
-**Alt screen nesting**: FloatingPanel detects when a foreground program (vim, htop) is already on alt screen and avoids entering a second alt screen (which doesn't nest in most terminals). Instead, it renders directly on top of the program's alt screen.
-
-**Screen restore**: On dismiss, the panel uses a SIGWINCH double-resize (resize to `rows-1`, then back to `rows`) to force the foreground program to fully repaint. This is necessary because ncurses ignores same-size SIGWINCH (`resizeterm` returns early when dimensions haven't changed), and ncurses's `curscr` is stale after the overlay drew on the terminal — a simple exit from alt screen would leave overlay artifacts in cells that ncurses considers unchanged.
-
-**Keyboard protocol support**: The trigger key is recognized in all encodings — raw control byte, xterm modifyOtherKeys (`\e[27;5;code~`), and kitty keyboard protocol (`\e[code;5u`). This ensures the trigger works inside vim and other programs that enable extended keyboard protocols.
+See `src/utils/floating-panel.ts` for the full API, handler hooks, and rendering customization.
 
 ## Remote Sessions
 

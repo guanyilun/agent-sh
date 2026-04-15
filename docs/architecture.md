@@ -134,13 +134,17 @@ agent-sh/
 │   │   ├── agent-loop.ts     # Internal agent (OpenAI-compat API, bus-driven)
 │   │   ├── token-budget.ts   # Unified token budget (splits context window between streams)
 │   │   ├── tool-registry.ts  # Map-based tool registry
+│   │   ├── tool-protocol.ts  # Tool calling protocol abstraction
 │   │   ├── conversation-state.ts  # Three-tier conversation: active + nuclear + history
 │   │   ├── nuclear-form.ts   # Nuclear one-liner generation + serialization
 │   │   ├── history-file.ts   # Persistent JSONL history file
 │   │   ├── system-prompt.ts  # System prompt builder
+│   │   ├── skills.ts         # Skill discovery and loading
+│   │   ├── subagent.ts       # Subagent orchestration
 │   │   └── tools/            # Built-in tool implementations
 │   │       ├── bash.ts, read-file.ts, write-file.ts, edit-file.ts
 │   │       ├── grep.ts, glob.ts, ls.ts, user-shell.ts, display.ts
+│   │       └── list-skills.ts
 │   │
 │   ├── utils/                # Shared primitives
 │   │   ├── llm-client.ts     # OpenAI SDK wrapper
@@ -151,7 +155,8 @@ agent-sh/
 │   │   ├── palette.ts, ansi.ts, diff.ts, diff-renderer.ts
 │   │   ├── box-frame.ts, tool-display.ts, output-writer.ts
 │   │   ├── stream-transform.ts, markdown.ts, file-watcher.ts
-│   │   └── line-editor.ts, frame-renderer.ts
+│   │   ├── line-editor.ts, frame-renderer.ts
+│   │   └── message-utils.ts, tool-interactive.ts
 │   │
 │   └── extensions/           # Built-in extensions (loaded via manifest, disableable)
 │       ├── index.ts          # Declarative manifest + loader
@@ -163,11 +168,20 @@ agent-sh/
 │
 ├── examples/                 # Example extensions and agent integrations
 │   └── extensions/
-│       ├── overlay-agent.ts  # Ctrl+\ floating overlay agent
-│       ├── peer-mesh.ts      # Cross-instance communication (Ray-inspired)
-│       ├── tmux-pane.ts      # Tmux side pane output/interactive modes
+│       ├── overlay-agent.ts     # Ctrl+\ floating overlay agent
+│       ├── interactive-prompts.ts # Permission prompts (opt-in safety)
+│       ├── peer-mesh.ts         # Cross-instance communication
+│       ├── tmux-pane.ts         # Tmux side pane output/interactive modes
+│       ├── web-access.ts        # Web search and content extraction
+│       ├── subagents.ts         # Subagent orchestration
+│       ├── solarized-theme.ts   # Theme example
+│       ├── secret-guard.ts      # Secret redaction
+│       ├── latex-images.ts      # LaTeX equation rendering
+│       ├── openrouter.ts        # OpenRouter provider helper
 │       ├── claude-code-bridge/  # Claude Code SDK backend
-│       └── pi-bridge/          # Pi agent backend
+│       ├── pi-bridge/           # Pi agent backend
+│       ├── ash-mcp-bridge/      # MCP server bridge
+│       └── ash-acp-bridge/      # ACP server (headless core)
 ├── docs/                     # Documentation
 ├── package.json
 └── tsconfig.json
