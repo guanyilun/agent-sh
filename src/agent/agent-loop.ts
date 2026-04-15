@@ -772,6 +772,9 @@ export class AgentLoop implements AgentBackend {
       const batchTotal = toolCalls.length;
       const collectedResults: ProtocolToolResult[] = [];
 
+      // Round-scoped cache for pure, read-only tool calls
+      const roundCache = new Map<string, ProtocolToolResult>();
+
       const executeSingle = async (tc: PendingToolCall, batchIndex?: number) => {
         // Rewrite meta-tool calls (e.g., use_extension → actual tool)
         tc = this.toolProtocol.rewriteToolCall(tc);
@@ -806,6 +809,40 @@ export class AgentLoop implements AgentBackend {
             content: `Invalid JSON arguments for ${tc.name}`, isError: true,
           });
           return;
+        }
+
+        // ── Round-scoped cache for cacheable read-only tools ──
+        const cacheable = !tool.modifiesFiles && !tool.requiresPermission && tool.showOutput !== true;
+        const cacheKey = cacheable ? `${tc.name}:${JSON.stringify(args)}` : null;
+        if (cacheKey) {
+          const cached = roundCache.get(cacheKey);
+          if (cached) {
+            const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" as const };
+            this.bus.emit("agent:tool-started", {
+              title: tool.displayName ?? tc.name,
+              toolCallId: tc.id,
+              kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
+              displayDetail: tool.formatCall?.(args),
+              batchIndex, batchTotal: batchTotal > 1 ? batchTotal : undefined,
+            });
+            this.bus.emit("agent:tool-call", { tool: tc.name, args });
+            // Reconstruct a ToolResult for formatResult; ProtocolToolResult has no exitCode
+            const cachedToolResult = { content: cached.content, exitCode: 0, isError: cached.isError };
+            const resultDisplay = tool.formatResult?.(args, cachedToolResult);
+            this.bus.emitTransform("agent:tool-completed", {
+              toolCallId: tc.id, exitCode: 0,
+              rawOutput: cached.content, kind: display.kind,
+              resultDisplay,
+            });
+            this.bus.emit("agent:tool-output", {
+              tool: tc.name, output: cached.content, exitCode: 0,
+            });
+            collectedResults.push({
+              callId: tc.id, toolName: tc.name,
+              content: cached.content, isError: cached.isError,
+            });
+            return;
+          }
         }
 
         // Execute via handler — extensions can advise to add safe-mode,
@@ -843,10 +880,15 @@ export class AgentLoop implements AgentBackend {
             ...lines.slice(tailStart),
           ].join("\n");
         }
-        collectedResults.push({
+
+        const finalResult: ProtocolToolResult = {
           callId: tc.id, toolName: tc.name,
           content, isError: result.isError,
-        });
+        };
+        if (cacheKey) {
+          roundCache.set(cacheKey, finalResult);
+        }
+        collectedResults.push(finalResult);
       };
 
       // Partition into parallel-safe (read-only) and sequential (needs permission)
