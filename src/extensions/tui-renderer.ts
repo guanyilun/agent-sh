@@ -22,7 +22,7 @@ import {
   type SpinnerState,
   type SpinnerOpts,
 } from "../utils/tool-display.js";
-import { renderDiff } from "../utils/diff-renderer.js";
+import { renderDiff, renderDiffAsync } from "../utils/diff-renderer.js";
 import { renderBoxFrame } from "../utils/box-frame.js";
 import type { DiffResult } from "../utils/diff.js";
 import { getSettings } from "../settings.js";
@@ -452,14 +452,28 @@ export default function activate(ctx: ExtensionContext): void {
       s.renderer.flush();
       drain();
     }
+    // Diff rendering is handled in the async pipe below so it can yield
+    // to the event loop between hunks (keeping the spinner responsive).
+  });
+
+  // Async pipe: render diffs progressively (yields between hunks) then
+  // restart the spinner.  Runs after the sync `on` handler above (which
+  // flushes state) and before shell.ts's pipe (which pauses stdout).
+  bus.onPipeAsync("permission:request", async (e) => {
+    if (!shouldRender()) return e;
 
     if (e.kind === "file-write" && e.metadata?.diff) {
       showCollapsedThinking();
-      showFileDiff(e.title, e.metadata.diff as DiffResult);
+      // Start spinner now so it animates during the async diff rendering
+      // (yields between hunks let the spinner interval fire).
+      startThinkingSpinner();
+      await showFileDiff(e.title, e.metadata.diff as DiffResult);
+      // Spinner keeps running after diff — shows activity while tool executes.
     }
     // Don't endAgentResponse() here — permission requests that aren't
     // file-write diffs are handled inline (auto-approved or by extensions).
     // Closing the response prematurely causes double separator borders.
+    return e;
   });
 
   bus.on("input:keypress", (e) => {
@@ -966,21 +980,37 @@ export default function activate(ctx: ExtensionContext): void {
     return `${p.dim}${filePath}${p.reset}  ${stats}`;
   }
 
-  function showFileDiff(filePath: string, diff: DiffResult): void {
+  async function showFileDiff(filePath: string, diff: DiffResult): Promise<void> {
     if (diff.isIdentical) return;
     contentGap("diff");
 
-    const lines: string[] = ctx.call(
-      "render:result-body",
-      { kind: "diff", diff, filePath } satisfies ToolResultBody,
-      cappedW(),
-    ) ?? [];
-
     if (!s.renderer) startAgentResponse();
-    for (const line of lines) {
-      s.renderer!.writeLine(line);
-    }
-    drain();
+
+    const boxW = Math.min(120, cappedW() - 2);
+    const contentW = boxW - 4;
+
+    await renderDiffAsync(
+      diff,
+      {
+        width: contentW,
+        filePath,
+        maxLines: getSettings().diffMaxLines,
+        trueColor: true,
+      },
+      (diffLines) => {
+        const body = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
+        const framed = renderBoxFrame(body, {
+          width: boxW,
+          style: "rounded",
+          borderColor: p.dim,
+          title: diffTitle(filePath, diff),
+        });
+        for (const line of framed) {
+          s.renderer!.writeLine(line);
+        }
+        drain();
+      },
+    );
   }
 
   function toggleThinkingDisplay(): void {
