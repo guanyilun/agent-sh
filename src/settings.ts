@@ -84,6 +84,8 @@ export interface Settings {
   diffMaxLines?: number;
 
   // ── Agent integration ─────────────────────────────────────
+  /** Tool protocol: "api" (all tools), "deferred" (extensions via meta-tool), "inline" (text). */
+  toolMode?: "api" | "deferred" | "inline";
   /** Additional directories to scan for skills (supports ~ expansion). */
   skillPaths?: string[];
 
@@ -92,6 +94,10 @@ export interface Settings {
   startupBanner?: boolean;
   /** Show a subtle agent-sh indicator in the shell prompt. */
   promptIndicator?: boolean;
+
+  // ── Built-in extensions ──────────────────────────────────
+  /** Names of built-in extensions to disable (e.g. ["command-suggest"]). */
+  disabledBuiltins?: string[];
 }
 
 const DEFAULTS: Required<Settings> = {
@@ -99,7 +105,8 @@ const DEFAULTS: Required<Settings> = {
   historySize: 500,
   providers: {},
   defaultProvider: undefined as any,
-  defaultBackend: "agent-sh",
+  defaultBackend: "ash",
+  toolMode: "api" as "api" | "deferred" | "inline",
   contextWindowSize: 20,
   contextBudget: 16384,
   shellTruncateThreshold: 10,
@@ -117,6 +124,7 @@ const DEFAULTS: Required<Settings> = {
   skillPaths: [],
   startupBanner: true,
   promptIndicator: true,
+  disabledBuiltins: [],
 };
 
 let cached: Settings | null = null;

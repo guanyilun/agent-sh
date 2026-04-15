@@ -270,7 +270,7 @@ The compositor sits between "produce lines" and "display lines". It doesn't affe
 |---|---|
 | `src/utils/compositor.ts` | `RenderSurface`, `Compositor`, `DefaultCompositor`, `StdoutSurface` |
 | `src/extensions/tui-renderer.ts` | Main renderer — writes to compositor streams |
-| `src/extensions/overlay-agent.ts` | Uses `createRemoteSession` to route to floating panel |
+| `examples/extensions/overlay-agent.ts` | Uses `createRemoteSession` to route to floating panel |
 | `src/utils/floating-panel.ts` | Panel screen management and content API |
 | `src/core.ts` | Creates compositor, registers default surfaces, implements `createRemoteSession` |
 | `src/types.ts` | `ExtensionContext.compositor`, `RemoteSession`, `RemoteSessionOptions` |

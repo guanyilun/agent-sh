@@ -49,19 +49,18 @@ TypeScript and JavaScript are both supported (`.ts`, `.tsx`, `.mts`, `.js`, `.mj
 |---|---|---|
 | `bus` | `EventBus` | Subscribe to events, emit events, register pipe handlers |
 | `contextManager` | `ContextManager` | Access exchange history, cwd, search, expand |
-| `llmClient` | `LlmClient \| null` | LLM client for fast-path features (null if extension backend provides its own) |
+| `instanceId` | `string` | Stable per-instance identifier (4-char hex) |
 | `quit` | `() => void` | Exit agent-sh |
 | `setPalette` | `(overrides) => void` | Override color palette slots for theming |
 | `createBlockTransform` | `(opts) => void` | Register an inline delimiter transform (e.g. `$$...$$`) |
 | `createFencedBlockTransform` | `(opts) => void` | Register a fenced block transform (e.g. ` ```lang...``` `) |
 | `getExtensionSettings` | `(namespace, defaults) => T` | Read extension settings from `~/.agent-sh/settings.json` |
-| `registerTool` | `(tool: ToolDefinition) => void` | Register a tool for the built-in agent (no-op for bridge backends). Tools can include optional `getDisplayInfo`, `formatCall`, and `formatResult` for TUI integration — see [Internal Agent: Tool interface](agent.md#tool-interface) |
+| `registerTool` | `(tool: ToolDefinition) => void` | Register a tool with the active agent backend (routed via bus events). No-op if no backend is loaded. Tools can include optional `getDisplayInfo`, `formatCall`, and `formatResult` for TUI integration — see [Internal Agent: Tool interface](agent.md#tool-interface) |
 | `getTools` | `() => ToolDefinition[]` | Get all registered tools (for subagent tool subsets) |
 | `define` | `(name, fn) => void` | Register a named handler |
 | `advise` | `(name, wrapper) => void` | Wrap a named handler (receives `next` + args) |
 | `call` | `(name, ...args) => any` | Call a named handler |
 | `terminalBuffer` | `TerminalBuffer \| null` | Shared headless xterm.js buffer mirroring PTY output (lazy singleton, null if `@xterm/headless` not installed) |
-| `createFloatingPanel` | `(config: FloatingPanelConfig) => FloatingPanel` | Create a floating panel overlay with composited rendering, input routing, and handler-based customization |
 | `compositor` | `Compositor` | Routes named render streams to surfaces. See [TUI Composition](tui-composition.md) |
 | `createRemoteSession` | `(opts: RemoteSessionOptions) => RemoteSession` | Create a remote session that routes agent output to a surface. See [Remote Sessions](#remote-sessions) |
 
@@ -165,11 +164,11 @@ This is how agent backends emit response chunks — extensions get a chance to t
 
 ## Custom Agent Backends
 
-An extension can replace the entire agent backend — the component that receives queries and produces responses. The built-in backend (AgentLoop) uses an OpenAI-compatible API with tool calling, but you can swap it for anything: a local model, a proprietary agent service, a deterministic script, or a test stub.
+An extension can provide an agent backend — the component that receives queries and produces responses. The built-in backend (`agent-backend` extension, which creates AgentLoop) uses an OpenAI-compatible API with tool calling. You can add alternatives: a local model, a proprietary agent service, a deterministic script, or a test stub. All backends — including the built-in one — register via the same `agent:register-backend` mechanism.
 
 ### How it works
 
-During `activate()`, emit `agent:register-backend` to claim the backend role. This prevents the built-in AgentLoop from activating. From that point, your extension is responsible for handling queries.
+During `activate()`, emit `agent:register-backend` to register your backend. Multiple backends can coexist; the user switches between them with `/backend`. Set `defaultBackend` in settings to control which activates on startup.
 
 Here's a minimal working backend:
 
@@ -248,14 +247,14 @@ Multiple backends can be registered at the same time. Use the `/backend` command
 ```
 /backend              # list all registered backends (active one marked)
 /backend claude-code  # switch to the claude-code backend
-/backend agent-sh     # switch back to the built-in backend
+/backend ash          # switch back to the built-in backend
 ```
 
-Switching deactivates the current backend (`kill()`) and activates the new one (`start()`). The built-in backend is always available as `"agent-sh"`.
+Switching deactivates the current backend (`kill()`) and activates the new one (`start()`).
 
 ### Default backend
 
-By default, the built-in AgentLoop (`"agent-sh"`) activates. To make an extension backend the default, set `defaultBackend` in `~/.agent-sh/settings.json`:
+By default, the built-in `"ash"` backend activates (registered by the `agent-backend` built-in extension). To make an extension backend the default, set `defaultBackend` in `~/.agent-sh/settings.json`:
 
 ```json
 {
@@ -264,11 +263,19 @@ By default, the built-in AgentLoop (`"agent-sh"`) activates. To make an extensio
 }
 ```
 
-On startup, `activateBackend()` checks this setting and activates the named backend if it was registered. If the named backend isn't found (e.g. the extension failed to load), it falls back to any registered backend, then to the built-in AgentLoop.
+On startup, `activateBackend()` checks this setting and activates the named backend if it was registered. If the named backend isn't found, it falls back to the first registered backend.
+
+To disable the built-in agent entirely (e.g., for bridge-only setups):
+```json
+{
+  "disabledBuiltins": ["agent-backend"],
+  "defaultBackend": "claude-code"
+}
+```
 
 ### Registration timing
 
-Extensions load *before* `activateBackend()` runs. This is what makes `defaultBackend` work — by the time the core decides which backend to activate, all extensions have already registered theirs.
+Built-in extensions load first (via a declarative manifest), then user extensions, then `activateBackend()` runs. This is what makes `defaultBackend` work — by the time the core decides which backend to activate, all extensions have registered theirs.
 
 ### Real-world bridges
 
@@ -358,7 +365,7 @@ Handlers are reserved for **high-power use cases** where multiple independent ex
 
 #### Agent loop handlers
 
-These are registered by the built-in agent backend and let extensions shape what the LLM sees and how tools execute.
+These are registered by the `agent-backend` built-in extension (AgentLoop) and let other extensions shape what the LLM sees and how tools execute. They are only available when the built-in agent is active.
 
 | Handler | Signature | Description |
 |---|---|---|
@@ -658,6 +665,15 @@ open() → [input] → submit → [active] → setDone() → [input] (follow-up)
 | **idle** | Panel fully dismissed, no state retained |
 
 **Passthrough mode**: When the user hides the panel while the agent is still working (`active` phase), the panel enters passthrough mode instead of handing rendering back to the foreground program. It stays on alt screen with stdout held, and renders the TerminalBuffer content directly at 50ms intervals. This avoids ncurses curscr desync — the program's screen stays correct because we do full repaints, not differential updates. When the agent finishes (`setDone()`), passthrough auto-dismisses and hands back control via a SIGWINCH double-resize that forces ncurses to do a clean full repaint.
+
+**Session lifecycle with RemoteSession**: When using a FloatingPanel with `createRemoteSession` (as in the [overlay agent](../examples/extensions/overlay-agent.ts) example), the session controls compositor routing — all agent output goes to the panel surface while the session is active. Session lifetime follows these rules:
+
+- **Created** on first submit (or re-created on show if previously closed)
+- **Stays alive** when the panel is hidden during `active` phase — the agent keeps processing in the background, output buffers in the panel, and the agent can still execute tools (terminal keys, shell commands)
+- **Closed** when the panel is dismissed and the agent is NOT processing (`panel.processing === false`) — this restores compositor routing to the main terminal
+- **Closed** when `setDone()` triggers auto-dismiss from passthrough mode
+
+The `processing` getter distinguishes "agent actively working" from "waiting for follow-up input". This prevents the main agent's output from being routed to a hidden panel after the overlay agent has finished.
 
 **Content API**: `appendText(text)`, `appendLine(line)`, `updateLastLine(fn)`, `clearContent()`, `setTitle(title)`, `setFooter(footer)`.
 

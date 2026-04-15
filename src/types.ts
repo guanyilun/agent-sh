@@ -1,11 +1,9 @@
 import type { EventBus, ContentBlock } from "./event-bus.js";
 import type { ContextManager } from "./context-manager.js";
-import type { LlmClient } from "./utils/llm-client.js";
 import type { ColorPalette } from "./utils/palette.js";
 import type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
 import type { ToolDefinition } from "./agent/types.js";
 import type { TerminalBuffer } from "./utils/terminal-buffer.js";
-import type { FloatingPanel, FloatingPanelConfig } from "./utils/floating-panel.js";
 import type { Compositor } from "./utils/compositor.js";
 
 export type { ContentBlock } from "./event-bus.js";
@@ -78,8 +76,8 @@ export interface AgentShellConfig {
 export interface ExtensionContext {
   bus: EventBus;
   contextManager: ContextManager;
-  /** LLM client for fast-path features (null in ACP mode). */
-  llmClient: LlmClient | null;
+  /** Stable per-instance identifier (4-char hex). */
+  readonly instanceId: string;
   quit: () => void;
   /** Override color palette slots for theming. */
   setPalette: (overrides: Partial<ColorPalette>) => void;
@@ -124,12 +122,6 @@ export interface ExtensionContext {
    * Lazily created on first access. Returns null if @xterm/headless is not installed.
    */
   terminalBuffer: TerminalBuffer | null;
-  /**
-   * Create a floating panel overlay. The panel composites a bordered box
-   * over the terminal with input routing, dimmed background, and
-   * handler-based customization.
-   */
-  createFloatingPanel: (config: FloatingPanelConfig) => FloatingPanel;
 
   // ── Compositor ─────────────────────────────────────────────────
   /**

@@ -11,7 +11,7 @@
  * can subscribe to the same events.
  */
 import { highlight } from "cli-highlight";
-import { MarkdownRenderer, wrapLine } from "../utils/markdown.js";
+import { MarkdownRenderer, wrapLine, MAX_CONTENT_WIDTH } from "../utils/markdown.js";
 import { createFencedBlockTransform, type FencedBlockTransformHandle } from "../utils/stream-transform.js";
 import { palette as p } from "../utils/palette.js";
 import {
@@ -134,11 +134,14 @@ function createRenderState(): RenderState {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, llmClient, define, compositor } = ctx;
+  const { bus, define, compositor } = ctx;
   const s = createRenderState();
 
   /** Shorthand — get the current agent surface. */
   function out(): RenderSurface { return compositor.surface("agent"); }
+
+  /** Capped width for borders, tool lines, and content — keeps everything aligned. */
+  function cappedW(): number { return Math.min(MAX_CONTENT_WIDTH + 2, out().columns); }
 
   // Gate: other extensions (e.g. overlay) can advise this to suppress
   // TUI rendering of agent output while they own the display.
@@ -473,6 +476,9 @@ export default function activate(ctx: ExtensionContext): void {
     if (e.key === "\x0f") expandLastDiff();       // Ctrl+O
     if (e.key === "\x14") toggleThinkingDisplay(); // Ctrl+T
   });
+  // Interactive tool UI — stop spinner while tool has control
+  bus.on("tool:interactive-start", () => { stopCurrentSpinner(); });
+
   bus.on("ui:info", (e) => {
     stopCurrentSpinner();
     showInfo(e.message);
@@ -497,9 +503,9 @@ export default function activate(ctx: ExtensionContext): void {
   }
 
   function startAgentResponse(): void {
-    s.renderer = new MarkdownRenderer(out().columns);
+    s.renderer = new MarkdownRenderer(cappedW());
     s.hadToolCalls = false;
-    const border: string | null = ctx.call("tui:response-border", "top", out().columns);
+    const border: string | null = ctx.call("tui:response-border", "top", cappedW());
     if (border) s.renderer.writeLine(border);
     drain();
     ctx.call("tui:response-start");
@@ -538,7 +544,7 @@ export default function activate(ctx: ExtensionContext): void {
     if (s.renderer) {
       ctx.call("tui:response-end", s.hadToolCalls);
       s.renderer.flush();
-      const border: string | null = ctx.call("tui:response-border", "bottom", out().columns);
+      const border: string | null = ctx.call("tui:response-border", "bottom", cappedW());
       if (border) s.renderer.writeLine(border);
       drain();
       out().write("\n");
@@ -547,7 +553,7 @@ export default function activate(ctx: ExtensionContext): void {
   }
 
   function showUserQuery(query: string): void {
-    const model = backendInfo?.model ?? llmClient?.model;
+    const model = backendInfo?.model;
     const backend = backendInfo?.name;
     let modelLabel: string | undefined;
     if (backend && model) {
@@ -615,7 +621,7 @@ export default function activate(ctx: ExtensionContext): void {
   });
 
   function writeCodeBlock(language: string, code: string): void {
-    ctx.call("render:code-block", language, code, out().columns);
+    ctx.call("render:code-block", language, code, cappedW());
   }
 
   function flushForRaw(): void {
@@ -766,13 +772,13 @@ export default function activate(ctx: ExtensionContext): void {
       locations: extra?.locations,
       rawInput: extra?.rawInput,
       displayDetail: extra?.displayDetail,
-    }, out().columns);
+    }, cappedW());
 
     if (extra?.groupContinuation && lines.length > 0) {
       // Swap the colored kind icon for a muted tree connector,
       // and strip the tool name prefix — show detail only.
       const detail = extra.displayDetail || extractDetail(extra);
-      const maxW = Math.max(1, out().columns - 6);
+      const maxW = Math.max(1, cappedW() - 6);
       const text = detail.length > maxW ? detail.slice(0, maxW - 1) + "…" : detail;
       lines[0] = detail
         ? `${p.muted}├${p.reset} ${p.dim}${text}${p.reset}`
@@ -825,7 +831,7 @@ export default function activate(ctx: ExtensionContext): void {
 
   function renderResultBody(body: ToolResultBody): void {
     if (!s.renderer) return;
-    const lines: string[] = ctx.call("render:result-body", body, out().columns) ?? [];
+    const lines: string[] = ctx.call("render:result-body", body, cappedW()) ?? [];
     for (const line of lines) {
       s.renderer!.writeLine(line);
     }
@@ -958,7 +964,15 @@ export default function activate(ctx: ExtensionContext): void {
         s.renderer.writeLine(renderCommandLine(line));
       }
     } else if (s.commandOutputOverflow > 0 && maxLines > 0) {
-      s.renderer.writeLine(renderCommandLine(`… ${s.commandOutputOverflow} more lines`));
+      // Show last line of output so the user sees the tail (often the most useful part)
+      const tail = s.commandOverflowLines[s.commandOverflowLines.length - 1];
+      const hidden = tail ? s.commandOutputOverflow - 1 : s.commandOutputOverflow;
+      if (hidden > 0) {
+        s.renderer.writeLine(renderCommandLine(`… ${hidden} more lines`));
+      }
+      if (tail) {
+        s.renderer.writeLine(renderCommandLine(tail));
+      }
     }
 
     s.commandOutputOverflow = 0;
@@ -981,7 +995,7 @@ export default function activate(ctx: ExtensionContext): void {
     const lines: string[] = ctx.call(
       "render:result-body",
       { kind: "diff", diff, filePath } satisfies ToolResultBody,
-      out().columns,
+      cappedW(),
     ) ?? [];
 
     if (!s.renderer) startAgentResponse();
@@ -1004,7 +1018,7 @@ export default function activate(ctx: ExtensionContext): void {
 
     if (!entry.expandedLines) {
       const { filePath, diff } = entry;
-      const boxW = Math.min(120, out().columns - 2);  // -2 for writeLine indent
+      const boxW = Math.min(cappedW() - 2, out().columns - 2);  // -2 for writeLine indent
       const contentW = boxW - 4;
 
       const diffLines = renderDiff(diff, {
@@ -1035,7 +1049,7 @@ export default function activate(ctx: ExtensionContext): void {
     const lines: string[] = ctx.call(
       "render:result-body",
       { kind: "diff", diff: entry.diff, filePath: entry.filePath } satisfies ToolResultBody,
-      out().columns,
+      cappedW(),
     ) ?? [];
 
     out().write("\n");

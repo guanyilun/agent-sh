@@ -1,6 +1,6 @@
 # Internal Agent
 
-The internal agent (AgentLoop) is the default backend when you provide `--api-key` and `--model`. It calls any OpenAI-compatible API directly, manages conversation state, and executes tools in a loop until the LLM is done.
+The internal agent (AgentLoop) is loaded as a built-in extension (`agent-backend`) when an LLM provider is configured. It resolves providers from settings and CLI flags, creates an `LlmClient`, and calls any OpenAI-compatible API directly. It manages conversation state and executes tools in a loop until the LLM is done.
 
 ## The Query Flow
 
@@ -386,6 +386,6 @@ The current model is shown in the TUI prompt. Switching mid-conversation preserv
 
 ## Extension Tools
 
-Extensions can register custom tools via `ctx.registerTool()`. These appear alongside built-in tools and follow the same `ToolDefinition` interface. Only works with the built-in `agent-sh` backend — bridge backends manage their own tools.
+Extensions can register custom tools via `ctx.registerTool()`. These appear alongside built-in tools and follow the same `ToolDefinition` interface. Only works with the built-in `ash` backend — bridge backends manage their own tools.
 
 See [Extensions: ExtensionContext API](extensions.md#extensioncontext-api) for the interface and [Extensions: Custom Agent Backends](extensions.md#custom-agent-backends) for writing backend extensions.

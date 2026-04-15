@@ -1,0 +1,23 @@
+{
+  "name": "ash-acp-bridge",
+  "version": "0.1.0",
+  "description": "ACP server that wraps agent-sh's headless core for any ACP-compatible client",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "ash-acp-bridge": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "agent-sh": "file:../../..",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

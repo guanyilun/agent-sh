@@ -1,16 +1,10 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import * as path from "node:path";
-import { Shell } from "./shell.js";
+import { Shell } from "./shell/shell.js";
 import { createCore } from "./core.js";
 import { palette as p } from "./utils/palette.js";
-import tuiRenderer from "./extensions/tui-renderer.js";
-import slashCommands from "./extensions/slash-commands.js";
-import fileAutocomplete from "./extensions/file-autocomplete.js";
-import shellRecall from "./extensions/shell-recall.js";
-import commandSuggest from "./extensions/command-suggest.js";
-import terminalBuffer from "./extensions/terminal-buffer.js";
-import overlayAgent from "./extensions/overlay-agent.js";
+import { loadBuiltinExtensions } from "./extensions/index.js";
 import { loadExtensions } from "./extension-loader.js";
 import { getSettings } from "./settings.js";
 import { discoverSkills } from "./agent/skills.js";
@@ -226,9 +220,6 @@ async function main(): Promise<void> {
       if (agentInfo) {
         return { info: `${p.dim}${agentInfo.name}${agentInfo.model ? ` (${agentInfo.model})` : ""}${p.reset}` };
       }
-      if (core.llmClient) {
-        return { info: `${p.dim}agent-sh (${core.llmClient.model})${p.reset}` };
-      }
       return { info: "" };
     },
   });
@@ -255,13 +246,8 @@ async function main(): Promise<void> {
   }
   const extCtx = core.extensionContext({ quit: cleanup });
 
-  tuiRenderer(extCtx);
-  slashCommands(extCtx);
-  fileAutocomplete(extCtx);
-  shellRecall(extCtx);
-  commandSuggest(extCtx);
-  terminalBuffer(extCtx);
-  overlayAgent(extCtx);
+  // Load built-in extensions (individually disableable via settings.disabledBuiltins)
+  await loadBuiltinExtensions(extCtx, getSettings().disabledBuiltins);
 
   // Load user extensions (may register alternative agent backends)
   if (process.env.DEBUG) {
@@ -298,8 +284,8 @@ async function main(): Promise<void> {
     const productName = `${p.accent}${p.bold}agent-sh${p.reset}`;
 
     const info = agentInfo as { name: string; version: string; model?: string; provider?: string } | null;
-    const backendName = info?.name ?? "agent-sh";
-    const model = info?.model ?? core.llmClient?.model;
+    const backendName = info?.name ?? "ash";
+    const model = info?.model;
     const provider = info?.provider;
     const modelValue = model
       ? provider ? `${model} [${provider}]` : model

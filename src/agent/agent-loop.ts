@@ -16,7 +16,7 @@ import type { EventBus, ShellEvents } from "../event-bus.js";
 import type { AgentMode } from "../types.js";
 import type { ContextManager } from "../context-manager.js";
 import type { LlmClient } from "../utils/llm-client.js";
-import type { HandlerRegistry } from "../utils/handler-registry.js";
+import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -26,8 +26,11 @@ import { ToolRegistry } from "./tool-registry.js";
 import { ConversationState } from "./conversation-state.js";
 import { HistoryFile } from "./history-file.js";
 import { STATIC_SYSTEM_PROMPT, buildDynamicContext } from "./system-prompt.js";
-import { TokenBudget } from "../token-budget.js";
+import type { Compositor } from "../utils/compositor.js";
+import { createToolUI } from "../utils/tool-interactive.js";
+import { TokenBudget } from "./token-budget.js";
 import { getSettings } from "../settings.js";
+import { createToolProtocol, type ToolProtocol, type PendingToolCall as ProtocolPendingToolCall, type ToolResult as ProtocolToolResult } from "./tool-protocol.js";
 
 // Core tool factories
 import { createBashTool } from "./tools/bash.js";
@@ -42,10 +45,16 @@ import { createDisplayTool } from "./tools/display.js";
 import { createListSkillsTool } from "./tools/list-skills.js";
 import { discoverProjectSkills } from "./skills.js";
 
-interface PendingToolCall {
-  id: string;
-  name: string;
-  argumentsJson: string;
+type PendingToolCall = ProtocolPendingToolCall;
+
+export interface AgentLoopConfig {
+  bus: EventBus;
+  contextManager: ContextManager;
+  llmClient: LlmClient;
+  handlers: HandlerFunctions;
+  modes?: AgentMode[];
+  initialModeIndex?: number;
+  compositor?: Compositor;
 }
 
 export class AgentLoop implements AgentBackend {
@@ -58,27 +67,37 @@ export class AgentLoop implements AgentBackend {
   private modes: AgentMode[];
   private currentModeIndex = 0;
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
+  private ctorListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
+  private ctorPipeListeners: Array<{ event: string; fn: (...args: any[]) => any }> = [];
   private lastProjectSkillNames = new Set<string>();
   private static readonly THINKING_LEVELS = ["off", "low", "medium", "high"];
 
+  private bus: EventBus;
+  private contextManager: ContextManager;
+  private llmClient: LlmClient;
+  private handlers: HandlerFunctions;
   private thinkingLevel = "off";
+  private compositor: Compositor | null = null;
+  private toolProtocol: ToolProtocol;
 
-  constructor(
-    private bus: EventBus,
-    private contextManager: ContextManager,
-    private llmClient: LlmClient,
-    private handlers: HandlerRegistry,
-    modeConfig?: AgentMode[],
-    initialModeIndex?: number,
-  ) {
+  constructor(config: AgentLoopConfig) {
+    this.bus = config.bus;
+    this.contextManager = config.contextManager;
+    this.llmClient = config.llmClient;
+    this.handlers = config.handlers;
+    this.compositor = config.compositor ?? null;
+
     // Default modes: just the configured model
-    this.modes = modeConfig ?? [
-      { model: llmClient.model },
+    this.modes = config.modes ?? [
+      { model: config.llmClient.model },
     ];
-    this.currentModeIndex = initialModeIndex ?? 0;
+    this.currentModeIndex = config.initialModeIndex ?? 0;
 
     // Unified token budget — adapts to current model's context window
     this.tokenBudget = new TokenBudget(this.currentMode.contextWindow);
+
+    // Tool protocol — controls how tools are presented to the LLM
+    this.toolProtocol = createToolProtocol(getSettings().toolMode ?? "api");
 
     // Register core tools
     this.registerCoreTools();
@@ -88,6 +107,21 @@ export class AgentLoop implements AgentBackend {
 
     // Register handlers — extensions can advise these
     this.registerHandlers();
+
+    // Subscribe to bus-based tool/instruction registration from extensions.
+    // These must be in the constructor (not wire()) because extensions call
+    // registerTool() during activate(), before activateBackend() calls wire().
+    const onCtor = <K extends keyof ShellEvents>(event: K, fn: (payload: ShellEvents[K]) => void) => {
+      this.bus.on(event, fn);
+      this.ctorListeners.push({ event, fn });
+    };
+    onCtor("agent:register-tool", ({ tool }) => this.registerTool(tool));
+    onCtor("agent:unregister-tool", ({ name }) => this.unregisterTool(name));
+    onCtor("agent:register-instruction", ({ name, text }) => this.registerInstruction(name, text));
+    onCtor("agent:remove-instruction", ({ name }) => this.removeInstruction(name));
+    const getToolsPipe = () => ({ tools: this.getTools() });
+    this.bus.onPipe("agent:get-tools", getToolsPipe);
+    this.ctorPipeListeners.push({ event: "agent:get-tools", fn: getToolsPipe });
   }
 
   /** Subscribe to bus events — activates this backend. */
@@ -122,7 +156,7 @@ export class AgentLoop implements AgentBackend {
       }
       this.tokenBudget.update(m.contextWindow, this.toolRegistry.all().length);
       const label = m.provider ? `${m.provider}: ${m.model}` : m.model;
-      this.bus.emit("agent:info", { name: "agent-sh", version: "0.4", model: m.model, provider: m.provider, contextWindow: m.contextWindow });
+      this.bus.emit("agent:info", { name: "ash", version: "0.4", model: m.model, provider: m.provider, contextWindow: m.contextWindow });
       this.bus.emit("ui:info", { message: `Model: ${label}` });
       this.bus.emit("config:changed", {});
     });
@@ -276,6 +310,16 @@ export class AgentLoop implements AgentBackend {
 
   kill(): void {
     this.cancel();
+    this.unwire();
+    // Clean up constructor-level bus subscriptions
+    for (const { event, fn } of this.ctorListeners) {
+      this.bus.off(event as any, fn);
+    }
+    this.ctorListeners = [];
+    for (const { event, fn } of this.ctorPipeListeners) {
+      this.bus.offPipe(event as any, fn);
+    }
+    this.ctorPipeListeners = [];
   }
 
   private cancel(): void {
@@ -313,7 +357,7 @@ export class AgentLoop implements AgentBackend {
     const label = newMode.provider
       ? `${newMode.provider}: ${newMode.model}`
       : newMode.model;
-    this.bus.emit("agent:info", { name: "agent-sh", version: "0.4", model: newMode.model, provider: newMode.provider, contextWindow: newMode.contextWindow });
+    this.bus.emit("agent:info", { name: "ash", version: "0.4", model: newMode.model, provider: newMode.provider, contextWindow: newMode.contextWindow });
     this.bus.emit("ui:info", { message: `Model: ${label}` });
     this.bus.emit("config:changed", {});
   }
@@ -537,7 +581,7 @@ export class AgentLoop implements AgentBackend {
             if (typeof args.content === "string") {
               // write_file
               newContent = args.content;
-            } else if (typeof args.old_text === "string" && typeof args.new_text === "string" && oldContent) {
+            } else if (typeof args.old_text === "string" && typeof args.new_text === "string" && oldContent !== null) {
               // edit_file
               newContent = oldContent.replace(
                 (args.old_text as string).replace(/\r\n/g, "\n"),
@@ -563,10 +607,14 @@ export class AgentLoop implements AgentBackend {
           } catch { /* fall back to generic permission */ }
         }
 
+        const ui = this.compositor
+          ? createToolUI(this.bus, this.compositor.surface("agent"))
+          : undefined;
         const perm = await this.bus.emitPipeAsync("permission:request", {
           kind: permKind,
           title: permTitle,
           metadata,
+          ui,
           decision: { outcome: "approved" },
         });
         if ((perm.decision as { outcome: string }).outcome !== "approved") {
@@ -590,7 +638,10 @@ export class AgentLoop implements AgentBackend {
       const onChunk = (tool.showOutput !== false && !diffShown)
         ? ctx.onChunk
         : undefined;
-      const result = await tool.execute(args, onChunk);
+      const toolCtx = this.compositor
+        ? { ui: createToolUI(this.bus, this.compositor.surface("agent")) }
+        : undefined;
+      const result = await tool.execute(args, onChunk, toolCtx);
 
       // Invalidate read cache when a file is modified
       if (tool.modifiesFiles && typeof args.path === "string" && !result.isError) {
@@ -686,15 +737,16 @@ export class AgentLoop implements AgentBackend {
       // Stream LLM response with retry
       const result = await this.streamWithRetry(systemPrompt, dynamicContext, signal);
 
-      const { text, toolCalls, assistantContent, assistantToolCalls } = result;
+      const { text, toolCalls: streamedToolCalls } = result;
+
+      // Extract tool calls via protocol (API mode uses streamed calls,
+      // inline mode parses XML from text)
+      const toolCalls = this.toolProtocol.extractToolCalls(text, streamedToolCalls);
 
       fullResponseText += text;
 
-      // Record the assistant message in conversation
-      this.conversation.addAssistantMessage(
-        assistantContent,
-        assistantToolCalls,
-      );
+      // Record the assistant message via protocol
+      this.toolProtocol.recordAssistant(this.conversation, text, toolCalls);
 
       // No tool calls → agent is done
       if (toolCalls.length === 0) break;
@@ -718,13 +770,30 @@ export class AgentLoop implements AgentBackend {
       // Execute tool calls — run read-only tools in parallel, permission-
       // requiring tools sequentially (to avoid overlapping permission prompts).
       const batchTotal = toolCalls.length;
+      const collectedResults: ProtocolToolResult[] = [];
+
       const executeSingle = async (tc: PendingToolCall, batchIndex?: number) => {
+        // Rewrite meta-tool calls (e.g., use_extension → actual tool)
+        tc = this.toolProtocol.rewriteToolCall(tc);
+
+        // Check for validation errors from rewrite (e.g., wrong extension params)
+        try {
+          const maybeError = JSON.parse(tc.argumentsJson);
+          if (maybeError._error) {
+            collectedResults.push({
+              callId: tc.id, toolName: tc.name,
+              content: maybeError._error, isError: true,
+            });
+            return;
+          }
+        } catch { /* not an error payload, continue */ }
+
         const tool = this.toolRegistry.get(tc.name);
         if (!tool) {
-          this.conversation.addToolResult(
-            tc.id,
-            `Error: Unknown tool "${tc.name}"`,
-          );
+          collectedResults.push({
+            callId: tc.id, toolName: tc.name,
+            content: `Unknown tool "${tc.name}"`, isError: true,
+          });
           return;
         }
 
@@ -732,10 +801,10 @@ export class AgentLoop implements AgentBackend {
         try {
           args = JSON.parse(tc.argumentsJson);
         } catch {
-          this.conversation.addToolResult(
-            tc.id,
-            `Error: Invalid JSON arguments for ${tc.name}`,
-          );
+          collectedResults.push({
+            callId: tc.id, toolName: tc.name,
+            content: `Invalid JSON arguments for ${tc.name}`, isError: true,
+          });
           return;
         }
 
@@ -750,11 +819,8 @@ export class AgentLoop implements AgentBackend {
             batchIndex, batchTotal: batchTotal > 1 ? batchTotal : undefined },
         );
 
-        // Add tool result to conversation (truncate large outputs to avoid
-        // blowing through the context window on a single tool call)
-        let content = result.isError
-          ? `Error: ${result.content}`
-          : result.content;
+        // Truncate large outputs to avoid blowing context
+        let content = result.content;
         const maxBytes = 16_384; // ~4k tokens
         if (content.length > maxBytes) {
           const headBytes = Math.floor(maxBytes * 0.6);
@@ -777,7 +843,10 @@ export class AgentLoop implements AgentBackend {
             ...lines.slice(tailStart),
           ].join("\n");
         }
-        this.conversation.addToolResult(tc.id, content);
+        collectedResults.push({
+          callId: tc.id, toolName: tc.name,
+          content, isError: result.isError,
+        });
       };
 
       // Partition into parallel-safe (read-only) and sequential (needs permission)
@@ -806,6 +875,9 @@ export class AgentLoop implements AgentBackend {
         if (signal.aborted) break;
         await executeSingle(tc, ++batchIdx);
       }
+
+      // Record all tool results via protocol
+      this.toolProtocol.recordResults(this.conversation, collectedResults);
 
       // Loop back — LLM sees tool results
     }
@@ -877,10 +949,6 @@ export class AgentLoop implements AgentBackend {
   ): Promise<{
     text: string;
     toolCalls: PendingToolCall[];
-    assistantContent: string | null;
-    assistantToolCalls:
-      | { id: string; function: { name: string; arguments: string } }[]
-      | undefined;
   }> {
     let text = "";
     const pendingToolCalls: PendingToolCall[] = [];
@@ -895,9 +963,26 @@ export class AgentLoop implements AgentBackend {
     // Let extensions transform the message array (compact, summarize, filter, etc.)
     const messages = this.handlers.call("conversation:prepare", rawMessages);
 
+    // Tool protocol controls what goes in the API tools param vs dynamic context
+    const apiTools = this.toolProtocol.getApiTools(this.toolRegistry.all());
+    const toolPrompt = this.toolProtocol.getToolPrompt(this.toolRegistry.all());
+
+    // Append tool catalog to dynamic context (closer to user query = better followed)
+    if (toolPrompt) {
+      const ctxMsg = messages[1]; // dynamic context user message
+      if (ctxMsg && typeof ctxMsg.content === "string") {
+        ctxMsg.content += "\n" + toolPrompt;
+      }
+    }
+
+    // Stream filter strips tool tags from display (inline mode only)
+    const streamFilter = this.toolProtocol.createStreamFilter(
+      this.toolRegistry.all().map((t) => t.name),
+    );
+
     const stream = await this.llmClient.stream({
       messages,
-      tools: this.toolRegistry.toAPITools(),
+      tools: apiTools,
       model: this.currentModel,
       reasoning_effort: this.shouldSendReasoningEffort() ? this.thinkingLevel : undefined,
       signal,
@@ -905,6 +990,16 @@ export class AgentLoop implements AgentBackend {
 
     for await (const chunk of stream) {
       if (signal.aborted) break;
+
+      // Token usage (may arrive in a chunk with empty choices)
+      if ((chunk as any).usage) {
+        const u = (chunk as any).usage;
+        this.bus.emit("agent:usage", {
+          prompt_tokens: u.prompt_tokens ?? 0,
+          completion_tokens: u.completion_tokens ?? 0,
+          total_tokens: u.total_tokens ?? 0,
+        });
+      }
 
       const choice = chunk.choices[0];
       if (!choice) continue;
@@ -914,9 +1009,15 @@ export class AgentLoop implements AgentBackend {
       // Text content
       if (delta?.content) {
         text += delta.content;
-        this.bus.emitTransform("agent:response-chunk", {
-          blocks: [{ type: "text", text: delta.content }],
-        });
+        // Filter tool tags from display output (inline mode)
+        const displayText = streamFilter
+          ? streamFilter.feed(delta.content)
+          : delta.content;
+        if (displayText) {
+          this.bus.emitTransform("agent:response-chunk", {
+            blocks: [{ type: "text", text: displayText }],
+          });
+        }
       }
 
       // Reasoning/thinking tokens (non-standard, e.g. DeepSeek)
@@ -945,31 +1046,21 @@ export class AgentLoop implements AgentBackend {
           }
         }
       }
+    }
 
-      // Token usage (final chunk from providers that support it)
-      if ((chunk as any).usage) {
-        const u = (chunk as any).usage;
-        this.bus.emit("agent:usage", {
-          prompt_tokens: u.prompt_tokens ?? 0,
-          completion_tokens: u.completion_tokens ?? 0,
-          total_tokens: u.total_tokens ?? 0,
+    // Flush any buffered content from the stream filter
+    if (streamFilter) {
+      const remaining = streamFilter.flush();
+      if (remaining) {
+        this.bus.emitTransform("agent:response-chunk", {
+          blocks: [{ type: "text", text: remaining }],
         });
       }
     }
 
-    // Build assistant tool calls for conversation recording
-    const assistantToolCalls = pendingToolCalls.length
-      ? pendingToolCalls.map((tc) => ({
-          id: tc.id,
-          function: { name: tc.name, arguments: tc.argumentsJson },
-        }))
-      : undefined;
-
     return {
       text,
       toolCalls: pendingToolCalls,
-      assistantContent: text || null,
-      assistantToolCalls,
     };
   }
 }

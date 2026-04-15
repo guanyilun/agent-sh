@@ -5,66 +5,112 @@
  * inside vim, htop, or ssh. Composites a floating response box on top
  * of the current terminal content.
  *
- * Requires: npm install @xterm/headless@5.5.0 @xterm/addon-serialize@0.13.0
+ * Uses createRemoteSession() to route the full tui-renderer pipeline
+ * (markdown, tool grouping, spinner, diffs) into the floating panel.
  *
- * Usage:
+ * Install:
+ *   cp examples/extensions/overlay-agent.ts ~/.agent-sh/extensions/
+ *
+ * Or load directly:
  *   agent-sh -e ./examples/extensions/overlay-agent.ts
  *
- *   # Or copy to ~/.agent-sh/extensions/ for permanent use:
- *   cp examples/extensions/overlay-agent.ts ~/.agent-sh/extensions/
+ * Requires: npm install @xterm/headless@5.5.0 @xterm/addon-serialize@0.13.0
  */
-import type { ExtensionContext } from "agent-sh/types";
-import { formatScreenContext } from "agent-sh/utils/terminal-buffer.js";
+import type { ExtensionContext, RemoteSession } from "../../src/types.js";
+import type { RenderSurface } from "../../src/utils/compositor.js";
+import { FloatingPanel } from "../../src/utils/floating-panel.js";
 
-const BOLD = "\x1b[1m";
-const CYAN = "\x1b[36m";
-const RESET = "\x1b[0m";
+/** Adapt a FloatingPanel to the RenderSurface interface. */
+function createPanelSurface(panel: FloatingPanel): RenderSurface {
+  return {
+    write(text: string): void {
+      // Handle \r (carriage return) — overwrite the current line.
+      // The spinner uses "\r  <content>\x1b[K" to update in-place.
+      if (text.startsWith("\r")) {
+        // Strip \r and any erase-line sequences
+        const cleaned = text.replace(/^\r/, "").replace(/\x1b\[\d*K/g, "");
+        if (cleaned.trim()) {
+          panel.updateLastLine(() => cleaned);
+        }
+        return;
+      }
 
-export default function activate({ bus, advise, createFloatingPanel, terminalBuffer }: ExtensionContext): void {
-  const panel = createFloatingPanel({
+      // Regular text — may contain newlines
+      panel.appendText(text);
+    },
+    writeLine(line: string): void {
+      panel.appendLine(line);
+    },
+    get columns(): number {
+      return panel.computeGeometry().contentW;
+    },
+  };
+}
+
+export default function activate(ctx: ExtensionContext): void {
+  const { bus, registerInstruction, createRemoteSession, terminalBuffer } = ctx;
+
+  const panel = new FloatingPanel(bus, {
     trigger: "\x1c", // Ctrl+\
     dimBackground: true,
-    autoDismissMs: 2000,
+    terminalBuffer: terminalBuffer ?? undefined,
   });
 
-  // ── Inject terminal buffer into agent context ──────────────
-  if (terminalBuffer) {
-    advise("context:build-extra", (next: () => string) =>
-      formatScreenContext(terminalBuffer.readScreen({ includeScrollback: true }), 80, next()),
-    );
-  }
+  const panelSurface = createPanelSurface(panel);
+  let session: RemoteSession | null = null;
 
-  // ── Panel lifecycle ────────────────────────────────────────
+  registerInstruction("Interactive Overlay Sessions", [
+    "When the dynamic context includes `interactive-session: true`, the user has summoned you",
+    "via a hotkey overlay from inside their live terminal. They may be in the middle of using",
+    "a program (vim, ssh, a REPL, etc.) or at a shell prompt. In this mode:",
+    "- Start with terminal_read if you need to understand what's on screen.",
+    "- Prefer terminal_keys to interact with whatever is currently running.",
+    "- Use user_shell only for running new, standalone commands — not for interacting with",
+    "  what's already on screen.",
+    "- Keep responses concise — the user is in the middle of a workflow.",
+  ].join("\n"));
+
+  // ── Panel lifecycle ────────────────────────────────────────────
+
   panel.handlers.advise("panel:submit", (_next, query: string) => {
+    if (!session) {
+      session = createRemoteSession({
+        surface: panelSurface,
+        suppressQueryBox: true,
+        interactive: true,
+      });
+    }
     panel.setActive();
-    panel.appendLine(`${CYAN}${BOLD}❯${RESET} ${query}`);
-    panel.appendLine("");
-    bus.emit("agent:submit", { query });
+    session.submit(query);
   });
 
-  // ── Stream agent response into panel ───────────────────────
-  bus.on("agent:response-chunk", (e) => {
-    if (!panel.active) return;
-    for (const block of e.blocks) {
-      if (block.type === "text" && block.text) {
-        panel.appendText(block.text);
-      }
+  panel.handlers.advise("panel:show", (_next) => {
+    // Re-establish session if panel is shown while agent is still working
+    if (panel.active && !session) {
+      session = createRemoteSession({
+        surface: panelSurface,
+        suppressQueryBox: true,
+        interactive: true,
+      });
     }
   });
 
-  bus.on("agent:tool-started", (e) => {
-    if (!panel.active) return;
-    panel.appendLine(`▶ ${e.title}${e.displayDetail ? " " + e.displayDetail : ""}`);
-  });
-
-  bus.on("agent:tool-completed", (e) => {
-    if (!panel.active) return;
-    const mark = e.exitCode === 0 ? " ✓" : ` ✗ exit ${e.exitCode}`;
-    panel.updateLastLine((line) => line + mark);
+  // On dismiss: close session only if agent is not actively processing.
+  // If agent is still working (phase="active"), keep session alive so
+  // output buffers in the panel and agent can keep executing tools.
+  panel.handlers.advise("panel:dismiss", (next) => {
+    next();
+    if (session && !panel.processing) {
+      session.close();
+      session = null;
+    }
   });
 
   bus.on("agent:processing-done", () => {
     if (!panel.active) return;
     panel.setDone();
+    // If panel was hidden while processing (passthrough), setDone()
+    // triggers dismiss() which closes the session above.
+    // If panel is still visible, session stays for the follow-up prompt.
   });
 }

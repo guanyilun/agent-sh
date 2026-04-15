@@ -45,6 +45,29 @@ export interface ToolDisplayInfo {
   icon?: string;
 }
 
+/** Interactive UI session — imperative control over rendering + input. */
+export interface InteractiveSession<T> {
+  /** Return lines to render. Called on mount and after each input. */
+  render(width: number): string[];
+  /** Handle raw input. Call done(result) to finish the session. */
+  handleInput(data: string, done: (result: T) => void): void;
+  /** Called when session starts. Receives invalidate() for async re-renders. */
+  onMount?(invalidate: () => void): void;
+  /** Called when session ends (cleanup). */
+  onUnmount?(): void;
+}
+
+/** Interactive UI capability passed to tools during execution. */
+export interface ToolUI {
+  /** Present a custom interactive UI and wait for the user's response. */
+  custom<T>(session: InteractiveSession<T>): Promise<T>;
+}
+
+/** Context passed to tool execute() as optional third parameter. */
+export interface ToolExecutionContext {
+  ui: ToolUI;
+}
+
 export interface ToolDefinition {
   name: string;
   /** Short label for TUI display (e.g. "search" instead of "ads_search"). Defaults to name. */
@@ -55,6 +78,7 @@ export interface ToolDefinition {
   execute(
     args: Record<string, unknown>,
     onChunk?: (chunk: string) => void,
+    ctx?: ToolExecutionContext,
   ): Promise<ToolResult>;
 
   /** Whether to stream tool output to the TUI (default: true). */

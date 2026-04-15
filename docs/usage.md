@@ -91,7 +91,15 @@ agent-sh --api-key dummy \
 
 ## Overlay Agent (Ctrl+\)
 
-Press **Ctrl+\\** anywhere — even inside vim, htop, or ssh — to summon the agent in a floating overlay. Type a query, and the agent's response streams into the panel.
+The overlay agent is an optional extension that lets you summon the agent from anywhere — even inside vim, htop, or ssh — by pressing **Ctrl+\\**. Type a query, and the agent's response streams into a floating panel.
+
+```bash
+# Install the extension
+cp examples/extensions/overlay-agent.ts ~/.agent-sh/extensions/
+
+# Or load directly
+agent-sh -e ./examples/extensions/overlay-agent.ts
+```
 
 The agent can read the terminal screen and send keystrokes via the built-in `terminal_read` and `terminal_keys` tools, enabling it to operate inside interactive programs.
 
@@ -186,7 +194,7 @@ When cycling across providers (e.g. from OpenAI to Ollama), the API key and base
 | Setting | Default | Description |
 |---|---|---|
 | `defaultProvider` | — | Which provider to use when no `--provider` flag is given |
-| `defaultBackend` | `"agent-sh"` | Which agent backend to activate. Set to an extension backend name (e.g. `"claude-code"`, `"pi"`) to use it by default |
+| `defaultBackend` | `"ash"` | Which agent backend to activate. Set to an extension backend name (e.g. `"claude-code"`, `"pi"`) to use it by default |
 | `extensions` | `[]` | Extensions to load (npm packages or file paths) |
 | `historySize` | `500` | Max agent query history entries (persisted across sessions) |
 | `contextWindowSize` | `20` | Recent exchanges included in agent context |
@@ -202,7 +210,7 @@ When cycling across providers (e.g. from OpenAI to Ollama), the API key and base
 
 On launch, agent-sh displays a structured startup banner showing:
 
-- **Backend** — which agent backend is active (`agent-sh`, `claude-code`, `pi`, etc.)
+- **Backend** — which agent backend is active (`ash`, `claude-code`, `pi`, etc.)
 - **Model** — current model with provider in brackets (e.g. `gpt-4o [openai]`)
 - **Extensions** — loaded extensions (from CLI `-e`, settings, or `~/.agent-sh/extensions/`)
 - **Skills** — discovered skills (global + project)

@@ -497,6 +497,11 @@ export class FloatingPanel {
     return this.phase !== "idle";
   }
 
+  /** Whether the agent is currently processing a query. */
+  get processing(): boolean {
+    return this.phase === "active";
+  }
+
   /** Whether the panel is currently visible on screen. */
   get visible(): boolean {
     return this._visible;
@@ -693,7 +698,7 @@ export class FloatingPanel {
   }
 
   getInput(): string {
-    return this.editor.buffer;
+    return this.editor.text;
   }
 
   requestRender(): void {
@@ -789,7 +794,7 @@ export class FloatingPanel {
     for (const action of actions) {
       switch (action.action) {
         case "submit": {
-          const query = this.editor.buffer.trim();
+          const query = this.editor.text.trim();
           if (!query) { this.hide(); return; }
           this.editor.pushHistory(query);
           this.phase = "active";
@@ -846,8 +851,8 @@ export class FloatingPanel {
       width: geo.contentW,
       height: geo.contentH,
       phase: this.phase,
-      inputBuffer: this.editor.buffer,
-      inputCursor: this.editor.cursor,
+      inputBuffer: this.editor.displayText,
+      inputCursor: this.editor.displayCursor,
       scrollOffset: this.scrollOffset,
       contentLines: this.contentLines,
       partialLine: this.currentPartialLine,
@@ -922,6 +927,11 @@ export class FloatingPanel {
     }
     this.suppressNextRedraw = true;
 
+    // Re-check alt screen state: the program we overlaid may have exited
+    // (e.g. agent quit vim via terminal_keys) while the panel was active.
+    const stillInAltScreen = !this.usedAltScreen && !!this.buffer?.altScreen;
+    const programExited = !this.usedAltScreen && !stillInAltScreen;
+
     if (this.usedAltScreen) {
       process.stdout.write("\x1b[?1049l");
     }
@@ -937,9 +947,11 @@ export class FloatingPanel {
     this.ptyBuffer = "";
     this.bus.emit("shell:stdout-release", {});
 
-    if (!this.usedAltScreen) {
-      // TUI app was running (vim, htop, etc.) — we didn't enter our own
-      // alt screen, so the app needs SIGWINCH to repaint its UI.
+    if (stillInAltScreen || programExited) {
+      // Either a TUI app is still running and needs SIGWINCH to repaint,
+      // or the overlaid program exited (e.g. agent quit vim) and we
+      // discarded its stale buffer — SIGWINCH makes the shell redraw
+      // its prompt cleanly.
       const cols = process.stdout.columns || 80;
       const rows = process.stdout.rows || 24;
       this.bus.emit("shell:pty-resize", { cols, rows: rows - 1 });

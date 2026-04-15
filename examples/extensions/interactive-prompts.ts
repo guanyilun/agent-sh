@@ -4,34 +4,36 @@
  * Adds permission gates for tool calls and file writes.
  * Without this extension, agent-sh runs in yolo mode (auto-approve).
  *
+ * Uses the interactive UI primitive for compositor-aware, themed rendering.
+ *
  * Usage:
- *   # Load by short name (built-in):
- *   agent-sh --extensions interactive-prompts
+ *   agent-sh -e ./examples/extensions/interactive-prompts.ts
  *
  *   # Or copy to ~/.agent-sh/extensions/ for permanent use:
  *   cp examples/extensions/interactive-prompts.ts ~/.agent-sh/extensions/
- *
- *   # Or install as an npm package and load by name:
- *   agent-sh --extensions my-prompts-package
  */
 import { renderDiff } from "agent-sh/utils/diff-renderer.js";
 import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
 import { palette as p } from "agent-sh/utils/palette.js";
 import type { ExtensionContext } from "agent-sh/types";
+import type { ToolUI } from "agent-sh/agent/types.js";
 
 export default function activate({ bus }: ExtensionContext) {
   let autoApproveWrites = false;
 
   bus.onPipeAsync("permission:request", async (payload) => {
+    const ui = payload.ui as ToolUI | undefined;
+    if (!ui) return payload;
+
     switch (payload.kind) {
       case "tool-call":
-        return handleToolCallPermission(payload);
+        return handleToolCall(payload, ui);
       case "file-write": {
         if (autoApproveWrites) {
-          return { ...payload, decision: { approved: true } };
+          return { ...payload, decision: { outcome: "approved" } };
         }
-        const result = await handleFileWritePermission(payload);
-        if (result.decision.autoApprove) {
+        const result = await handleFileWrite(payload, ui);
+        if ((result.decision as any).autoApprove) {
           autoApproveWrites = true;
         }
         return result;
@@ -42,120 +44,90 @@ export default function activate({ bus }: ExtensionContext) {
   });
 }
 
-async function handleToolCallPermission(payload) {
+async function handleToolCall(payload: any, ui: ToolUI) {
   const options = payload.metadata.options;
-  const answer = await promptPermission(payload.title);
+
+  const answer = await ui.custom<"approve" | "approve_all" | "deny">({
+    render(width) {
+      const boxW = Math.min(84, width);
+      return renderBoxFrame(
+        [`${p.bold}⚠ ${payload.title}${p.reset}`],
+        {
+          width: boxW,
+          style: "rounded",
+          borderColor: p.warning,
+          title: "Permission required",
+          footer: [`  ${p.dim}[y]es / [n]o / [a]llow all${p.reset}`],
+        },
+      );
+    },
+    handleInput(data, done) {
+      const ch = data.toLowerCase();
+      if (ch === "y") done("approve");
+      else if (ch === "a") done("approve_all");
+      else if (ch === "n" || ch === "\x1b") done("deny");
+    },
+  });
 
   if (answer === "approve" || answer === "approve_all") {
-    const option = answer === "approve_all"
-      ? options.find((o) => o.kind === "allow_always") ?? options.find((o) => o.kind === "allow_once")
-      : options.find((o) => o.kind === "allow_once" || o.kind === "allow_always");
+    const kind = answer === "approve_all" ? "allow_always" : "allow_once";
+    const option = options?.find((o: any) => o.kind === kind)
+      ?? options?.find((o: any) => o.kind === "allow_once" || o.kind === "allow_always");
     if (option) {
       return { ...payload, decision: { outcome: "selected", optionId: option.optionId } };
     }
+    return { ...payload, decision: { outcome: "approved" } };
   }
   return { ...payload, decision: { outcome: "cancelled" } };
 }
 
-async function handleFileWritePermission(payload) {
+async function handleFileWrite(payload: any, ui: ToolUI) {
   const diff = payload.metadata.diff;
-  const filePath = payload.metadata.path;
-  const answer = await previewDiff({ path: filePath, diff });
+  const filePath = payload.metadata.path ?? payload.title;
+
+  const answer = await ui.custom<"approve" | "approve_all" | "reject">({
+    render(width) {
+      const boxW = Math.min(84, width);
+      const contentW = boxW - 4;
+      const MAX_DISPLAY = 25;
+
+      const stats = diff.isNewFile
+        ? `(+${diff.added} lines)`
+        : `(+${diff.added} / -${diff.removed})`;
+      const title = diff.isNewFile
+        ? `new: ${filePath}  ${stats}`
+        : `${filePath}  ${stats}`;
+
+      const diffLines = renderDiff(diff, {
+        width: contentW,
+        filePath,
+        maxLines: MAX_DISPLAY,
+        trueColor: true,
+        mode: "unified",
+      });
+      const content = ["", ...diffLines.slice(1), ""];
+
+      return renderBoxFrame(content, {
+        width: boxW,
+        style: "rounded",
+        borderColor: p.warning,
+        title,
+        footer: [`  ${p.bold}[y] Apply  [n] Skip  [a] Don't ask again${p.reset}`],
+      });
+    },
+    handleInput(data, done) {
+      const ch = data.toLowerCase();
+      if (ch === "y") done("approve");
+      else if (ch === "a") done("approve_all");
+      else if (ch === "n" || ch === "\x1b") done("reject");
+    },
+  });
+
   if (answer === "approve") {
-    return { ...payload, decision: { approved: true } };
+    return { ...payload, decision: { outcome: "approved" } };
   }
   if (answer === "approve_all") {
-    return { ...payload, decision: { approved: true, autoApprove: true } };
+    return { ...payload, decision: { outcome: "approved", autoApprove: true } };
   }
-  return { ...payload, decision: { approved: false } };
-}
-
-async function promptPermission(title) {
-  const termW = process.stdout.columns || 80;
-  const boxW = Math.min(84, termW);
-
-  const framed = renderBoxFrame(
-    [`${p.bold}⚠ ${title}${p.reset}`],
-    {
-      width: boxW,
-      style: "rounded",
-      borderColor: p.warning,
-      title: "Permission required",
-      footer: [`  ${p.dim}[y]es / [n]o / [a]llow all${p.reset}`],
-    },
-  );
-
-  process.stdout.write("\n");
-  for (const line of framed) {
-    process.stdout.write(line + "\n");
-  }
-  process.stdout.write("  ");
-
-  return new Promise((resolve) => {
-    const handler = (data) => {
-      const ch = data.toString("utf-8").toLowerCase();
-      process.stdin.removeListener("data", handler);
-      process.stdout.write("\n");
-
-      if (ch === "y") resolve("approve");
-      else if (ch === "a") resolve("approve_all");
-      else resolve(null);
-    };
-    process.stdin.on("data", handler);
-  });
-}
-
-async function previewDiff(opts) {
-  const termW = process.stdout.columns || 80;
-  const boxW = Math.min(84, termW);
-  const contentW = boxW - 4;
-  const MAX_DISPLAY = 25;
-
-  const stats = opts.diff.isNewFile
-    ? `(+${opts.diff.added} lines)`
-    : `(+${opts.diff.added} / -${opts.diff.removed})`;
-  const title = opts.diff.isNewFile
-    ? `new: ${opts.path}  ${stats}`
-    : `${opts.path}  ${stats}`;
-
-  const diffLines = renderDiff(opts.diff, {
-    width: contentW,
-    filePath: opts.path,
-    maxLines: MAX_DISPLAY,
-    trueColor: true,
-    mode: "unified",
-  });
-  const content = ["", ...diffLines.slice(1), ""];
-
-  const framed = renderBoxFrame(content, {
-    width: boxW,
-    style: "rounded",
-    borderColor: p.warning,
-    title,
-    footer: [`  ${p.bold}[y] Apply  [n] Skip  [a] Don't ask again${p.reset}`],
-  });
-
-  process.stdout.write("\n");
-  for (const line of framed) {
-    process.stdout.write(line + "\n");
-  }
-
-  return new Promise((resolve) => {
-    const handler = (data) => {
-      const ch = data.toString("utf-8").toLowerCase();
-      process.stdin.removeListener("data", handler);
-
-      if (ch === "y") {
-        process.stdout.write(`  ${p.success}✓ Applied${p.reset}\n`);
-        resolve("approve");
-      } else if (ch === "a") {
-        process.stdout.write(`  ${p.success}✓ Applied (auto-approve on)${p.reset}\n`);
-        resolve("approve_all");
-      } else {
-        process.stdout.write(`  ${p.error}✗ Skipped${p.reset}\n`);
-        resolve("reject");
-      }
-    };
-    process.stdin.on("data", handler);
-  });
+  return { ...payload, decision: { outcome: "cancelled" } };
 }
