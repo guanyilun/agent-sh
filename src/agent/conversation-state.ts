@@ -370,6 +370,12 @@ export class ConversationState {
     return this.nuclearEntries.length;
   }
 
+  /** Formatted nuclear summary text (one line per entry), or null if empty. */
+  getNuclearSummary(): string | null {
+    if (this.nuclearEntries.length === 0) return null;
+    return this.nuclearEntries.map(formatNuclearLine).join("\n");
+  }
+
   getRecallArchiveSize(): number {
     return this.recallArchive.size;
   }

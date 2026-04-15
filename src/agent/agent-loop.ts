@@ -121,6 +121,9 @@ export class AgentLoop implements AgentBackend {
     const getToolsPipe = () => ({ tools: this.getTools() });
     this.bus.onPipe("agent:get-tools", getToolsPipe);
     this.ctorPipeListeners.push({ event: "agent:get-tools", fn: getToolsPipe });
+    const getNuclearPipe = () => ({ summary: this.conversation.getNuclearSummary() });
+    this.bus.onPipe("agent:get-nuclear-summary", getNuclearPipe);
+    this.ctorPipeListeners.push({ event: "agent:get-nuclear-summary", fn: getNuclearPipe });
   }
 
   /** Subscribe to bus events — activates this backend. */
