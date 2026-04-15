@@ -7,7 +7,7 @@ import { CONFIG_DIR, getSettings } from "../settings.js";
 import type { EventBus } from "../event-bus.js";
 import type { InputModeConfig } from "../types.js";
 
-const HISTORY_FILE = path.join(CONFIG_DIR, "history");
+const HISTORY_FILE = path.join(CONFIG_DIR, "input-history");
 
 /**
  * Narrow contract between InputHandler and its host (Shell).
