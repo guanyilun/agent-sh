@@ -36,7 +36,7 @@ See [Context Management](context-management.md) for the full design: token budge
 
 The system prompt is rebuilt on **every LLM call** (not cached), so context is always fresh. It includes:
 
-1. **Identity** — "You are an AI coding assistant in ash..."
+1. **Identity** — "You are an AI coding assistant in agent-sh..."
 2. **Tool decision guide** — when to use scratchpad tools vs display vs user_shell
 3. **Available tools** — name + description of every registered tool
 4. **Tool usage guidelines** — read before editing, prefer edit over write, use grep/glob to find files, etc.

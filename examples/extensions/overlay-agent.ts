@@ -1,5 +1,5 @@
 /**
- * Built-in overlay agent.
+ * Overlay agent extension.
  *
  * Provides a hotkey (Ctrl+\) to summon the agent from anywhere — even
  * inside vim, htop, or ssh. Composites a floating response box on top
@@ -8,11 +8,17 @@
  * Uses createRemoteSession() to route the full tui-renderer pipeline
  * (markdown, tool grouping, spinner, diffs) into the floating panel.
  *
+ * Install:
+ *   cp examples/extensions/overlay-agent.ts ~/.agent-sh/extensions/
+ *
+ * Or load directly:
+ *   agent-sh -e ./examples/extensions/overlay-agent.ts
+ *
  * Requires: npm install @xterm/headless@5.5.0 @xterm/addon-serialize@0.13.0
  */
-import type { ExtensionContext, RemoteSession } from "../types.js";
-import type { RenderSurface } from "../utils/compositor.js";
-import type { FloatingPanel } from "../utils/floating-panel.js";
+import type { ExtensionContext, RemoteSession } from "../../src/types.js";
+import type { RenderSurface } from "../../src/utils/compositor.js";
+import { FloatingPanel } from "../../src/utils/floating-panel.js";
 
 /** Adapt a FloatingPanel to the RenderSurface interface. */
 function createPanelSurface(panel: FloatingPanel): RenderSurface {
@@ -42,11 +48,12 @@ function createPanelSurface(panel: FloatingPanel): RenderSurface {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, registerInstruction, createFloatingPanel, createRemoteSession } = ctx;
+  const { bus, registerInstruction, createRemoteSession, terminalBuffer } = ctx;
 
-  const panel = createFloatingPanel({
+  const panel = new FloatingPanel(bus, {
     trigger: "\x1c", // Ctrl+\
     dimBackground: true,
+    terminalBuffer: terminalBuffer ?? undefined,
   });
 
   const panelSurface = createPanelSurface(panel);

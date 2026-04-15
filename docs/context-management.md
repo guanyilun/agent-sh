@@ -2,11 +2,11 @@
 
 ## Design Philosophy
 
-Most coding agents treat context as a session problem — you start a chat, work on something, and eventually the context fills up or you start a new session. This works when the agent owns the entire interaction, but ash is different: **we live in a terminal.**
+Most coding agents treat context as a session problem — you start a chat, work on something, and eventually the context fills up or you start a new session. This works when the agent owns the entire interaction, but agent-sh is different: **we live in a terminal.**
 
 The terminal is continuous. You run commands, switch between tasks, help a colleague, come back to what you were doing. Nobody thinks about "sessions" when using a shell. Shell history is just *there* — always available, always growing, persisting across restarts. You never manage it, but you can always search it.
 
-This is the model ash follows for context management:
+This is the model agent-sh follows for context management:
 
 **No sessions.** There's no "new session" or "clear." History is continuous and append-only, like `.zsh_history`. Old content naturally rolls through tiers of decreasing resolution — full content, then one-liner summaries, then a persistent file on disk.
 
@@ -20,7 +20,7 @@ This is the model ash follows for context management:
 
 ## How It Works
 
-ash manages context like shell history — it's always there, it persists across restarts, there are no explicit sessions. Content flows through three tiers at decreasing resolution, ensuring the agent always has a timeline of what happened while keeping within the model's context window.
+agent-sh manages context like shell history — it's always there, it persists across restarts, there are no explicit sessions. Content flows through three tiers at decreasing resolution, ensuring the agent always has a timeline of what happened while keeping within the model's context window.
 
 ## The Two Streams
 
@@ -101,7 +101,7 @@ When nuclear entries accumulate past `nuclearMaxEntries` (default 200), oldest e
 
 On startup, the last `historyStartupEntries` (default 50) entries are loaded so the agent knows what happened in prior terminal sessions.
 
-**Multi-shell**: Multiple ash instances share the same history file. Each line is well under PIPE_BUF, so `O_APPEND` writes are atomic. Only file truncation (when exceeding `historyMaxBytes`) uses a lock file.
+**Multi-shell**: Multiple agent-sh instances share the same history file. Each line is well under PIPE_BUF, so `O_APPEND` writes are atomic. Only file truncation (when exceeding `historyMaxBytes`) uses a lock file.
 
 **Format**: One JSON object per line, inspectable with `jq`:
 ```json

@@ -1,8 +1,8 @@
-# Using ash as a Library
+# Using agent-sh as a Library
 
 ## Library vs Extension
 
-ash has two integration points. The difference: **extensions customize the existing TUI**, while **library mode lets you build your own frontend**.
+agent-sh has two integration points. The difference: **extensions customize the existing TUI**, while **library mode lets you build your own frontend**.
 
 | | Extension | Library |
 |---|---|---|
@@ -73,7 +73,7 @@ const extCtx = core.extensionContext({ quit: () => process.exit(0) });
 
 // Load built-in extensions (includes agent-backend, tui-renderer, etc.)
 // Optionally disable specific ones:
-await loadBuiltinExtensions(extCtx, ["tui-renderer", "overlay-agent"]);
+await loadBuiltinExtensions(extCtx, ["tui-renderer"]);
 
 // Load your own extensions
 import myTheme from "./my-theme";

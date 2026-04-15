@@ -25,7 +25,6 @@ import * as settingsMod from "./settings.js";
 import { HandlerRegistry } from "./utils/handler-registry.js";
 import { TerminalBuffer } from "./utils/terminal-buffer.js";
 import crypto from "node:crypto";
-import { FloatingPanel, type FloatingPanelConfig } from "./utils/floating-panel.js";
 import { DefaultCompositor, StdoutSurface } from "./utils/compositor.js";
 
 // Re-export types that library consumers need
@@ -206,10 +205,6 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         advise: (name, wrapper) => handlers.advise(name, wrapper),
         call: (name, ...args) => handlers.call(name, ...args),
         get terminalBuffer() { return getTerminalBuffer(); },
-        createFloatingPanel: (config: FloatingPanelConfig) => {
-          const tb = config.dimBackground !== false ? getTerminalBuffer() : null;
-          return new FloatingPanel(bus, { ...config, terminalBuffer: tb ?? undefined });
-        },
         compositor,
         createRemoteSession: (opts: RemoteSessionOptions): RemoteSession => {
           const { surface } = opts;

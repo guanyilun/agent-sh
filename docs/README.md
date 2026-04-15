@@ -1,4 +1,4 @@
-# ash Documentation
+# agent-sh Documentation
 
 ## Guides
 
@@ -8,5 +8,5 @@
 - [Architecture](architecture.md) — design philosophy, component overview, project structure
 - [Extensions](extensions.md) — event bus, content transforms, custom backends, theming
 - [TUI Composition](tui-composition.md) — compositor, render surfaces, stream routing
-- [Library Usage](library.md) — embedding ash in your own apps
+- [Library Usage](library.md) — embedding agent-sh in your own apps
 - [Troubleshooting](troubleshooting.md) — common errors and debug mode

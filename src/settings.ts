@@ -96,7 +96,7 @@ export interface Settings {
   promptIndicator?: boolean;
 
   // ── Built-in extensions ──────────────────────────────────
-  /** Names of built-in extensions to disable (e.g. ["command-suggest", "overlay-agent"]). */
+  /** Names of built-in extensions to disable (e.g. ["command-suggest"]). */
   disabledBuiltins?: string[];
 }
 

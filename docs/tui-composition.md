@@ -1,6 +1,6 @@
 # TUI Composition
 
-How ash routes rendered output to different surfaces (stdout, floating panels, test buffers) and how extensions intercept or redirect that output.
+How agent-sh routes rendered output to different surfaces (stdout, floating panels, test buffers) and how extensions intercept or redirect that output.
 
 ## Overview
 
@@ -270,7 +270,7 @@ The compositor sits between "produce lines" and "display lines". It doesn't affe
 |---|---|
 | `src/utils/compositor.ts` | `RenderSurface`, `Compositor`, `DefaultCompositor`, `StdoutSurface` |
 | `src/extensions/tui-renderer.ts` | Main renderer — writes to compositor streams |
-| `src/extensions/overlay-agent.ts` | Uses `createRemoteSession` to route to floating panel |
+| `examples/extensions/overlay-agent.ts` | Uses `createRemoteSession` to route to floating panel |
 | `src/utils/floating-panel.ts` | Panel screen management and content API |
 | `src/core.ts` | Creates compositor, registers default surfaces, implements `createRemoteSession` |
 | `src/types.ts` | `ExtensionContext.compositor`, `RemoteSession`, `RemoteSessionOptions` |

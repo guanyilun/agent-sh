@@ -20,7 +20,6 @@ export const BUILTIN_EXTENSIONS: Array<{
   { name: "shell-recall",     load: () => import("./shell-recall.js").then(m => m.default) },
   { name: "command-suggest",   load: () => import("./command-suggest.js").then(m => m.default) },
   { name: "terminal-buffer",   load: () => import("./terminal-buffer.js").then(m => m.default) },
-  { name: "overlay-agent",     load: () => import("./overlay-agent.js").then(m => m.default) },
 ];
 
 /**

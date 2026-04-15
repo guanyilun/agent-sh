@@ -50,7 +50,7 @@ TypeScript and JavaScript are both supported (`.ts`, `.tsx`, `.mts`, `.js`, `.mj
 | `bus` | `EventBus` | Subscribe to events, emit events, register pipe handlers |
 | `contextManager` | `ContextManager` | Access exchange history, cwd, search, expand |
 | `instanceId` | `string` | Stable per-instance identifier (4-char hex) |
-| `quit` | `() => void` | Exit ash |
+| `quit` | `() => void` | Exit agent-sh |
 | `setPalette` | `(overrides) => void` | Override color palette slots for theming |
 | `createBlockTransform` | `(opts) => void` | Register an inline delimiter transform (e.g. `$$...$$`) |
 | `createFencedBlockTransform` | `(opts) => void` | Register a fenced block transform (e.g. ` ```lang...``` `) |
@@ -61,7 +61,6 @@ TypeScript and JavaScript are both supported (`.ts`, `.tsx`, `.mts`, `.js`, `.mj
 | `advise` | `(name, wrapper) => void` | Wrap a named handler (receives `next` + args) |
 | `call` | `(name, ...args) => any` | Call a named handler |
 | `terminalBuffer` | `TerminalBuffer \| null` | Shared headless xterm.js buffer mirroring PTY output (lazy singleton, null if `@xterm/headless` not installed) |
-| `createFloatingPanel` | `(config: FloatingPanelConfig) => FloatingPanel` | Create a floating panel overlay with composited rendering, input routing, and handler-based customization |
 | `compositor` | `Compositor` | Routes named render streams to surfaces. See [TUI Composition](tui-composition.md) |
 | `createRemoteSession` | `(opts: RemoteSessionOptions) => RemoteSession` | Create a remote session that routes agent output to a surface. See [Remote Sessions](#remote-sessions) |
 
@@ -280,11 +279,11 @@ Built-in extensions load first (via a declarative manifest), then user extension
 
 ### Real-world bridges
 
-The echo-backend shows the protocol. The `examples/extensions/` directory has two production bridges that wire real agent SDKs into ash. They follow the same pattern — the difference is just which SDK they translate.
+The echo-backend shows the protocol. The `examples/extensions/` directory has two production bridges that wire real agent SDKs into agent-sh. They follow the same pattern — the difference is just which SDK they translate.
 
 #### Claude Code Bridge (`claude-code-bridge/`)
 
-Runs the [Claude Code Agent SDK](https://docs.anthropic.com/en/docs/claude-code/sdk) in-process. Claude Code handles model selection, tool execution, and permissions — ash provides the shell and TUI.
+Runs the [Claude Code Agent SDK](https://docs.anthropic.com/en/docs/claude-code/sdk) in-process. Claude Code handles model selection, tool execution, and permissions — agent-sh provides the shell and TUI.
 
 ```bash
 cp -r examples/extensions/claude-code-bridge ~/.agent-sh/extensions/
@@ -297,7 +296,7 @@ cd ~/.agent-sh/extensions/claude-code-bridge && npm install
 1. **Registers as backend** via `agent:register-backend`
 2. **Creates a `user_shell` MCP tool** using the SDK's `tool()` + `createSdkMcpServer()`, wired to `bus.emitPipeAsync("shell:exec-request", ...)`. This gives Claude Code access to the live PTY.
 3. **On each `agent:submit`**, calls the SDK's `query()` with the user's prompt, a system prompt preset, and the MCP server attached
-4. **Iterates the SDK's async iterator** — maps `stream_event` (text/thinking deltas) and `assistant` messages (tool use blocks) to ash events (`agent:response-chunk`, `agent:thinking-chunk`, `agent:tool-started`)
+4. **Iterates the SDK's async iterator** — maps `stream_event` (text/thinking deltas) and `assistant` messages (tool use blocks) to agent-sh events (`agent:response-chunk`, `agent:thinking-chunk`, `agent:tool-started`)
 
 #### Pi Bridge (`pi-bridge/`)
 
@@ -313,7 +312,7 @@ cd ~/.agent-sh/extensions/pi-bridge && npm install
 
 1. **Registers as backend** with an async `start()` — pi needs to boot (load config from `~/.pi/`, create services, initialize tools)
 2. **Creates a `user_shell` tool** using pi's `ToolDefinition` interface (TypeBox schema). Includes `promptGuidelines` — pi's way of injecting per-tool instructions into the system prompt.
-3. **Subscribes to pi's event stream** (`session.subscribe`) — maps pi events to ash events:
+3. **Subscribes to pi's event stream** (`session.subscribe`) — maps pi events to agent-sh events:
    - `message_update` → `agent:response-chunk` or `agent:thinking-chunk`
    - `tool_execution_start/update/end` → `agent:tool-started`, `agent:tool-output-chunk`, `agent:tool-completed`
    - `agent_end` → `agent:response-done` + `agent:processing-done`
@@ -326,7 +325,7 @@ Both bridges follow the same 5-step structure:
 1. **Register as backend** — emit `agent:register-backend` with `name`, `start()`, `kill()`
 2. **Create a `user_shell` tool** in the target SDK's format — wire it to `bus.emitPipeAsync("shell:exec-request", ...)` so the external agent can run commands in the live PTY
 3. **Listen for `agent:submit`** — forward the query to the external agent
-4. **Map the agent's events** to ash bus events (response chunks, tool starts/completions, thinking, errors)
+4. **Map the agent's events** to agent-sh bus events (response chunks, tool starts/completions, thinking, errors)
 5. **Handle cancellation and reset** — wire `agent:cancel-request` and `agent:reset-session`
 
 The difference between the two bridges is just SDK shape: Claude Code uses an async iterator you `for await` over; pi uses a subscription callback. The translation layer is the same.
@@ -588,7 +587,7 @@ Each trigger character can only be claimed by one mode. Slash commands and readl
 
 ## Terminal Buffer & Floating Panel
 
-ash exposes two core utilities for building interactive terminal overlays.
+agent-sh exposes two core utilities for building interactive terminal overlays.
 
 ### TerminalBuffer
 
@@ -667,7 +666,7 @@ open() → [input] → submit → [active] → setDone() → [input] (follow-up)
 
 **Passthrough mode**: When the user hides the panel while the agent is still working (`active` phase), the panel enters passthrough mode instead of handing rendering back to the foreground program. It stays on alt screen with stdout held, and renders the TerminalBuffer content directly at 50ms intervals. This avoids ncurses curscr desync — the program's screen stays correct because we do full repaints, not differential updates. When the agent finishes (`setDone()`), passthrough auto-dismisses and hands back control via a SIGWINCH double-resize that forces ncurses to do a clean full repaint.
 
-**Session lifecycle with RemoteSession**: When using a FloatingPanel with `createRemoteSession` (as in the built-in overlay agent), the session controls compositor routing — all agent output goes to the panel surface while the session is active. Session lifetime follows these rules:
+**Session lifecycle with RemoteSession**: When using a FloatingPanel with `createRemoteSession` (as in the [overlay agent](../examples/extensions/overlay-agent.ts) example), the session controls compositor routing — all agent output goes to the panel surface while the session is active. Session lifetime follows these rules:
 
 - **Created** on first submit (or re-created on show if previously closed)
 - **Stays alive** when the panel is hidden during `active` phase — the agent keeps processing in the background, output buffers in the panel, and the agent can still execute tools (terminal keys, shell commands)
@@ -826,7 +825,7 @@ Rendering components follow a **return lines, don't write** convention — each 
 
 ## Yolo Mode
 
-By default, ash runs in **yolo mode** — all tool calls and file writes are auto-approved. To add permission prompts, load the example extension:
+By default, agent-sh runs in **yolo mode** — all tool calls and file writes are auto-approved. To add permission prompts, load the example extension:
 
 ```bash
 npm start -- -e ./examples/extensions/interactive-prompts.ts
@@ -837,7 +836,7 @@ cp examples/extensions/interactive-prompts.ts ~/.agent-sh/extensions/
 
 ## Theming
 
-ash uses a semantic color palette (~10 base roles). Override any slot via `setPalette()`:
+agent-sh uses a semantic color palette (~10 base roles). Override any slot via `setPalette()`:
 
 ```typescript
 export default function activate({ setPalette }) {

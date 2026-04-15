@@ -1,6 +1,6 @@
 # Architecture
 
-ash is a shell with a pluggable AI backend. The shell is the product — the agent is a bus-driven component that self-wires to events.
+agent-sh is a shell with a pluggable AI backend. The shell is the product — the agent is a bus-driven component that self-wires to events.
 
 ## Design Philosophy: Pure Kernel + Everything Is an Extension
 
@@ -25,7 +25,6 @@ index.ts — interactive terminal frontend:
   │     shell-recall      — shell_recall terminal interception
   │     command-suggest   — fix suggestions on failed commands (fast-path LLM)
   │     terminal-buffer   — terminal_read + terminal_keys tools
-  │     overlay-agent     — Ctrl+\ floating overlay agent
   │
   ├── Shared utilities:
   │     palette           — semantic color system (accent, success, warning, error, muted)
@@ -36,22 +35,22 @@ index.ts — interactive terminal frontend:
   │     stream-transform  — content block transforms for response pipeline
   │
   └── User extensions (opt-in, loaded from -e flag / settings.json / extensions dir):
-        e.g. interactive-prompts, solarized-theme, latex-images, peer-mesh
+        e.g. overlay-agent, interactive-prompts, solarized-theme, latex-images, peer-mesh
 ```
 
 All components communicate exclusively through typed bus events. The backend has no reference to Shell — it emits lifecycle events and the TUI subscribes. Input flows the same way: any frontend emits `agent:submit` and the backend handles it.
 
 Built-in extensions are loaded from a declarative manifest and can be individually disabled via the `disabledBuiltins` setting in `~/.agent-sh/settings.json`. This means even the built-in agent can be disabled (e.g., for users who only use extension backends like Claude Code).
 
-**The core works without any frontend.** See [Library](library.md) for embedding ash in your own apps.
+**The core works without any frontend.** See [Library](library.md) for embedding agent-sh in your own apps.
 
 ## How It Works
 
-1. ash spawns a real PTY running your shell (zsh or bash, with your full rc config) and sets up raw stdin passthrough
+1. agent-sh spawns a real PTY running your shell (zsh or bash, with your full rc config) and sets up raw stdin passthrough
 2. Built-in extensions load (including the agent backend, which registers via `agent:register-backend`), then user extensions
 3. `activateBackend()` wires the chosen backend to bus events
 4. All keyboard input goes directly to the PTY — zero latency, full terminal compatibility
-4. When you type `>` at the start of a line, ash intercepts and enters agent input mode
+4. When you type `>` at the start of a line, agent-sh intercepts and enters agent input mode
 5. On Enter, the query is emitted as `agent:submit` and the agent decides which tools to use
 6. The backend handles the query — streaming LLM responses, executing tools, emitting events. Read-only tools run in parallel; permission-requiring tools run sequentially.
 7. The TUI renderer extension renders streamed content inline (markdown, diffs, tool calls with tree-style grouping)
@@ -101,7 +100,7 @@ All backends emit the same bus events. The TUI, extensions, and library consumer
 
 ## Key Extension Points
 
-The extension system provides several composable primitives for customizing ash. Each is documented in detail in the [Extensions](extensions.md) guide:
+The extension system provides several composable primitives for customizing agent-sh. Each is documented in detail in the [Extensions](extensions.md) guide:
 
 - **[Event Bus](extensions.md#event-bus)** — typed pub/sub (`on`/`emit`), synchronous transform chains (`onPipe`/`emitPipe`), async transform chains (`onPipeAsync`/`emitPipeAsync`), and transform-then-notify (`emitTransform`)
 - **[Custom Agent Backends](extensions.md#custom-agent-backends)** — replace the entire agent backend via `agent:register-backend`
@@ -160,11 +159,11 @@ agent-sh/
 │       ├── tui-renderer.ts, slash-commands.ts
 │       ├── file-autocomplete.ts, shell-recall.ts
 │       ├── command-suggest.ts
-│       ├── terminal-buffer.ts  # terminal_read + terminal_keys tools
-│       └── overlay-agent.ts    # Ctrl+\ floating overlay agent
+│       └── terminal-buffer.ts  # terminal_read + terminal_keys tools
 │
 ├── examples/                 # Example extensions and agent integrations
 │   └── extensions/
+│       ├── overlay-agent.ts  # Ctrl+\ floating overlay agent
 │       ├── peer-mesh.ts      # Cross-instance communication (Ray-inspired)
 │       ├── tmux-pane.ts      # Tmux side pane output/interactive modes
 │       ├── claude-code-bridge/  # Claude Code SDK backend
