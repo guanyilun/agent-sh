@@ -38,10 +38,11 @@ The system prompt is rebuilt on **every LLM call** (not cached), so context is a
 
 1. **Identity** — "You are an AI coding assistant in agent-sh..."
 2. **Tool decision guide** — when to use scratchpad tools
-3. **Available tools** — name + description of every registered tool
-4. **Tool usage guidelines** — read before editing, prefer edit over write, use grep/glob to find files, etc.
-5. **Shell context** — the assembled context from above
-6. **Metadata** — current date, working directory
+3. **Tool usage guidelines** — read before editing, prefer edit over write, use grep/glob to find files, etc.
+4. **Extension instructions** — blocks registered by extensions via `registerInstruction()` (e.g. proactive recall guidance)
+5. **Available tools** — name + description of every registered tool
+6. **Shell context** — the assembled context from above
+7. **Metadata** — current date, working directory
 
 ## Project Conventions
 

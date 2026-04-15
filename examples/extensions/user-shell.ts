@@ -5,7 +5,7 @@
  * shell — affecting real shell state (cd, export, source). Also registers
  * system prompt guidance so the agent knows when to use it.
  *
- * Without this extension, the agent only has the isolated bash tool and display.
+ * Without this extension, the agent only has the isolated bash tool.
  *
  * Usage:
  *   agent-sh -e ./examples/extensions/user-shell.ts
@@ -33,7 +33,7 @@ You have access to user_shell, which runs commands in the user's live shell (PTY
 - The user sees output directly — do not repeat or summarize it.
 - Use it for: cd, export, source, installing packages, starting servers, git commands.
 - Set return_output=true only if you need to inspect the result.
-- When the user asks to see, list, view, or display anything, use user_shell or display.
+- When the user asks to see, list, view, or display anything, use user_shell.
   Internal tools (bash, read, ls, etc.) run in an isolated subprocess — the user cannot see their output.
 - Only use internal tools when you need to reason about content silently.`);
 }

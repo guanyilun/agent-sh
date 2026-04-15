@@ -99,7 +99,7 @@ Key behaviors:
 
 When nuclear entries accumulate past `nuclearMaxEntries` (default 200), oldest entries flush to `~/.agent-sh/history` — a JSONL file that persists across restarts.
 
-On startup, the last `historyStartupEntries` (default 50) entries are loaded so the agent knows what happened in prior terminal sessions.
+On startup, the last `historyStartupEntries` (default 100) non-read-only entries are loaded so the agent knows what happened in prior terminal sessions. Read-only tools (`read_file`, `grep`, `glob`, `ls`) are filtered out at load time to maximize the number of meaningful entries.
 
 **Multi-shell**: Multiple agent-sh instances share the same history file. Each line is well under PIPE_BUF, so `O_APPEND` writes are atomic. Only file truncation (when exceeding `historyMaxBytes`) uses a lock file.
 
@@ -169,7 +169,7 @@ All settings in `~/.agent-sh/settings.json`:
 | `shellContextRatio` | 0.35 | Fraction of content budget for shell context |
 | `recallExpandMaxLines` | 100 | Max lines shell_recall returns without line ranges |
 | `historyMaxBytes` | 102400 | Max history file size (100KB) |
-| `historyStartupEntries` | 50 | Prior history entries loaded on startup |
+| `historyStartupEntries` | 100 | Prior history entries loaded on startup (read-only tools filtered) |
 | `nuclearMaxEntries` | 200 | Max nuclear entries in-context before flushing to disk |
 
 ## Key Files

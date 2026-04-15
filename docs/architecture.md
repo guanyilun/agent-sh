@@ -136,7 +136,7 @@ agent-sh/
 │   │   ├── subagent.ts       # Subagent orchestration
 │   │   └── tools/            # Built-in tool implementations
 │   │       ├── bash.ts, read-file.ts, write-file.ts, edit-file.ts
-│   │       ├── grep.ts, glob.ts, ls.ts, user-shell.ts, display.ts
+│   │       ├── grep.ts, glob.ts, ls.ts
 │   │       └── list-skills.ts
 │   │
 │   ├── utils/                # Shared primitives
@@ -166,6 +166,8 @@ agent-sh/
 │       ├── peer-mesh.ts         # Cross-instance communication
 │       ├── tmux-pane.ts         # Tmux side pane output/interactive modes
 │       ├── web-access.ts        # Web search and content extraction
+│       ├── user-shell.ts        # Run commands in the live PTY
+│       ├── questionnaire.ts     # Interactive question prompts
 │       ├── subagents.ts         # Subagent orchestration
 │       ├── solarized-theme.ts   # Theme example
 │       ├── secret-guard.ts      # Secret redaction
