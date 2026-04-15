@@ -20,8 +20,8 @@ import {
   type Query,
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import type { ExtensionContext } from "../../src/types.js";
-import type { EventBus } from "../../src/event-bus.js";
+import type { ExtensionContext } from "agent-sh/types";
+import type { EventBus } from "agent-sh/event-bus";
 
 // ── Helpers ──────────────────────────────────────────────────────
 function interpretEscapes(str: string): string {

@@ -5,7 +5,7 @@ import type { ToolDefinition } from "../types.js";
  * display — shows command output to the user in their live terminal.
  *
  * Unlike bash (scratchpad), the user sees the output directly in their shell.
- * Unlike user_shell, this is for read-only display — no lasting side effects.
+ * This is for read-only display — no lasting side effects.
  * The agent does NOT receive the output back.
  */
 export function createDisplayTool(opts: {

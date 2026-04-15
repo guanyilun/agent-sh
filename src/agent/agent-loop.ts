@@ -40,7 +40,6 @@ import { createEditFileTool } from "./tools/edit-file.js";
 import { createGrepTool } from "./tools/grep.js";
 import { createGlobTool } from "./tools/glob.js";
 import { createLsTool } from "./tools/ls.js";
-import { createUserShellTool } from "./tools/user-shell.js";
 import { createDisplayTool } from "./tools/display.js";
 import { createListSkillsTool } from "./tools/list-skills.js";
 import { discoverProjectSkills } from "./skills.js";
@@ -467,9 +466,6 @@ export class AgentLoop implements AgentBackend {
     this.toolRegistry.register(createGrepTool(getCwd));
     this.toolRegistry.register(createGlobTool(getCwd));
     this.toolRegistry.register(createLsTool(getCwd));
-    this.toolRegistry.register(
-      createUserShellTool({ getCwd, bus: this.bus }),
-    );
     this.toolRegistry.register(
       createDisplayTool({ getCwd, bus: this.bus }),
     );
