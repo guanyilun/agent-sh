@@ -95,6 +95,7 @@ function kindIcon(kind?: string): string {
 export function renderToolCall(
   tool: ToolCallRender,
   width: number,
+  cwd: string = process.cwd(),
 ): string[] {
   const mode = selectToolDisplayMode(width);
   const icon = tool.icon ?? kindIcon(tool.kind);
@@ -111,7 +112,6 @@ export function renderToolCall(
 
   // Build a compact detail string to append after the title
   let detail = "";
-  const cwd = process.cwd();
   if (mode === "full" && tool.displayDetail) {
     detail = tool.displayDetail;
   } else if (mode === "full") {

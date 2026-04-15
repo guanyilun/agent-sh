@@ -127,6 +127,10 @@ export default function activate(ctx: ExtensionContext): void {
   const { bus, define, compositor } = ctx;
   const s = createRenderState();
 
+  /** Track the shell's cwd so path shortening is relative to where the user actually is. */
+  let shellCwd = process.cwd();
+  bus.on("shell:cwd-change", (e) => { shellCwd = e.cwd; });
+
   /** Shorthand — get the current agent surface. */
   function out(): RenderSurface { return compositor.surface("agent"); }
 
@@ -724,10 +728,9 @@ export default function activate(ctx: ExtensionContext): void {
   function extractDetail(extra: { rawInput?: unknown; locations?: { path: string; line?: number | null }[] }): string {
     if (extra.locations && extra.locations.length > 0) {
       const loc = extra.locations[0]!;
-      const cwd = process.cwd();
       const home = process.env.HOME;
       let fp = loc.path;
-      if (fp.startsWith(cwd + "/")) fp = fp.slice(cwd.length + 1);
+      if (fp.startsWith(shellCwd + "/")) fp = fp.slice(shellCwd.length + 1);
       else if (home && fp.startsWith(home + "/")) fp = "~/" + fp.slice(home.length + 1);
       return loc.line ? `${fp}:${loc.line}` : fp;
     }
@@ -736,10 +739,9 @@ export default function activate(ctx: ExtensionContext): void {
     if (typeof raw.command === "string") return `$ ${raw.command}`;
     if (typeof raw.pattern === "string") return raw.pattern;
     if (typeof raw.path === "string") {
-      const cwd = process.cwd();
       const home = process.env.HOME;
       let fp = raw.path as string;
-      if (fp.startsWith(cwd + "/")) fp = fp.slice(cwd.length + 1);
+      if (fp.startsWith(shellCwd + "/")) fp = fp.slice(shellCwd.length + 1);
       else if (home && fp.startsWith(home + "/")) fp = "~/" + fp.slice(home.length + 1);
       return fp;
     }
@@ -777,7 +779,7 @@ export default function activate(ctx: ExtensionContext): void {
       locations: extra?.locations,
       rawInput: extra?.rawInput,
       displayDetail: extra?.displayDetail,
-    }, cappedW());
+    }, cappedW(), shellCwd);
 
     if (extra?.groupContinuation && lines.length > 0) {
       // Swap the colored kind icon for a muted tree connector,
