@@ -769,9 +769,16 @@ export class ConversationState {
           return true;
         });
         if (kept.length === 0) {
-          // All calls were read-only — drop the tool_calls field entirely
-          const { tool_calls: _, ...rest } = msg;
-          result.push(rest);
+          // All calls were read-only — drop the tool_calls field entirely.
+          // If the assistant had no text content, skip the message entirely —
+          // an empty {role: "assistant", content: null} wastes tokens and
+          // provides no context (Q9 display-layer audit).
+          const hasText = typeof msg.content === "string" && msg.content.trim().length > 0;
+          if (hasText) {
+            const { tool_calls: _, ...rest } = msg;
+            result.push(rest);
+          }
+          // else: skip — ghost message with no content and no tool calls
         } else {
           result.push({ ...msg, tool_calls: kept });
         }
