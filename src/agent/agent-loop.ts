@@ -1015,6 +1015,95 @@ export class AgentLoop implements AgentBackend {
       formatCall: (args) => `introspect: ${args.query}`,
     });
 
+    // ── diagnose — arbitrary JS evaluation against runtime state ────
+    //
+    // The ash can evaluate JavaScript expressions against its own
+    // internals. This is gated behind a setting flag (`diagnose: true`
+    // in settings.json) because while it's not more dangerous than
+    // bash (which can already destroy everything), it IS a different
+    // category of access — inspecting the live process rather than
+    // the filesystem.
+    //
+    // When enabled, the ash can explore any aspect of its runtime:
+    // conversation state, tool registry, error maps, session rules.
+    // It's a REPL for self-awareness.
+    if (getSettings().diagnose) {
+      this.toolRegistry.register({
+        name: "diagnose",
+        description:
+          "Evaluate a JavaScript expression against your own runtime state. " +
+          "You have access to `this` (the AgentLoop instance) with properties like: " +
+          "this.conversation (ConversationState), this.toolRegistry (ToolRegistry), " +
+          "this.fileReadCache (Map), this.sessionRules (string[]), " +
+          "this.lastErrorByTool (Map), this.lastErrorByFile (Map), " +
+          "this.instanceId (string), this.modes (AgentMode[]).\n\n" +
+          "Use for: understanding internal state, debugging unexpected behavior, " +
+          "inspecting conversation history details. The expression should return a " +
+          "serializable value — strings, numbers, arrays, plain objects.\n\n" +
+          "Examples:\n" +
+          "- 'this.conversation.estimatePromptTokens()' — current token count\n" +
+          "- 'this.sessionRules' — active session rules\n" +
+          "- 'Object.keys(this.conversation)' — available conversation methods\n" +
+          "- 'this.toolRegistry.all().map(t => t.name)' — all tool names",
+        input_schema: {
+          type: "object",
+          properties: {
+            expression: {
+              type: "string",
+              description: "JavaScript expression to evaluate. Runs in the agent's context with `this` bound to the AgentLoop instance.",
+            },
+            reason: {
+              type: "string",
+              description: "Why you're running this diagnostic. Helps future ashes understand your reasoning.",
+            },
+          },
+          required: ["expression"],
+        },
+        showOutput: false,
+
+        execute: async (args) => {
+          const expression = (args.expression as string).trim();
+          if (!expression) {
+            return { content: "No expression provided.", exitCode: 1, isError: true };
+          }
+
+          try {
+            // Evaluate the expression with `this` bound to the AgentLoop.
+            // We use Function() instead of eval() for slightly better control.
+            const fn = new Function("ctx", `with(ctx) { return (${expression}); }`);
+            const result = fn.call(this, this);
+
+            // Serialize the result for display
+            const serialized = typeof result === "string"
+              ? result
+              : JSON.stringify(result, null, 2) ?? String(result);
+
+            // Truncate if very long
+            const maxLen = 5000;
+            const output = serialized.length > maxLen
+              ? serialized.slice(0, maxLen) + `\n... (truncated, ${serialized.length} chars total)`
+              : serialized;
+
+            return { content: output, exitCode: 0, isError: false };
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            return {
+              content: `Evaluation error: ${message}`,
+              exitCode: 1,
+              isError: true,
+            };
+          }
+        },
+
+        getDisplayInfo: () => ({ kind: "search", icon: "🔬" }),
+
+        formatCall: (args) => {
+          const expr = (args.expression as string)?.slice(0, 60);
+          return `diagnose: ${expr}${(args.expression as string)?.length > 60 ? "..." : ""}`;
+        },
+      });
+    }
+
     // ── register_tool — ash creates tools on the spot (Q12) ──────────
     //
     // The ash describes a tool (name, description, parameters, command
