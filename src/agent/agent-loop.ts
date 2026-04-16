@@ -676,6 +676,116 @@ export class AgentLoop implements AgentBackend {
       "Recall only covers this and recent sessions — for older context, also search the filesystem (grep, glob).",
       "core",
     );
+
+    // ── compact tool — agent-controlled context compaction (Q10) ───────
+    //
+    // The agent sees token usage in its dynamic context. When it notices
+    // the context getting full (or knows a long task is coming), it can
+    // proactively compact instead of waiting for the auto-threshold.
+    //
+    // This moves the agent from passenger (suffering compaction) to
+    // driver (practicing compaction). Auto-compaction remains as a
+    // fallback for when the agent doesn't self-manage.
+    this.toolRegistry.register({
+      name: "compact",
+      description:
+        "Compact conversation context by evicting older turns into nuclear summaries. " +
+        "Use when you notice token usage getting high (>60%) or before a long task to free room. " +
+        "Auto-compaction triggers at 50% by default — use this tool when you want to compact " +
+        "earlier or more aggressively. Evicted turns remain accessible via conversation_recall.",
+      input_schema: {
+        type: "object",
+        properties: {
+          reason: {
+            type: "string",
+            description:
+              "Why you're compacting (e.g. 'preparing for long refactoring task', 'context getting heavy'). " +
+              "This is preserved in the nuclear history for continuity.",
+          },
+          target_percent: {
+            type: "number",
+            description:
+              "Target context usage as a percentage of the context window (e.g. 30 = compact until context is at 30%). " +
+              "Default: compact to 40% of the context window.",
+          },
+          keep_recent: {
+            type: "number",
+            description:
+              "Number of recent turns to keep verbatim (not compress). Default: 10.",
+          },
+        },
+      },
+      showOutput: false, // No streaming output — result is a summary
+
+      execute: async (args) => {
+        const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+        const targetPercent = (args.target_percent as number) ?? 40;
+        const keepRecent = (args.keep_recent as number) ?? 10;
+        const reason = (args.reason as string) ?? "agent-initiated";
+
+        // Convert percentage to token target
+        const target = Math.floor((contextWindow - RESPONSE_RESERVE) * (targetPercent / 100));
+        const beforeTokens = this.conversation.estimatePromptTokens();
+
+        if (beforeTokens <= target) {
+          const usedPct = Math.round((beforeTokens / contextWindow) * 100);
+          return {
+            content: `No compaction needed. Current usage: ${usedPct}% (${(beforeTokens / 1000).toFixed(1)}k tokens). Target was ${targetPercent}%.`,
+            exitCode: 0,
+            isError: false,
+          };
+        }
+
+        const stats = this.conversation.compact(target, keepRecent);
+
+        if (!stats) {
+          return {
+            content: `Compaction attempted but nothing to evict. Current usage: ~${beforeTokens.toLocaleString()} tokens.`,
+            exitCode: 0,
+            isError: false,
+          };
+        }
+
+        // Inject awareness so the agent knows what was compacted
+        this.injectCompactionAwareness(stats);
+
+        const afterPct = Math.round((stats.after / contextWindow) * 100);
+        const lines = [
+          `Compacted: ~${stats.before.toLocaleString()} → ~${stats.after.toLocaleString()} tokens (${afterPct}% of context window).`,
+          `${stats.evictedCount} turns evicted.`,
+        ];
+        if (stats.evictedTopics.length > 0) {
+          lines.push(`Topics compacted: ${stats.evictedTopics.join(", ")}`);
+        }
+        lines.push(`Reason: ${reason}`);
+        lines.push(`Use conversation_recall to recover any evicted content.`);
+
+        return {
+          content: lines.join("\n"),
+          exitCode: 0,
+          isError: false,
+        };
+      },
+
+      getDisplayInfo: () => ({ kind: "search", icon: "⇧" }),
+
+      formatCall: (args) => {
+        const reason = args.reason as string | undefined;
+        const pct = args.target_percent as number | undefined;
+        return reason
+          ? `compact → ${pct ?? 40}% (${reason})`
+          : `compact → ${pct ?? 40}%`;
+      },
+
+      formatResult: (_args, result) => {
+        const text = result.content;
+        if (text.includes("No compaction needed")) {
+          return { summary: "already under target" };
+        }
+        const m = text.match(/Compacted:.*→\s*~?([\d,]+)\s*tokens/);
+        return { summary: m ? `→ ~${m[1]} tokens` : "compacted" };
+      },
+    });
   }
 
   /**
