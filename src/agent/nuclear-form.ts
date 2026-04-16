@@ -19,7 +19,7 @@ export interface NuclearEntry {
   /** Instance ID — identifies the agent-sh process. */
   iid: string;
   /** Entry kind. */
-  kind: "user" | "agent" | "tool" | "error" | "session";
+  kind: "user" | "agent" | "tool" | "error" | "session" | "wonder";
   /** Tool name (for kind=tool or kind=error). */
   tool?: string;
   /** The one-liner summary — injected in startup context. */
@@ -280,7 +280,15 @@ export function formatNuclearLine(entry: NuclearEntry): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   // ISO-ish compact: 2026-04-13 14:05
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  return `#${entry.seq} [${stamp}] ${entry.sum}`;
+  // Preserve reasoning through compaction — the `why` field carries the
+  // agent's stated motivation for an action. Without this line, the LLM
+  // sees "edited file X" after compaction but loses "because the O(n²)
+  // pattern matches the bug I saw earlier." The reasoning survives on
+  // disk (JSONL) and across sessions (prior history reasoning: lines),
+  // but was invisible within a session after compaction evicted the
+  // original turn. This is the answer to Q4.
+  const whyTag = entry.why ? ` {${truncate(entry.why, 80)}}` : "";
+  return `#${entry.seq} [${stamp}] ${entry.sum}${whyTag}`;
 }
 
 // ── Serialization (JSONL for history file) ────────────────────────
