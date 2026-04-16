@@ -25,7 +25,7 @@ import type { AgentBackend, ToolDefinition } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { ConversationState } from "./conversation-state.js";
 import { HistoryFile } from "./history-file.js";
-import { STATIC_SYSTEM_PROMPT, buildDynamicContext } from "./system-prompt.js";
+import { STATIC_SYSTEM_PROMPT, buildDynamicContext, formatSkillsBlock } from "./system-prompt.js";
 import type { Compositor } from "../utils/compositor.js";
 import { createToolUI } from "../utils/tool-interactive.js";
 import { TokenBudget, RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW } from "./token-budget.js";
@@ -41,7 +41,7 @@ import { createGrepTool } from "./tools/grep.js";
 import { createGlobTool } from "./tools/glob.js";
 import { createLsTool } from "./tools/ls.js";
 import { createListSkillsTool } from "./tools/list-skills.js";
-import { discoverProjectSkills } from "./skills.js";
+import { discoverGlobalSkills, discoverProjectSkills } from "./skills.js";
 
 type PendingToolCall = ProtocolPendingToolCall;
 
@@ -612,9 +612,20 @@ export class AgentLoop implements AgentBackend {
     // Extensions can use registerInstruction() for a managed section,
     // or advise this handler directly for full control.
     h.define("system-prompt:build", () => {
-      const sections = this.buildExtensionSections();
-      if (sections.length === 0) return STATIC_SYSTEM_PROMPT;
-      return STATIC_SYSTEM_PROMPT + "\n\n# Extension Instructions\n\n" + sections.join("\n\n");
+      const parts: string[] = [STATIC_SYSTEM_PROMPT];
+
+      // Global skills — stable across cwd changes, cacheable with the system prompt
+      const globalSkills = discoverGlobalSkills();
+      const skillsBlock = formatSkillsBlock(globalSkills);
+      if (skillsBlock) parts.push(skillsBlock);
+
+      // Extension sections (tools, skills, instructions grouped by extension)
+      const extensionSections = this.buildExtensionSections();
+      if (extensionSections.length > 0) {
+        parts.push("# Extension Instructions\n\n" + extensionSections.join("\n\n"));
+      }
+
+      return parts.join("\n\n");
     });
 
     // Extensions compose additional context (git info, project rules, etc.)

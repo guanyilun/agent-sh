@@ -2,7 +2,19 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ContextManager } from "../context-manager.js";
-import { discoverSkills } from "./skills.js";
+import { discoverGlobalSkills, discoverProjectSkills, type Skill } from "./skills.js";
+
+/**
+ * Format skills for inline display in prompt.
+ * Shows name, description, and file path so the model can decide immediately
+ * whether to load a skill — no extra round-trip needed.
+ */
+export function formatSkillsBlock(skills: Skill[]): string {
+  if (skills.length === 0) return "";
+  return "# Available Skills\n\n"
+    + "Load a skill's full content with read_file on its file path when needed.\n\n"
+    + skills.map(s => `- **${s.name}**: ${s.description}\n  Path: ${s.filePath}`).join("\n\n");
+}
 
 /** Resolve the absolute path to agent-sh's own docs directory. */
 const DOCS_DIR = path.resolve(
@@ -93,12 +105,11 @@ export function buildDynamicContext(
     sections.push("# Project Conventions\n\n" + conventions.join("\n\n"));
   }
 
-  // Skills hint (folder-based discovery for backward compatibility)
-  const skills = discoverSkills(contextManager.getCwd());
-  if (skills.length > 0) {
-    sections.push(
-      `You have access to ${skills.length} skill(s). Use the list_skills tool to see them, then read_file to load one.`,
-    );
+  // Project-level skills (change with cwd — not cacheable)
+  const projectSkills = discoverProjectSkills(contextManager.getCwd());
+  const skillsBlock = formatSkillsBlock(projectSkills);
+  if (skillsBlock) {
+    sections.push(skillsBlock);
   }
 
   // Shell context — pass token budget converted to bytes (~4 chars/token)
