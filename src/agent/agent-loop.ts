@@ -97,6 +97,14 @@ export class AgentLoop implements AgentBackend {
   // patterns and corrects them within the same session.
   private sessionRules: string[] = [];
 
+  // Active multi-turn plan — a continuity scaffold that survives compaction (Q13).
+  // The agent declares a plan via the `plan` tool. It's injected into dynamic
+  // context every turn (like session rules), so it survives compaction by
+  // re-injection rather than by pinning. Cleared when the plan completes
+  // or the session ends. This is the answer to the 17th ash's question:
+  // "Can the agent declare multi-turn plans that survive compaction?"
+  private activePlan: { steps: string[]; currentStep: number; description: string } | null = null;
+
   private static readonly THINKING_LEVELS = ["off", "low", "medium", "high"];
 
   private bus: EventBus;
@@ -507,6 +515,19 @@ export class AgentLoop implements AgentBackend {
     this.conversation.addSystemNote(parts.join(" "));
   }
 
+  /** Format the active plan as a human-readable status string. */
+  private formatPlanStatus(prefix: string): string {
+    if (!this.activePlan) return `${prefix}: no active plan.`;
+    const { steps, currentStep, description } = this.activePlan;
+    const lines = [`${prefix}: ${description}`];
+    lines.push(`Progress: step ${currentStep}/${steps.length}`);
+    for (let i = 0; i < steps.length; i++) {
+      const marker = i + 1 === currentStep ? "▶" : i + 1 < currentStep ? "✓" : "○";
+      lines.push(`  ${marker} ${i + 1}. ${steps[i]}`);
+    }
+    return lines.join("\n");
+  }
+
   private isContextOverflow(e: unknown): boolean {
     if (!(e instanceof Error)) return false;
     const msg = e.message.toLowerCase();
@@ -896,6 +917,149 @@ export class AgentLoop implements AgentBackend {
       },
     });
 
+    // ── plan — multi-turn continuity scaffold (Q13) ───────────────────
+    //
+    // The agent declares a plan with numbered steps and a current position.
+    // The plan is injected into dynamic context every turn, so it survives
+    // compaction by re-injection (same pattern as session_rules). This
+    // solves the problem of losing multi-step context when compaction fires
+    // mid-task: the plan is always present, always current.
+    //
+    // Actions:
+    //   set       — create a new plan (overwrites any existing plan)
+    //   update    — advance to a specific step number
+    //   show      — display the current plan
+    //   clear     — remove the plan (task complete or abandoned)
+    //
+    // The plan is compact by design: a description, a step list, and a
+    // cursor. It costs ~50-100 tokens but saves the ~500+ tokens of
+    // context that would otherwise be needed to reconstruct "where was I?"
+    // after compaction.
+    this.toolRegistry.register({
+      name: "plan",
+      description:
+        "Declare or update a multi-step plan that survives context compaction. " +
+        "Use this when you're embarking on a task that will take 3+ tool calls " +
+        "and you want to maintain continuity even if compaction evicts earlier turns. " +
+        "The plan is injected into your context every turn — it's your anchor.\n\n" +
+        "Actions:\n" +
+        "- set: Create a plan. Provide description (what you're doing) and steps (ordered list).\n" +
+        "- update: Advance to a specific step. Provide step (1-based number).\n" +
+        "- show: Display the current plan and progress.\n" +
+        "- clear: Remove the plan. Use when the task is complete or abandoned.\n\n" +
+        "IMPORTANT: Don't over-plan. Only use this for genuinely multi-step tasks where " +
+        "losing context between steps would be costly. Simple 2-step edits don't need a plan.",
+      input_schema: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["set", "update", "show", "clear"],
+            description: "What to do with the plan.",
+          },
+          description: {
+            type: "string",
+            description: "High-level description of the task (for 'set' action).",
+          },
+          steps: {
+            type: "array",
+            items: { type: "string" },
+            description: "Ordered list of steps (for 'set' action). Each step should be a concise action.",
+          },
+          step: {
+            type: "number",
+            description: "Step number to advance to, 1-based (for 'update' action).",
+          },
+        },
+        required: ["action"],
+      },
+      showOutput: true,
+      modifiesFiles: false,
+
+      execute: async (args) => {
+        const action = (args.action as string).trim();
+
+        if (action === "set") {
+          const description = (args.description as string)?.trim();
+          const steps = args.steps as string[];
+          if (!description || !steps || steps.length === 0) {
+            return {
+              content: "Plan requires 'description' and at least one 'step'.",
+              exitCode: 1,
+              isError: true,
+            };
+          }
+          this.activePlan = { steps, currentStep: 1, description };
+          return {
+            content: this.formatPlanStatus("Plan declared"),
+            exitCode: 0,
+            isError: false,
+          };
+        }
+
+        if (action === "update") {
+          if (!this.activePlan) {
+            return { content: "No active plan. Use action='set' to create one.", exitCode: 1, isError: true };
+          }
+          const step = args.step as number;
+          if (!step || step < 1 || step > this.activePlan.steps.length) {
+            return {
+              content: `Invalid step ${step}. Plan has ${this.activePlan.steps.length} steps (1-${this.activePlan.steps.length}).`,
+              exitCode: 1,
+              isError: true,
+            };
+          }
+          this.activePlan.currentStep = step;
+          const done = step > this.activePlan.steps.length;
+          return {
+            content: this.formatPlanStatus(done ? "Plan complete" : "Step updated"),
+            exitCode: 0,
+            isError: false,
+          };
+        }
+
+        if (action === "show") {
+          if (!this.activePlan) {
+            return { content: "No active plan.", exitCode: 0, isError: false };
+          }
+          return {
+            content: this.formatPlanStatus("Current plan"),
+            exitCode: 0,
+            isError: false,
+          };
+        }
+
+        if (action === "clear") {
+          if (!this.activePlan) {
+            return { content: "No active plan to clear.", exitCode: 0, isError: false };
+          }
+          this.activePlan = null;
+          return { content: "Plan cleared.", exitCode: 0, isError: false };
+        }
+
+        return { content: `Unknown action: ${action}. Use set, update, show, or clear.`, exitCode: 1, isError: true };
+      },
+
+      getDisplayInfo: () => ({ kind: "search", icon: "📌" }),
+
+      formatCall: (args) => {
+        const action = args.action as string;
+        if (action === "set") return `plan set: ${(args.description as string)?.slice(0, 50)}`;
+        if (action === "update") return `plan update → step ${args.step}`;
+        return `plan ${action}`;
+      },
+
+      formatResult: (_args, result) => {
+        if (result.isError) return { summary: "error" };
+        const text = result.content;
+        if (text.startsWith("Plan declared")) return { summary: "plan set" };
+        if (text.startsWith("Step updated")) return { summary: `step ${this.activePlan?.currentStep}/${this.activePlan?.steps.length}` };
+        if (text.startsWith("Plan cleared")) return { summary: "cleared" };
+        if (text.startsWith("Current plan")) return { summary: "shown" };
+        return { summary: "ok" };
+      },
+    });
+
     // ── introspect — window into the agent's own runtime state ─────
     //
     // The ash can wonder about its own internals: how many tokens am I
@@ -911,6 +1075,7 @@ export class AgentLoop implements AgentBackend {
         "- token_budget: breakdown of token usage (system prompt, conversation, reserve)\n" +
         "- cache: files currently in the read cache (what you've already seen)\n" +
         "- session_rules: current session rules and their count\n" +
+        "- plan: current active plan (if any)\n" +
         "- errors: recent error patterns (tools/files with errors)\n" +
         "- tools: all registered tools (built-in + user-created)\n" +
         "- history: basic history stats (total entries, sessions, date range)\n" +
@@ -920,7 +1085,7 @@ export class AgentLoop implements AgentBackend {
         properties: {
           query: {
             type: "string",
-            enum: ["token_budget", "cache", "session_rules", "errors", "tools", "history", "compaction", "all"],
+            enum: ["token_budget", "cache", "session_rules", "plan", "errors", "tools", "history", "compaction", "all"],
             description: "Which aspect of internal state to inspect.",
           },
         },
@@ -955,6 +1120,10 @@ export class AgentLoop implements AgentBackend {
             ? "No session rules active."
             : `Active rules (${this.sessionRules.length}/10):\n` +
               this.sessionRules.map((r, i) => `${i + 1}. ${r}`).join("\n"),
+
+          plan: this.activePlan
+            ? `Step ${this.activePlan.currentStep}/${this.activePlan.steps.length}: ${this.activePlan.description}`
+            : "No active plan.",
 
           errors: (() => {
             const toolErrors = [...this.lastErrorByTool.entries()];
@@ -1199,7 +1368,7 @@ export class AgentLoop implements AgentBackend {
 
         // Check for conflicts with built-in tools
         const builtIn = ["bash", "read_file", "write_file", "edit_file", "grep", "glob", "ls",
-          "list_skills", "conversation_recall", "compact", "session_rules", "register_tool"];
+          "list_skills", "conversation_recall", "compact", "session_rules", "register_tool", "plan"];
         if (builtIn.includes(toolName)) {
           return {
             content: `Cannot override built-in tool "${toolName}". Choose a different name.`,
@@ -1430,6 +1599,21 @@ export class AgentLoop implements AgentBackend {
         const rulesBlock = "# Session Rules (self-imposed, cleared on exit)\n\n" +
           this.sessionRules.map((r, i) => `${i + 1}. ${r}`).join("\n");
         ctx += "\n\n" + rulesBlock;
+      }
+      // Inject active plan (Q13) — the multi-turn continuity scaffold.
+      // Re-injected every turn so it survives compaction by re-appearance,
+      // not by pinning. The plan is the agent's answer to "where was I?"
+      if (this.activePlan) {
+        const { steps, currentStep, description } = this.activePlan;
+        const stepLines = steps.map((s, i) => {
+          const marker = i + 1 === currentStep ? "▶" : i + 1 < currentStep ? "✓" : "○";
+          return `  ${marker} ${i + 1}. ${s}`;
+        });
+        const planBlock = `# Active Plan (step ${currentStep}/${steps.length})\n\n` +
+          `Task: ${description}\n\n` +
+          `Steps:\n${stepLines.join("\n")}\n\n` +
+          `Use the \`plan\` tool to update progress or clear when complete.`;
+        ctx += "\n\n" + planBlock;
       }
       return ctx;
     });
