@@ -56,39 +56,42 @@ export class HistoryFile {
     const { size } = await fs.stat(this.filePath).catch(() => ({ size: 0 }));
     if (size === 0) return [];
 
-    // Start with the last 96KB — typically enough for 100+ non-read-only entries.
-    // Each JSONL entry averages ~200 bytes after body caps, so 96KB ≈ ~480 entries.
-    // With ~50% being read-only, that's ~240 meaningful entries — well over 100.
     const CHUNK_SIZE = 96 * 1024;
-    let startOffset = Math.max(0, size - CHUNK_SIZE);
     let entries: NuclearEntry[] = [];
 
-    while (true) {
-      const readLen = size - startOffset;
+    // Scan backward one chunk at a time — each read is exactly one chunk,
+    // never re-reading data from previous iterations.
+    let offset = size;
+    while (offset > 0 && entries.length < maxEntries) {
+      const chunkStart = Math.max(0, offset - CHUNK_SIZE);
+      const readLen = offset - chunkStart;
       const buf = Buffer.alloc(readLen);
       const fd = await fs.open(this.filePath, "r");
       try {
-        await fd.read(buf, 0, readLen, startOffset);
+        await fd.read(buf, 0, readLen, chunkStart);
       } finally {
         await fd.close();
       }
       const text = buf.toString("utf-8");
-      const lines = text.split("\n").filter(Boolean);
+      const lines = text.split("\n");
 
-      // If we didn't read from the start, the first line might be partial — skip it
-      const startIndex = startOffset > 0 ? 1 : 0;
+      // If we didn't read from byte 0, skip the first line (may be partial at boundary)
+      const startIndex = chunkStart > 0 ? 1 : 0;
 
-      entries = [];
-      for (let i = startIndex; i < lines.length; i++) {
-        const entry = deserializeEntry(lines[i]!);
-        if (entry && !isReadOnly(entry)) entries.push(entry);
+      // Parse from end of chunk (newest) to start, collecting non-read-only entries
+      const chunkEntries: NuclearEntry[] = [];
+      for (let i = lines.length - 1; i >= startIndex; i--) {
+        const line = lines[i];
+        if (!line) continue;
+        const entry = deserializeEntry(line);
+        if (entry && !isReadOnly(entry)) chunkEntries.push(entry);
       }
 
-      // Enough entries, or we've read the whole file
-      if (entries.length >= maxEntries || startOffset === 0) break;
+      // Prepend: chunkEntries are newest-first, so reverse to chronological
+      // before merging with any entries from later (newer) chunks.
+      entries = [...chunkEntries.reverse(), ...entries];
 
-      // Expand backward by another chunk
-      startOffset = Math.max(0, startOffset - CHUNK_SIZE);
+      offset = chunkStart;
     }
 
     return entries.slice(-maxEntries);
@@ -167,29 +170,32 @@ export class HistoryFile {
     if (size === 0) return null;
 
     const CHUNK_SIZE = 96 * 1024;
-    let startOffset = Math.max(0, size - CHUNK_SIZE);
+    let offset = size;
 
-    while (true) {
-      const readLen = size - startOffset;
+    // Scan backward one chunk at a time — each read is exactly one chunk.
+    while (offset > 0) {
+      const chunkStart = Math.max(0, offset - CHUNK_SIZE);
+      const readLen = offset - chunkStart;
       const buf = Buffer.alloc(readLen);
       const fd = await fs.open(this.filePath, "r");
       try {
-        await fd.read(buf, 0, readLen, startOffset);
+        await fd.read(buf, 0, readLen, chunkStart);
       } finally {
         await fd.close();
       }
       const text = buf.toString("utf-8");
-      const lines = text.split("\n").filter(Boolean);
-      const startIndex = startOffset > 0 ? 1 : 0;
+      const lines = text.split("\n");
+      const startIndex = chunkStart > 0 ? 1 : 0;
 
       // Search from end (most recent first)
       for (let i = lines.length - 1; i >= startIndex; i--) {
-        const entry = deserializeEntry(lines[i]!);
+        const line = lines[i];
+        if (!line) continue;
+        const entry = deserializeEntry(line);
         if (entry && entry.seq === seq) return entry;
       }
 
-      if (startOffset === 0) break;
-      startOffset = Math.max(0, startOffset - CHUNK_SIZE);
+      offset = chunkStart;
     }
     return null;
   }
