@@ -179,9 +179,13 @@ export class ConversationState {
   }
 
   private appendToFile(entries: NuclearEntry[]): void {
-    if (this.historyFile && entries.length > 0) {
+    if (!this.historyFile || entries.length === 0) return;
+    // Skip read-only tools (read_file, grep, glob, ls) — they bloat the
+    // file without adding searchable value since the agent can re-run them.
+    const writable = entries.filter((e) => !isReadOnly(e));
+    if (writable.length > 0) {
       // Fire-and-forget — don't block the conversation flow
-      this.historyFile.append(entries).catch(() => {});
+      this.historyFile.append(writable).catch(() => {});
     }
   }
 
