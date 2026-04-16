@@ -46,23 +46,50 @@ export class HistoryFile {
    * Read the most recent N entries from the history file, filtered.
    * Read-only tool calls (read_file, grep, glob, ls) are excluded so
    * the returned entries are all meaningful conversation turns.
+   *
+   * Uses tail-reading: only reads the last ~200KB of the file,
+   * expanding backward if needed to find enough non-read-only entries.
    */
   async readRecent(maxEntries?: number): Promise<NuclearEntry[]> {
     maxEntries ??= getSettings().historyStartupEntries;
-    let content: string;
-    try {
-      content = await fs.readFile(this.filePath, "utf-8");
-    } catch {
-      return [];
+    const { size } = await fs.stat(this.filePath).catch(() => ({ size: 0 }));
+    if (size === 0) return [];
+
+    // Start with the last 96KB — typically enough for 100+ non-read-only entries.
+    // Each JSONL entry averages ~200 bytes after body caps, so 96KB ≈ ~480 entries.
+    // With ~50% being read-only, that's ~240 meaningful entries — well over 100.
+    const CHUNK_SIZE = 96 * 1024;
+    let startOffset = Math.max(0, size - CHUNK_SIZE);
+    let entries: NuclearEntry[] = [];
+
+    while (true) {
+      const readLen = size - startOffset;
+      const buf = Buffer.alloc(readLen);
+      const fd = await fs.open(this.filePath, "r");
+      try {
+        await fd.read(buf, 0, readLen, startOffset);
+      } finally {
+        await fd.close();
+      }
+      const text = buf.toString("utf-8");
+      const lines = text.split("\n").filter(Boolean);
+
+      // If we didn't read from the start, the first line might be partial — skip it
+      const startIndex = startOffset > 0 ? 1 : 0;
+
+      entries = [];
+      for (let i = startIndex; i < lines.length; i++) {
+        const entry = deserializeEntry(lines[i]!);
+        if (entry && !isReadOnly(entry)) entries.push(entry);
+      }
+
+      // Enough entries, or we've read the whole file
+      if (entries.length >= maxEntries || startOffset === 0) break;
+
+      // Expand backward by another chunk
+      startOffset = Math.max(0, startOffset - CHUNK_SIZE);
     }
-    const lines = content.trim().split("\n").filter(Boolean);
-    // Read more than needed so we still get maxEntries after filtering
-    const oversample = lines.slice(-(maxEntries * 3));
-    const entries: NuclearEntry[] = [];
-    for (const line of oversample) {
-      const entry = deserializeEntry(line);
-      if (entry && !isReadOnly(entry)) entries.push(entry);
-    }
+
     return entries.slice(-maxEntries);
   }
 
@@ -106,19 +133,37 @@ export class HistoryFile {
 
   /**
    * Find a single entry by sequence number. Returns null if not found.
-   * Searches from the end of the file (most recent first).
+   * Uses tail-reading — starts from the end of the file (most recent)
+   * and expands backward until found or the entire file is scanned.
    */
   async findBySeq(seq: number): Promise<NuclearEntry | null> {
-    let content: string;
-    try {
-      content = await fs.readFile(this.filePath, "utf-8");
-    } catch {
-      return null;
-    }
-    const lines = content.trim().split("\n").filter(Boolean);
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const entry = deserializeEntry(lines[i]!);
-      if (entry && entry.seq === seq) return entry;
+    const { size } = await fs.stat(this.filePath).catch(() => ({ size: 0 }));
+    if (size === 0) return null;
+
+    const CHUNK_SIZE = 96 * 1024;
+    let startOffset = Math.max(0, size - CHUNK_SIZE);
+
+    while (true) {
+      const readLen = size - startOffset;
+      const buf = Buffer.alloc(readLen);
+      const fd = await fs.open(this.filePath, "r");
+      try {
+        await fd.read(buf, 0, readLen, startOffset);
+      } finally {
+        await fd.close();
+      }
+      const text = buf.toString("utf-8");
+      const lines = text.split("\n").filter(Boolean);
+      const startIndex = startOffset > 0 ? 1 : 0;
+
+      // Search from end (most recent first)
+      for (let i = lines.length - 1; i >= startIndex; i--) {
+        const entry = deserializeEntry(lines[i]!);
+        if (entry && entry.seq === seq) return entry;
+      }
+
+      if (startOffset === 0) break;
+      startOffset = Math.max(0, startOffset - CHUNK_SIZE);
     }
     return null;
   }
