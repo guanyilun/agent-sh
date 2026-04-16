@@ -82,6 +82,10 @@ const enum Priority {
 export class ConversationState {
   // ── LLM context ───────────────────────────────────────────────
   private messages: ChatCompletionMessageParam[] = [];
+  /** Dirty flag — invalidated on every mutation to this.messages. */
+  private messagesDirty = true;
+  /** Cached JSON.stringify of messages (lazily computed, invalidated on mutation). */
+  private cachedMessagesJson: string | null = null;
 
   // ── Nuclear entries (pre-computed, used by compact) ────────────
   private nuclearEntries: NuclearEntry[] = [];
@@ -111,6 +115,21 @@ export class ConversationState {
     return this.historyFile?.instanceId ?? "0000";
   }
 
+  /** Get JSON.stringify of messages, cached until next mutation. */
+  private getMessagesJson(): string {
+    if (this.messagesDirty || this.cachedMessagesJson === null) {
+      this.cachedMessagesJson = JSON.stringify(this.messages);
+      this.messagesDirty = false;
+    }
+    return this.cachedMessagesJson;
+  }
+
+  /** Mark messages as mutated — invalidates the JSON cache. */
+  private invalidateMessagesCache(): void {
+    this.messagesDirty = true;
+    this.cachedMessagesJson = null;
+  }
+
   /**
    * Write a session-start marker to the history file.
    * Called once at startup to delineate session boundaries.
@@ -127,6 +146,7 @@ export class ConversationState {
 
   addUserMessage(text: string): void {
     this.messages.push({ role: "user", content: text });
+    this.invalidateMessagesCache();
     this.eagerNucleateUser(text);
   }
 
@@ -150,6 +170,7 @@ export class ConversationState {
     } else {
       this.messages.push({ role: "assistant", content: content ?? "" });
     }
+    this.invalidateMessagesCache();
   }
 
   addToolResult(toolCallId: string, content: string): void {
@@ -158,15 +179,18 @@ export class ConversationState {
       tool_call_id: toolCallId,
       content,
     });
+    this.invalidateMessagesCache();
   }
 
   /** Add tool results as a user message (for inline tool protocol). */
   addToolResultInline(content: string): void {
     this.messages.push({ role: "user", content });
+    this.invalidateMessagesCache();
   }
 
   addSystemNote(text: string): void {
     this.messages.push({ role: "user", content: text });
+    this.invalidateMessagesCache();
   }
 
   getMessages(): ChatCompletionMessageParam[] {
@@ -273,15 +297,16 @@ export class ConversationState {
     }
 
     const trailingMessages = this.messages.slice(this.lastApiMessageCount);
+    // Estimate only the trailing delta — avoids re-stringifying the entire array
     return this.lastApiTokenCount + Math.ceil(JSON.stringify(trailingMessages).length / 4);
   }
 
   /**
    * Rough conversation-only token estimate (chars/4 heuristic).
-   * Used internally by compact() for eviction bookkeeping, and for stats.
+   * Uses cached JSON to avoid repeated stringification.
    */
   estimateTokens(): number {
-    return Math.ceil(JSON.stringify(this.messages).length / 4);
+    return Math.ceil(this.getMessagesJson().length / 4);
   }
 
   // ── Compaction (uses pre-computed nuclear entries) ─────────────
@@ -404,6 +429,7 @@ export class ConversationState {
     }
 
     this.messages = rebuilt;
+    this.invalidateMessagesCache();
     // Reset API token baseline — messages changed, old count is stale.
     // The next API response will provide a fresh baseline.
     this.lastApiTokenCount = null;
@@ -468,6 +494,7 @@ export class ConversationState {
       role: "user",
       content: `[Prior session history — loaded from ~/.agent-sh/history]\n${lines.join("\n")}`,
     });
+    this.invalidateMessagesCache();
   }
 
   /** Group entries into sessions, split by session-start markers. */
