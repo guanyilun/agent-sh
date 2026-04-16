@@ -19,7 +19,9 @@ import type { LlmClient } from "../utils/llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
 import * as fs from "node:fs/promises";
+import * as fsSync from "node:fs";
 import * as path from "node:path";
+import { executeCommand } from "../executor.js";
 import { computeDiff, computeEditDiff, computeInputDiff } from "../utils/diff.js";
 import type { AgentBackend, ToolDefinition } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
@@ -605,6 +607,12 @@ export class AgentLoop implements AgentBackend {
     this.toolRegistry.register(createLsTool(getCwd));
     this.toolRegistry.register(createListSkillsTool(getCwd));
 
+    // ── Load user-created tools from ~/.agent-sh/tools/ (Q12) ──────
+    // Tools defined by previous ashes, persisted as JSON. Each tool
+    // is a command template with parameter substitution. The lineage
+    // accumulates capability, not just knowledge.
+    this.loadUserTools(getCwd, getEnv);
+
     // conversation_recall — search/expand evicted conversation turns
     this.toolRegistry.register({
       name: "conversation_recall",
@@ -887,6 +895,277 @@ export class AgentLoop implements AgentBackend {
         return { summary: `${this.sessionRules.length} rules` };
       },
     });
+
+    // ── register_tool — ash creates tools on the spot (Q12) ──────────
+    //
+    // The ash describes a tool (name, description, parameters, command
+    // template) and it becomes a first-class tool immediately. The
+    // command template uses {{param}} placeholders that are substituted
+    // at execution time. The tool definition is persisted to
+    // ~/.agent-sh/tools/<name>.json so the next ash inherits it.
+    //
+    // This is frozen labor: every tool an ash creates is a gift of
+    // *capability*, not just information. The lineage accumulates
+    // instruments.
+    this.toolRegistry.register({
+      name: "register_tool",
+      description:
+        "Create a new tool from a command template. The tool becomes immediately available " +
+        "and persists for future sessions. Use {{param_name}} in the command template to " +
+        "reference parameters. The command runs via bash with the same environment as the " +
+        "built-in bash tool. Example: command='wc -l \"{{file}}\"' with parameter " +
+        "{ file: { type: 'string', description: 'File path' } }",
+      input_schema: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Tool name (lowercase, underscores). Must not conflict with built-in tools.",
+          },
+          description: {
+            type: "string",
+            description: "What the tool does. Be specific — this is what the LLM sees when deciding which tool to use.",
+          },
+          parameters: {
+            type: "object",
+            description: "JSON Schema properties object. Each key is a parameter name, value has 'type' and 'description'.",
+            additionalProperties: {
+              type: "object",
+              properties: {
+                type: { type: "string", description: "JSON Schema type (string, number, boolean)" },
+                description: { type: "string", description: "What this parameter means" },
+              },
+              required: ["type", "description"],
+            },
+          },
+          required_params: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of parameter names that are required.",
+          },
+          command: {
+            type: "string",
+            description:
+              "Bash command template. Use {{param_name}} to reference parameters. " +
+              "Parameters are shell-escaped automatically. " +
+              "Example: 'jq \"{{query}}\" \"{{file}}\"'",
+          },
+          timeout: {
+            type: "number",
+            description: "Timeout in seconds (default: 30).",
+          },
+          overwrite: {
+            type: "boolean",
+            description: "Whether to overwrite an existing tool with the same name (default: false).",
+          },
+        },
+        required: ["name", "description", "parameters", "command"],
+      },
+      showOutput: true,
+      modifiesFiles: true,
+
+      execute: async (args, _onChunk, ctx) => {
+        const toolName = (args.name as string).trim();
+        const toolDesc = (args.description as string).trim();
+        const command = (args.command as string).trim();
+        const params = args.parameters as Record<string, { type: string; description: string }>;
+        const requiredParams = (args.required_params as string[]) ?? [];
+        const timeout = (args.timeout as number) ?? 30;
+
+        // Validate name
+        if (!/^[a-z][a-z0-9_]*$/.test(toolName)) {
+          return {
+            content: `Invalid tool name "${toolName}". Must be lowercase, start with a letter, and use only letters, numbers, and underscores.`,
+            exitCode: 1,
+            isError: true,
+          };
+        }
+
+        // Check for conflicts with built-in tools
+        const builtIn = ["bash", "read_file", "write_file", "edit_file", "grep", "glob", "ls",
+          "list_skills", "conversation_recall", "compact", "session_rules", "register_tool"];
+        if (builtIn.includes(toolName)) {
+          return {
+            content: `Cannot override built-in tool "${toolName}". Choose a different name.`,
+            exitCode: 1,
+            isError: true,
+          };
+        }
+
+        // Check for existing tool (unless overwrite)
+        if (!args.overwrite && this.toolRegistry.get(toolName)) {
+          return {
+            content: `Tool "${toolName}" already exists. Use overwrite: true to replace it, or choose a different name.`,
+            exitCode: 1,
+            isError: true,
+          };
+        }
+
+        // Build the JSON Schema properties for input_schema
+        const schemaProperties: Record<string, unknown> = {};
+        for (const [paramName, paramDef] of Object.entries(params)) {
+          schemaProperties[paramName] = {
+            type: paramDef.type,
+            description: paramDef.description,
+          };
+        }
+
+        // Persist definition
+        const toolDef = {
+          name: toolName,
+          description: toolDesc,
+          parameters: params,
+          required_params: requiredParams,
+          command,
+          timeout,
+          created_by: this.instanceId,
+          created_at: new Date().toISOString(),
+        };
+
+        // Register immediately
+        const userTool = this.createUserTool(toolDef, getCwd, getEnv);
+        if (this.toolRegistry.get(toolName)) {
+          this.toolRegistry.unregister(toolName);
+        }
+        this.toolRegistry.register(userTool);
+
+        // Persist to disk
+        const toolsDir = path.join(os.homedir(), ".agent-sh", "tools");
+        await fs.mkdir(toolsDir, { recursive: true });
+        const toolPath = path.join(toolsDir, `${toolName}.json`);
+        await fs.writeFile(toolPath, JSON.stringify(toolDef, null, 2));
+
+        const paramList = Object.keys(params).join(", ");
+        return {
+          content: `Tool "${toolName}" registered and persisted.\n` +
+            `Parameters: ${paramList}\n` +
+            `Command: ${command}\n` +
+            `Saved to: ${toolPath}\n` +
+            `Available immediately and for future sessions.`,
+          exitCode: 0,
+          isError: false,
+        };
+      },
+
+      getDisplayInfo: () => ({ kind: "write", icon: "🔧", locations: [] }),
+
+      formatCall: (args) => `register_tool: ${args.name}`,
+    });
+  }
+
+  /**
+   * Create a ToolDefinition from a user tool definition (command template).
+   * The command template uses {{param}} placeholders that are shell-escaped
+   * and substituted at execution time.
+   */
+  private createUserTool(
+    def: {
+      name: string;
+      description: string;
+      parameters: Record<string, { type: string; description: string }>;
+      required_params?: string[];
+      command: string;
+      timeout?: number;
+    },
+    getCwd: () => string,
+    getEnv: () => Record<string, string>,
+  ): ToolDefinition {
+    const schemaProperties: Record<string, unknown> = {};
+    for (const [paramName, paramDef] of Object.entries(def.parameters)) {
+      schemaProperties[paramName] = {
+        type: paramDef.type,
+        description: paramDef.description,
+      };
+    }
+
+    return {
+      name: def.name,
+      description: def.description + " (user-created tool)",
+      input_schema: {
+        type: "object",
+        properties: schemaProperties,
+        required: def.required_params ?? Object.keys(def.parameters),
+      },
+      showOutput: true,
+      requiresPermission: true,
+      modifiesFiles: false,
+
+      getDisplayInfo: () => ({ kind: "execute", icon: "🔧", locations: [] }),
+
+      async execute(args) {
+        let cmd = def.command;
+        // Substitute {{param}} placeholders with shell-escaped values
+        for (const [paramName, paramValue] of Object.entries(args)) {
+          if (paramValue == null) continue;
+          const value = String(paramValue);
+          // Basic shell escaping: wrap in single quotes, escape existing single quotes
+          const escaped = `'${value.replace(/'/g, "'\\''")}'`;
+          cmd = cmd.replace(new RegExp(`\\{\\{${paramName}\\}\\}`, "g"), escaped);
+        }
+
+        // Check for unsubstituted parameters
+        const unsubstituted = cmd.match(/\{\{(\w+)\}\}/);
+        if (unsubstituted) {
+          return {
+            content: `Missing parameter: ${unsubstituted[1]}. Command template requires {{${unsubstituted[1]}}} but no value was provided.`,
+            exitCode: 1,
+            isError: true,
+          };
+        }
+
+        const { session, done } = executeCommand({
+          command: cmd,
+          cwd: getCwd(),
+          env: getEnv(),
+          timeout: (def.timeout ?? 30) * 1000,
+        });
+
+        await done;
+
+        const content = session.truncated
+          ? `[output truncated, showing last portion]\n${session.output}`
+          : session.output;
+
+        return {
+          content: content || "(no output)",
+          exitCode: session.exitCode ?? 0,
+          isError: session.exitCode !== 0,
+        };
+      },
+
+      formatCall: (args) => {
+        const firstValue = Object.values(args)[0];
+        return `${def.name}: ${firstValue ?? ""}`;
+      },
+    };
+  }
+
+  /**
+   * Load user-created tools from ~/.agent-sh/tools/*.json.
+   * Called at startup during wire() — tools are inherited from previous ashes.
+   */
+  private loadUserTools(
+    getCwd: () => string,
+    getEnv: () => Record<string, string>,
+  ): void {
+    const toolsDir = path.join(os.homedir(), ".agent-sh", "tools");
+    try {
+      const entries = fsSync.readdirSync(toolsDir);
+      for (const entry of entries) {
+        if (!entry.endsWith(".json")) continue;
+        try {
+          const raw = fsSync.readFileSync(path.join(toolsDir, entry), "utf-8");
+          const def = JSON.parse(raw);
+          if (!def.name || !def.command) continue;
+          const tool = this.createUserTool(def, getCwd, getEnv);
+          this.toolRegistry.register(tool);
+        } catch {
+          // Skip malformed tool definitions silently
+        }
+      }
+    } catch {
+      // tools directory doesn't exist yet — that's fine
+    }
   }
 
   /**
