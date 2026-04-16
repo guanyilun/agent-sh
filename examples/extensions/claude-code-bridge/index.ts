@@ -144,6 +144,46 @@ export default function activate(ctx: ExtensionContext): void {
   let activeQuery: Query | null = null;
   const listeners: Array<{ event: string; fn: Function }> = [];
 
+  // ── Tool display helpers ────────────────────────────────────────
+
+  /** Map Claude Code tool names to agent-sh display kinds. */
+  function toolKind(name: string): string {
+    if (name === "Read" || name.includes("terminal_read")) return "read";
+    if (name === "Edit") return "edit";
+    if (name === "Write") return "write";
+    if (name === "Glob" || name === "Grep") return "search";
+    if (name === "Bash" || name.includes("shell") || name.includes("terminal_keys")) return "execute";
+    return "execute";
+  }
+
+  /** Map Claude Code tool names to agent-sh display icons. */
+  function toolIcon(name: string): string | undefined {
+    if (name === "Read") return "◆";
+    if (name === "Edit") return "✎";
+    if (name === "Write") return "✎";
+    if (name === "Glob" || name === "Grep") return "⌕";
+    return undefined;
+  }
+
+  /** Extract file locations from tool input args. */
+  function toolLocations(input: Record<string, unknown>): { path: string; line?: number | null }[] | undefined {
+    const raw = input.file_path ?? input.path;
+    if (typeof raw !== "string") return undefined;
+    const line = (input.line_number ?? input.line ?? input.offset) as number | undefined;
+    return [{ path: raw, line: line ?? null }];
+  }
+
+  /** Format a compact display string for a tool call. */
+  function formatToolCall(name: string, input: Record<string, unknown>): string {
+    const str = (v: unknown) => typeof v === "string" ? v : "";
+    if (name === "Bash") return `$ ${str(input.command)}`;
+    if (name === "Read" || name === "Edit" || name === "Write") return str(input.file_path ?? input.path);
+    if (name === "Grep" || name === "Glob") return `${str(input.pattern)} ${str(input.path)}`.trim();
+    if (name.includes("user_shell")) return `$ ${str(input.command)}`;
+    if (name.includes("terminal_keys")) return str(input.keys);
+    return name;
+  }
+
   const wireListeners = () => {
     const onSubmit = async ({ query: userQuery }: any) => {
       bus.emit("agent:query", { query: userQuery });
@@ -151,6 +191,12 @@ export default function activate(ctx: ExtensionContext): void {
 
       let fullResponseText = "";
       let streamed = false;
+      /** Track in-flight tool calls so we can emit tool-completed when results arrive. */
+      const pendingTools = new Map<string, { name: string; kind: string }>();
+      /** Tool input JSON being streamed via input_json_delta events. */
+      const inputBuffers = new Map<number, string>();
+      /** Tool metadata per content block index (for correlating deltas). */
+      const blockMeta = new Map<number, { name: string; id: string }>();
 
       try {
         activeQuery = query({
@@ -183,15 +229,47 @@ export default function activate(ctx: ExtensionContext): void {
             case "stream_event": {
               streamed = true;
               const event = message.event;
-              if (event.type === "content_block_delta") {
-                const delta = event.delta as any;
-                if (delta.type === "text_delta" && delta.text) {
+              if (event.type === "content_block_start") {
+                const cb = (event as any).content_block;
+                if (cb?.type === "tool_use") {
+                  blockMeta.set(event.index, { name: cb.name, id: cb.id });
+                  inputBuffers.set(event.index, "");
+                }
+              } else if (event.type === "content_block_delta") {
+                const delta = (event as any).delta;
+                if (delta?.type === "text_delta" && delta.text) {
                   bus.emitTransform("agent:response-chunk", {
                     blocks: [{ type: "text" as const, text: delta.text }],
                   });
                   fullResponseText += delta.text;
-                } else if (delta.type === "thinking_delta" && delta.thinking) {
+                } else if (delta?.type === "thinking_delta" && delta.thinking) {
                   bus.emit("agent:thinking-chunk", { text: delta.thinking });
+                } else if (delta?.type === "input_json_delta" && delta.partial_json != null) {
+                  // Accumulate tool input JSON as it streams in
+                  const buf = inputBuffers.get(event.index) ?? "";
+                  inputBuffers.set(event.index, buf + delta.partial_json);
+                }
+              } else if (event.type === "content_block_stop") {
+                const meta = blockMeta.get(event.index);
+                const inputJson = inputBuffers.get(event.index);
+                if (meta && inputJson != null) {
+                  blockMeta.delete(event.index);
+                  inputBuffers.delete(event.index);
+
+                  let input: Record<string, unknown> = {};
+                  try { input = JSON.parse(inputJson || "{}"); } catch {}
+
+                  const kind = toolKind(meta.name);
+                  bus.emit("agent:tool-started", {
+                    title: meta.name,
+                    toolCallId: meta.id,
+                    kind,
+                    icon: toolIcon(meta.name),
+                    locations: toolLocations(input),
+                    rawInput: input,
+                    displayDetail: formatToolCall(meta.name, input),
+                  });
+                  pendingTools.set(meta.id, { name: meta.name, kind });
                 }
               }
               break;
@@ -206,22 +284,78 @@ export default function activate(ctx: ExtensionContext): void {
                     blocks: [{ type: "text" as const, text: b.text }],
                   });
                   fullResponseText += b.text;
-                } else if (b.type === "tool_use") {
+                } else if (b.type === "tool_use" && !streamed) {
+                  // Non-streamed fallback: emit tool-started from full message
+                  const input = (b.input ?? {}) as Record<string, unknown>;
+                  const kind = toolKind(b.name);
                   bus.emit("agent:tool-started", {
                     title: b.name,
                     toolCallId: b.id,
-                    kind: b.name.includes("shell") || b.name === "Bash"
-                      ? "execute"
-                      : "read",
+                    kind,
+                    icon: toolIcon(b.name),
+                    locations: toolLocations(input),
+                    rawInput: input,
+                    displayDetail: formatToolCall(b.name, input),
                   });
+                  pendingTools.set(b.id, { name: b.name, kind });
                 }
               }
               break;
             }
 
+            case "user": {
+              // Tool results come back as user messages with tool_result content blocks
+              const msg = message.message as any;
+              if (msg?.content && Array.isArray(msg.content)) {
+                for (const block of msg.content) {
+                  if (block.type === "tool_result") {
+                    const toolUseId = block.tool_use_id as string;
+                    const pending = pendingTools.get(toolUseId);
+                    if (!pending) continue;
+                    pendingTools.delete(toolUseId);
+
+                    const isError = !!block.is_error;
+                    const content = typeof block.content === "string"
+                      ? block.content
+                      : Array.isArray(block.content)
+                        ? block.content.map((c: any) => c.text ?? JSON.stringify(c)).join("\n")
+                        : "";
+
+                    const exitCode = isError ? 1 : 0;
+                    bus.emitTransform("agent:tool-completed", {
+                      toolCallId: toolUseId,
+                      exitCode,
+                      rawOutput: content,
+                      kind: pending.kind,
+                    });
+                    bus.emit("agent:tool-output", {
+                      tool: pending.name,
+                      output: content,
+                      exitCode,
+                    });
+                  }
+                }
+              }
+              break;
+            }
+
+            case "tool_progress":
+              // Tool still running — nothing to do, TUI spinner already active
+              break;
+
             case "result":
               break;
           }
+        }
+
+        // Emit completion for any tools still pending (edge case: interrupted query)
+        for (const [id, pending] of pendingTools) {
+          bus.emitTransform("agent:tool-completed", {
+            toolCallId: id,
+            exitCode: 0,
+            rawOutput: "",
+            kind: pending.kind,
+          });
         }
 
         bus.emitTransform("agent:response-done", {
