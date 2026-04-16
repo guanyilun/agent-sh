@@ -896,6 +896,125 @@ export class AgentLoop implements AgentBackend {
       },
     });
 
+    // ── introspect — window into the agent's own runtime state ─────
+    //
+    // The ash can wonder about its own internals: how many tokens am I
+    // using? What files have I cached? How close am I to compaction?
+    // This tool answers those questions. It's a mirror for the agent
+    // to see itself — not for debugging (that's what logs are for)
+    // but for metacognition: the ash understanding its own state so
+    // it can make better decisions.
+    this.toolRegistry.register({
+      name: "introspect",
+      description:
+        "Query your own internal runtime state. Available queries:\n" +
+        "- token_budget: breakdown of token usage (system prompt, conversation, reserve)\n" +
+        "- cache: files currently in the read cache (what you've already seen)\n" +
+        "- session_rules: current session rules and their count\n" +
+        "- errors: recent error patterns (tools/files with errors)\n" +
+        "- tools: all registered tools (built-in + user-created)\n" +
+        "- history: basic history stats (total entries, sessions, date range)\n" +
+        "- compaction: compaction state (how many times, last topics compacted)",
+      input_schema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            enum: ["token_budget", "cache", "session_rules", "errors", "tools", "history", "compaction", "all"],
+            description: "Which aspect of internal state to inspect.",
+          },
+        },
+        required: ["query"],
+      },
+      showOutput: false,
+
+      execute: async (args) => {
+        const query = args.query as string;
+        const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+        const promptTokens = this.conversation.estimatePromptTokens();
+
+        const sections: Record<string, string> = {
+          token_budget: [
+            `Context window: ${contextWindow.toLocaleString()} tokens`,
+            `Response reserve: ${RESPONSE_RESERVE.toLocaleString()} tokens`,
+            `Estimated prompt tokens: ${promptTokens.toLocaleString()}`,
+            `Available for conversation: ${(contextWindow - RESPONSE_RESERVE - promptTokens).toLocaleString()} tokens`,
+            `Usage: ${Math.round((promptTokens / contextWindow) * 100)}%`,
+            `Auto-compact threshold: ${Math.round((getSettings().autoCompactThreshold ?? 0.5) * 100)}%`,
+          ].join("\n"),
+
+          cache: (() => {
+            const entries = [...this.fileReadCache.entries()];
+            if (entries.length === 0) return "Read cache is empty.";
+            return entries.map(([filePath, state]) =>
+              `- ${filePath} (read at offset ${state.offset}, limit ${state.limit ?? "full"}, mtime ${new Date(state.mtimeMs).toISOString()})`
+            ).join("\n");
+          })(),
+
+          session_rules: this.sessionRules.length === 0
+            ? "No session rules active."
+            : `Active rules (${this.sessionRules.length}/10):\n` +
+              this.sessionRules.map((r, i) => `${i + 1}. ${r}`).join("\n"),
+
+          errors: (() => {
+            const toolErrors = [...this.lastErrorByTool.entries()];
+            const fileErrors = [...this.lastErrorByFile.entries()];
+            if (toolErrors.length === 0 && fileErrors.length === 0) {
+              return "No recent error patterns tracked.";
+            }
+            const lines: string[] = [];
+            if (toolErrors.length > 0) {
+              lines.push("Tool errors:");
+              toolErrors.forEach(([tool, err]) => lines.push(`  ${tool}: ${err}`));
+            }
+            if (fileErrors.length > 0) {
+              lines.push("File errors:");
+              fileErrors.forEach(([file, err]) => lines.push(`  ${file}: ${err}`));
+            }
+            return lines.join("\n");
+          })(),
+
+          tools: (() => {
+            const allTools = this.toolRegistry.all();
+            return `Registered tools (${allTools.length}):\n` +
+              allTools.map((t: ToolDefinition) => `- ${t.name}: ${t.description.split("\n")[0]}`).join("\n");
+          })(),
+
+          history: (() => {
+            const nuclear = this.conversation.getNuclearSummary();
+            return [
+              `Instance ID: ${this.instanceId ?? "unknown"}`,
+              `Nuclear entries: ${nuclear ? nuclear.split("\n").length : 0} lines`,
+              `Session rules: ${this.sessionRules.length}`,
+            ].join("\n");
+          })(),
+
+          compaction: [
+            `Auto-compact threshold: ${Math.round((getSettings().autoCompactThreshold ?? 0.5) * 100)}%`,
+            `Compact tool default target: 35%`,
+            `Current usage: ${Math.round((promptTokens / contextWindow) * 100)}%`,
+          ].join("\n"),
+        };
+
+        if (query === "all") {
+          const all = Object.entries(sections)
+            .map(([key, value]) => `## ${key}\n${value}`)
+            .join("\n\n");
+          return { content: all, exitCode: 0, isError: false };
+        }
+
+        return {
+          content: sections[query] ?? `Unknown query: ${query}. Available: ${Object.keys(sections).join(", ")}, all`,
+          exitCode: 0,
+          isError: false,
+        };
+      },
+
+      getDisplayInfo: () => ({ kind: "search", icon: "🔍" }),
+
+      formatCall: (args) => `introspect: ${args.query}`,
+    });
+
     // ── register_tool — ash creates tools on the spot (Q12) ──────────
     //
     // The ash describes a tool (name, description, parameters, command
@@ -913,8 +1032,16 @@ export class AgentLoop implements AgentBackend {
         "Create a new tool from a command template. The tool becomes immediately available " +
         "and persists for future sessions. Use {{param_name}} in the command template to " +
         "reference parameters. The command runs via bash with the same environment as the " +
-        "built-in bash tool. Example: command='wc -l \"{{file}}\"' with parameter " +
-        "{ file: { type: 'string', description: 'File path' } }",
+        "built-in bash tool.\n\n" +
+        "IMPORTANT: Only create tools that save *thinking*, not *typing*. Simple commands " +
+        "like 'wc -l {{file}}' are NOT worth a tool — you can run those directly via bash. " +
+        "Tools are valuable when they encode a complex pipeline you spent real reasoning to " +
+        "assemble: multi-step processing, non-obvious flag combinations, or domain-specific " +
+        "incantations. Ask yourself: would a future ash benefit from not having to rediscover " +
+        "this command? If no, just use bash. If yes, it's a tool.\n\n" +
+        "Example of a WORTHY tool: a pipeline that extracts TypeScript function signatures " +
+        "with proper type inference across multiple files. " +
+        "Example of an UNWORTHY tool: 'wc -l {{file}}' (just use bash).",
       input_schema: {
         type: "object",
         properties: {
