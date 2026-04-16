@@ -31,7 +31,7 @@ type Cleanup = () => void;
  * advise, command:register). Returns the wrapped context and a dispose()
  * function that tears down everything registered through it.
  */
-function createScopedContext(ctx: ExtensionContext): { scoped: ExtensionContext; dispose: () => void } {
+function createScopedContext(ctx: ExtensionContext, extensionName: string): { scoped: ExtensionContext; dispose: () => void } {
   const cleanups: Cleanup[] = [];
   const bus = ctx.bus;
 
@@ -56,22 +56,22 @@ function createScopedContext(ctx: ExtensionContext): { scoped: ExtensionContext;
     return unadvise;
   };
 
-  // Track instruction registrations
+  // Track instruction registrations — extension name captured in scope
   const scopedRegisterInstruction: typeof ctx.registerInstruction = (name, text) => {
-    ctx.registerInstruction(name, text);
-    cleanups.push(() => ctx.removeInstruction(name));
+    bus.emit("agent:register-instruction", { name, text, extensionName });
+    cleanups.push(() => bus.emit("agent:remove-instruction", { name }));
   };
 
-  // Track skill registrations
+  // Track skill registrations — extension name captured in scope
   const scopedRegisterSkill: typeof ctx.registerSkill = (name, description, filePath) => {
-    ctx.registerSkill(name, description, filePath);
-    cleanups.push(() => ctx.removeSkill(name));
+    bus.emit("agent:register-skill", { name, description, filePath, extensionName });
+    cleanups.push(() => bus.emit("agent:remove-skill", { name }));
   };
 
-  // Track tool registrations
+  // Track tool registrations — extension name captured in scope
   const scopedRegisterTool: typeof ctx.registerTool = (tool) => {
-    ctx.registerTool(tool);
-    cleanups.push(() => ctx.unregisterTool(tool.name));
+    bus.emit("agent:register-tool", { tool, extensionName });
+    cleanups.push(() => bus.emit("agent:unregister-tool", { name: tool.name }));
   };
 
   const scoped: ExtensionContext = {
@@ -201,17 +201,19 @@ async function loadSpecifiers(
         const name = base === "index" ? path.basename(path.dirname(specifier)) : base;
 
         // User extensions get a scoped context so /reload can tear them down
+        // All extensions get scoped contexts with the extension name captured
         if (userSet.has(specifier)) {
           // Dispose previous load if reloading
           extensionDisposers.get(name)?.();
 
-          const { scoped, dispose } = createScopedContext(ctx);
-          scoped._extensionName = name;
+          const { scoped, dispose } = createScopedContext(ctx, name);
           activate(scoped);
           extensionDisposers.set(name, dispose);
         } else {
-          ctx._extensionName = name;
-          activate(ctx);
+          const { scoped, dispose } = createScopedContext(ctx, name);
+          activate(scoped);
+          // Non-user extensions aren't reloadable, but track for cleanup on shutdown
+          extensionDisposers.set(name, dispose);
         }
         loaded.push(name);
       }

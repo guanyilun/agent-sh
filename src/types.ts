@@ -114,10 +114,6 @@ export interface ExtensionContext {
   /** Remove a registered skill by name. */
   removeSkill: (name: string) => void;
 
-  // ── Internal ──────────────────────────────────────────────
-  /** @internal Extension name set by the loader before activate(). */
-  _extensionName?: string;
-
   // ── Named handler registry (Emacs-style advice) ───────────
   /** Register a named handler. */
   define: (name: string, fn: (...args: any[]) => any) => void;
