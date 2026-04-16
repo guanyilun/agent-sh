@@ -30,6 +30,8 @@ export interface CompactResult {
    * Intended for a compaction-awareness message to the agent.
    */
   evictedTopics: string[];
+  /** Number of turns promoted to PINNED via topic matching (0 if no pin_topics). */
+  topicPinnedCount?: number;
 }
 
 // ── Search helpers (module-level) ─────────────────────────────
@@ -350,7 +352,7 @@ export class ConversationState {
    *                         (system + context + conversation). Internally
    *                         converted to a conversation-only target.
    */
-  compact(maxPromptTokens: number, recentTurnsToKeep = 10, force = false): CompactResult | null {
+  compact(maxPromptTokens: number, recentTurnsToKeep = 10, force = false, pinTopics?: string[]): CompactResult | null {
     // Convert total-prompt target to conversation-only target.
     // overhead = prompt total - conversation estimate (both approximate,
     // but the ratio is stable since both share the same messages array).
@@ -375,6 +377,23 @@ export class ConversationState {
     for (let i = 0; i < turns.length; i++) {
       turns[i]!.priority = this.inferPriority(turns[i]!.messages);
     }
+
+    // Topic-based pinning: if the agent specified topics to preserve,
+    // promote matching turns to PINNED so they survive compaction.
+    // Matches against the turn's text content (user messages, tool calls,
+    // assistant reasoning). Case-insensitive substring match.
+    const topicPinnedIndices = new Set<number>();
+    if (pinTopics && pinTopics.length > 0) {
+      for (let i = 0; i < turns.length; i++) {
+        if (turns[i]!.priority === Priority.PINNED) continue;
+        const text = this.turnToText(turns[i]!.messages).toLowerCase();
+        if (pinTopics.some((topic) => text.includes(topic.toLowerCase()))) {
+          turns[i]!.priority = Priority.PINNED;
+          topicPinnedIndices.add(i);
+        }
+      }
+    }
+
     // Two-tier pin: last turn verbatim, next (pinnedCount-1) slimmed
     const verbatimCount = 1;
     const slimmedCount = Math.max(0, pinnedCount - verbatimCount);
@@ -476,6 +495,7 @@ export class ConversationState {
       after: this.estimateTokens(),
       evictedCount: evictedIndices.size,
       evictedTopics: evictedTopics.slice(0, 5), // Cap at 5 topics to keep awareness brief
+      topicPinnedCount: topicPinnedIndices.size,
     };
   }
 

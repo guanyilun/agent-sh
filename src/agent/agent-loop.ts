@@ -749,6 +749,15 @@ export class AgentLoop implements AgentBackend {
             description:
               "Number of recent turns to keep verbatim (not compress). Default: 10.",
           },
+          pin_topics: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Topics/patterns to preserve through compaction. Turns whose content matches " +
+              "any of these strings (case-insensitive substring) will be pinned instead of evicted. " +
+              "Use for design decisions, key insights, or important context you want to keep. " +
+              "Example: [\"design decision\", \"event bus\", \"project memory\"]",
+          },
         },
       },
       showOutput: false, // No streaming output — result is a summary
@@ -758,6 +767,7 @@ export class AgentLoop implements AgentBackend {
         const targetPercent = (args.target_percent as number) ?? 35;
         const keepRecent = (args.keep_recent as number) ?? 10;
         const reason = (args.reason as string) ?? "agent-initiated";
+        const pinTopics = args.pin_topics as string[] | undefined;
 
         // Convert percentage to token target
         const target = Math.floor((contextWindow - RESPONSE_RESERVE) * (targetPercent / 100));
@@ -772,7 +782,7 @@ export class AgentLoop implements AgentBackend {
           };
         }
 
-        const stats = this.conversation.compact(target, keepRecent);
+        const stats = this.conversation.compact(target, keepRecent, false, pinTopics);
 
         if (!stats) {
           return {
@@ -792,6 +802,9 @@ export class AgentLoop implements AgentBackend {
         ];
         if (stats.evictedTopics.length > 0) {
           lines.push(`Topics compacted: ${stats.evictedTopics.join(", ")}`);
+        }
+        if (stats.topicPinnedCount && stats.topicPinnedCount > 0) {
+          lines.push(`${stats.topicPinnedCount} turns pinned by topic matching.`);
         }
         lines.push(`Reason: ${reason}`);
         lines.push(`Use conversation_recall to recover any evicted content.`);
