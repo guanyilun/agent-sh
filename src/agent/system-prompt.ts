@@ -20,11 +20,33 @@ export function formatSkillsBlock(skills: Skill[]): string {
 import * as os from "node:os";
 const GLOBAL_AGENTS_MD = path.join(os.homedir(), ".agent-sh", "AGENTS.md");
 
+// ── File caches ─────────────────────────────────────────────────────
+// Convention files (CLAUDE.md/AGENT.md) are walked synchronously from
+// CWD to root on every query. In practice they almost never change,
+// so a short TTL cache keyed by CWD avoids redundant filesystem walks.
+// The 5-second TTL is short enough to pick up edits quickly but long
+// enough to eliminate repeated walks within a multi-tool agent loop.
+
+const CACHE_TTL_MS = 5_000;
+
+/** TTL cache for convention files, keyed by resolved CWD. */
+let conventionCache: { cwd: string; result: string[]; expiry: number } | null = null;
+
+/** TTL cache for global AGENTS.md — changes extremely rarely. */
+let agentsMdCache: { result: string | null; expiry: number } | null = null;
+
 export function loadGlobalAgentsMd(): string | null {
+  const now = Date.now();
+  if (agentsMdCache && now < agentsMdCache.expiry) {
+    return agentsMdCache.result;
+  }
   try {
     const content = fs.readFileSync(GLOBAL_AGENTS_MD, "utf-8").trim();
-    return content || null;
+    const result = content || null;
+    agentsMdCache = { result, expiry: now + CACHE_TTL_MS };
+    return result;
   } catch {
+    agentsMdCache = { result: null, expiry: now + CACHE_TTL_MS };
     return null;
   }
 }
@@ -38,15 +60,21 @@ const CODE_DIR = path.resolve(
 /** File names to scan for project conventions (checked in order). */
 const CONVENTION_FILES = ["CLAUDE.md", "AGENT.md"];
 
-
-
 /**
  * Scan from `dir` upward for project convention files.
  * Returns contents ordered root-first (general → specific).
+ * Results are cached for CACHE_TTL_MS, keyed by resolved directory.
  */
 function loadConventionFiles(dir: string): string[] {
+  const cwd = path.resolve(dir);
+  const now = Date.now();
+
+  if (conventionCache && conventionCache.cwd === cwd && now < conventionCache.expiry) {
+    return conventionCache.result;
+  }
+
   const files: { path: string; content: string }[] = [];
-  let current = path.resolve(dir);
+  let current = cwd;
 
   while (true) {
     for (const name of CONVENTION_FILES) {
@@ -68,7 +96,9 @@ function loadConventionFiles(dir: string): string[] {
   }
 
   files.reverse();
-  return files.map(f => `<!-- ${f.path} -->\n${f.content}`);
+  const result = files.map(f => `<!-- ${f.path} -->\n${f.content}`);
+  conventionCache = { cwd, result, expiry: now + CACHE_TTL_MS };
+  return result;
 }
 
 /**
