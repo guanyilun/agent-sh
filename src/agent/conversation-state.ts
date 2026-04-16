@@ -565,6 +565,9 @@ export class ConversationState {
    */
   private slimTurn(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
     const MAX_RESULT_LEN = 1500;
+    // Error tool results get a more generous budget — losing the exact error
+    // during compaction is a primary cause of repeated mistakes.
+    const MAX_ERROR_RESULT_LEN = 4000;
     const result: ChatCompletionMessageParam[] = [];
 
     // Collect tool_call ids that are read-only so we can skip their results
@@ -595,10 +598,12 @@ export class ConversationState {
       if (msg.role === "tool") {
         if (readOnlyToolIds.has(msg.tool_call_id)) continue;
         const content = typeof msg.content === "string" ? msg.content : "";
-        if (content.length > MAX_RESULT_LEN) {
+        const isErr = content.startsWith("Error:");
+        const limit = isErr ? MAX_ERROR_RESULT_LEN : MAX_RESULT_LEN;
+        if (content.length > limit) {
           result.push({
             ...msg,
-            content: content.slice(0, MAX_RESULT_LEN) + "\n... [truncated by compact]",
+            content: content.slice(0, limit) + "\n... [truncated by compact]",
           });
         } else {
           result.push(msg);

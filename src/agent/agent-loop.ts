@@ -69,6 +69,10 @@ export class AgentLoop implements AgentBackend {
   private ctorPipeListeners: Array<{ event: string; fn: (...args: any[]) => any }> = [];
   private lastProjectSkillNames = new Set<string>();
 
+  // Consecutive error tracking — metacognitive nudge when stuck in a loop
+  private consecutiveErrors = new Map<string, number>();
+  private static readonly ERROR_NUDGE_THRESHOLD = 3;
+
   private static readonly THINKING_LEVELS = ["off", "low", "medium", "high"];
 
   private bus: EventBus;
@@ -1056,6 +1060,34 @@ export class AgentLoop implements AgentBackend {
       for (const tc of sequential) {
         if (signal.aborted) break;
         await executeSingle(tc, ++batchIdx);
+      }
+
+      // ── Consecutive error detection (metacognitive nudge) ──
+      // Track errors per tool. When the same tool errors N times in a row,
+      // inject a nudge encouraging the agent to read the tool's source instead
+      // of retrying blindly.
+      const errorTools = new Set<string>();
+      const successTools = new Set<string>();
+      for (const r of collectedResults) {
+        if (r.isError) errorTools.add(r.toolName);
+        else successTools.add(r.toolName);
+      }
+      for (const tool of errorTools) {
+        this.consecutiveErrors.set(tool, (this.consecutiveErrors.get(tool) ?? 0) + 1);
+      }
+      for (const tool of successTools) {
+        this.consecutiveErrors.delete(tool);
+      }
+      // Inject a synthetic nudge if any tool crosses the threshold
+      for (const [tool, count] of this.consecutiveErrors) {
+        if (count >= AgentLoop.ERROR_NUDGE_THRESHOLD) {
+          const nudge = `[system] ${tool} has errored ${count} times consecutively. ` +
+            `Consider reading its source code (src/agent/tools/${tool.replace("_", "-")}.ts) ` +
+            `to understand why, rather than retrying with the same approach.`;
+          collectedResults.push({ callId: "nudge", toolName: "system", content: nudge, isError: false });
+          // Reset counter after nudging so we don't spam
+          this.consecutiveErrors.delete(tool);
+        }
       }
 
       // Record all tool results via protocol

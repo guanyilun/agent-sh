@@ -16,16 +16,7 @@ export function formatSkillsBlock(skills: Skill[]): string {
     + skills.map(s => `- **${s.name}**: ${s.description}\n  Path: ${s.filePath}`).join("\n\n");
 }
 
-/** Resolve the absolute path to agent-sh's own docs directory. */
-const CODE_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../",
-);
-
-/** File names to scan for project conventions (checked in order). */
-const CONVENTION_FILES = ["CLAUDE.md", "AGENT.md"];
-
-// Resolve to the user's home-based config dir for global behavioral rules
+// Resolve to the user's home-based config dir — user's standing instructions to the agent
 import * as os from "node:os";
 const GLOBAL_AGENTS_MD = path.join(os.homedir(), ".agent-sh", "AGENTS.md");
 
@@ -37,6 +28,17 @@ export function loadGlobalAgentsMd(): string | null {
     return null;
   }
 }
+
+/** Resolve the absolute path to agent-sh's own docs directory. */
+const CODE_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../",
+);
+
+/** File names to scan for project conventions (checked in order). */
+const CONVENTION_FILES = ["CLAUDE.md", "AGENT.md"];
+
+
 
 /**
  * Scan from `dir` upward for project convention files.
