@@ -170,6 +170,38 @@ export function computeEditDiff(
   return computeDiff(oldFileText, newFile.join("\n"));
 }
 
+/**
+ * Diff two edit strings directly — no file read needed.
+ * Line numbers are relative to the edit region, not the file.
+ * Use for permission prompt previews where speed matters more than
+ * exact file-relative line numbers.
+ */
+export function computeInputDiff(
+  oldText: string,
+  newText: string,
+): DiffResult {
+  const a = oldText.split("\n");
+  const b = newText.split("\n");
+
+  const ses = myersSES(a, b);
+  const raw = sesToDiffLines(ses, a, b);
+
+  let added = 0;
+  let removed = 0;
+  for (const l of raw) {
+    if (l.type === "added") added++;
+    else if (l.type === "removed") removed++;
+  }
+
+  return {
+    hunks: groupHunks(raw, 3),
+    added,
+    removed,
+    isIdentical: false,
+    isNewFile: false,
+  };
+}
+
 // ── Myers' algorithm ──────────────────────────────────────────────
 
 interface SESEntry {

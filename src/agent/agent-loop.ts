@@ -20,7 +20,7 @@ import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { computeDiff, computeEditDiff } from "../utils/diff.js";
+import { computeDiff, computeInputDiff } from "../utils/diff.js";
 import type { AgentBackend, ToolDefinition } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { ConversationState } from "./conversation-state.js";
@@ -576,27 +576,20 @@ export class AgentLoop implements AgentBackend {
         if (tool.modifiesFiles && typeof args.path === "string") {
           try {
             const absPath = path.resolve(process.cwd(), args.path as string);
-            let oldContent: string | null = null;
-            try { oldContent = await fs.readFile(absPath, "utf-8"); } catch { /* new file */ }
-
-            let newContent: string | undefined;
             let diff: ReturnType<typeof computeDiff> | undefined;
-            if (typeof args.content === "string") {
-              // write_file
-              newContent = args.content;
-            } else if (typeof args.old_text === "string" && typeof args.new_text === "string" && oldContent !== null) {
-              // edit_file — use windowed diff
+
+            if (typeof args.old_text === "string" && typeof args.new_text === "string") {
+              // edit_file — diff the edit inputs directly, no file read needed
               const normalizedOld = (args.old_text as string).replace(/\r\n/g, "\n");
               const normalizedNew = (args.new_text as string).replace(/\r\n/g, "\n");
-              const replaceAll = (args.replace_all as boolean) ?? false;
-              const normalizedFile = oldContent.replace(/\r\n/g, "\n");
-              diff = computeEditDiff(normalizedFile, normalizedOld, normalizedNew, replaceAll);
-              // Still need newContent for permission metadata fallback
-              newContent = normalizedFile.replace(normalizedOld, normalizedNew);
-            }
-
-            if (diff === undefined && newContent !== undefined) {
-              diff = computeDiff(oldContent, newContent);
+              diff = computeInputDiff(normalizedOld, normalizedNew);
+            } else if (typeof args.content === "string") {
+              // write_file — still need to read the old file for comparison
+              let oldContent: string | null = null;
+              try { oldContent = await fs.readFile(absPath, "utf-8"); } catch { /* new file */ }
+              if (oldContent !== null) {
+                diff = computeDiff(oldContent, args.content as string);
+              }
             }
 
             if (diff && !diff.isIdentical) {
