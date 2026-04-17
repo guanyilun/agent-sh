@@ -63,7 +63,10 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   const bus = new EventBus();
   const handlers = new HandlerRegistry();
   const contextManager = new ContextManager(bus, handlers);
-  const instanceId = crypto.randomBytes(8).toString("hex");
+  // 3 bytes = 6 hex chars, ~16M values — ample for per-lineage uniqueness and
+  // short enough to read/remember. Legacy content may have 16-char iids; any
+  // parsers should accept ≥6 hex chars.
+  const instanceId = crypto.randomBytes(3).toString("hex");
   const settings = settingsMod.getSettings();
 
   // Expose raw CLI config so the agent backend extension can resolve
