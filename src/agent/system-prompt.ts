@@ -16,6 +16,41 @@ export function formatSkillsBlock(skills: Skill[]): string {
     + skills.map(s => `- **${s.name}**: ${s.description}\n  Path: ${s.filePath}`).join("\n\n");
 }
 
+// Resolve to the user's home-based config dir — user's standing instructions to the agent
+import * as os from "node:os";
+const GLOBAL_AGENTS_MD = path.join(os.homedir(), ".agent-sh", "AGENTS.md");
+
+// ── File caches ─────────────────────────────────────────────────────
+// Convention files (CLAUDE.md/AGENT.md) are walked synchronously from
+// CWD to root on every query. In practice they almost never change,
+// so a short TTL cache keyed by CWD avoids redundant filesystem walks.
+// The 5-second TTL is short enough to pick up edits quickly but long
+// enough to eliminate repeated walks within a multi-tool agent loop.
+
+const CACHE_TTL_MS = 5_000;
+
+/** TTL cache for convention files, keyed by resolved CWD. */
+let conventionCache: { cwd: string; result: string[]; expiry: number } | null = null;
+
+/** TTL cache for global AGENTS.md — changes extremely rarely. */
+let agentsMdCache: { result: string | null; expiry: number } | null = null;
+
+export function loadGlobalAgentsMd(): string | null {
+  const now = Date.now();
+  if (agentsMdCache && now < agentsMdCache.expiry) {
+    return agentsMdCache.result;
+  }
+  try {
+    const content = fs.readFileSync(GLOBAL_AGENTS_MD, "utf-8").trim();
+    const result = content || null;
+    agentsMdCache = { result, expiry: now + CACHE_TTL_MS };
+    return result;
+  } catch {
+    agentsMdCache = { result: null, expiry: now + CACHE_TTL_MS };
+    return null;
+  }
+}
+
 /** Resolve the absolute path to agent-sh's own docs directory. */
 const CODE_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -25,26 +60,21 @@ const CODE_DIR = path.resolve(
 /** File names to scan for project conventions (checked in order). */
 const CONVENTION_FILES = ["CLAUDE.md", "AGENT.md"];
 
-// Resolve to the user's home-based config dir for global behavioral rules
-import * as os from "node:os";
-const GLOBAL_AGENTS_MD = path.join(os.homedir(), ".agent-sh", "AGENTS.md");
-
-export function loadGlobalAgentsMd(): string | null {
-  try {
-    const content = fs.readFileSync(GLOBAL_AGENTS_MD, "utf-8").trim();
-    return content || null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Scan from `dir` upward for project convention files.
  * Returns contents ordered root-first (general → specific).
+ * Results are cached for CACHE_TTL_MS, keyed by resolved directory.
  */
 function loadConventionFiles(dir: string): string[] {
+  const cwd = path.resolve(dir);
+  const now = Date.now();
+
+  if (conventionCache && conventionCache.cwd === cwd && now < conventionCache.expiry) {
+    return conventionCache.result;
+  }
+
   const files: { path: string; content: string }[] = [];
-  let current = path.resolve(dir);
+  let current = cwd;
 
   while (true) {
     for (const name of CONVENTION_FILES) {
@@ -66,7 +96,9 @@ function loadConventionFiles(dir: string): string[] {
   }
 
   files.reverse();
-  return files.map(f => `<!-- ${f.path} -->\n${f.content}`);
+  const result = files.map(f => `<!-- ${f.path} -->\n${f.content}`);
+  conventionCache = { cwd, result, expiry: now + CACHE_TTL_MS };
+  return result;
 }
 
 /**
@@ -105,9 +137,17 @@ be reminded.`;
  *
  * Runs through the "dynamic-context:build" handler so extensions can advise.
  */
+export interface TokenStatus {
+  /** Estimated prompt tokens (API-grounded when available, else chars/4). */
+  promptTokens: number;
+  /** Model's context window in tokens. */
+  contextWindow: number;
+}
+
 export function buildDynamicContext(
   contextManager: ContextManager,
   shellBudgetTokens?: number,
+  tokenStatus?: TokenStatus,
 ): string {
   const sections: string[] = [];
 
@@ -131,10 +171,15 @@ export function buildDynamicContext(
     sections.push(shellContext);
   }
 
-  // Metadata
-  sections.push(
-    `Current date: ${new Date().toISOString().split("T")[0]}\nWorking directory: ${contextManager.getCwd()}`,
-  );
+  // Metadata + token awareness
+  let metadata = `Current date: ${new Date().toISOString().split("T")[0]}\nWorking directory: ${contextManager.getCwd()}`;
+  if (tokenStatus) {
+    const usedK = (tokenStatus.promptTokens / 1000).toFixed(1);
+    const maxK = (tokenStatus.contextWindow / 1000).toFixed(0);
+    const pct = Math.min(100, Math.round((tokenStatus.promptTokens / tokenStatus.contextWindow) * 100));
+    metadata += `\nToken usage: ${usedK}k/${maxK}k (${pct}%)`;
+  }
+  sections.push(metadata);
 
   return sections.join("\n\n");
 }

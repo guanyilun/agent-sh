@@ -86,6 +86,15 @@ export interface Settings {
   toolMode?: "api" | "deferred" | "inline";
   /** Additional directories to scan for skills (supports ~ expansion). */
   skillPaths?: string[];
+  /**
+   * Enable the "diagnose" tool — lets the agent evaluate JavaScript
+   * expressions against its own runtime state. Powerful for introspection
+   * (e.g. this.conversation.turns.length) but grants arbitrary code
+   * execution within the agent process. Off by default because the
+   * agent already has unrestricted bash access — this is a convenience,
+   * not a new capability.
+   */
+  diagnose?: boolean;
 
   // ── Identity & startup ───────────────────────────────────
   /** Show a startup banner when agent-sh launches. */
@@ -119,6 +128,7 @@ const DEFAULTS: Required<Settings> = {
   readOutputMaxLines: 10,
   diffMaxLines: Infinity,
   skillPaths: [],
+  diagnose: false,
   startupBanner: true,
   promptIndicator: true,
   disabledBuiltins: [],

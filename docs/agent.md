@@ -28,9 +28,9 @@ Every query includes two streams of context that share a unified token budget:
 - **Shell context** = user terminal history (commands + outputs), assembled fresh for every LLM call. It's what lets the agent understand "fix this" after you ran a failing command.
 - **Conversation state** = the OpenAI chat messages array (`user`/`assistant`/`tool` messages). This is the LLM's memory of what it already said and did.
 
-The two streams don't overlap — agent tool outputs live only in the conversation, while shell context tracks only user-initiated activity. Both streams support recall tools (`shell_recall` and `conversation_recall`) for recovering evicted content.
+The two streams don't overlap — agent tool outputs live only in the conversation, while shell context tracks only user-initiated activity. The `shell_recall` tool recovers evicted shell content; conversation compaction strategy and any conversation-recall behaviour is provided by extensions (the kernel exposes `conversation:compact` as an advisable handler).
 
-See [Context Management](context-management.md) for the full design: token budgeting, truncation pipeline, priority-based compaction, and configuration.
+See [Context Management](context-management.md) for the full design: token budgeting, truncation pipeline, compaction hook, and configuration.
 
 ## System Prompt
 
@@ -180,7 +180,6 @@ Extensions can add tools that cross the shell↔agent boundary via `shell:exec-r
 | `glob` | Find files by name pattern | No | No |
 | `ls` | List directory contents (with timestamps and sizes) | No | No |
 | `list_skills` | List available skills (name, description, path) | No | No |
-| `conversation_recall` | Search or expand evicted conversation turns | No | No |
 | `shell_recall` | Browse or search truncated shell context (extension: shell-recall) | No | No |
 | `terminal_read` | Read the current terminal screen (extension: terminal-buffer) | No | No |
 | `terminal_keys` | Send keystrokes to the user's live PTY (extension: terminal-buffer) | No | No |

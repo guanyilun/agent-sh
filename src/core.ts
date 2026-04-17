@@ -25,7 +25,12 @@ import * as settingsMod from "./settings.js";
 import { HandlerRegistry } from "./utils/handler-registry.js";
 import { TerminalBuffer } from "./utils/terminal-buffer.js";
 import crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import { DefaultCompositor, StdoutSurface } from "./utils/compositor.js";
+
+const STORAGE_ROOT = path.join(os.homedir(), ".agent-sh");
 
 // Re-export types that library consumers need
 export { EventBus } from "./event-bus.js";
@@ -58,7 +63,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   const bus = new EventBus();
   const handlers = new HandlerRegistry();
   const contextManager = new ContextManager(bus, handlers);
-  const instanceId = crypto.randomBytes(2).toString("hex");
+  const instanceId = crypto.randomBytes(8).toString("hex");
   const settings = settingsMod.getSettings();
 
   // Expose raw CLI config so the agent backend extension can resolve
@@ -194,6 +199,11 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         createFencedBlockTransform: (o) =>
           streamTransform.createFencedBlockTransform(bus, o),
         getExtensionSettings: settingsMod.getExtensionSettings,
+        getStoragePath: (namespace: string) => {
+          const dir = path.join(STORAGE_ROOT, namespace);
+          fs.mkdirSync(dir, { recursive: true });
+          return dir;
+        },
         registerCommand: (name, description, handler) =>
           bus.emit("command:register", { name, description, handler }),
         registerTool: (tool) => bus.emit("agent:register-tool", { tool, extensionName: "" }),
@@ -206,6 +216,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         define: (name, fn) => handlers.define(name, fn),
         advise: (name, wrapper) => handlers.advise(name, wrapper),
         call: (name, ...args) => handlers.call(name, ...args),
+        list: () => handlers.list(),
         get terminalBuffer() { return getTerminalBuffer(); },
         compositor,
         createRemoteSession: (opts: RemoteSessionOptions): RemoteSession => {

@@ -502,7 +502,7 @@ export class DeferredToolProtocol implements ToolProtocol {
 const CORE_TOOLS = [
   "bash", "read_file", "write_file", "edit_file",
   "grep", "glob", "ls",
-  "list_skills", "conversation_recall",
+  "list_skills",
 ];
 
 export function createToolProtocol(mode: "api" | "inline" | "deferred"): ToolProtocol {

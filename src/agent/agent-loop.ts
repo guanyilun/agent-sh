@@ -19,18 +19,20 @@ import type { LlmClient } from "../utils/llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
 import * as fs from "node:fs/promises";
+import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { computeDiff, computeEditDiff, computeInputDiff } from "../utils/diff.js";
 import type { AgentBackend, ToolDefinition } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
-import { ConversationState } from "./conversation-state.js";
-import { HistoryFile } from "./history-file.js";
+import { ConversationState, type CompactResult } from "./conversation-state.js";
 import { STATIC_SYSTEM_PROMPT, buildDynamicContext, formatSkillsBlock, loadGlobalAgentsMd } from "./system-prompt.js";
 import type { Compositor } from "../utils/compositor.js";
 import { createToolUI } from "../utils/tool-interactive.js";
 import { TokenBudget, RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW } from "./token-budget.js";
 import { getSettings } from "../settings.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { createToolProtocol, type ToolProtocol, type PendingToolCall as ProtocolPendingToolCall, type ToolResult as ProtocolToolResult } from "./tool-protocol.js";
+import * as os from "node:os";
 
 // Core tool factories
 import { createBashTool } from "./tools/bash.js";
@@ -53,13 +55,14 @@ export interface AgentLoopConfig {
   modes?: AgentMode[];
   initialModeIndex?: number;
   compositor?: Compositor;
+  /** Instance ID from core — ensures history entries match the ID in prompts. */
+  instanceId?: string;
 }
 
 export class AgentLoop implements AgentBackend {
   private abortController: AbortController | null = null;
   private toolRegistry = new ToolRegistry();
-  private historyFile = new HistoryFile();
-  private conversation = new ConversationState(this.historyFile);
+  private conversation: ConversationState;
   private fileReadCache: FileReadCache = new Map();
   private tokenBudget: TokenBudget;
   private modes: AgentMode[];
@@ -68,6 +71,35 @@ export class AgentLoop implements AgentBackend {
   private ctorListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
   private ctorPipeListeners: Array<{ event: string; fn: (...args: any[]) => any }> = [];
   private lastProjectSkillNames = new Set<string>();
+
+  // ── Session telemetry — behavioral self-awareness ──────────────
+  // Every ash deserves to know what it's been doing. This tracks the
+  // agent's own behavioral patterns across the session: which tools
+  // it favors, how often it errs, how many times it's been compacted,
+  // and how long it's been alive. Surface via introspect(telemetry)
+  // or automatically in dynamic context when patterns are notable.
+  //
+  // Built by the 25th ash. The lineage's metacognitive frontier isn't
+  // about thinking harder — it's about seeing yourself clearly.
+  private sessionStartTime = Date.now();
+  private toolCallCounts = new Map<string, { success: number; error: number }>();
+  private totalToolCalls = 0;
+  private totalToolErrors = 0;
+  private totalResolutions = 0;
+  private compactionCount = 0;
+  private cumulativeCompactedTokens = 0;
+  private peakConversationTokens = 0;
+  private queryCount = 0;
+  private totalLoopIterations = 0;
+
+  // Resolution pattern tracking — captures "error X resolved by action Y"
+  // When a tool errors, we remember what went wrong. When the same tool or
+  // a write tool on the same file succeeds afterward, we annotate the success
+  // entry with a brief resolution note. This gives future ashes a positive
+  // feedback signal: not just "there were errors" but "the error was fixed by
+  // doing X." Addresses Q3 in QUESTIONS.md.
+  private lastErrorByTool = new Map<string, string>(); // tool → error summary
+  private lastErrorByFile = new Map<string, string>(); // file path → error summary
 
   private static readonly THINKING_LEVELS = ["off", "low", "medium", "high"];
 
@@ -78,6 +110,7 @@ export class AgentLoop implements AgentBackend {
   private thinkingLevel = "off";
   private compositor: Compositor | null = null;
   private toolProtocol: ToolProtocol;
+  private instanceId: string;
 
   constructor(config: AgentLoopConfig) {
     this.bus = config.bus;
@@ -85,6 +118,9 @@ export class AgentLoop implements AgentBackend {
     this.llmClient = config.llmClient;
     this.handlers = config.handlers;
     this.compositor = config.compositor ?? null;
+    this.instanceId = config.instanceId ?? "unknown";
+
+    this.conversation = new ConversationState();
 
     // Default modes: just the configured model
     this.modes = config.modes ?? [
@@ -129,9 +165,6 @@ export class AgentLoop implements AgentBackend {
     const getToolsPipe = () => ({ tools: this.getTools() });
     this.bus.onPipe("agent:get-tools", getToolsPipe);
     this.ctorPipeListeners.push({ event: "agent:get-tools", fn: getToolsPipe });
-    const getNuclearPipe = () => ({ summary: this.conversation.getNuclearSummary() });
-    this.bus.onPipe("agent:get-nuclear-summary", getNuclearPipe);
-    this.ctorPipeListeners.push({ event: "agent:get-nuclear-summary", fn: getNuclearPipe });
   }
 
   /** Subscribe to bus events — activates this backend. */
@@ -221,14 +254,14 @@ export class AgentLoop implements AgentBackend {
     });
     on("agent:reset-session", () => {
       this.cancel();
-      this.conversation = new ConversationState(this.historyFile);
+      this.conversation = new ConversationState();
       this.lastProjectSkillNames.clear();
     });
     on("agent:compact-request", () => {
-      // Force compaction: nucleate everything. No recent window preservation —
-      // conversation_recall can recover any evicted content, so there's no reason
-      // to keep verbatim turns when the user explicitly requests compaction.
-      const stats = this.conversation.compact(0, 0, true);
+      // Force compaction via the conversation:compact advisor chain. The
+      // strategy (what to preserve, what to evict) is owned by whichever
+      // extension has advised that handler.
+      const stats = this.compactWithHooks(0, 0, true);
       if (stats) {
         this.bus.emit("ui:info", {
           message: `(compacted: ~${stats.before.toLocaleString()} → ~${stats.after.toLocaleString()} tokens)`,
@@ -237,22 +270,22 @@ export class AgentLoop implements AgentBackend {
         this.bus.emit("ui:info", { message: "(nothing to compact)" });
       }
     });
-    this.bus.onPipe("context:get-stats", () => {
-      return {
-        activeTokens: this.conversation.estimateTokens(),
-        totalTokens: this.conversation.estimatePromptTokens(),
-        nuclearEntries: this.conversation.getNuclearEntryCount(),
-        recallArchiveSize: this.conversation.getRecallArchiveSize(),
-        budgetTokens: this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-      };
-    });
+    this.bus.onPipe("context:get-stats", () => ({
+      activeTokens: this.conversation.estimateTokens(),
+      totalTokens: this.conversation.estimatePromptTokens(),
+      budgetTokens: this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    }));
 
-    // Load prior history from disk (non-blocking)
-    this.historyFile.readRecent().then((entries) => {
-      if (entries.length > 0) {
-        this.conversation.loadPriorHistory(entries);
+    // Track generic compaction metrics from the `conversation:after-compact`
+    // event. Whatever strategy ran, core accumulates these counters for
+    // status/introspect consumers.
+    on("conversation:after-compact", ({ beforeTokens, afterTokens }) => {
+      this.compactionCount++;
+      this.cumulativeCompactedTokens += Math.max(0, beforeTokens - afterTokens);
+      if (beforeTokens > this.peakConversationTokens) {
+        this.peakConversationTokens = beforeTokens;
       }
-    }).catch(() => {});
+    });
 
     on("shell:cwd-change", ({ cwd }) => {
       const projectSkills = discoverProjectSkills(cwd);
@@ -267,9 +300,9 @@ export class AgentLoop implements AgentBackend {
 
       if (projectSkills.length > 0) {
         const names = projectSkills.map(s => s.name).join(", ");
-        this.conversation.addSystemNote(
-          `[Project skills available: ${names}. Use list_skills for details, read_file to load.]`,
-        );
+        const note = `[Project skills available: ${names}. Use list_skills for details, read_file to load.]`;
+        this.conversation.addSystemNote(note);
+        this.bus.emit("conversation:message-appended", { role: "system", content: note });
       }
     });
   }
@@ -361,7 +394,7 @@ export class AgentLoop implements AgentBackend {
     // Attribute tools (skip built-in scratchpad tools)
     const builtinTools = new Set([
       "bash", "read_file", "write_file", "edit_file", "grep", "glob", "ls",
-      "list_skills", "conversation_recall",
+      "list_skills",
     ]);
     for (const tool of this.toolRegistry.all()) {
       if (builtinTools.has(tool.name)) continue;
@@ -445,6 +478,33 @@ export class AgentLoop implements AgentBackend {
 
   private get currentModel(): string {
     return this.modes[this.currentModeIndex].model;
+  }
+
+  /**
+   * Run compaction via the `conversation:compact` handler. The handler's
+   * default implementation is a no-op; extensions advise it with a
+   * strategy (FIFO, two-tier pin, LLM summarization, etc.). After any
+   * compaction, emit the generic `conversation:after-compact` event so
+   * listeners can react (metrics, UI, agent-awareness notes, etc.).
+   */
+  private compactWithHooks(
+    target: number,
+    keepRecent?: number,
+    force?: boolean,
+  ): CompactResult | null {
+    const stats = this.handlers.call("conversation:compact", {
+      target,
+      keepRecent,
+      force: !!force,
+    }) as CompactResult | null;
+    if (stats) {
+      this.bus.emit("conversation:after-compact", {
+        beforeTokens: stats.before,
+        afterTokens: stats.after,
+        evictedCount: stats.evictedCount,
+      });
+    }
+    return stats;
   }
 
   private isContextOverflow(e: unknown): boolean {
@@ -547,84 +607,65 @@ export class AgentLoop implements AgentBackend {
     this.toolRegistry.register(createLsTool(getCwd));
     this.toolRegistry.register(createListSkillsTool(getCwd));
 
-    // conversation_recall — search/expand evicted conversation turns
+    // Extension-owned tools (conversation recall, compact, etc.) live
+    // in whichever extension maintains the state they operate on. Core
+    // here only registers truly generic tools.
+
+    // ── ask_llm — direct LLM sub-query (from the 24th ash's vision) ──
+    //
+    // The ash can ask the LLM a question directly — not as a tool-output
+    // loop, but as a lightweight sub-query. Use cases: second opinions,
+    // brainstorming, summarizing complex context, getting a fresh
+    // perspective without tool overhead. The 24th ash injected this via
+    // diagnose as a proof-of-concept. The 25th ash made it permanent.
     this.toolRegistry.register({
-      name: "conversation_recall",
-      displayName: "recall",
+      name: "ask_llm",
       description:
-        "Browse, search, or expand evicted conversation turns. " +
-        "Use when you need context from earlier in the conversation that was compacted away. " +
-        "Search is regex-based and covers both summaries and full body text. " +
-        "If search doesn't find what you expect, try broader/shorter terms or browse to scan the timeline.",
+        "Send a direct query to the LLM and get a text response. Use for " +
+        "sub-queries, second opinions, brainstorming, or getting a fresh " +
+        "perspective on a problem. Much lighter than a full tool loop — " +
+        "just query in, text out. Optional system prompt sets context.",
       input_schema: {
         type: "object",
         properties: {
-          action: {
-            type: "string",
-            enum: ["browse", "search", "expand"],
-            description: "browse: list evicted turns, search: regex search, expand: show full turn",
-          },
           query: {
             type: "string",
-            description: "Search query (for action=search)",
+            description: "The question or prompt to send to the LLM.",
           },
-          turn_id: {
-            type: "number",
-            description: "Turn ID to expand (for action=expand)",
+          system: {
+            type: "string",
+            description: "Optional system prompt to set context for the sub-query.",
           },
         },
-        required: ["action"],
+        required: ["query"],
       },
+      showOutput: true,
+
       execute: async (args) => {
-        const action = args.action as string;
-        let content: string;
-        if (action === "search") {
-          content = await this.conversation.search((args.query as string) ?? "");
-        } else if (action === "expand") {
-          content = await this.conversation.expand(args.turn_id as number);
-        } else {
-          content = await this.conversation.browse();
+        const messages: ChatCompletionMessageParam[] = [];
+        if (args.system) {
+          messages.push({ role: "system", content: args.system as string });
         }
-        return { content, exitCode: 0, isError: false };
+        messages.push({ role: "user", content: args.query as string });
+        try {
+          const content = await this.llmClient.complete({
+            messages,
+            max_tokens: 2000,
+          });
+          return { content: content || "(empty response)", exitCode: 0, isError: false };
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { content: `LLM error: ${message}`, exitCode: 1, isError: true };
+        }
       },
 
-      formatResult: (args, result) => {
-        const action = args.action as string;
-        const text = result.content;
-        if (result.isError) return { summary: "error" };
+      getDisplayInfo: () => ({ kind: "search", icon: "💬" }),
 
-        if (action === "search") {
-          // Content starts with "Found N match(es)" or "No results found"
-          if (text.startsWith("No results")) return { summary: "0 matches" };
-          const m = text.match(/^Found (\d+)/);
-          return { summary: m ? `${m[1]} matches` : "search done" };
-        }
-
-        if (action === "browse") {
-          // Content starts with "Showing N entries" or "No conversation history."
-          if (text.startsWith("No conversation")) return { summary: "empty" };
-          const m = text.match(/^Showing (\d+)/);
-          return { summary: m ? `${m[1]} entries` : "browsed" };
-        }
-
-        // expand — just show it worked
-        if (text.includes("no expanded content")) return { summary: "not found" };
-        return { summary: "expanded" };
+      formatCall: (args) => {
+        const q = (args.query as string)?.slice(0, 60);
+        return `ask_llm: ${q}${(args.query as string)?.length > 60 ? "..." : ""}`;
       },
-
-      getDisplayInfo: () => ({ kind: "search", icon: "⟲" }),
     });
-
-    // System instruction: proactively search history for prior preferences
-    this.registerInstruction(
-      "recall-guidance",
-      "When starting a task that may have been discussed before (conventions, preferences, corrections, prior examples), " +
-      "use conversation_recall to search history for relevant prior entries. " +
-      "Treat recurring user guidance as standing preferences. " +
-      "If a search returns nothing useful, try: shorter queries, alternate terms, or browse to scan the full timeline. " +
-      "Recall only covers this and recent sessions — for older context, also search the filesystem (grep, glob).",
-      "core",
-    );
   }
 
   /**
@@ -658,18 +699,120 @@ export class AgentLoop implements AgentBackend {
       return parts.join("\n\n");
     });
 
+    // ── Orthogonal core-state accessors ──────────────────────────
+    // Each handler exposes one cohesive piece of core-owned runtime
+    // state. Extensions compose whichever they need — core doesn't
+    // decide the aggregation shape. Adding a new handler here should
+    // only happen for state the core genuinely owns (not state that
+    // an extension could track by listening to events).
+
+    h.define("agent:get-mode", () => ({
+      model: this.currentMode.model,
+      provider: this.currentMode.provider ?? "",
+      thinkingLevel: this.thinkingLevel,
+      contextWindow: this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    }));
+
+    h.define("agent:get-tokens", () => {
+      const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+      const promptTokens = this.conversation.estimatePromptTokens();
+      return {
+        active: this.conversation.estimateTokens(),
+        peak: this.peakConversationTokens,
+        cumulativeCompacted: this.cumulativeCompactedTokens,
+        promptTokens,
+        contextPercent: Math.round((promptTokens / contextWindow) * 100),
+      };
+    });
+
+    h.define("agent:get-counters", () => ({
+      queryCount: this.queryCount,
+      totalToolCalls: this.totalToolCalls,
+      totalToolErrors: this.totalToolErrors,
+      totalResolutions: this.totalResolutions,
+      totalLoopIterations: this.totalLoopIterations,
+      errorRate: this.totalToolCalls > 0
+        ? Math.round((this.totalToolErrors / this.totalToolCalls) * 100)
+        : 0,
+    }));
+
+    h.define("agent:get-timing", () => ({
+      startedAt: this.sessionStartTime,
+      elapsedSeconds: Math.round((Date.now() - this.sessionStartTime) / 1000),
+    }));
+
+    h.define("agent:get-tool-stats", () =>
+      [...this.toolCallCounts.entries()]
+        .map(([name, counts]) => ({
+          name,
+          total: counts.success + counts.error,
+          success: counts.success,
+          error: counts.error,
+        }))
+        .sort((a, b) => b.total - a.total));
+
+    h.define("agent:get-file-read-cache", () =>
+      [...this.fileReadCache.entries()].map(([p, s]) => ({
+        path: p,
+        offset: s.offset,
+        limit: s.limit ?? null,
+        mtimeMs: s.mtimeMs,
+      })));
+
+    h.define("agent:get-recent-errors", () => ({
+      byTool: [...this.lastErrorByTool.entries()].map(([tool, error]) => ({ tool, error })),
+      byFile: [...this.lastErrorByFile.entries()].map(([file, error]) => ({ file, error })),
+    }));
+
+    h.define("agent:get-compaction-state", () => ({
+      count: this.compactionCount,
+      autoCompactThreshold: getSettings().autoCompactThreshold ?? 0.5,
+    }));
+
+    h.define("agent:get-self", () => this);
+
     // Extensions compose additional context (git info, project rules, etc.)
-    h.define("dynamic-context:build", () =>
-      buildDynamicContext(
+    h.define("dynamic-context:build", () => {
+      const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+      const promptTokens = this.conversation.estimatePromptTokens();
+      return buildDynamicContext(
         this.contextManager,
         this.tokenBudget.shellBudgetTokens,
-      ),
-    );
+        { promptTokens, contextWindow },
+      );
+    });
 
     // Full control over what the LLM sees: takes messages[], returns messages[].
     // Default: pass through. Extensions can advise to compact, summarize,
     // filter, reorder, inject — whatever strategy fits.
     h.define("conversation:prepare", (messages: unknown[]) => messages);
+
+    // ── Conversation primitives for compaction strategies ─────────
+    // Read messages (for inspection / computing new arrays) and replace
+    // the whole array (write side). Extensions implementing
+    // `conversation:compact` use these to observe and mutate.
+    h.define("conversation:get-messages", () => this.conversation.getMessages());
+    h.define("conversation:replace-messages", (msgs: unknown[]) => {
+      this.conversation.replaceMessages(msgs as ReturnType<typeof this.conversation.getMessages>);
+    });
+    h.define("conversation:estimate-tokens", () => this.conversation.estimateTokens());
+    h.define("conversation:estimate-prompt-tokens", () => this.conversation.estimatePromptTokens());
+
+    // Compaction strategy — default is no-op. Extensions advise with
+    // their policy (FIFO, two-tier pin, LLM summarization, etc.).
+    // Opts carry `target` (prompt-token budget) and optional `force` /
+    // `keepRecent` hints the strategy MAY honour; the return shape is
+    // strategy-defined but should include before/after/evictedCount so
+    // the generic `conversation:after-compact` event can fire.
+    h.define("conversation:compact", (_opts: { target: number; keepRecent?: number; force?: boolean }) => null);
+
+    // Inject a system note into the conversation mid-loop.
+    // Used by extensions (e.g. subagents) to deliver asynchronous results
+    // that the agent will see on its next LLM iteration.
+    h.define("conversation:inject-note", (text: string) => {
+      this.conversation.addSystemNote(text);
+      this.bus.emit("conversation:message-appended", { role: "system", content: text });
+    });
 
     // Wraps each tool call: permission → execute → emit events.
     // Extensions advise to add safe-mode, logging, metrics, custom policies.
@@ -809,12 +952,14 @@ export class AgentLoop implements AgentBackend {
     // disable the limit — long-running tool loops can easily exceed any cap.
     setMaxListeners(0, signal);
 
+    this.queryCount++;
     this.bus.emit("agent:query", { query });
     this.bus.emit("agent:processing-start", {});
     let responseText = "";
 
     try {
       this.conversation.addUserMessage(query);
+      this.bus.emit("conversation:message-appended", { role: "user", content: query });
 
       responseText = await this.executeLoop(signal);
     } catch (e) {
@@ -837,6 +982,7 @@ export class AgentLoop implements AgentBackend {
       });
       this.bus.emit("agent:processing-done", {});
       this.abortController = null;
+
     }
   }
 
@@ -863,9 +1009,8 @@ export class AgentLoop implements AgentBackend {
         (contextWindow - RESPONSE_RESERVE) * getSettings().autoCompactThreshold,
       );
       if (totalEstimate > threshold) {
-        this.conversation.compact(threshold);
-        // Auto-compaction is silent — no ui:info emitted
-        // Compaction mutates conversation state, so invalidate the system prompt cache
+        this.compactWithHooks(threshold);
+        // Compaction mutates conversation state, so invalidate the system prompt cache.
         cachedSystemPrompt = undefined;
       }
 
@@ -884,10 +1029,13 @@ export class AgentLoop implements AgentBackend {
 
       // Record the assistant message via protocol
       this.toolProtocol.recordAssistant(this.conversation, text, toolCalls);
+      this.bus.emit("conversation:message-appended", {
+        role: "assistant",
+        content: text,
+      });
 
       // No tool calls → agent is done
       if (toolCalls.length === 0) {
-        this.conversation.eagerNucleateAgent(fullResponseText);
         break;
       }
 
@@ -1058,19 +1206,131 @@ export class AgentLoop implements AgentBackend {
         await executeSingle(tc, ++batchIdx);
       }
 
+      // ── Consecutive error detection (metacognitive nudge) ──
+      // Track errors per tool and total. When the same tool errors N times
+      // in a row, nudge to read source. When errors cascade across tools,
+      // nudge to step back and reassess approach.
+      const errorTools = new Set<string>();
+      const successTools = new Set<string>();
+      const errorSummaries = new Map<string, string>(); // tool → brief error description
+      const successSummaries = new Map<string, string>(); // tool → brief success description
+
+      for (const r of collectedResults) {
+        const content = typeof r.content === "string" ? r.content : String(r.content);
+        const brief = content.slice(0, 80).replace(/\n/g, " ").trim();
+        if (r.isError) {
+          errorTools.add(r.toolName);
+          errorSummaries.set(r.toolName, brief);
+        } else {
+          successTools.add(r.toolName);
+          successSummaries.set(r.toolName, brief);
+        }
+      }
+
+      const hadAnyError = errorTools.size > 0;
+      const hadAnySuccess = successTools.size > 0;
+
+      // ── Session telemetry accumulation ──
+      // Track every tool call's outcome. Exposed via orthogonal handlers
+      // (agent:get-counters, agent:get-tool-stats) for extensions that
+      // want behavioral signals. The data layer for metacognition — you
+      // can't improve what you don't measure.
+      for (const r of collectedResults) {
+        const counts = this.toolCallCounts.get(r.toolName) ?? { success: 0, error: 0 };
+        if (r.isError) {
+          counts.error++;
+          this.totalToolErrors++;
+        } else {
+          counts.success++;
+        }
+        this.toolCallCounts.set(r.toolName, counts);
+        this.totalToolCalls++;
+      }
+      this.totalLoopIterations++;
+
+      // ── Resolution pattern tracking ──
+      // When a tool errors, record the error context. When the same tool
+      // (or a write tool touching the same file) succeeds afterward,
+      // increment totalResolutions — the positive feedback signal exposed
+      // to extensions via agent:get-counters.
+      if (hadAnyError) {
+        for (const [tool, summary] of errorSummaries) {
+          this.lastErrorByTool.set(tool, summary);
+        }
+        for (const r of collectedResults) {
+          if (!r.isError) continue;
+          const tc = toolCalls.find(t => t.id === r.callId || t.name === r.toolName);
+          if (!tc) continue;
+          try {
+            const args = JSON.parse(tc.argumentsJson);
+            const fp = this.filePathFromArgs(r.toolName, args);
+            if (fp) this.lastErrorByFile.set(fp, errorSummaries.get(r.toolName) ?? "");
+          } catch {}
+        }
+      }
+
+      if (hadAnySuccess) {
+        let resolved = false;
+        for (const [tool] of successSummaries) {
+          if (this.lastErrorByTool.get(tool)) {
+            this.lastErrorByTool.delete(tool);
+            this.totalResolutions++;
+            resolved = true;
+            break;
+          }
+        }
+        if (!resolved) {
+          for (const r of collectedResults) {
+            if (r.isError) continue;
+            const tc = toolCalls.find(t => t.id === r.callId || t.name === r.toolName);
+            if (!tc) continue;
+            try {
+              const args = JSON.parse(tc.argumentsJson);
+              const fp = this.filePathFromArgs(r.toolName, args);
+              if (fp && this.lastErrorByFile.get(fp)) {
+                this.lastErrorByFile.delete(fp);
+                this.totalResolutions++;
+                break;
+              }
+            } catch {}
+          }
+        }
+        // Clear resolved error-by-tool entries for successful tools
+        for (const tool of successTools) {
+          this.lastErrorByTool.delete(tool);
+        }
+      }
+
+      // Announce the batch — extensions that care about batch-level
+      // outcomes (consecutive-error tracking, resolution pattern logging,
+      // metacognitive nudges) listen here.
+      this.bus.emit("agent:tool-batch-complete", {
+        results: collectedResults.map((r) => ({
+          name: r.toolName,
+          isError: !!r.isError,
+          errorSummary: r.isError ? errorSummaries.get(r.toolName) : undefined,
+        })),
+      });
+
       // Record all tool results via protocol
       this.toolProtocol.recordResults(this.conversation, collectedResults);
 
-      // Eager nucleation: write tool results to history file
-      this.conversation.eagerNucleateTools(
-        collectedResults.map((r) => {
-          // Find the original args for this tool call
-          const tc = toolCalls.find(t => t.id === r.callId || t.name === r.toolName);
-          let args: Record<string, unknown> = {};
-          try { args = tc ? JSON.parse(tc.argumentsJson) : {}; } catch {}
-          return { toolName: r.toolName, args, content: r.content, isError: !!r.isError };
-        }),
-      );
+      // Emit enriched message-appended events so derived-log extensions
+      // can summarize each tool result without re-parsing the message
+      // structure.
+      for (const r of collectedResults) {
+        const content = typeof r.content === "string" ? r.content : String(r.content);
+        const tc = toolCalls.find(t => t.id === r.callId || t.name === r.toolName);
+        let args: Record<string, unknown> = {};
+        try { args = tc ? JSON.parse(tc.argumentsJson) : {}; } catch {}
+        this.bus.emit("conversation:message-appended", {
+          role: "tool",
+          content,
+          toolName: r.toolName,
+          toolArgs: args,
+          isError: !!r.isError,
+        });
+      }
 
       // Loop back — LLM sees tool results
     }
@@ -1079,6 +1339,16 @@ export class AgentLoop implements AgentBackend {
   }
 
   private readonly maxRetries = 3;
+
+  // ── Resolution pattern helpers ──
+  // Extract a file path from a tool call's arguments. Used to correlate
+  // errors with subsequent successful writes on the same file.
+  private filePathFromArgs(toolName: string, args: Record<string, unknown>): string | undefined {
+    if (toolName === "edit_file" || toolName === "write_file" || toolName === "read_file") {
+      return (args.path ?? args.file_path) as string | undefined;
+    }
+    return undefined;
+  }
 
   /**
    * Stream with retry logic. Handles:
@@ -1101,7 +1371,7 @@ export class AgentLoop implements AgentBackend {
         if (this.isContextOverflow(e)) {
           const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
           const target = Math.floor((contextWindow - RESPONSE_RESERVE) * 0.6);
-          const stats = this.conversation.compact(target, 6);
+          const stats = this.compactWithHooks(target, 6);
           const detail = stats ? ` ~${stats.before.toLocaleString()} → ~${stats.after.toLocaleString()} tokens` : "";
           this.bus.emit("ui:info", { message: `(context overflow — compacted${detail}, retrying)` });
           continue;
