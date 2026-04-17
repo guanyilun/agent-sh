@@ -31,7 +31,7 @@ import { STATIC_SYSTEM_PROMPT, buildDynamicContext, buildStaticByCwd, formatSkil
 import type { Compositor } from "../utils/compositor.js";
 import { createToolUI } from "../utils/tool-interactive.js";
 import { TokenBudget, RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW } from "./token-budget.js";
-import { getSettings } from "../settings.js";
+import { getSettings, updateSettings } from "../settings.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { createToolProtocol, type ToolProtocol, type PendingToolCall as ProtocolPendingToolCall, type ToolResult as ProtocolToolResult } from "./tool-protocol.js";
 import * as os from "node:os";
@@ -218,7 +218,17 @@ export class AgentLoop implements AgentBackend {
       this.tokenBudget.update(m.contextWindow, this.toolRegistry.all().length);
       const label = m.provider ? `${m.provider}: ${m.model}` : m.model;
       this.bus.emit("agent:info", { name: "ash", version: "0.4", model: m.model, provider: m.provider, contextWindow: m.contextWindow });
-      this.bus.emit("ui:info", { message: `Model: ${label}` });
+
+      // Persist as the new default — selection survives restart.
+      if (m.provider) {
+        updateSettings({
+          defaultProvider: m.provider,
+          providers: { [m.provider]: { defaultModel: m.model } },
+        });
+        this.bus.emit("ui:info", { message: `Model: ${label} (saved as default)` });
+      } else {
+        this.bus.emit("ui:info", { message: `Model: ${label}` });
+      }
       this.bus.emit("config:changed", {});
     });
     this.bus.onPipe("config:get-models", (payload) => {

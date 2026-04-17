@@ -102,7 +102,12 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   });
 
   bus.on("config:switch-backend", ({ name }) => {
-    activateByName(name);
+    activateByName(name).then(() => {
+      if (activeBackendName === name) {
+        settingsMod.updateSettings({ defaultBackend: name });
+        bus.emit("ui:info", { message: `Saved '${name}' as default backend.` });
+      }
+    });
   });
 
   bus.on("config:list-backends", () => {

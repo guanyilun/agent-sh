@@ -180,6 +180,52 @@ export function reloadSettings(): void {
 }
 
 /**
+ * Deep-merge a patch into ~/.agent-sh/settings.json on disk.
+ *
+ * Reads the raw file (preserving unknown keys), merges the patch, writes back
+ * with 2-space indentation, and clears the cache so subsequent getSettings()
+ * calls see the new values.
+ *
+ * Used by runtime controls (`/model`, `/backend`) that want their selection
+ * to persist as the default across restarts.
+ */
+export function updateSettings(patch: Record<string, unknown>): void {
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = fs.readFileSync(SETTINGS_PATH, "utf-8");
+    existing = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    // file missing or unreadable — start fresh
+  }
+
+  const merged = deepMerge(existing, patch);
+
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(merged, null, 2) + "\n", "utf-8");
+    cached = null;
+  } catch (err) {
+    console.error(`[agent-sh] Warning: failed to update ${SETTINGS_PATH}: ${(err as Error).message}`);
+  }
+}
+
+function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...target };
+  for (const [key, val] of Object.entries(source)) {
+    const existing = out[key];
+    if (
+      val !== null && typeof val === "object" && !Array.isArray(val) &&
+      existing !== null && typeof existing === "object" && !Array.isArray(existing)
+    ) {
+      out[key] = deepMerge(existing as Record<string, unknown>, val as Record<string, unknown>);
+    } else {
+      out[key] = val;
+    }
+  }
+  return out;
+}
+
+/**
  * Expand $ENV_VAR references in a string.
  * Supports $VAR and ${VAR} syntax.
  */
