@@ -110,6 +110,15 @@ export interface Settings {
   // ── Built-in extensions ──────────────────────────────────
   /** Names of built-in extensions to disable (e.g. ["command-suggest"]). */
   disabledBuiltins?: string[];
+
+  /**
+   * Names of user extensions in ~/.agent-sh/extensions/ to skip when
+   * auto-discovering. Match by basename without extension for files
+   * (e.g. "peer-mesh" matches peer-mesh.ts), or by directory name for
+   * directory-style extensions (e.g. "superash" matches superash/index.ts).
+   * Beats having to rename files to .disabled every time.
+   */
+  disabledExtensions?: string[];
 }
 
 const DEFAULTS: Required<Settings> = {
@@ -137,6 +146,7 @@ const DEFAULTS: Required<Settings> = {
   startupBanner: true,
   promptIndicator: true,
   disabledBuiltins: [],
+  disabledExtensions: [],
 };
 
 let cached: Settings | null = null;

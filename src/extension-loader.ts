@@ -159,9 +159,16 @@ export async function loadExtensions(
 
 async function discoverUserExtensions(): Promise<string[]> {
   const specifiers: string[] = [];
+  const disabled = new Set(getSettings().disabledExtensions ?? []);
   try {
     const entries = await fs.readdir(EXT_DIR, { withFileTypes: true });
     for (const entry of entries) {
+      // Disable check: directory name for dir-extensions, or basename sans
+      // extension for file-extensions. Lets settings.json turn one off
+      // without renaming it.
+      const nameForDisable = entry.name.replace(/\.[^.]+$/, "");
+      if (disabled.has(nameForDisable)) continue;
+
       const fullPath = path.join(EXT_DIR, entry.name);
       const isDir = entry.isDirectory() ||
         (entry.isSymbolicLink() && (await fs.stat(fullPath)).isDirectory());
