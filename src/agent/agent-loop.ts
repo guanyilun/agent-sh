@@ -1252,8 +1252,10 @@ export class AgentLoop implements AgentBackend {
           try {
             // Evaluate the expression with `this` bound to the AgentLoop.
             // We use Function() instead of eval() for slightly better control.
+            // Supports async expressions — if the result is a Promise, we await it.
             const fn = new Function("ctx", `with(ctx) { return (${expression}); }`);
-            const result = fn.call(this, this);
+            const raw = fn.call(this, this);
+            const result = raw instanceof Promise ? await raw : raw;
 
             // Serialize the result for display
             const serialized = typeof result === "string"
