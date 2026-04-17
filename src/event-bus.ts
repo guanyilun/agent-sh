@@ -268,10 +268,16 @@ export interface ShellEvents {
 
   // Query initial modes (sync pipe: agent backend extension → core)
   "config:get-initial-modes": { modes: AgentMode[]; initialModeIndex: number };
-  // Set modes (core → agent loop: after provider switch)
-  "config:set-modes": { modes: AgentMode[] };
+  // Set modes (core → agent loop: after provider switch).
+  // Optional activeIndex honors the persisted default without resetting to 0.
+  "config:set-modes": { modes: AgentMode[]; activeIndex?: number };
   // Append modes (core → agent loop: after provider register)
   "config:add-modes": { modes: AgentMode[] };
+
+  // Fires after all extensions (built-in + user) have activated.
+  // agent-backend waits on this to resolve settings.defaultProvider
+  // against the full provider registry, including dynamic providers.
+  "core:extensions-loaded": Record<string, never>;
 
   // Register a provider at runtime (extensions → core)
   "provider:register": {

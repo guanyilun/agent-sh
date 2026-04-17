@@ -216,18 +216,20 @@ async function loadSpecifiers(
         const base = path.basename(specifier).replace(/\.(ts|js|mjs|mts|tsx)$/, "");
         const name = base === "index" ? path.basename(path.dirname(specifier)) : base;
 
-        // User extensions get a scoped context so /reload can tear them down
-        // All extensions get scoped contexts with the extension name captured
+        // Scoped context so /reload can tear user extensions down.
+        // Awaiting activate() lets extensions with async setup (e.g.
+        // openrouter fetching its model catalog) finish before we move
+        // on; a 10s outer timeout in index.ts guards against hangs.
         if (userSet.has(specifier)) {
           // Dispose previous load if reloading
           extensionDisposers.get(name)?.();
 
           const { scoped, dispose } = createScopedContext(ctx, name);
-          activate(scoped);
+          await activate(scoped);
           extensionDisposers.set(name, dispose);
         } else {
           const { scoped, dispose } = createScopedContext(ctx, name);
-          activate(scoped);
+          await activate(scoped);
           // Non-user extensions aren't reloadable, but track for cleanup on shutdown
           extensionDisposers.set(name, dispose);
         }
