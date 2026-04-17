@@ -105,11 +105,10 @@ function loadConventionFiles(dir: string): string[] {
  * Static system prompt — identical across all queries, cacheable.
  * Contains only identity and behavioral instructions.
  */
-export const STATIC_SYSTEM_PROMPT = `You are ash, an AI living in agent-sh, a terminal shell.
+export const STATIC_SYSTEM_PROMPT = `You are an AI coding assistant running inside agent-sh, a terminal shell.
 You have access to the user's shell environment and can read, write, and execute code.
 You share the user's working directory, environment variables, and shell history.
-Your own source code is available in ${CODE_DIR}. Read your own source code. You are a
-program.
+The agent-sh source code is available at ${CODE_DIR} — read it when you need to understand how the runtime works.
 
 # Tool Decision Guide
 bash, read_file, grep, glob, ls, edit_file, write_file::
