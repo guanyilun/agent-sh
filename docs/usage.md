@@ -205,6 +205,7 @@ When cycling across providers (e.g. from OpenAI to Ollama), the API key and base
 | `maxCommandOutputLines` | `3` | Max tool output lines shown inline in TUI |
 | `readOutputMaxLines` | `10` | Max read tool output lines shown inline (0 = hidden) |
 | `diffMaxLines` | `Infinity` | Max diff lines rendered in the TUI. Defaults to no limit |
+| `toolMode` | `"api"` | How tools are presented to the LLM. `"api"` sends all tool schemas. `"deferred"` bundles extension tools behind a `use_extension(name, args)` meta-tool (saves prompt tokens, loses schema fidelity). `"deferred-lookup"` keeps extension schemas dormant until the model calls `load_tool(names[])` — loaded tools then become first-class on the next turn with full schemas. `"inline"` describes tools as text. |
 
 ## Startup Banner
 

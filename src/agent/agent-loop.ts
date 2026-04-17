@@ -144,6 +144,10 @@ export class AgentLoop implements AgentBackend {
     // Register core tools
     this.registerCoreTools();
 
+    // Register any protocol-provided tools (e.g. load_tool for deferred-lookup).
+    const protocolTools = this.toolProtocol.getProtocolTools?.() ?? [];
+    for (const t of protocolTools) this.registerTool(t);
+
     // Update token budget with tool count
     this.tokenBudget.update(undefined, this.toolRegistry.all().length);
 

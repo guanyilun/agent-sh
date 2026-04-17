@@ -82,8 +82,13 @@ export interface Settings {
   diffMaxLines?: number;
 
   // ── Agent integration ─────────────────────────────────────
-  /** Tool protocol: "api" (all tools), "deferred" (extensions via meta-tool), "inline" (text). */
-  toolMode?: "api" | "deferred" | "inline";
+  /** Tool protocol:
+   *   "api" — all tools sent with full schema.
+   *   "deferred" — extensions dispatched through `use_extension(name, args)` meta-tool.
+   *   "deferred-lookup" — extensions loaded on demand via `load_tool(names[])`; once loaded, callable as first-class tools.
+   *   "inline" — tools described as text.
+   */
+  toolMode?: "api" | "deferred" | "deferred-lookup" | "inline";
   /** Additional directories to scan for skills (supports ~ expansion). */
   skillPaths?: string[];
   /**
@@ -113,7 +118,7 @@ const DEFAULTS: Required<Settings> = {
   providers: {},
   defaultProvider: undefined as any,
   defaultBackend: "ash",
-  toolMode: "api" as "api" | "deferred" | "inline",
+  toolMode: "api" as "api" | "deferred" | "deferred-lookup" | "inline",
   contextWindowSize: 20,
   contextBudget: 32768,
   shellTruncateThreshold: 20,
