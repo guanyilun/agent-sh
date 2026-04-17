@@ -460,3 +460,4 @@ export default function activate(ctx: ExtensionContext): void {
     saveProject(project);
   });
 }
+// Hot-reload test marker
