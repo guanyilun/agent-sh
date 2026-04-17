@@ -78,7 +78,7 @@ export interface Settings {
   maxCommandOutputLines?: number;
   /** Max read tool output lines shown inline in TUI (0 = hide). */
   readOutputMaxLines?: number;
-  /** Max diff lines shown before "ctrl+o to expand". */
+  /** Max diff lines rendered in the TUI (Infinity = no limit). */
   diffMaxLines?: number;
 
   // ── Agent integration ─────────────────────────────────────

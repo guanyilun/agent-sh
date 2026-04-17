@@ -198,13 +198,13 @@ When cycling across providers (e.g. from OpenAI to Ollama), the API key and base
 | `extensions` | `[]` | Extensions to load (npm packages or file paths) |
 | `historySize` | `500` | Max agent query history entries (persisted across sessions) |
 | `contextWindowSize` | `20` | Recent exchanges included in agent context |
-| `contextBudget` | `16384` | Context budget in bytes (~4K tokens) |
-| `shellTruncateThreshold` | `10` | Shell output lines before truncation |
-| `shellHeadLines` / `shellTailLines` | `5` / `5` | Lines kept from start/end of truncated output |
-| `recallExpandMaxLines` | `100` | Max lines for recall expand |
+| `contextBudget` | `32768` | Context budget in bytes (~8K tokens) |
+| `shellTruncateThreshold` | `20` | Shell output lines before truncation |
+| `shellHeadLines` / `shellTailLines` | `10` / `10` | Lines kept from start/end of truncated output |
+| `recallExpandMaxLines` | `500` | Max lines for recall expand |
 | `maxCommandOutputLines` | `3` | Max tool output lines shown inline in TUI |
 | `readOutputMaxLines` | `10` | Max read tool output lines shown inline (0 = hidden) |
-| `diffMaxLines` | `20` | Max diff lines before "ctrl+o to expand" |
+| `diffMaxLines` | `Infinity` | Max diff lines rendered in the TUI. Defaults to no limit |
 
 ## Startup Banner
 
