@@ -49,6 +49,20 @@ import { discoverGlobalSkills, discoverProjectSkills } from "./skills.js";
 
 type PendingToolCall = ProtocolPendingToolCall;
 
+/**
+ * Compact one-line summary of a tool description for the extension
+ * catalog in the system prompt. Takes the first line, then the first
+ * sentence, capped at 140 chars. The full description still reaches
+ * the LLM via the API `tools` param (or via load_tool in deferred-
+ * lookup mode) — this only trims the always-visible catalog.
+ */
+function summarizeDescription(desc: string): string {
+  const firstLine = desc.split("\n", 1)[0]!;
+  const sentenceEnd = firstLine.search(/[.!?](\s|$)/);
+  const candidate = sentenceEnd > 0 ? firstLine.slice(0, sentenceEnd + 1) : firstLine;
+  return candidate.length > 140 ? candidate.slice(0, 137) + "..." : candidate;
+}
+
 export interface AgentLoopConfig {
   bus: EventBus;
   contextManager: ContextManager;
@@ -114,6 +128,10 @@ export class AgentLoop implements AgentBackend {
   private compositor: Compositor | null = null;
   private toolProtocol: ToolProtocol;
   private instanceId: string;
+  // Cursor into ContextManager's exchange stream. Events with id > this
+  // have not yet been shown to the LLM. We inject the delta as a user
+  // message before each stream so the prefix stays cacheable.
+  private lastShellSeq = 0;
 
   constructor(config: AgentLoopConfig) {
     this.bus = config.bus;
@@ -422,16 +440,23 @@ export class AgentLoop implements AgentBackend {
       ensure(extensionName).skills.push({ name: skillName, description, filePath });
     }
 
-    // Attribute tools (skip built-in scratchpad tools)
-    const builtinTools = new Set([
-      "bash", "read_file", "write_file", "edit_file", "grep", "glob", "ls",
-      "list_skills",
-    ]);
-    for (const tool of this.toolRegistry.all()) {
-      if (builtinTools.has(tool.name)) continue;
-      const extName = this.toolExtensions.get(tool.name);
-      if (!extName) continue;
-      ensure(extName).tools.push({ name: tool.name, description: tool.description.split("\n")[0] });
+    // Attribute tools (skip built-in scratchpad tools).
+    // In "api" mode the full tool schemas are in the API `tools` param,
+    // making the text catalog here pure duplication — skip it. Other
+    // modes (deferred / deferred-lookup / inline) rely on the text
+    // catalog as the discovery surface, so keep it there.
+    const toolModeHasApiSchemas = this.toolProtocol.mode === "api";
+    if (!toolModeHasApiSchemas) {
+      const builtinTools = new Set([
+        "bash", "read_file", "write_file", "edit_file", "grep", "glob", "ls",
+        "list_skills",
+      ]);
+      for (const tool of this.toolRegistry.all()) {
+        if (builtinTools.has(tool.name)) continue;
+        const extName = this.toolExtensions.get(tool.name);
+        if (!extName) continue;
+        ensure(extName).tools.push({ name: tool.name, description: summarizeDescription(tool.description) });
+      }
     }
 
     // Render
@@ -1119,7 +1144,15 @@ export class AgentLoop implements AgentBackend {
     let responseText = "";
 
     try {
-      this.conversation.addUserMessage(query);
+      // Prepend any shell events that preceded this query into the same
+      // user message, so the conversation reads chronologically and we
+      // don't emit two consecutive user-role messages (some providers
+      // reject that).
+      const preDelta = this.contextManager.getEventsSince(this.lastShellSeq);
+      const userContent = preDelta ? `${preDelta.text}\n\n${query}` : query;
+      if (preDelta) this.lastShellSeq = preDelta.lastSeq;
+
+      this.conversation.addUserMessage(userContent);
       this.bus.emit("conversation:message-appended", { role: "user", content: query });
 
       responseText = await this.executeLoop(signal);
@@ -1184,6 +1217,10 @@ export class AgentLoop implements AgentBackend {
 
       const systemPrompt = cachedSystemPrompt ?? (cachedSystemPrompt = this.handlers.call("system-prompt:build") as string);
       const dynamicContext = this.handlers.call("dynamic-context:build") as string;
+
+      // Shell events are injected once per user query (see query() above),
+      // not per loop iteration. Mid-loop injection would break the
+      // tool_call → tool_result chain some providers require.
 
       // Stream LLM response with retry
       const result = await this.streamWithRetry(systemPrompt, dynamicContext, signal);

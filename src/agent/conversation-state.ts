@@ -264,8 +264,8 @@ export class ConversationState {
     const overhead = promptEstimate - convEstimate;
     const convTarget = Math.max(0, maxPromptTokens - overhead);
 
-    const before = convEstimate;
-    if (!force && before <= convTarget) return null;
+    const before = promptEstimate;
+    if (!force && convEstimate <= convTarget) return null;
 
     const turns = this.parseTurns();
     if (turns.length <= 2) return null;
@@ -348,11 +348,15 @@ export class ConversationState {
 
     this.messages = rebuilt;
     this.invalidateMessagesCache();
-    this.lastApiTokenCount = null;
-    this.lastApiMessageCount = 0;
+    // Preserve system+tools+dynamic overhead so estimatePromptTokens() stays
+    // full-prompt-accurate until the next API call refines it. Nulling here
+    // caused /context to under-report by ~overhead tokens after every compact.
+    const after = overhead + this.estimateTokens();
+    this.lastApiTokenCount = after;
+    this.lastApiMessageCount = this.messages.length;
     return {
       before,
-      after: this.estimateTokens(),
+      after,
       evictedCount: evictedIndices.size,
     };
   }

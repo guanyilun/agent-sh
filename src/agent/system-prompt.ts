@@ -180,11 +180,12 @@ export function buildDynamicContext(
 ): string {
   const sections: string[] = [];
 
-  const shellBudgetBytes = shellBudgetTokens != null ? shellBudgetTokens * 4 : undefined;
-  const shellContext = contextManager.getContext(shellBudgetBytes);
-  if (shellContext) {
-    sections.push(`<shell>\n${shellContext}\n</shell>`);
-  }
+  // Shell context is no longer injected here — it flows into the conversation
+  // as incremental <shell-events> messages (see AgentLoop.injectShellDelta),
+  // so it benefits from the provider's prefix cache instead of being rebuilt
+  // and re-sent every turn. shellBudgetTokens is accepted but unused; kept
+  // for backward compatibility with callers.
+  void shellBudgetTokens;
 
   const envLines = [
     `Current date: ${new Date().toISOString().split("T")[0]}`,
