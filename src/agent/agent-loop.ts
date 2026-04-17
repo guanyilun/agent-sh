@@ -147,10 +147,11 @@ export class AgentLoop implements AgentBackend {
     this.historyFile = new HistoryFile({ instanceId: this.instanceId });
     this.conversation = new ConversationState(this.handlers, this.instanceId);
 
-    // Default modes: just the configured model
-    this.modes = config.modes ?? [
-      { model: config.llmClient.model },
-    ];
+    // Fall back to a single-mode placeholder if the caller passed an
+    // empty array (agent-backend does this pre-resolution).
+    this.modes = config.modes?.length
+      ? config.modes
+      : [{ model: config.llmClient.model }];
     this.currentModeIndex = config.initialModeIndex ?? 0;
 
     // Unified token budget — adapts to current model's context window
@@ -202,6 +203,22 @@ export class AgentLoop implements AgentBackend {
       ];
       this.bus.emit("config:changed", {});
     });
+    // Fires before wire() too — agent-backend emits this from
+    // `core:extensions-loaded` to replace the placeholder mode list.
+    onCtor("config:set-modes", ({ modes: newModes, activeIndex }) => {
+      this.modes = newModes;
+      const inRange = activeIndex != null && activeIndex >= 0 && activeIndex < newModes.length;
+      this.currentModeIndex = inRange ? activeIndex! : 0;
+      const m = newModes[this.currentModeIndex];
+      if (!m) return;
+      if (m.providerConfig) {
+        this.llmClient.reconfigure({ ...m.providerConfig, model: m.model });
+      } else {
+        this.llmClient.model = m.model;
+      }
+      this.tokenBudget.update(m.contextWindow, this.toolRegistry.all().length);
+      this.bus.emit("config:changed", {});
+    });
     const getToolsPipe = () => ({ tools: this.getTools() });
     this.bus.onPipe("agent:get-tools", getToolsPipe);
     this.ctorPipeListeners.push({ event: "agent:get-tools", fn: getToolsPipe });
@@ -242,6 +259,9 @@ export class AgentLoop implements AgentBackend {
       this.bus.emit("agent:info", { name: "ash", version: "0.4", model: m.model, provider: m.provider, contextWindow: m.contextWindow });
 
       // Persist as the new default — selection survives restart.
+      // Safe even for dynamic providers: agent-backend defers mode
+      // resolution to `core:extensions-loaded`, so the extension gets
+      // to re-register before the persisted default is looked up.
       if (m.provider) {
         updateSettings({
           defaultProvider: m.provider,
@@ -280,18 +300,6 @@ export class AgentLoop implements AgentBackend {
       const mode = this.currentMode;
       const supported = mode.reasoning !== false && mode.supportsReasoningEffort !== false;
       return { level: this.thinkingLevel, levels: AgentLoop.THINKING_LEVELS, supported };
-    });
-    on("config:set-modes", ({ modes: newModes }) => {
-      this.modes = newModes;
-      this.currentModeIndex = 0;
-      const m = this.modes[0];
-      if (m.providerConfig) {
-        this.llmClient.reconfigure({ ...m.providerConfig, model: m.model });
-      } else {
-        this.llmClient.model = m.model;
-      }
-      this.tokenBudget.update(m.contextWindow, this.toolRegistry.all().length);
-      this.bus.emit("config:changed", {});
     });
     on("agent:reset-session", () => {
       this.cancel();

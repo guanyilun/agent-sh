@@ -267,6 +267,10 @@ async function main(): Promise<void> {
     console.error('[agent-sh] Extensions loaded');
   }
 
+  // Tell deferred-init listeners (agent-backend) that the provider
+  // registry is now complete.
+  core.bus.emit("core:extensions-loaded", {});
+
   // ── Discover skills ───────────────────────────────────────────
   const skills = discoverSkills(process.cwd());
 
