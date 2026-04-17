@@ -247,6 +247,14 @@ async function streamOnce(
     }
   }
 
+  // Normalize arguments JSON (same fix as agent-loop): strict providers
+  // reject empty "" on replay next turn even though OpenAI is lenient.
+  for (const tc of pendingToolCalls) {
+    const s = tc.argumentsJson.trim();
+    if (s === "") { tc.argumentsJson = "{}"; continue; }
+    try { JSON.parse(s); } catch { tc.argumentsJson = "{}"; }
+  }
+
   const assistantToolCalls = pendingToolCalls.length
     ? pendingToolCalls.map(tc => ({ id: tc.id, function: { name: tc.name, arguments: tc.argumentsJson } }))
     : undefined;

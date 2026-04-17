@@ -1704,6 +1704,17 @@ export class AgentLoop implements AgentBackend {
       }
     }
 
+    // Normalize arguments JSON — some providers (Alibaba/qwen) strictly
+    // validate `function.arguments` as parseable JSON on the NEXT turn,
+    // and reject empty strings or partial chunks. OpenAI itself is lenient,
+    // so empty "" slips through locally but the replay breaks upstream.
+    for (const tc of pendingToolCalls) {
+      if (!tc) continue;
+      const s = tc.argumentsJson.trim();
+      if (s === "") { tc.argumentsJson = "{}"; continue; }
+      try { JSON.parse(s); } catch { tc.argumentsJson = "{}"; }
+    }
+
     return {
       text,
       toolCalls: pendingToolCalls,
