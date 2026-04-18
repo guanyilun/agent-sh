@@ -89,6 +89,9 @@ export class ConversationState {
   private messagesDirty = true;
   private cachedMessagesJson: string | null = null;
 
+  // tool_call_ids whose results came back with isError=true.
+  private toolErrors = new Set<string>();
+
   private nuclearEntries: NuclearEntry[] = [];
   private nuclearBySeq = new Map<number, NuclearEntry>();
   private recallArchive = new Map<number, ChatCompletionMessageParam[]>();
@@ -147,8 +150,9 @@ export class ConversationState {
     this.invalidateMessagesCache();
   }
 
-  addToolResult(toolCallId: string, content: string): void {
+  addToolResult(toolCallId: string, content: string, isError = false): void {
     this.messages.push({ role: "tool", tool_call_id: toolCallId, content });
+    if (isError) this.toolErrors.add(toolCallId);
     this.invalidateMessagesCache();
   }
 
@@ -174,9 +178,23 @@ export class ConversationState {
    */
   replaceMessages(messages: ChatCompletionMessageParam[]): void {
     this.messages = messages;
+    this.pruneToolErrors();
     this.invalidateMessagesCache();
     this.lastApiTokenCount = null;
     this.lastApiMessageCount = 0;
+  }
+
+  private pruneToolErrors(): void {
+    if (this.toolErrors.size === 0) return;
+    const live = new Set<string>();
+    for (const msg of this.messages) {
+      if (msg.role === "tool" && typeof msg.tool_call_id === "string") {
+        live.add(msg.tool_call_id);
+      }
+    }
+    for (const id of this.toolErrors) {
+      if (!live.has(id)) this.toolErrors.delete(id);
+    }
   }
 
   // ── Eager nucleation (via advisable handlers) ─────────────────
@@ -329,10 +347,13 @@ export class ConversationState {
 
     const rebuilt: ChatCompletionMessageParam[] = [];
     let insertedNuclearBlock = false;
+    this.nuclearBlockIdx = -1;
     for (let i = 0; i < turns.length; i++) {
       if (evictedIndices.has(i)) {
         if (!insertedNuclearBlock) {
-          rebuilt.push(this.buildNuclearBlock());
+          const block = this.buildNuclearBlock();
+          this.nuclearBlockIdx = rebuilt.length;
+          rebuilt.push(block);
           insertedNuclearBlock = true;
         }
       } else if (slimmedIndices.has(i)) {
@@ -347,6 +368,7 @@ export class ConversationState {
     }
 
     this.messages = rebuilt;
+    this.pruneToolErrors();
     this.invalidateMessagesCache();
     // Preserve system+tools+dynamic overhead so estimatePromptTokens() stays
     // full-prompt-accurate until the next API call refines it. Nulling here
@@ -488,13 +510,31 @@ export class ConversationState {
     };
   }
 
+  /** Index of the nuclear block in messages[], or -1 if not present. */
+  private nuclearBlockIdx = -1;
+
   private updateNuclearBlockInMessages(messages: ChatCompletionMessageParam[]): void {
     if (this.nuclearEntries.length === 0) return;
     const marker = "[Conversation history — use conversation_recall";
+    const newBlock = this.buildNuclearBlock();
+
+    // Verify the cached index still points at the nuclear block; stale if
+    // messages[] was mutated elsewhere since compaction.
+    if (this.nuclearBlockIdx >= 0 && this.nuclearBlockIdx < messages.length) {
+      const slot = messages[this.nuclearBlockIdx]!;
+      if (slot.role === "user" && typeof slot.content === "string" && slot.content.startsWith(marker)) {
+        messages[this.nuclearBlockIdx] = newBlock;
+        return;
+      }
+      this.nuclearBlockIdx = -1;
+    }
+
+
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i]!;
       if (msg.role === "user" && typeof msg.content === "string" && msg.content.startsWith(marker)) {
-        messages[i] = this.buildNuclearBlock();
+        this.nuclearBlockIdx = i;
+        messages[i] = newBlock;
         return;
       }
     }
@@ -504,7 +544,8 @@ export class ConversationState {
         if (messages[i]!.role === "user") { insertIdx = i; break; }
         insertIdx = i + 1;
       }
-      messages.splice(insertIdx, 0, this.buildNuclearBlock());
+      messages.splice(insertIdx, 0, newBlock);
+      this.nuclearBlockIdx = insertIdx;
     }
   }
 
@@ -574,8 +615,13 @@ export class ConversationState {
       if (msg.role === "user") return Priority.HIGH;
       if (msg.role === "tool") {
         hasToolResult = true;
+        // Structured flag is primary; the "Error:" prefix check covers
+        // callers that didn't thread isError (extensions, legacy paths).
+        const id = typeof msg.tool_call_id === "string" ? msg.tool_call_id : "";
         const content = typeof msg.content === "string" ? msg.content : "";
-        if (content.startsWith("Error:") || content.includes("error")) hasError = true;
+        if (this.toolErrors.has(id) || content.startsWith("Error:")) {
+          hasError = true;
+        }
       }
       if (msg.role === "assistant" && "tool_calls" in msg && msg.tool_calls) {
         for (const tc of msg.tool_calls) {

@@ -49,30 +49,24 @@ export class HistoryFile {
    */
   async readRecent(maxEntries?: number): Promise<NuclearEntry[]> {
     maxEntries ??= getSettings().historyStartupEntries;
-    let content: string;
-    try {
-      content = await fs.readFile(this.filePath, "utf-8");
-    } catch {
-      return [];
-    }
-    const lines = content.trim().split("\n").filter(Boolean);
-    // Read more than needed so we still get maxEntries after filtering
-    const oversample = lines.slice(-(maxEntries * 3));
-    const entries: NuclearEntry[] = [];
-    for (const line of oversample) {
+    const want = maxEntries * 3 + 10;
+    const recent: NuclearEntry[] = []; // newest-first
+    for await (const line of this.streamReverseLines()) {
       const entry = deserializeEntry(line);
-      if (entry && !isReadOnly(entry)) entries.push(entry);
+      if (entry && !isReadOnly(entry)) recent.push(entry);
+      if (recent.length >= want) break;
     }
-    return entries.slice(-maxEntries);
+    // Caller expects oldest-to-newest order.
+    return recent.reverse().slice(-maxEntries);
   }
 
   /**
-   * Search history entries by regex/keyword.
+   * Search history entries by regex/keyword, scanning the file from the
+   * end. Caps at ~20 MB of content to bound cost on 100 MB history files.
    */
   async search(query: string): Promise<{ entry: NuclearEntry; line: string }[]> {
     if (!query.trim()) return [];
 
-    // Try raw query as regex; fallback to AND logic (all words must match)
     let regex: RegExp;
     try {
       regex = new RegExp(query, "i");
@@ -83,19 +77,15 @@ export class HistoryFile {
       regex = new RegExp(lookaheads, "i");
     }
 
-    let content: string;
-    try {
-      content = await fs.readFile(this.filePath, "utf-8");
-    } catch {
-      return [];
-    }
-
+    const budgetBytes = 20 * 1024 * 1024;
+    let scanned = 0;
     const results: { entry: NuclearEntry; line: string }[] = [];
-    for (const line of content.trim().split("\n")) {
+    for await (const line of this.streamReverseLines()) {
+      scanned += line.length + 1;
+      if (scanned > budgetBytes) break;
       const entry = deserializeEntry(line);
       if (!entry || isReadOnly(entry)) continue;
-      // Search both the summary and the body — the body can contain up to
-      // 4000 chars of the original content that the summary truncates away.
+      // Body can hold ~4000 chars the summary truncates — search both.
       const searchText = [entry.sum, entry.body].filter(Boolean).join("\n");
       if (regex.test(searchText)) {
         results.push({ entry, line: formatNuclearLine(entry) });
@@ -104,34 +94,91 @@ export class HistoryFile {
     return results;
   }
 
-  /**
-   * Find a single entry by sequence number. Returns null if not found.
-   * Searches from the end of the file (most recent first).
-   */
+  /** Find a single entry by sequence number, streaming from the file end. */
   async findBySeq(seq: number): Promise<NuclearEntry | null> {
-    let content: string;
-    try {
-      content = await fs.readFile(this.filePath, "utf-8");
-    } catch {
-      return null;
-    }
-    const lines = content.trim().split("\n").filter(Boolean);
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const entry = deserializeEntry(lines[i]!);
+    for await (const line of this.streamReverseLines()) {
+      const entry = deserializeEntry(line);
       if (entry && entry.seq === seq) return entry;
     }
     return null;
   }
 
-  /**
-   * Get file size in bytes. Returns 0 if file doesn't exist.
-   */
   async getSize(): Promise<number> {
     try {
       const stat = await fs.stat(this.filePath);
       return stat.size;
     } catch {
       return 0;
+    }
+  }
+
+  /**
+   * Yield lines from the file in reverse order (newest-first). Buffers
+   * pre-first-newline bytes across chunks to stitch lines that straddle
+   * a boundary; carries raw bytes (not strings) so UTF-8 characters split
+   * by a chunk boundary are never decoded mid-codepoint.
+   */
+  private async *streamReverseLines(chunkBytes = 1 << 20): AsyncGenerator<string> {
+    let handle: fs.FileHandle;
+    let fileSize: number;
+    try {
+      const stat = await fs.stat(this.filePath);
+      fileSize = stat.size;
+      if (fileSize === 0) return;
+      handle = await fs.open(this.filePath, "r");
+    } catch {
+      return;
+    }
+
+    try {
+      let position = fileSize;
+      let pending: Buffer = Buffer.alloc(0);
+
+      while (position > 0) {
+        const readSize = Math.min(chunkBytes, position);
+        position -= readSize;
+
+        const buf = Buffer.alloc(readSize);
+        await handle.read(buf, 0, readSize, position);
+        // pending: start-bytes of a line whose first \n lives in this chunk.
+        const combined = Buffer.concat([buf, pending]);
+
+        const newlineIdxs: number[] = [];
+        for (let i = 0; i < combined.length; i++) {
+          if (combined[i] === 0x0A) newlineIdxs.push(i);
+        }
+
+        if (newlineIdxs.length === 0) {
+          pending = combined;
+          continue;
+        }
+
+        const firstNl = newlineIdxs[0]!;
+        const lastNl = newlineIdxs[newlineIdxs.length - 1]!;
+
+        // Post-last-\n: a line straddling into the later chunk (completed
+        // here because `pending` was appended at the end of `combined`).
+        const trailing = combined.subarray(lastNl + 1);
+        if (trailing.length > 0) yield trailing.toString("utf-8");
+
+        for (let i = newlineIdxs.length - 1; i >= 1; i--) {
+          const seg = combined.subarray(newlineIdxs[i - 1]! + 1, newlineIdxs[i]!);
+          if (seg.length > 0) yield seg.toString("utf-8");
+        }
+
+        // Pre-first-\n: partial if there's more file to the left, else complete.
+        const leading = combined.subarray(0, firstNl);
+        if (position === 0) {
+          if (leading.length > 0) yield leading.toString("utf-8");
+          pending = Buffer.alloc(0);
+        } else {
+          pending = leading;
+        }
+      }
+
+      if (pending.length > 0) yield pending.toString("utf-8");
+    } finally {
+      await handle.close();
     }
   }
 

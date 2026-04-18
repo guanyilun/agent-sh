@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ContextManager } from "../context-manager.js";
-import { discoverGlobalSkills, discoverProjectSkills, type Skill } from "./skills.js";
+import { discoverProjectSkills, type Skill } from "./skills.js";
 
 /**
  * Format skills for inline display in prompt.
@@ -166,38 +166,29 @@ export function buildStaticByCwd(cwd: string): string {
 }
 
 /**
- * Per-iteration dynamic context: shell state, date, working directory,
- * token usage. Rebuild every LLM call. Extension advisors add more
- * sections (budget, subagents, metacognitive signals, etc.) on top.
+ * Per-iteration dynamic context: date, working directory, token usage.
+ * Rebuilt every LLM call. Extension advisors add more sections (budget,
+ * subagents, metacognitive signals, etc.) on top.
  *
- * Each section is wrapped in a named XML tag so the LLM can treat them
- * as distinct world-state elements rather than one concatenated blob.
+ * Skills, AGENTS.md, and project conventions live in the system prompt
+ * (see `system-prompt:build` in agent-loop) so they enter the provider's
+ * prefix cache instead of being rebuilt and re-sent every turn.
+ *
+ * Shell context is likewise not injected here — it flows into the
+ * conversation as incremental <shell-events> messages (see
+ * AgentLoop.injectShellDelta) for the same reason.
  */
 export function buildDynamicContext(
   contextManager: ContextManager,
-  shellBudgetTokens?: number,
-  tokenStatus?: TokenStatus,
+  tokenStatus: TokenStatus,
 ): string {
-  const sections: string[] = [];
-
-  // Shell context is no longer injected here — it flows into the conversation
-  // as incremental <shell-events> messages (see AgentLoop.injectShellDelta),
-  // so it benefits from the provider's prefix cache instead of being rebuilt
-  // and re-sent every turn. shellBudgetTokens is accepted but unused; kept
-  // for backward compatibility with callers.
-  void shellBudgetTokens;
-
   const envLines = [
     `Current date: ${new Date().toISOString().split("T")[0]}`,
     `Working directory: ${contextManager.getCwd()}`,
   ];
-  if (tokenStatus) {
-    const usedK = (tokenStatus.promptTokens / 1000).toFixed(1);
-    const maxK = (tokenStatus.contextWindow / 1000).toFixed(0);
-    const pct = Math.min(100, Math.round((tokenStatus.promptTokens / tokenStatus.contextWindow) * 100));
-    envLines.push(`Token usage: ${usedK}k/${maxK}k (${pct}%)`);
-  }
-  sections.push(`<environment>\n${envLines.join("\n")}\n</environment>`);
-
-  return sections.join("\n\n");
+  const usedK = (tokenStatus.promptTokens / 1000).toFixed(1);
+  const maxK = (tokenStatus.contextWindow / 1000).toFixed(0);
+  const pct = Math.min(100, Math.round((tokenStatus.promptTokens / tokenStatus.contextWindow) * 100));
+  envLines.push(`Token usage: ${usedK}k/${maxK}k (${pct}%)`);
+  return `<environment>\n${envLines.join("\n")}\n</environment>`;
 }

@@ -133,11 +133,14 @@ function addUnique(target: Skill[], source: Skill[], seen: Set<string>): void {
   }
 }
 
-/**
- * Discover global skills (stable across cwd changes).
- * Default: ~/.agents/skills/, plus any skillPaths from settings.
- */
+// Global skill sources are stable within a session, so cache the result
+// to skip filesystem scans on every system-prompt:build.
+let _cachedGlobalSkills: Skill[] | null = null;
+
+/** Discover global skills (stable across cwd changes). Cached per-process. */
 export function discoverGlobalSkills(): Skill[] {
+  if (_cachedGlobalSkills) return _cachedGlobalSkills;
+
   const seen = new Set<string>();
   const skills: Skill[] = [];
 
@@ -148,7 +151,12 @@ export function discoverGlobalSkills(): Skill[] {
     addUnique(skills, scanDir(path.resolve(expandHome(p))), seen);
   }
 
+  _cachedGlobalSkills = skills;
   return skills;
+}
+
+export function invalidateGlobalSkillsCache(): void {
+  _cachedGlobalSkills = null;
 }
 
 /**

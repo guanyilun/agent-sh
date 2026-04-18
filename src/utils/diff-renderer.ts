@@ -7,7 +7,7 @@
  */
 import { highlight } from "cli-highlight";
 import type { DiffResult, DiffHunk, DiffLine } from "./diff.js";
-import { visibleLen } from "./ansi.js";
+import { visibleLen, charWidth } from "./ansi.js";
 import { palette as p } from "./palette.js";
 import { wrapLine } from "./markdown.js";
 
@@ -622,11 +622,11 @@ function truncateText(text: string, maxWidth: number): string {
   if (visibleLen(text) <= maxWidth) return text;
   if (maxWidth <= 1) return "…";
 
-  // Walk through the string, tracking visible characters
+  // Advance by visible width (CJK = 2), skipping ANSI sequences.
+  // Reserve one column for the trailing ellipsis.
   let visible = 0;
   let i = 0;
   while (i < text.length && visible < maxWidth - 1) {
-    // Check for ANSI escape sequence
     if (text[i] === "\x1b" && text[i + 1] === "[") {
       const end = text.indexOf("m", i);
       if (end !== -1) {
@@ -634,8 +634,11 @@ function truncateText(text: string, maxWidth: number): string {
         continue;
       }
     }
-    visible++;
-    i++;
+    const cp = text.codePointAt(i) ?? 0;
+    const cw = charWidth(cp);
+    if (visible + cw > maxWidth - 1) break;
+    visible += cw;
+    i += cp > 0xffff ? 2 : 1;
   }
 
   return text.slice(0, i) + p.reset + "…";

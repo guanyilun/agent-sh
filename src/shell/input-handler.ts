@@ -138,16 +138,19 @@ export class InputHandler {
         p.accent + after + p.reset +
         "\x1b8"                             // DECRC — restore cursor position
       );
-      const N = promptVisLen + dCursor;
-      this.cursorRowsBelow = N > 0 ? Math.ceil(N / termW) - 1 : 0;
-      this.cursorTermCol = N === 0 ? 1 : (N % termW === 0 ? termW : (N % termW) + 1);
+      // Clearing on next redraw needs total rows, so measure the full
+      // content width — not just up to the cursor.
+      const totalVisLen = promptVisLen + visibleLen(display);
+      this.cursorRowsBelow = totalVisLen > 0 ? Math.ceil(totalVisLen / termW) - 1 : 0;
+      const cursorVisCol = promptVisLen + visibleLen(before);
+      this.cursorTermCol = cursorVisCol === 0 ? 1 : (cursorVisCol % termW === 0 ? termW : (cursorVisCol % termW) + 1);
     } else {
       // Multi-line: render each line with continuation indent.
       // Same save/restore strategy — cursor position is never computed.
       const lines = display.split("\n");
       const indent = " ".repeat(promptVisLen);
 
-      // Locate cursor: which logical line and offset within it
+      // Locate cursor: which logical line and offset within it.
       let charsRemaining = dCursor;
       let cursorLine = 0;
       for (let li = 0; li < lines.length; li++) {
@@ -166,20 +169,20 @@ export class InputHandler {
       for (let li = 0; li < lines.length; li++) {
         const prefix = li === 0 ? promptPrefix : indent;
         const lineText = lines[li]!;
-        const lineVisLen = promptVisLen + lineText.length;
+        const lineVisLen = promptVisLen + visibleLen(lineText);
         const lineTermRows = lineVisLen > 0 ? Math.ceil(lineVisLen / termW) : 1;
 
         if (li === cursorLine) {
-          // Split this line at the cursor
+          // Split this line at the cursor.
           const before = lineText.slice(0, charsRemaining);
           const after = lineText.slice(charsRemaining);
           output += prefix + p.accent + before + p.reset;
           output += "\x1b7";                // DECSC — save cursor position
           output += p.accent + after + p.reset;
 
-          const beforeColAbs = promptVisLen + charsRemaining;
-          cursorRowFromTop = rowsSoFar + (beforeColAbs > 0 ? Math.ceil(beforeColAbs / termW) - 1 : 0);
-          this.cursorTermCol = beforeColAbs === 0 ? 1 : (beforeColAbs % termW === 0 ? termW : (beforeColAbs % termW) + 1);
+          const beforeVisCol = promptVisLen + visibleLen(before);
+          cursorRowFromTop = rowsSoFar + (beforeVisCol > 0 ? Math.ceil(beforeVisCol / termW) - 1 : 0);
+          this.cursorTermCol = beforeVisCol === 0 ? 1 : (beforeVisCol % termW === 0 ? termW : (beforeVisCol % termW) + 1);
         } else {
           output += prefix + p.accent + lineText + p.reset;
         }
@@ -189,7 +192,8 @@ export class InputHandler {
       }
 
       process.stdout.write(output + "\x1b8"); // DECRC — restore cursor position
-      this.cursorRowsBelow = cursorRowFromTop;
+      // Total rows (not cursor row) so next redraw clears the whole area.
+      this.cursorRowsBelow = rowsSoFar - 1 > 0 ? rowsSoFar - 1 : 0;
     }
   }
 
@@ -304,6 +308,8 @@ export class InputHandler {
     // Disable kitty keyboard protocol and bracket paste mode
     process.stdout.write("\x1b[<u\x1b[?2004l");
     this.clearPromptArea();
+    this.cursorRowsBelow = 0;
+    this.cursorTermCol = 1;
     this.printPrompt();
   }
 
@@ -513,6 +519,8 @@ export class InputHandler {
           const currentMode = this.activeMode!;
           this.activeMode = null;
           this.editor.clear();
+          this.cursorRowsBelow = 0;
+          this.cursorTermCol = 1;
           this.dismissAutocomplete();
           if (query && query.startsWith("/")) {
             const spaceIdx = query.indexOf(" ");

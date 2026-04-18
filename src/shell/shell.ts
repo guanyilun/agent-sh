@@ -258,6 +258,11 @@ export class Shell implements InputContext {
    * For bash, falls back to sending \n for a fresh prompt cycle.
    */
   redrawPrompt(): void {
+    // A stale echoSkip or paused flag (left over from handleProcessingDone
+    // re-entering a mode) would swallow the redrawn prompt and make the
+    // terminal appear frozen. Reset both before emitting.
+    this.echoSkip = false;
+    this.paused = false;
     const result = this.bus.emitPipe("shell:redraw-prompt", {
       cwd: this.outputParser.getCwd(),
       handled: false,
@@ -343,9 +348,13 @@ export class Shell implements InputContext {
     });
 
     this.handlers.define("shell:on-processing-done", () => {
-      this.paused = false;
       this.agentActive = false;
+      // If handleProcessingDone re-entered a mode, leave stdout paused so
+      // stale PTY output doesn't overwrite the mode prompt (exitMode →
+      // redrawPrompt will unpause). Setting echoSkip here would swallow
+      // that PTY output since no \n was sent.
       if (!this.inputHandler.handleProcessingDone()) {
+        this.paused = false;
         if (this.freshPrompt()) {
           this.echoSkip = true;
         }
@@ -389,6 +398,9 @@ export class Shell implements InputContext {
         const handler = (e: { command: string; output: string; cwd: string; exitCode: number | null }) => {
           clearTimeout(timeout);
           this.bus.off("shell:command-done", handler);
+          // Re-pause stdout so the prompt text following the marker doesn't
+          // leak to the terminal while the agent is still processing.
+          this.paused = true;
           resolve({ output: e.output, cwd: e.cwd, exitCode: e.exitCode });
         };
         this.bus.on("shell:command-done", handler);

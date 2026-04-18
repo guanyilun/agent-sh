@@ -918,7 +918,6 @@ export class AgentLoop implements AgentBackend {
       const promptTokens = this.conversation.estimatePromptTokens();
       return buildDynamicContext(
         this.contextManager,
-        this.tokenBudget.shellBudgetTokens,
         { promptTokens, contextWindow },
       );
     });
@@ -1530,9 +1529,13 @@ export class AgentLoop implements AgentBackend {
       // Record all tool results via protocol
       this.toolProtocol.recordResults(this.conversation, collectedResults);
 
+      const tcMap = new Map<string, PendingToolCall>();
+      for (const tc of toolCalls) {
+        if (tc.id) tcMap.set(tc.id, tc);
+      }
       this.conversation.eagerNucleateTools(
         collectedResults.map((r) => {
-          const tc = toolCalls.find(t => t.id === r.callId || t.name === r.toolName);
+          const tc = tcMap.get(r.callId);
           let args: Record<string, unknown> = {};
           try { args = tc ? JSON.parse(tc.argumentsJson) : {}; } catch {}
           return { toolName: r.toolName, args, content: r.content, isError: !!r.isError };
