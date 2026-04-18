@@ -1529,15 +1529,12 @@ export class AgentLoop implements AgentBackend {
       // Record all tool results via protocol
       this.toolProtocol.recordResults(this.conversation, collectedResults);
 
-      // Eager nucleation: write tool results to history file
-      // Build a callId→toolCall map for O(1) lookup (avoids O(n²) on batched calls)
       const tcMap = new Map<string, PendingToolCall>();
       for (const tc of toolCalls) {
         if (tc.id) tcMap.set(tc.id, tc);
       }
       this.conversation.eagerNucleateTools(
         collectedResults.map((r) => {
-          // Find the original args for this tool call by exact ID match
           const tc = tcMap.get(r.callId);
           let args: Record<string, unknown> = {};
           try { args = tc ? JSON.parse(tc.argumentsJson) : {}; } catch {}

@@ -89,6 +89,9 @@ export class ConversationState {
   private messagesDirty = true;
   private cachedMessagesJson: string | null = null;
 
+  // tool_call_ids whose results came back with isError=true.
+  private toolErrors = new Set<string>();
+
   private nuclearEntries: NuclearEntry[] = [];
   private nuclearBySeq = new Map<number, NuclearEntry>();
   private recallArchive = new Map<number, ChatCompletionMessageParam[]>();
@@ -147,8 +150,9 @@ export class ConversationState {
     this.invalidateMessagesCache();
   }
 
-  addToolResult(toolCallId: string, content: string): void {
+  addToolResult(toolCallId: string, content: string, isError = false): void {
     this.messages.push({ role: "tool", tool_call_id: toolCallId, content });
+    if (isError) this.toolErrors.add(toolCallId);
     this.invalidateMessagesCache();
   }
 
@@ -174,9 +178,23 @@ export class ConversationState {
    */
   replaceMessages(messages: ChatCompletionMessageParam[]): void {
     this.messages = messages;
+    this.pruneToolErrors();
     this.invalidateMessagesCache();
     this.lastApiTokenCount = null;
     this.lastApiMessageCount = 0;
+  }
+
+  private pruneToolErrors(): void {
+    if (this.toolErrors.size === 0) return;
+    const live = new Set<string>();
+    for (const msg of this.messages) {
+      if (msg.role === "tool" && typeof msg.tool_call_id === "string") {
+        live.add(msg.tool_call_id);
+      }
+    }
+    for (const id of this.toolErrors) {
+      if (!live.has(id)) this.toolErrors.delete(id);
+    }
   }
 
   // ── Eager nucleation (via advisable handlers) ─────────────────
@@ -329,7 +347,7 @@ export class ConversationState {
 
     const rebuilt: ChatCompletionMessageParam[] = [];
     let insertedNuclearBlock = false;
-    this.nuclearBlockIdx = -1; // reset — rebuilt is a new array
+    this.nuclearBlockIdx = -1;
     for (let i = 0; i < turns.length; i++) {
       if (evictedIndices.has(i)) {
         if (!insertedNuclearBlock) {
@@ -350,6 +368,7 @@ export class ConversationState {
     }
 
     this.messages = rebuilt;
+    this.pruneToolErrors();
     this.invalidateMessagesCache();
     // Preserve system+tools+dynamic overhead so estimatePromptTokens() stays
     // full-prompt-accurate until the next API call refines it. Nulling here
@@ -499,13 +518,18 @@ export class ConversationState {
     const marker = "[Conversation history — use conversation_recall";
     const newBlock = this.buildNuclearBlock();
 
-    // Fast path: if we know the index, update in place
+    // Verify the cached index still points at the nuclear block; stale if
+    // messages[] was mutated elsewhere since compaction.
     if (this.nuclearBlockIdx >= 0 && this.nuclearBlockIdx < messages.length) {
-      messages[this.nuclearBlockIdx] = newBlock;
-      return;
+      const slot = messages[this.nuclearBlockIdx]!;
+      if (slot.role === "user" && typeof slot.content === "string" && slot.content.startsWith(marker)) {
+        messages[this.nuclearBlockIdx] = newBlock;
+        return;
+      }
+      this.nuclearBlockIdx = -1;
     }
 
-    // Slow path: scan for the marker (only on first compaction)
+
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i]!;
       if (msg.role === "user" && typeof msg.content === "string" && msg.content.startsWith(marker)) {
@@ -591,8 +615,11 @@ export class ConversationState {
       if (msg.role === "user") return Priority.HIGH;
       if (msg.role === "tool") {
         hasToolResult = true;
+        // Structured flag is primary; the "Error:" prefix check covers
+        // callers that didn't thread isError (extensions, legacy paths).
+        const id = typeof msg.tool_call_id === "string" ? msg.tool_call_id : "";
         const content = typeof msg.content === "string" ? msg.content : "";
-        if (content.startsWith("Error:")) {
+        if (this.toolErrors.has(id) || content.startsWith("Error:")) {
           hasError = true;
         }
       }

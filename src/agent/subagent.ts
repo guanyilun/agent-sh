@@ -124,7 +124,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
 
       const tool = toolMap.get(tc.name);
       if (!tool) {
-        conversation.addToolResult(tc.id, `Error: Unknown tool "${tc.name}"`);
+        conversation.addToolResult(tc.id, `Error: Unknown tool "${tc.name}"`, true);
         continue;
       }
 
@@ -132,7 +132,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       try {
         args = JSON.parse(tc.argumentsJson);
       } catch {
-        conversation.addToolResult(tc.id, `Error: Invalid JSON arguments for ${tc.name}`);
+        conversation.addToolResult(tc.id, `Error: Invalid JSON arguments for ${tc.name}`, true);
         continue;
       }
 
@@ -167,7 +167,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       }
 
       const content = result.isError ? `Error: ${result.content}` : result.content;
-      conversation.addToolResult(tc.id, content);
+      conversation.addToolResult(tc.id, content, !!result.isError);
     }
   }
 

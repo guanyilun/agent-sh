@@ -50,7 +50,6 @@ export function createLsTool(getCwd: () => string): ToolDefinition {
           withFileTypes: true,
         });
 
-        // Batch stat calls in parallel to avoid N+1 serial overhead
         const items = await Promise.all(
           entries.map(async (e) => {
             const fullPath = path.join(absPath, e.name);

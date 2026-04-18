@@ -258,11 +258,9 @@ export class Shell implements InputContext {
    * For bash, falls back to sending \n for a fresh prompt cycle.
    */
   redrawPrompt(): void {
-    // Clear any pending echoSkip — we explicitly want to see the prompt output.
-    // A stale echoSkip (e.g. from handleProcessingDone re-entering a mode) would
-    // swallow the ZLE redraw or shell prompt, making the terminal appear frozen.
-    // Also unpause stdout so the redrawn prompt is visible (it may have been
-    // kept paused after handleProcessingDone re-entered a mode).
+    // A stale echoSkip or paused flag (left over from handleProcessingDone
+    // re-entering a mode) would swallow the redrawn prompt and make the
+    // terminal appear frozen. Reset both before emitting.
     this.echoSkip = false;
     this.paused = false;
     const result = this.bus.emitPipe("shell:redraw-prompt", {
@@ -351,18 +349,15 @@ export class Shell implements InputContext {
 
     this.handlers.define("shell:on-processing-done", () => {
       this.agentActive = false;
+      // If handleProcessingDone re-entered a mode, leave stdout paused so
+      // stale PTY output doesn't overwrite the mode prompt (exitMode →
+      // redrawPrompt will unpause). Setting echoSkip here would swallow
+      // that PTY output since no \n was sent.
       if (!this.inputHandler.handleProcessingDone()) {
         this.paused = false;
         if (this.freshPrompt()) {
           this.echoSkip = true;
         }
-      } else {
-        // Re-entered a mode via handleProcessingDone. Keep stdout paused
-        // so any stale PTY data (e.g. shell prompt from a tool exec)
-        // doesn't overwrite the mode prompt. It will be unpaused when the
-        // user exits the mode (exitMode → redrawPrompt unpasuses stdout).
-        // Don't set echoSkip since no \n was sent to the PTY — a stale
-        // echoSkip would swallow or corrupt subsequent PTY output.
       }
     });
 
@@ -403,9 +398,8 @@ export class Shell implements InputContext {
         const handler = (e: { command: string; output: string; cwd: string; exitCode: number | null }) => {
           clearTimeout(timeout);
           this.bus.off("shell:command-done", handler);
-          // Re-pause stdout immediately so the prompt text that follows
-          // the prompt marker isn't displayed to the terminal. Without this,
-          // the shell prompt leaks through during agent processing.
+          // Re-pause stdout so the prompt text following the marker doesn't
+          // leak to the terminal while the agent is still processing.
           this.paused = true;
           resolve({ output: e.output, cwd: e.cwd, exitCode: e.exitCode });
         };

@@ -138,9 +138,8 @@ export class InputHandler {
         p.accent + after + p.reset +
         "\x1b8"                             // DECRC — restore cursor position
       );
-      // cursorRowsBelow tracks total rows the prompt occupies so we can
-      // reliably clear the entire area on next redraw.  Must account for
-      // the *full* content visible width (cursor + after), not just up to cursor.
+      // Clearing on next redraw needs total rows, so measure the full
+      // content width — not just up to the cursor.
       const totalVisLen = promptVisLen + visibleLen(display);
       this.cursorRowsBelow = totalVisLen > 0 ? Math.ceil(totalVisLen / termW) - 1 : 0;
       const cursorVisCol = promptVisLen + visibleLen(before);
@@ -151,7 +150,7 @@ export class InputHandler {
       const lines = display.split("\n");
       const indent = " ".repeat(promptVisLen);
 
-      // Locate cursor: which logical line and offset within it (character offset)
+      // Locate cursor: which logical line and offset within it.
       let charsRemaining = dCursor;
       let cursorLine = 0;
       for (let li = 0; li < lines.length; li++) {
@@ -174,7 +173,7 @@ export class InputHandler {
         const lineTermRows = lineVisLen > 0 ? Math.ceil(lineVisLen / termW) : 1;
 
         if (li === cursorLine) {
-          // Split this line at the cursor (character offset)
+          // Split this line at the cursor.
           const before = lineText.slice(0, charsRemaining);
           const after = lineText.slice(charsRemaining);
           output += prefix + p.accent + before + p.reset;
@@ -193,8 +192,7 @@ export class InputHandler {
       }
 
       process.stdout.write(output + "\x1b8"); // DECRC — restore cursor position
-      // Use total rows (rowsSoFar) so next redraw clears the entire area,
-      // not just up to the cursor line.
+      // Total rows (not cursor row) so next redraw clears the whole area.
       this.cursorRowsBelow = rowsSoFar - 1 > 0 ? rowsSoFar - 1 : 0;
     }
   }
@@ -310,7 +308,6 @@ export class InputHandler {
     // Disable kitty keyboard protocol and bracket paste mode
     process.stdout.write("\x1b[<u\x1b[?2004l");
     this.clearPromptArea();
-    // Reset tracking state after clearing — back to raw shell mode
     this.cursorRowsBelow = 0;
     this.cursorTermCol = 1;
     this.printPrompt();

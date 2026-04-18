@@ -120,7 +120,7 @@ export class ApiToolProtocol implements ToolProtocol {
   recordResults(conv: ConversationState, results: ToolResult[]): void {
     for (const r of results) {
       const content = r.isError ? `Error: ${r.content}` : r.content;
-      conv.addToolResult(r.callId, content);
+      conv.addToolResult(r.callId, content, r.isError);
     }
   }
 
@@ -494,7 +494,7 @@ export class DeferredToolProtocol implements ToolProtocol {
   recordResults(conv: ConversationState, results: ToolResult[]): void {
     for (const r of results) {
       const content = r.isError ? `Error: ${r.content}` : r.content;
-      conv.addToolResult(r.callId, content);
+      conv.addToolResult(r.callId, content, r.isError);
     }
   }
 
@@ -607,7 +607,7 @@ export class DeferredLookupProtocol implements ToolProtocol {
   recordResults(conv: ConversationState, results: ToolResult[]): void {
     for (const r of results) {
       const content = r.isError ? `Error: ${r.content}` : r.content;
-      conv.addToolResult(r.callId, content);
+      conv.addToolResult(r.callId, content, r.isError);
     }
   }
 

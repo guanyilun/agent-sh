@@ -284,12 +284,14 @@ async function resolveSpecifier(specifier: string): Promise<string> {
   } else if (path.isAbsolute(specifier)) {
     resolved = specifier;
   } else {
-    // Check if it looks like a file path (contains /) vs bare npm package name
-    if (specifier.includes("/")) {
+    // Distinguish bare npm specifier from a relative path lacking "./".
+    // Scoped packages ("@scope/pkg") contain "/" but are npm specifiers,
+    // so the "@" prefix takes precedence over the "/" heuristic.
+    if (specifier.includes("/") && !specifier.startsWith("@")) {
       // Treat as relative path from cwd
       resolved = path.resolve(process.cwd(), specifier);
     } else {
-      // Bare specifier — npm package
+      // Bare specifier — npm package (including @scope/pkg)
       return specifier;
     }
   }

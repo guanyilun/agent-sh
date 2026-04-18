@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ContextManager } from "../context-manager.js";
-import { discoverGlobalSkills, discoverProjectSkills, type Skill } from "./skills.js";
+import { discoverProjectSkills, type Skill } from "./skills.js";
 
 /**
  * Format skills for inline display in prompt.
@@ -166,40 +166,29 @@ export function buildStaticByCwd(cwd: string): string {
 }
 
 /**
- * Build the dynamic context for a query.
- * Injects shell state, conventions, and skills as a user message.
+ * Per-iteration dynamic context: date, working directory, token usage.
+ * Rebuilt every LLM call. Extension advisors add more sections (budget,
+ * subagents, metacognitive signals, etc.) on top.
+ *
+ * Skills, AGENTS.md, and project conventions live in the system prompt
+ * (see `system-prompt:build` in agent-loop) so they enter the provider's
+ * prefix cache instead of being rebuilt and re-sent every turn.
+ *
+ * Shell context is likewise not injected here — it flows into the
+ * conversation as incremental <shell-events> messages (see
+ * AgentLoop.injectShellDelta) for the same reason.
  */
 export function buildDynamicContext(
   contextManager: ContextManager,
   tokenStatus: TokenStatus,
 ): string {
-  const sections: string[] = [];
-
-  // Token budget line
-  const { promptTokens, contextWindow } = tokenStatus;
-  const pct = contextWindow > 0 ? Math.round((promptTokens / contextWindow) * 100) : 0;
-  sections.push(
-    `Context: ${promptTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${pct}%)`
-  );
-
-  // Shell context
-  const shellContext = contextManager.getContext();
-  if (shellContext) {
-    sections.push(shellContext);
-  }
-
-  // Global skills
-  const globalSkills = discoverGlobalSkills();
-  const globalSkillsBlock = formatSkillsBlock(globalSkills);
-  if (globalSkillsBlock) {
-    sections.push(globalSkillsBlock);
-  }
-
-  // Global AGENTS.md
-  const agentsMd = loadGlobalAgentsMd();
-  if (agentsMd) {
-    sections.push("# Cross-Session Memory\n\n" + agentsMd);
-  }
-
-  return sections.join("\n\n");
+  const envLines = [
+    `Current date: ${new Date().toISOString().split("T")[0]}`,
+    `Working directory: ${contextManager.getCwd()}`,
+  ];
+  const usedK = (tokenStatus.promptTokens / 1000).toFixed(1);
+  const maxK = (tokenStatus.contextWindow / 1000).toFixed(0);
+  const pct = Math.min(100, Math.round((tokenStatus.promptTokens / tokenStatus.contextWindow) * 100));
+  envLines.push(`Token usage: ${usedK}k/${maxK}k (${pct}%)`);
+  return `<environment>\n${envLines.join("\n")}\n</environment>`;
 }

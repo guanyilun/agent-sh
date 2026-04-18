@@ -151,13 +151,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
       // Runtime switches (config:switch-backend) still emit ui:info.
       if (backends.size === 0) return;
       const preferred = settings.defaultBackend;
-      // Check if any backend other than "ash" is registered (extension backends)
-      const hasNonAshBackend = [...backends.keys()].some((n) => n !== "ash");
-      if (hasNonAshBackend) {
-        // Prefer non-ash backends when available
-        const nonAshBackend = [...backends.keys()].find((n) => n !== "ash");
-        activateByName(nonAshBackend!, true);
-      } else if (preferred && backends.has(preferred)) {
+      if (preferred && backends.has(preferred)) {
         activateByName(preferred, true);
       } else {
         activateByName(backends.keys().next().value!, true);

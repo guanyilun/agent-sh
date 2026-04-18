@@ -90,7 +90,6 @@ export function executeCommand(opts: {
   child.stdout?.on("data", handleData);
   child.stderr?.on("data", handleData);
 
-  // Timeout handler
   let cancelKill: (() => void) | undefined;
   const timer = setTimeout(() => {
     if (!session.done) {
@@ -100,7 +99,7 @@ export function executeCommand(opts: {
 
   child.on("exit", (code, signal) => {
     clearTimeout(timer);
-    cancelKill?.(); // cancel SIGKILL fallback if killSession was called
+    cancelKill?.();
     session.exitCode = code ?? (signal ? -1 : null);
     session.done = true;
     session.process = null;
@@ -109,7 +108,7 @@ export function executeCommand(opts: {
 
   child.on("error", (err) => {
     clearTimeout(timer);
-    cancelKill?.(); // cancel SIGKILL fallback if killSession was called
+    cancelKill?.();
     if (!session.done) {
       session.exitCode = -1;
       session.output += `\nProcess error: ${err.message}`;
@@ -123,39 +122,27 @@ export function executeCommand(opts: {
 }
 
 /**
- * Kill a running session's process group.
- * Sends SIGTERM first, then SIGKILL after 5 seconds.
- *
- * Returns a cleanup function that cancels the fallback timer.
- * Call it when the process exits to prevent the timer from firing.
+ * Kill a running session's process group: SIGTERM, then SIGKILL after 5s.
+ * Returns a cleanup that cancels the pending SIGKILL — callers should invoke
+ * it once the process has exited.
  */
 export function killSession(session: ExecutorSession): () => void {
   const proc = session.process;
   if (!proc || !proc.pid) return () => {};
 
   try {
-    // Kill the entire process group
     process.kill(-proc.pid, "SIGTERM");
-  } catch {
-    // Process may already be dead
-  }
+  } catch {}
 
-  // Fallback: SIGKILL after 5 seconds
   let settled = false;
   const fallback = setTimeout(() => {
     if (!settled && !session.done && proc.pid) {
-      try {
-        process.kill(-proc.pid, "SIGKILL");
-      } catch {
-        // Ignore — process likely already dead
-      }
+      try { process.kill(-proc.pid, "SIGKILL"); } catch {}
     }
   }, 5000);
 
-  // Don't let the timer keep the process alive
   fallback.unref();
 
-  // Return cleanup — caller should invoke when process exits
   return () => {
     if (!settled) {
       settled = true;

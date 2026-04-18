@@ -70,7 +70,7 @@ export function createGlobTool(getCwd: () => string): ToolDefinition {
       const cwd = getCwd();
       const files = session.output.trim().split("\n");
 
-      // Sort by modification time (newest first) — parallel stat calls
+      // Sort by modification time (newest first)
       const withMtime = await Promise.all(
         files.map(async (f) => {
           try {
