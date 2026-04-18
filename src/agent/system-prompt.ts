@@ -41,10 +41,17 @@ export function loadGlobalAgentsMd(): string | null {
 /**
  * Scan from `dir` upward for project convention files.
  * Returns contents ordered root-first (general → specific).
+ * Results are cached by resolved directory to avoid redundant filesystem scans.
  */
+const _conventionCache = new Map<string, string[]>();
+
 function loadConventionFiles(dir: string): string[] {
+  const resolved = path.resolve(dir);
+  const cached = _conventionCache.get(resolved);
+  if (cached !== undefined) return cached;
+
   const files: { path: string; content: string }[] = [];
-  let current = path.resolve(dir);
+  let current = resolved;
 
   while (true) {
     for (const name of CONVENTION_FILES) {
@@ -66,7 +73,9 @@ function loadConventionFiles(dir: string): string[] {
   }
 
   files.reverse();
-  return files.map(f => `<!-- ${f.path} -->\n${f.content}`);
+  const result = files.map(f => `<!-- ${f.path} -->\n${f.content}`);
+  _conventionCache.set(resolved, result);
+  return result;
 }
 
 /**
