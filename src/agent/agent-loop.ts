@@ -4,7 +4,6 @@
  * Subscribes to bus events in constructor:
  *   - agent:submit → run query through LLM tool loop
  *   - agent:cancel-request → abort current loop
- *   - config:cycle → cycle through modes
  *
  * Emits bus events during execution:
  *   - agent:query, agent:processing-start/done, agent:response-chunk/done
@@ -30,7 +29,8 @@ import { nucleate, formatNuclearLine, isReadOnly, type NuclearEntry } from "./nu
 import { STATIC_SYSTEM_PROMPT, buildDynamicContext, buildStaticByCwd, formatSkillsBlock, loadGlobalAgentsMd } from "./system-prompt.js";
 import type { Compositor } from "../utils/compositor.js";
 import { createToolUI } from "../utils/tool-interactive.js";
-import { TokenBudget, RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW } from "./token-budget.js";
+import { RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW } from "./token-budget.js";
+import { PACKAGE_VERSION } from "../utils/package-version.js";
 import { getSettings, updateSettings } from "../settings.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { createToolProtocol, type ToolProtocol, type PendingToolCall as ProtocolPendingToolCall, type ToolResult as ProtocolToolResult } from "./tool-protocol.js";
@@ -81,7 +81,6 @@ export class AgentLoop implements AgentBackend {
   private historyFile: HistoryFile;
   private conversation: ConversationState;
   private fileReadCache: FileReadCache = new Map();
-  private tokenBudget: TokenBudget;
   private modes: AgentMode[];
   private currentModeIndex = 0;
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
@@ -154,9 +153,6 @@ export class AgentLoop implements AgentBackend {
       : [{ model: config.llmClient.model }];
     this.currentModeIndex = config.initialModeIndex ?? 0;
 
-    // Unified token budget — adapts to current model's context window
-    this.tokenBudget = new TokenBudget(this.currentMode.contextWindow);
-
     // Tool protocol — controls how tools are presented to the LLM
     this.toolProtocol = createToolProtocol(getSettings().toolMode ?? "api");
 
@@ -166,9 +162,6 @@ export class AgentLoop implements AgentBackend {
     // Register any protocol-provided tools (e.g. load_tool for deferred-lookup).
     const protocolTools = this.toolProtocol.getProtocolTools?.() ?? [];
     for (const t of protocolTools) this.registerTool(t);
-
-    // Update token budget with tool count
-    this.tokenBudget.update(undefined, this.toolRegistry.all().length);
 
     // Register handlers — extensions can advise these
     this.registerHandlers();
@@ -216,7 +209,6 @@ export class AgentLoop implements AgentBackend {
       } else {
         this.llmClient.model = m.model;
       }
-      this.tokenBudget.update(m.contextWindow, this.toolRegistry.all().length);
       this.bus.emit("config:changed", {});
     });
     const getToolsPipe = () => ({ tools: this.getTools() });
@@ -240,7 +232,6 @@ export class AgentLoop implements AgentBackend {
     on("agent:cancel-request", (e) => {
       this.abortController?.abort(e.silent ? "silent" : undefined);
     });
-    on("config:cycle", () => this.cycleMode());
     on("config:switch-model", ({ model: target }) => {
       const idx = this.modes.findIndex((m) => m.model === target);
       if (idx === -1) {
@@ -254,9 +245,8 @@ export class AgentLoop implements AgentBackend {
       } else {
         this.llmClient.model = m.model;
       }
-      this.tokenBudget.update(m.contextWindow, this.toolRegistry.all().length);
       const label = m.provider ? `${m.provider}: ${m.model}` : m.model;
-      this.bus.emit("agent:info", { name: "ash", version: "0.4", model: m.model, provider: m.provider, contextWindow: m.contextWindow });
+      this.bus.emit("agent:info", { name: "ash", version: PACKAGE_VERSION, model: m.model, provider: m.provider, contextWindow: m.contextWindow });
 
       // Persist as the new default — selection survives restart.
       // Safe even for dynamic providers: agent-backend defers mode
@@ -509,32 +499,6 @@ export class AgentLoop implements AgentBackend {
     return true;
   }
 
-
-  private cycleMode(): void {
-    const prevMode = this.modes[this.currentModeIndex];
-    this.currentModeIndex =
-      (this.currentModeIndex + 1) % this.modes.length;
-    const newMode = this.modes[this.currentModeIndex];
-
-    // Reconfigure LlmClient if provider changed
-    if (newMode.provider !== prevMode.provider && newMode.providerConfig) {
-      this.llmClient.reconfigure({
-        apiKey: newMode.providerConfig.apiKey,
-        baseURL: newMode.providerConfig.baseURL,
-        model: newMode.model,
-      });
-    } else {
-      this.llmClient.model = newMode.model;
-    }
-
-    this.tokenBudget.update(newMode.contextWindow, this.toolRegistry.all().length);
-    const label = newMode.provider
-      ? `${newMode.provider}: ${newMode.model}`
-      : newMode.model;
-    this.bus.emit("agent:info", { name: "ash", version: "0.4", model: newMode.model, provider: newMode.provider, contextWindow: newMode.contextWindow });
-    this.bus.emit("ui:info", { message: `Model: ${label}` });
-    this.bus.emit("config:changed", {});
-  }
 
   private get currentMode(): AgentMode {
     return this.modes[this.currentModeIndex];

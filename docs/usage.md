@@ -89,25 +89,6 @@ agent-sh --api-key dummy \
   --model your-model
 ```
 
-## Overlay Agent (Ctrl+\)
-
-The overlay agent is an optional extension that lets you summon the agent from anywhere — even inside vim, htop, or ssh — by pressing **Ctrl+\\**. Type a query, and the agent's response streams into a floating panel.
-
-```bash
-# Install the extension
-cp examples/extensions/overlay-agent.ts ~/.agent-sh/extensions/
-
-# Or load directly
-agent-sh -e ./examples/extensions/overlay-agent.ts
-```
-
-While the agent is working, press **Ctrl+\\** or **Esc** to hide the overlay and continue using your program — the agent keeps running in the background and control returns automatically when it finishes. If the overlay is still visible when the agent finishes, it shows a follow-up prompt for multi-turn conversation.
-
-Requires `@xterm/headless` for the dimmed background compositing:
-```bash
-npm install @xterm/headless@5.5.0 @xterm/addon-serialize@0.13.0
-```
-
 ## Using agent-sh as Your Default Shell
 
 Add to the end of your `~/.zshrc` or `~/.bashrc`:
@@ -135,7 +116,8 @@ Instead of passing `--api-key` and `--base-url` every time, define named provide
     "openai": {
       "apiKey": "$OPENAI_API_KEY",
       "defaultModel": "gpt-4o",
-      "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]
+      "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+      "contextWindow": 128000
     },
     "ollama": {
       "apiKey": "not-needed",
@@ -146,8 +128,11 @@ Instead of passing `--api-key` and `--base-url` every time, define named provide
     "openrouter": {
       "apiKey": "$OPENROUTER_KEY",
       "baseURL": "https://openrouter.ai/api/v1",
-      "defaultModel": "anthropic/claude-sonnet-4-20250514",
-      "models": ["anthropic/claude-sonnet-4-20250514", "google/gemini-2.5-pro"]
+      "defaultModel": "anthropic/claude-sonnet-4.5",
+      "models": [
+        { "id": "anthropic/claude-sonnet-4.5", "contextWindow": 200000, "reasoning": true },
+        { "id": "google/gemini-2.5-pro",       "contextWindow": 1000000 }
+      ]
     }
   }
 }
@@ -163,16 +148,31 @@ agent-sh --provider openai --model gpt-4-turbo  # override the default model
 
 The `apiKey` field supports `$ENV_VAR` and `${ENV_VAR}` syntax — variables are expanded at runtime, so you don't store secrets in the file.
 
-### Model Cycling
+### Declaring the context window
 
-When a provider has multiple `models`, you can cycle through them at runtime:
+agent-sh adapts its auto-compaction trigger to the model's context window. There are two places to declare it:
 
-- **Shift+Tab** or **`/model`** — switch to the next model in the list
-- **`/provider <name>`** — switch to a different provider entirely
+- **Provider-level `contextWindow`** — applies to every model in that provider unless a more specific value is set.
+- **Per-model `contextWindow`** (inside an entry of `models`) — overrides the provider-level value for a specific model, and also lets you tag reasoning-capable models via `reasoning: true`.
 
-The current model is shown in the prompt. Switching mid-conversation preserves your conversation state — only the LLM endpoint changes.
+If neither is set, agent-sh falls back to a conservative 60k-token default.
 
-When cycling across providers (e.g. from OpenAI to Ollama), the API key and base URL are reconfigured automatically.
+Entries in `models` can be plain strings (just the model id, uses the provider-level `contextWindow`) or objects:
+
+```json
+"models": [
+  "gpt-4o-mini",
+  { "id": "gpt-4o",    "contextWindow": 128000 },
+  { "id": "o1-preview", "contextWindow": 128000, "reasoning": true }
+]
+```
+
+### Switching models at runtime
+
+- **`/model`** — show the current model
+- **`/model <name>`** — switch to a specific model (may cross providers; API key and base URL are reconfigured automatically)
+
+Switching mid-conversation preserves your conversation state — only the LLM endpoint changes.
 
 ### CLI Flags
 
@@ -195,14 +195,18 @@ When cycling across providers (e.g. from OpenAI to Ollama), the API key and base
 | `defaultBackend` | `"ash"` | Which agent backend to activate. Set to an extension backend name (e.g. `"claude-code"`, `"pi"`) to use it by default |
 | `extensions` | `[]` | Extensions to load (npm packages or file paths) |
 | `historySize` | `500` | Max agent query history entries (persisted across sessions) |
-| `contextWindowSize` | `20` | Recent exchanges included in agent context |
-| `contextBudget` | `32768` | Context budget in bytes (~8K tokens) |
-| `shellTruncateThreshold` | `20` | Shell output lines before truncation |
-| `shellHeadLines` / `shellTailLines` | `10` / `10` | Lines kept from start/end of truncated output |
-| `recallExpandMaxLines` | `500` | Max lines for recall expand |
+| `shellTruncateThreshold` | `20` | Shell output lines before spill-to-tempfile |
+| `shellHeadLines` / `shellTailLines` | `10` / `10` | Lines kept from start/end when output is spilled |
+| `autoCompactThreshold` | `0.5` | Fraction of the model's context window at which conversation auto-compacts |
+| `historyMaxBytes` | `104857600` | Max size of `~/.agent-sh/history` before front-truncation (100MB) |
+| `historyStartupEntries` | `100` | Prior history entries injected as `[Prior session history]` preamble on launch |
 | `maxCommandOutputLines` | `3` | Max tool output lines shown inline in TUI |
 | `readOutputMaxLines` | `10` | Max read tool output lines shown inline (0 = hidden) |
 | `diffMaxLines` | `Infinity` | Max diff lines rendered in the TUI. Defaults to no limit |
+| `skillPaths` | `[]` | Extra directories to scan for skills (supports `~` expansion) |
+| `diagnose` | `false` | Enable the `diagnose` tool — lets the agent evaluate JS expressions against its own runtime state (introspection; agent already has bash, so this is convenience, not new capability) |
+| `startupBanner` | `true` | Show the startup banner (backend / model / extensions / skills) on launch |
+| `promptIndicator` | `true` | Show a subtle agent-sh indicator in the shell prompt |
 | `toolMode` | `"api"` | How tools are presented to the LLM. `"api"` sends all tool schemas. `"deferred"` bundles extension tools behind a `use_extension(name, args)` meta-tool (saves prompt tokens, loses schema fidelity). `"deferred-lookup"` keeps extension schemas dormant until the model calls `load_tool(names[])` — loaded tools then become first-class on the next turn with full schemas. `"inline"` describes tools as text. |
 | `disabledExtensions` | `[]` | Names of user extensions in `~/.agent-sh/extensions/` to skip when auto-discovering. Match by basename without extension for files (`"peer-mesh"` matches `peer-mesh.ts`) or by directory name for dir-style extensions (`"superash"` matches `superash/index.ts`). Avoids having to rename files to `.disabled`. |
 | `disabledBuiltins` | `[]` | Names of built-in extensions to disable. |
@@ -223,20 +227,21 @@ Set `startupBanner: false` in settings to disable.
 The agent automatically receives structured context about your shell session with each query:
 
 - **Current working directory** — tracked via OSC 7 escape sequences
-- **Recent commands and output** — truncated summaries of recent shell activity
-- **Full history access** — the agent can recall full output of truncated exchanges
+- **Recent commands and output** — new shell activity since the last turn is injected as a `<shell-events>` delta prepended to your query
+- **Long outputs are spilled to tempfiles** — outputs over `shellTruncateThreshold` lines are written to `<tmpdir>/agent-sh-<pid>/<id>.out` at capture; the agent sees head+tail plus the path and recovers the full text via the built-in `read_file` tool
 
-This means you can run a failing command, then type `> fix this` and the agent knows exactly what happened. Context size is tunable via settings.
+This means you can run a failing command, then type `> fix this` and the agent knows exactly what happened — including a pointer to the full output if it got truncated. See [Context Management](context-management.md) for the full design.
 
 ## Slash Commands
 
 | Command | Description |
 |---|---|
 | `/help` | Show available commands |
-| `/model [name]` | Cycle to the next model, or switch to a specific one |
+| `/model [name]` | Show current model; with a name, switch to that model |
 | `/backend [name]` | List backends, or switch to a named backend |
-| `/compact` | Compact conversation (free up context space) |
-| `/context` | Show context budget usage |
 | `/thinking [level]` | Set reasoning effort (off, low, medium, high) |
+| `/compact` | Compact conversation (free up context space) |
+| `/context` | Show context budget usage (active tokens vs. budget) |
+| `/reload` | Reload user extensions from `~/.agent-sh/extensions/` |
 
 See [Context Management](context-management.md) for how `/compact` and `/context` work, and [Extensions: Custom Agent Backends](extensions.md#custom-agent-backends) for `/backend`.
