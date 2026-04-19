@@ -4,7 +4,6 @@
  * Subscribes to bus events in constructor:
  *   - agent:submit → run query through LLM tool loop
  *   - agent:cancel-request → abort current loop
- *   - config:cycle → cycle through modes
  *
  * Emits bus events during execution:
  *   - agent:query, agent:processing-start/done, agent:response-chunk/done
@@ -233,7 +232,6 @@ export class AgentLoop implements AgentBackend {
     on("agent:cancel-request", (e) => {
       this.abortController?.abort(e.silent ? "silent" : undefined);
     });
-    on("config:cycle", () => this.cycleMode());
     on("config:switch-model", ({ model: target }) => {
       const idx = this.modes.findIndex((m) => m.model === target);
       if (idx === -1) {
@@ -501,31 +499,6 @@ export class AgentLoop implements AgentBackend {
     return true;
   }
 
-
-  private cycleMode(): void {
-    const prevMode = this.modes[this.currentModeIndex];
-    this.currentModeIndex =
-      (this.currentModeIndex + 1) % this.modes.length;
-    const newMode = this.modes[this.currentModeIndex];
-
-    // Reconfigure LlmClient if provider changed
-    if (newMode.provider !== prevMode.provider && newMode.providerConfig) {
-      this.llmClient.reconfigure({
-        apiKey: newMode.providerConfig.apiKey,
-        baseURL: newMode.providerConfig.baseURL,
-        model: newMode.model,
-      });
-    } else {
-      this.llmClient.model = newMode.model;
-    }
-
-    const label = newMode.provider
-      ? `${newMode.provider}: ${newMode.model}`
-      : newMode.model;
-    this.bus.emit("agent:info", { name: "ash", version: PACKAGE_VERSION, model: newMode.model, provider: newMode.provider, contextWindow: newMode.contextWindow });
-    this.bus.emit("ui:info", { message: `Model: ${label}` });
-    this.bus.emit("config:changed", {});
-  }
 
   private get currentMode(): AgentMode {
     return this.modes[this.currentModeIndex];

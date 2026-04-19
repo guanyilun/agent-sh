@@ -561,10 +561,6 @@ export class InputHandler {
           }
           break;
 
-        case "shift+tab":
-          this.bus.emit("config:cycle", {});
-          break;
-
         case "arrow-up":
           if (this.autocompleteActive) {
             this.autocompleteIndex =

@@ -6,7 +6,6 @@ import type { EventBus } from "../event-bus.js";
  * Backends self-wire to bus events in their constructor:
  *   - agent:submit → handle queries
  *   - agent:cancel-request → handle cancellation
- *   - config:cycle → handle mode switching
  *
  * They emit bus events for results:
  *   - agent:response-chunk, agent:tool-started, agent:tool-completed, etc.

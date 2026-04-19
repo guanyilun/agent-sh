@@ -186,16 +186,12 @@ Entries in `models` can be plain strings (just the model id, uses the provider-l
 ]
 ```
 
-### Model Cycling
+### Switching models at runtime
 
-When a provider has multiple `models` — or you've defined multiple providers — you can cycle through them at runtime:
+- **`/model`** — show the current model
+- **`/model <name>`** — switch to a specific model (may cross providers; API key and base URL are reconfigured automatically)
 
-- **Shift+Tab** — cycle to the next model (spans providers if applicable)
-- **`/model`** — show the current model; **`/model <name>`** — switch to a specific one
-
-The current model is shown in the prompt. Switching mid-conversation preserves your conversation state — only the LLM endpoint changes.
-
-When cycling across providers (e.g. from OpenAI to Ollama), the API key and base URL are reconfigured automatically.
+Switching mid-conversation preserves your conversation state — only the LLM endpoint changes.
 
 ### CLI Flags
 
@@ -253,7 +249,7 @@ This means you can run a failing command, then type `> fix this` and the agent k
 | Command | Description |
 |---|---|
 | `/help` | Show available commands |
-| `/model [name]` | Show current model; with a name, switch to that model. Cycle with **Shift+Tab**. |
+| `/model [name]` | Show current model; with a name, switch to that model |
 | `/backend [name]` | List backends, or switch to a named backend |
 | `/thinking [level]` | Set reasoning effort (off, low, medium, high) |
 | `/compact` | Compact conversation (free up context space) |

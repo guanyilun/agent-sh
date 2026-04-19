@@ -255,8 +255,6 @@ export interface ShellEvents {
   // Session mode/config updated (from agent backend)
   "config:changed": Record<string, never>;
 
-  // Cycle session mode (input-handler → backend: cycles models within provider)
-  "config:cycle": Record<string, never>;
   // Switch to a specific model by name (slash command → backend)
   "config:switch-model": { model: string };
   // Query available models (sync pipe — for autocomplete)

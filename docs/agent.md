@@ -355,8 +355,8 @@ When all modes share the same provider, cycling just changes the model name. Whe
 
 ### Switching
 
-- **Shift+Tab** or **`/model`** — cycle to the next mode in the list
-- **`/provider <name>`** — switch to a different provider's model list
+- **`/model`** — show the current model
+- **`/model <name>`** — switch to a specific model (may cross providers; credentials and base URL are reconfigured automatically)
 
 The current model is shown in the TUI prompt. Switching mid-conversation preserves the conversation state — only the LLM endpoint changes.
 
