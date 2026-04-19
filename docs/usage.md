@@ -89,25 +89,6 @@ agent-sh --api-key dummy \
   --model your-model
 ```
 
-## Overlay Agent (Ctrl+\)
-
-The overlay agent is an optional extension that lets you summon the agent from anywhere — even inside vim, htop, or ssh — by pressing **Ctrl+\\**. Type a query, and the agent's response streams into a floating panel.
-
-```bash
-# Install the extension
-cp examples/extensions/overlay-agent.ts ~/.agent-sh/extensions/
-
-# Or load directly
-agent-sh -e ./examples/extensions/overlay-agent.ts
-```
-
-While the agent is working, press **Ctrl+\\** or **Esc** to hide the overlay and continue using your program — the agent keeps running in the background and control returns automatically when it finishes. If the overlay is still visible when the agent finishes, it shows a follow-up prompt for multi-turn conversation.
-
-Requires `@xterm/headless` for the dimmed background compositing:
-```bash
-npm install @xterm/headless@5.5.0 @xterm/addon-serialize@0.13.0
-```
-
 ## Using agent-sh as Your Default Shell
 
 Add to the end of your `~/.zshrc` or `~/.bashrc`:
