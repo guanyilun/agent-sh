@@ -15,6 +15,7 @@ import type { AgentMode, AgentShellConfig } from "../types.js";
 import { AgentLoop } from "../agent/agent-loop.js";
 import { LlmClient } from "../utils/llm-client.js";
 import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../settings.js";
+import { PACKAGE_VERSION } from "../utils/package-version.js";
 
 /** Read the user's persisted defaultModel for a provider, if any. */
 function persistedModelFor(providerName: string | undefined): string | undefined {
@@ -91,7 +92,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       agentLoop.wire();
       bus.emit("agent:info", {
         name: "ash",
-        version: "0.4",
+        version: PACKAGE_VERSION,
         model: llmClient.model,
         provider: modes[initialModeIndex]?.provider,
         contextWindow: modes[initialModeIndex]?.contextWindow,
@@ -210,7 +211,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     });
     bus.emit("config:set-modes", { modes: newModes });
 
-    bus.emit("agent:info", { name: "ash", version: "0.4", model: switchModel, provider: name, contextWindow: p.contextWindow });
+    bus.emit("agent:info", { name: "ash", version: PACKAGE_VERSION, model: switchModel, provider: name, contextWindow: p.contextWindow });
     bus.emit("ui:info", { message: `Switched to ${name} (${switchModel})` });
     bus.emit("config:changed", {});
   });

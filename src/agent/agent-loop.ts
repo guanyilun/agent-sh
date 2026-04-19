@@ -31,6 +31,7 @@ import { STATIC_SYSTEM_PROMPT, buildDynamicContext, buildStaticByCwd, formatSkil
 import type { Compositor } from "../utils/compositor.js";
 import { createToolUI } from "../utils/tool-interactive.js";
 import { RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW } from "./token-budget.js";
+import { PACKAGE_VERSION } from "../utils/package-version.js";
 import { getSettings, updateSettings } from "../settings.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { createToolProtocol, type ToolProtocol, type PendingToolCall as ProtocolPendingToolCall, type ToolResult as ProtocolToolResult } from "./tool-protocol.js";
@@ -247,7 +248,7 @@ export class AgentLoop implements AgentBackend {
         this.llmClient.model = m.model;
       }
       const label = m.provider ? `${m.provider}: ${m.model}` : m.model;
-      this.bus.emit("agent:info", { name: "ash", version: "0.4", model: m.model, provider: m.provider, contextWindow: m.contextWindow });
+      this.bus.emit("agent:info", { name: "ash", version: PACKAGE_VERSION, model: m.model, provider: m.provider, contextWindow: m.contextWindow });
 
       // Persist as the new default — selection survives restart.
       // Safe even for dynamic providers: agent-backend defers mode
@@ -521,7 +522,7 @@ export class AgentLoop implements AgentBackend {
     const label = newMode.provider
       ? `${newMode.provider}: ${newMode.model}`
       : newMode.model;
-    this.bus.emit("agent:info", { name: "ash", version: "0.4", model: newMode.model, provider: newMode.provider, contextWindow: newMode.contextWindow });
+    this.bus.emit("agent:info", { name: "ash", version: PACKAGE_VERSION, model: newMode.model, provider: newMode.provider, contextWindow: newMode.contextWindow });
     this.bus.emit("ui:info", { message: `Model: ${label}` });
     this.bus.emit("config:changed", {});
   }
