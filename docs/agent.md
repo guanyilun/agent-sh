@@ -186,25 +186,6 @@ Extensions can add tools that cross the shell↔agent boundary via `shell:exec-r
 
 **Common pattern**: all file-based tools resolve relative paths from the current working directory (`contextManager.getCwd()`).
 
-### Interactive program tools (example extension)
-
-`terminal_read` and `terminal_keys` are **not built-in** — they ship as the `terminal-buffer` example extension (`examples/extensions/terminal-buffer.ts`). Load it to let the agent operate inside full-screen interactive programs (vim, htop, less, ssh, etc.). The extension is backed by a headless xterm.js terminal buffer that mirrors the real terminal.
-
-**`terminal_read`** returns:
-- Clean text (ANSI stripped) of the current screen
-- Whether the alternate screen buffer is active (indicates a full-screen program)
-- Cursor position (row, col)
-
-**`terminal_keys`** sends keystrokes to the PTY as if the user typed them. Supports escape sequences:
-- `\x1b` for Escape, `\r` for Enter, `\t` for Tab
-- `\x03` for Ctrl+C, `\x04` for Ctrl+D, `\x1a` for Ctrl+Z
-- `\x1b[A/B/C/D` for arrow keys, `\x7f` for Backspace
-- Example: `\x1b:q!\r` to quit vim without saving (Escape, `:q!`, Enter)
-
-After sending keys, `terminal_keys` waits for the terminal to settle (default 150ms, configurable via `settle_ms`) and returns the screen state.
-
-The extension requires `@xterm/headless` and `@xterm/addon-serialize` to be installed in your project (they are not dependencies of `agent-sh` itself). Without them, the tools are silently unavailable.
-
 ### Tool-specific enhancements
 
 **`grep`** supports three output modes and pagination:
