@@ -135,7 +135,8 @@ Instead of passing `--api-key` and `--base-url` every time, define named provide
     "openai": {
       "apiKey": "$OPENAI_API_KEY",
       "defaultModel": "gpt-4o",
-      "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]
+      "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+      "contextWindow": 128000
     },
     "ollama": {
       "apiKey": "not-needed",
@@ -146,8 +147,11 @@ Instead of passing `--api-key` and `--base-url` every time, define named provide
     "openrouter": {
       "apiKey": "$OPENROUTER_KEY",
       "baseURL": "https://openrouter.ai/api/v1",
-      "defaultModel": "anthropic/claude-sonnet-4-20250514",
-      "models": ["anthropic/claude-sonnet-4-20250514", "google/gemini-2.5-pro"]
+      "defaultModel": "anthropic/claude-sonnet-4.5",
+      "models": [
+        { "id": "anthropic/claude-sonnet-4.5", "contextWindow": 200000, "reasoning": true },
+        { "id": "google/gemini-2.5-pro",       "contextWindow": 1000000 }
+      ]
     }
   }
 }
@@ -163,12 +167,31 @@ agent-sh --provider openai --model gpt-4-turbo  # override the default model
 
 The `apiKey` field supports `$ENV_VAR` and `${ENV_VAR}` syntax — variables are expanded at runtime, so you don't store secrets in the file.
 
+### Declaring the context window
+
+agent-sh adapts its auto-compaction trigger to the model's context window. There are two places to declare it:
+
+- **Provider-level `contextWindow`** — applies to every model in that provider unless a more specific value is set.
+- **Per-model `contextWindow`** (inside an entry of `models`) — overrides the provider-level value for a specific model, and also lets you tag reasoning-capable models via `reasoning: true`.
+
+If neither is set, agent-sh falls back to a conservative 60k-token default.
+
+Entries in `models` can be plain strings (just the model id, uses the provider-level `contextWindow`) or objects:
+
+```json
+"models": [
+  "gpt-4o-mini",
+  { "id": "gpt-4o",    "contextWindow": 128000 },
+  { "id": "o1-preview", "contextWindow": 128000, "reasoning": true }
+]
+```
+
 ### Model Cycling
 
-When a provider has multiple `models`, you can cycle through them at runtime:
+When a provider has multiple `models` — or you've defined multiple providers — you can cycle through them at runtime:
 
-- **Shift+Tab** or **`/model`** — switch to the next model in the list
-- **`/provider <name>`** — switch to a different provider entirely
+- **Shift+Tab** — cycle to the next model (spans providers if applicable)
+- **`/model`** — show the current model; **`/model <name>`** — switch to a specific one
 
 The current model is shown in the prompt. Switching mid-conversation preserves your conversation state — only the LLM endpoint changes.
 
@@ -220,20 +243,21 @@ Set `startupBanner: false` in settings to disable.
 The agent automatically receives structured context about your shell session with each query:
 
 - **Current working directory** — tracked via OSC 7 escape sequences
-- **Recent commands and output** — truncated summaries of recent shell activity
-- **Full history access** — the agent can recall full output of truncated exchanges
+- **Recent commands and output** — new shell activity since the last turn is injected as a `<shell-events>` delta prepended to your query
+- **Long outputs are spilled to tempfiles** — outputs over `shellTruncateThreshold` lines are written to `<tmpdir>/agent-sh-<pid>/<id>.out` at capture; the agent sees head+tail plus the path and recovers the full text via the built-in `read_file` tool
 
-This means you can run a failing command, then type `> fix this` and the agent knows exactly what happened. Context size is tunable via settings.
+This means you can run a failing command, then type `> fix this` and the agent knows exactly what happened — including a pointer to the full output if it got truncated. See [Context Management](context-management.md) for the full design.
 
 ## Slash Commands
 
 | Command | Description |
 |---|---|
 | `/help` | Show available commands |
-| `/model [name]` | Cycle to the next model, or switch to a specific one |
+| `/model [name]` | Show current model; with a name, switch to that model. Cycle with **Shift+Tab**. |
 | `/backend [name]` | List backends, or switch to a named backend |
-| `/compact` | Compact conversation (free up context space) |
-| `/context` | Show context budget usage |
 | `/thinking [level]` | Set reasoning effort (off, low, medium, high) |
+| `/compact` | Compact conversation (free up context space) |
+| `/context` | Show context budget usage (active tokens vs. budget) |
+| `/reload` | Reload user extensions from `~/.agent-sh/extensions/` |
 
 See [Context Management](context-management.md) for how `/compact` and `/context` work, and [Extensions: Custom Agent Backends](extensions.md#custom-agent-backends) for `/backend`.
