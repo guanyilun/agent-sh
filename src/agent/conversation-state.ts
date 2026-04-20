@@ -286,12 +286,18 @@ export class ConversationState {
     if (!force && convEstimate <= convTarget) return null;
 
     const turns = this.parseTurns();
-    if (turns.length <= 2) return null;
+    // With force, allow compacting down to 1 turn (the current response).
+    // Without force, keep at least 2 turns (user + agent) to avoid
+    // annihilating a young conversation.
+    if (turns.length <= (force ? 1 : 2)) return null;
 
     // Cap the pinned window so enough turns remain evictable.
     const maxPinnedFraction = force ? 0.4 : 0.6;
     const maxPinned = Math.max(2, Math.floor(turns.length * maxPinnedFraction));
-    const pinnedCount = Math.min(recentTurnsToKeep, turns.length - 1, maxPinned);
+    // Ensure at least 1 turn is evictable when force is true, even in
+    // very short conversations (e.g. 3 turns with heavy tool output).
+    const maxPinnedForced = force ? Math.min(maxPinned, turns.length - 2) : maxPinned;
+    const pinnedCount = Math.min(recentTurnsToKeep, turns.length - 1, Math.max(1, maxPinnedForced));
     for (let i = 0; i < turns.length; i++) {
       turns[i]!.priority = this.inferPriority(turns[i]!.messages);
     }
