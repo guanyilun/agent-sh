@@ -87,6 +87,9 @@ interface RenderState {
   // ── Tool grouping (collapse sequential same-type read-only tools) ──
   toolGroupKind: string | undefined;
   toolGroupCount: number;
+  /** Number of group members whose complete has arrived — used to
+   *  suppress the aggregate line when finalize fires prematurely. */
+  toolGroupCompletedCount: number;
   toolGroupAllOk: boolean;
   /** Number of tools rendered individually in current group. */
   toolGroupRendered: number;
@@ -121,6 +124,7 @@ function createRenderState(): RenderState {
     commandOverflowLines: [],
     toolGroupKind: undefined,
     toolGroupCount: 0,
+    toolGroupCompletedCount: 0,
     toolGroupAllOk: true,
     toolGroupRendered: 0,
     toolGroupSummaries: [],
@@ -385,6 +389,7 @@ export default function activate(ctx: ExtensionContext): void {
         group.headerShown = true;
         s.toolGroupKind = kind;
         s.toolGroupCount = 0;
+        s.toolGroupCompletedCount = 0;
         s.toolGroupRendered = 0;
         s.toolGroupAllOk = true;
         s.toolGroupSummaries = [];
@@ -421,6 +426,7 @@ export default function activate(ctx: ExtensionContext): void {
       // Don't restart spinner between grouped tools — it's already running from group start.
       if (e.resultDisplay?.summary) s.toolGroupSummaries.push(e.resultDisplay.summary);
       if (e.toolCallId) s.pendingToolCompletes.delete(e.toolCallId);
+      s.toolGroupCompletedCount++;
       s.currentToolKind = undefined;
     } else {
       // Parallel read-only batches let multiple tools be started before any
@@ -930,11 +936,17 @@ export default function activate(ctx: ExtensionContext): void {
 
   /** Finalize a group of collapsed tool calls, rendering the summary. */
   function finalizeToolGroup(): void {
-    if (s.toolGroupCount <= 1) {
-      // 0–1 tools: standalone, nothing to finalize
+    // If finalize fires before any member has completed — which happens
+    // when a different-kind standalone tool starts during a parallel batch
+    // — don't emit an aggregate ✓ line with empty summaries. Late
+    // completions will render as labeled ⎿ lines individually instead.
+    const skipAggregate = s.toolGroupCount > 1 && s.toolGroupCompletedCount === 0;
+    if (s.toolGroupCount <= 1 || skipAggregate) {
       s.toolGroupKind = undefined;
       s.toolGroupCount = 0;
+      s.toolGroupCompletedCount = 0;
       s.toolGroupRendered = 0;
+      s.toolGroupAllOk = true;
       s.toolGroupSummaries = [];
       return;
     }
@@ -948,6 +960,7 @@ export default function activate(ctx: ExtensionContext): void {
     drain();
     s.toolGroupKind = undefined;
     s.toolGroupCount = 0;
+    s.toolGroupCompletedCount = 0;
     s.toolGroupAllOk = true;
     s.toolGroupRendered = 0;
     s.toolGroupSummaries = [];
