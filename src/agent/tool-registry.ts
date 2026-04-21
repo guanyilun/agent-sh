@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "./types.js";
 import type { ChatCompletionTool } from "../utils/llm-client.js";
-import { registerReadOnlyTool } from "./nuclear-form.js";
+import { registerReadOnlyTool, unregisterReadOnlyTool } from "./nuclear-form.js";
 
 /**
  * Registry for agent tools. Holds tool definitions and converts them
@@ -12,10 +12,12 @@ export class ToolRegistry {
   register(tool: ToolDefinition): void {
     this.tools.set(tool.name, tool);
     if (tool.readOnly) registerReadOnlyTool(tool.name);
+    else unregisterReadOnlyTool(tool.name);
   }
 
   unregister(name: string): void {
     this.tools.delete(name);
+    unregisterReadOnlyTool(name);
   }
 
   get(name: string): ToolDefinition | undefined {

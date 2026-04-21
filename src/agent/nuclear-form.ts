@@ -65,6 +65,10 @@ export function registerReadOnlyTool(name: string): void {
   extraReadOnlyTools.add(name);
 }
 
+export function unregisterReadOnlyTool(name: string): void {
+  extraReadOnlyTools.delete(name);
+}
+
 /** State-changing tools whose summaries are kept in nuclear memory. */
 export const WRITE_TOOLS = new Set([
   "write_file", "edit_file", "write", "edit", "patch",
