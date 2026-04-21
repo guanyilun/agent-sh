@@ -41,9 +41,22 @@ export function charWidth(codePoint: number): number {
   if (codePoint >= 0x1f900 && codePoint <= 0x1f9ff) return 2; // Supplemental Symbols and Pictographs
   if (codePoint >= 0x1fa00 && codePoint <= 0x1faff) return 2; // Chess Symbols, Symbols and Pictographs Extended-A
   // NOTE: 0x2300-0x23ff (Misc Technical), 0x2600-0x26ff (Misc Symbols),
-  // and 0x2700-0x27bf (Dingbats) are intentionally NOT width 2 — these ranges
-  // contain mostly "Ambiguous" width characters that render as 1 column in
-  // non-CJK terminal locales (e.g. ❯, ⌘, ★, ♦).
+  // and 0x2700-0x27bf (Dingbats) are mostly "Ambiguous" width — render as
+  // 1 column in non-CJK terminal locales (e.g. ❯, ⌘, ★, ♦). But a handful
+  // of dingbats have Emoji_Presentation=Yes and render as 2 cols everywhere.
+  if (
+    codePoint === 0x2705 || // ✅ white heavy check mark
+    codePoint === 0x270a || // ✊ raised fist
+    codePoint === 0x270b || // ✋ raised hand
+    codePoint === 0x2728 || // ✨ sparkles
+    codePoint === 0x274c || // ❌ cross mark
+    codePoint === 0x274e || // ❎ negative squared cross mark
+    (codePoint >= 0x2753 && codePoint <= 0x2755) || // ❓❔❕
+    codePoint === 0x2757 || // ❗ heavy exclamation mark
+    (codePoint >= 0x2795 && codePoint <= 0x2797) || // ➕➖➗
+    codePoint === 0x27b0 || // ➰ curly loop
+    codePoint === 0x27bf    // ➿ double curly loop
+  ) return 2;
 
   // Regional indicator symbols (flag emoji components)
   if (codePoint >= 0x1f1e6 && codePoint <= 0x1f1ff) return 2;
