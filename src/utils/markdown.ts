@@ -203,8 +203,7 @@ export class MarkdownRenderer {
       while (row.length < numCols) row.push("");
     }
 
-    // Calculate column widths from rendered content — measuring the raw cell
-    // would over-count `**bold**` markers as 4 extra columns each.
+    // Width from rendered cell — raw `**bold**` over-counts by 4 per pair.
     const colWidths: number[] = new Array(numCols).fill(0);
     for (const row of dataRows) {
       for (let c = 0; c < numCols; c++) {
@@ -236,8 +235,6 @@ export class MarkdownRenderer {
       const isHeader = hasHeader && i === 0;
       const cells = row.map((cell, c) => {
         const w = colWidths[c]!;
-        // Parse inline markdown (**bold**, `code`, etc.) before width-fitting
-        // so emphasis inside cells renders as styling, not literal asterisks.
         const rendered = this.renderInline(cell);
         const text = visibleLen(rendered) > w
           ? truncateAnsiToWidth(rendered, w)

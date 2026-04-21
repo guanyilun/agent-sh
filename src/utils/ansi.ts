@@ -126,11 +126,8 @@ export function truncateToWidth(str: string, maxWidth: number): string {
   return clean.slice(0, i) + "…";
 }
 
-/**
- * Truncate while preserving SGR escape sequences. Use this when the input
- * already carries color/bold/italic codes (e.g. from a markdown renderer)
- * and you want them to survive the cut. `truncateToWidth` strips ANSI.
- */
+/** Truncate to visible width while preserving SGR sequences — use when
+ *  input carries color/bold codes. `truncateToWidth` strips them. */
 export function truncateAnsiToWidth(str: string, maxWidth: number): string {
   if (maxWidth <= 0) return "";
   if (visibleLen(str) <= maxWidth) return str;
@@ -140,7 +137,6 @@ export function truncateAnsiToWidth(str: string, maxWidth: number): string {
   let out = "";
   let i = 0;
   while (i < str.length) {
-    // Pass SGR escape sequences through verbatim (zero visible width)
     if (str[i] === "\x1b" && str[i + 1] === "[") {
       const end = str.indexOf("m", i);
       if (end !== -1) {
@@ -157,7 +153,6 @@ export function truncateAnsiToWidth(str: string, maxWidth: number): string {
     width += cw;
     i += chLen;
   }
-  // Reset any dangling styling before the ellipsis so it doesn't leak.
   return out + "\x1b[0m…";
 }
 

@@ -254,11 +254,8 @@ export class InputHandler {
         this.lineBuffer = "";
         this.ctx.writeToPty(ch);
       } else if (ch === "\x0b" || ch === "\x15") {
-        // Ctrl-K (kill to end) / Ctrl-U (kill to start). The shell's line
-        // editor handles the actual kill; we approximate by clearing our
-        // mirror so the mode-trigger check below sees an empty buffer.
-        // Not cursor-position-accurate, but strictly better than leaving
-        // stale content that blocks `>` from entering agent mode.
+        // Ctrl-K / Ctrl-U kill the line in the shell; mirror that so the
+        // mode-trigger check sees an empty buffer. Not cursor-accurate.
         this.lineBuffer = "";
         this.ctx.writeToPty(ch);
       } else if (ch === "\x1b") {

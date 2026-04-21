@@ -70,11 +70,9 @@ interface RenderState {
   spinnerStartTime: number;
 
   // ── Tool output ──
-  /** The tool whose last line is still "open" (no trailing newline) —
-   *  its completion will append ✓ inline. Null when no line is open. */
   openTool: { callId: string; title: string } | null;
-  /** Tools whose line was closed before their complete fired (parallel
-   *  read-only batches). Their ✓ renders as a labeled standalone line. */
+  /** Tools whose start line was closed before their complete fired.
+   *  Their ✓ renders as a labeled ⎿ line instead of an orphan. */
   pendingToolCompletes: Map<string, { title: string }>;
   currentToolKind: string | undefined;
   toolStartTime: number;
@@ -87,8 +85,7 @@ interface RenderState {
   // ── Tool grouping (collapse sequential same-type read-only tools) ──
   toolGroupKind: string | undefined;
   toolGroupCount: number;
-  /** Number of group members whose complete has arrived — used to
-   *  suppress the aggregate line when finalize fires prematurely. */
+  /** Completes-seen count — skip aggregate if finalize fires at 0. */
   toolGroupCompletedCount: number;
   toolGroupAllOk: boolean;
   /** Number of tools rendered individually in current group. */
@@ -401,11 +398,8 @@ export default function activate(ctx: ExtensionContext): void {
         showToolCall(e.title, "", { ...e, groupContinuation: true });
         s.toolGroupRendered++;
       }
-      // If a standalone tool of a different kind starts before this group's
-      // members complete, finalizeToolGroup will clear toolGroupKind — late
-      // completions then fall through to the standalone path. Record the
-      // identity here so those late completes can render as labeled ⎿ lines
-      // instead of orphan checkmarks.
+      // Record identity so late completes (after a premature finalize
+      // from a cross-kind standalone start) can render as labeled ⎿ lines.
       if (e.toolCallId) {
         s.pendingToolCompletes.set(e.toolCallId, { title: e.title });
       }
@@ -429,9 +423,7 @@ export default function activate(ctx: ExtensionContext): void {
       s.toolGroupCompletedCount++;
       s.currentToolKind = undefined;
     } else {
-      // Parallel read-only batches let multiple tools be started before any
-      // completes; completions for ones that lost the inline slot render as
-      // labeled ⎿ lines so the ✓ stays attached to its tool.
+      // Route by callId — tools that lost the inline slot get a labeled ⎿ line.
       const pending = e.toolCallId ? s.pendingToolCompletes.get(e.toolCallId) : undefined;
       if (pending) s.pendingToolCompletes.delete(e.toolCallId!);
       showToolComplete(e.exitCode, e.resultDisplay, pending?.title);
@@ -927,19 +919,15 @@ export default function activate(ctx: ExtensionContext): void {
   function closeToolLine(): void {
     if (s.openTool) {
       out().write("\n");
-      // Tool lost its inline ✓ slot — stash identity so the complete can
-      // still render as a labeled line instead of an orphan checkmark.
+      // Stash identity so the completion renders as ⎿ labeled, not orphan ✓.
       s.pendingToolCompletes.set(s.openTool.callId, { title: s.openTool.title });
       s.openTool = null;
     }
   }
 
-  /** Finalize a group of collapsed tool calls, rendering the summary. */
+  /** Render the group aggregate ⎿ line, or skip if no members have
+   *  completed yet (late completes will render individually as ⎿ labeled). */
   function finalizeToolGroup(): void {
-    // If finalize fires before any member has completed — which happens
-    // when a different-kind standalone tool starts during a parallel batch
-    // — don't emit an aggregate ✓ line with empty summaries. Late
-    // completions will render as labeled ⎿ lines individually instead.
     const skipAggregate = s.toolGroupCount > 1 && s.toolGroupCompletedCount === 0;
     if (s.toolGroupCount <= 1 || skipAggregate) {
       s.toolGroupKind = undefined;

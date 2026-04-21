@@ -332,11 +332,8 @@ export class AgentLoop implements AgentBackend {
       if (beforeTokens > this.peakConversationTokens) {
         this.peakConversationTokens = beforeTokens;
       }
-      // The fileReadCache's "File unchanged since last read — refer to the
-      // earlier result" stub assumes the original read_file output is still
-      // in active context. Compaction can evict that output, turning the
-      // stub into a dangling pointer. Clearing the cache forces the next
-      // read_file to return full content instead.
+      // The "File unchanged" stub assumes the prior read output is still
+      // in context; compaction can evict it. Clear so the next read re-emits.
       this.fileReadCache.clear();
     });
 
