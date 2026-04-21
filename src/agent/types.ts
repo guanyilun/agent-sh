@@ -86,6 +86,10 @@ export interface ToolDefinition {
   /** Whether this tool may modify files — triggers file watcher (default: false). */
   modifiesFiles?: boolean;
 
+  /** Results are re-fetchable; nuclear compaction drops the tool_result
+   *  body on eviction (like the builtin read_file/grep/ls). Default: false. */
+  readOnly?: boolean;
+
   /** Whether to gate execution via permission:request (default: false). */
   requiresPermission?: boolean;
 

@@ -58,6 +58,17 @@ export const READ_ONLY_TOOLS = new Set([
   "read_file", "grep", "glob", "ls", "search",
 ]);
 
+/** Extensions opt their tools in via ToolRegistry.register when readOnly is set. */
+const extraReadOnlyTools = new Set<string>();
+
+export function registerReadOnlyTool(name: string): void {
+  extraReadOnlyTools.add(name);
+}
+
+export function unregisterReadOnlyTool(name: string): void {
+  extraReadOnlyTools.delete(name);
+}
+
 /** State-changing tools whose summaries are kept in nuclear memory. */
 export const WRITE_TOOLS = new Set([
   "write_file", "edit_file", "write", "edit", "patch",
@@ -270,7 +281,8 @@ export function deserializeEntry(line: string): NuclearEntry | null {
 
 /** Check if a nuclear entry represents a read-only action (should be dropped). */
 export function isReadOnly(entry: NuclearEntry): boolean {
-  return entry.kind === "tool" && entry.tool != null && READ_ONLY_TOOLS.has(entry.tool);
+  if (entry.kind !== "tool" || entry.tool == null) return false;
+  return READ_ONLY_TOOLS.has(entry.tool) || extraReadOnlyTools.has(entry.tool);
 }
 
 // ── Internal helpers ──────────────────────────────────────────────
