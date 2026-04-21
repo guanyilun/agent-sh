@@ -1192,9 +1192,9 @@ export class AgentLoop implements AgentBackend {
         (contextWindow - RESPONSE_RESERVE) * getSettings().autoCompactThreshold,
       );
       if (totalEstimate > threshold) {
-        // Target below the trigger so eviction actually has headroom to work.
-        // Passing threshold made convTarget ≈ current size → near-no-op.
-        const target = Math.floor(threshold * 0.6);
+        // Compact deeply — shallow targets buy only 1–2 turns of runway on
+        // tool-heavy workloads.
+        const target = Math.floor(threshold * 0.25);
         const result = this.compactWithHooks(target, 6);
         if (!result) {
           // Auto-compact fired but nothing was evictable. This can happen
