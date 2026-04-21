@@ -253,6 +253,14 @@ export class InputHandler {
       } else if (ch === "\x04") {
         this.lineBuffer = "";
         this.ctx.writeToPty(ch);
+      } else if (ch === "\x0b" || ch === "\x15") {
+        // Ctrl-K (kill to end) / Ctrl-U (kill to start). The shell's line
+        // editor handles the actual kill; we approximate by clearing our
+        // mirror so the mode-trigger check below sees an empty buffer.
+        // Not cursor-position-accurate, but strictly better than leaving
+        // stale content that blocks `>` from entering agent mode.
+        this.lineBuffer = "";
+        this.ctx.writeToPty(ch);
       } else if (ch === "\x1b") {
         // Escape sequence — forward the entire sequence to the PTY but
         // don't let it corrupt lineBuffer.  Skip CSI (ESC [ ... final)
