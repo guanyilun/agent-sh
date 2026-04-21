@@ -1192,7 +1192,10 @@ export class AgentLoop implements AgentBackend {
         (contextWindow - RESPONSE_RESERVE) * getSettings().autoCompactThreshold,
       );
       if (totalEstimate > threshold) {
-        const result = this.compactWithHooks(threshold);
+        // Target below the trigger so eviction actually has headroom to work.
+        // Passing threshold made convTarget ≈ current size → near-no-op.
+        const target = Math.floor(threshold * 0.6);
+        const result = this.compactWithHooks(target, 6);
         if (!result) {
           // Auto-compact fired but nothing was evictable. This can happen
           // in short conversations with heavy tool output where the pin
