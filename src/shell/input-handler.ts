@@ -138,11 +138,11 @@ export class InputHandler {
         p.accent + after + p.reset +
         "\x1b8"                             // DECRC — restore cursor position
       );
-      // Clearing on next redraw needs total rows, so measure the full
-      // content width — not just up to the cursor.
-      const totalVisLen = promptVisLen + visibleLen(display);
-      this.cursorRowsBelow = totalVisLen > 0 ? Math.ceil(totalVisLen / termW) - 1 : 0;
+      // cursorRowsBelow is distance from cursor (restored by DECRC, sitting at
+      // the cursor col) back up to the prompt's top row. Next redraw uses it
+      // with \x1b[${n}A then \x1b[J — moving past the top scrolls the screen.
       const cursorVisCol = promptVisLen + visibleLen(before);
+      this.cursorRowsBelow = cursorVisCol > 0 ? Math.ceil(cursorVisCol / termW) - 1 : 0;
       this.cursorTermCol = cursorVisCol === 0 ? 1 : (cursorVisCol % termW === 0 ? termW : (cursorVisCol % termW) + 1);
     } else {
       // Multi-line: render each line with continuation indent.
@@ -192,8 +192,10 @@ export class InputHandler {
       }
 
       process.stdout.write(output + "\x1b8"); // DECRC — restore cursor position
-      // Total rows (not cursor row) so next redraw clears the whole area.
-      this.cursorRowsBelow = rowsSoFar - 1 > 0 ? rowsSoFar - 1 : 0;
+      // Distance from cursor (where DECRC lands) back to the top row. Next
+      // redraw moves up by this and clears to end-of-screen — \x1b[J handles
+      // everything below, including rows after the cursor's logical line.
+      this.cursorRowsBelow = cursorRowFromTop;
     }
   }
 
