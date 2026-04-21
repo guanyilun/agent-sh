@@ -70,6 +70,14 @@
       "types": "./dist/agent/token-budget.d.ts",
       "default": "./dist/agent/token-budget.js"
     },
+    "./agent/history-file": {
+      "types": "./dist/agent/history-file.d.ts",
+      "default": "./dist/agent/history-file.js"
+    },
+    "./agent/nuclear-form": {
+      "types": "./dist/agent/nuclear-form.d.ts",
+      "default": "./dist/agent/nuclear-form.js"
+    },
     "./executor": {
       "types": "./dist/executor.d.ts",
       "default": "./dist/executor.js"
