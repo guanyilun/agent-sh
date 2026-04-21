@@ -1,4 +1,4 @@
-import { visibleLen, truncateToWidth, padEndToWidth, charWidth } from "./ansi.js";
+import { visibleLen, truncateAnsiToWidth, padEndToWidth, charWidth } from "./ansi.js";
 import { palette as p } from "./palette.js";
 
 export const MAX_CONTENT_WIDTH = 90;
@@ -203,11 +203,11 @@ export class MarkdownRenderer {
       while (row.length < numCols) row.push("");
     }
 
-    // Calculate column widths from content
+    // Width from rendered cell — raw `**bold**` over-counts by 4 per pair.
     const colWidths: number[] = new Array(numCols).fill(0);
     for (const row of dataRows) {
       for (let c = 0; c < numCols; c++) {
-        colWidths[c] = Math.max(colWidths[c]!, visibleLen(row[c]!));
+        colWidths[c] = Math.max(colWidths[c]!, visibleLen(this.renderInline(row[c]!)));
       }
     }
 
@@ -235,7 +235,10 @@ export class MarkdownRenderer {
       const isHeader = hasHeader && i === 0;
       const cells = row.map((cell, c) => {
         const w = colWidths[c]!;
-        const text = visibleLen(cell) > w ? truncateToWidth(cell, w) : padEndToWidth(cell, w);
+        const rendered = this.renderInline(cell);
+        const text = visibleLen(rendered) > w
+          ? truncateAnsiToWidth(rendered, w)
+          : padEndToWidth(rendered, w);
         return isHeader ? `${p.bold}${text}${p.reset}` : text;
       });
       this.writeLine(`${p.dim}│${p.reset} ${cells.join(` ${p.dim}│${p.reset} `)} ${p.dim}│${p.reset}`);

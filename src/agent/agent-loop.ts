@@ -332,6 +332,9 @@ export class AgentLoop implements AgentBackend {
       if (beforeTokens > this.peakConversationTokens) {
         this.peakConversationTokens = beforeTokens;
       }
+      // The "File unchanged" stub assumes the prior read output is still
+      // in context; compaction can evict it. Clear so the next read re-emits.
+      this.fileReadCache.clear();
     });
 
     on("shell:cwd-change", ({ cwd }) => {

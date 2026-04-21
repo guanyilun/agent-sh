@@ -70,7 +70,10 @@ interface RenderState {
   spinnerStartTime: number;
 
   // ── Tool output ──
-  toolLineOpen: boolean;
+  openTool: { callId: string; title: string } | null;
+  /** Tools whose start line was closed before their complete fired.
+   *  Their ✓ renders as a labeled ⎿ line instead of an orphan. */
+  pendingToolCompletes: Map<string, { title: string }>;
   currentToolKind: string | undefined;
   toolStartTime: number;
   toolExitCode: number | null;
@@ -82,6 +85,8 @@ interface RenderState {
   // ── Tool grouping (collapse sequential same-type read-only tools) ──
   toolGroupKind: string | undefined;
   toolGroupCount: number;
+  /** Completes-seen count — skip aggregate if finalize fires at 0. */
+  toolGroupCompletedCount: number;
   toolGroupAllOk: boolean;
   /** Number of tools rendered individually in current group. */
   toolGroupRendered: number;
@@ -105,7 +110,8 @@ function createRenderState(): RenderState {
     spinnerOpts: {},
     spinnerInterval: null,
     spinnerStartTime: 0,
-    toolLineOpen: false,
+    openTool: null,
+    pendingToolCompletes: new Map(),
     currentToolKind: undefined,
     toolStartTime: 0,
     toolExitCode: null,
@@ -115,6 +121,7 @@ function createRenderState(): RenderState {
     commandOverflowLines: [],
     toolGroupKind: undefined,
     toolGroupCount: 0,
+    toolGroupCompletedCount: 0,
     toolGroupAllOk: true,
     toolGroupRendered: 0,
     toolGroupSummaries: [],
@@ -379,6 +386,7 @@ export default function activate(ctx: ExtensionContext): void {
         group.headerShown = true;
         s.toolGroupKind = kind;
         s.toolGroupCount = 0;
+        s.toolGroupCompletedCount = 0;
         s.toolGroupRendered = 0;
         s.toolGroupAllOk = true;
         s.toolGroupSummaries = [];
@@ -387,22 +395,18 @@ export default function activate(ctx: ExtensionContext): void {
       s.toolGroupCount++;
 
       if (s.toolGroupRendered < GROUP_MAX_VISIBLE) {
-        showToolCall(e.title, "", {
-          ...e,
-          batchIndex: e.batchIndex,
-          batchTotal: e.batchTotal,
-          groupContinuation: true,
-        });
+        showToolCall(e.title, "", { ...e, groupContinuation: true });
         s.toolGroupRendered++;
+      }
+      // Record identity so late completes (after a premature finalize
+      // from a cross-kind standalone start) can render as labeled ⎿ lines.
+      if (e.toolCallId) {
+        s.pendingToolCompletes.set(e.toolCallId, { title: e.title });
       }
     } else {
       // Standalone tool — single in its batch kind, or not groupable
       finalizeToolGroup();
-      showToolCall(e.title, "", {
-        ...e,
-        batchIndex: e.batchIndex,
-        batchTotal: e.batchTotal,
-      });
+      showToolCall(e.title, "", { ...e });
     }
   });
 
@@ -415,9 +419,14 @@ export default function activate(ctx: ExtensionContext): void {
       // Grouped tool — track success/failure and summaries, show aggregate on ⎿ line.
       // Don't restart spinner between grouped tools — it's already running from group start.
       if (e.resultDisplay?.summary) s.toolGroupSummaries.push(e.resultDisplay.summary);
+      if (e.toolCallId) s.pendingToolCompletes.delete(e.toolCallId);
+      s.toolGroupCompletedCount++;
       s.currentToolKind = undefined;
     } else {
-      showToolComplete(e.exitCode, e.resultDisplay);
+      // Route by callId — tools that lost the inline slot get a labeled ⎿ line.
+      const pending = e.toolCallId ? s.pendingToolCompletes.get(e.toolCallId) : undefined;
+      if (pending) s.pendingToolCompletes.delete(e.toolCallId!);
+      showToolComplete(e.exitCode, e.resultDisplay, pending?.title);
       s.currentToolKind = undefined;
       s.spinnerStartTime = 0;
       startThinkingSpinner();
@@ -774,6 +783,7 @@ export default function activate(ctx: ExtensionContext): void {
     title: string,
     command?: string,
     extra?: {
+      toolCallId?: string;
       kind?: string;
       icon?: string;
       locations?: { path: string; line?: number | null }[];
@@ -824,10 +834,9 @@ export default function activate(ctx: ExtensionContext): void {
         // Grouped tools: close the line immediately — checkmarks go on the ⎿ summary
         s.renderer!.writeLine(`  ${batchPrefix}${lines[lines.length - 1]}`);
         drain();
-        s.toolLineOpen = false;
       } else {
         out().write(`  ${batchPrefix}${lines[lines.length - 1]}`);
-        s.toolLineOpen = true;
+        if (extra?.toolCallId) s.openTool = { callId: extra.toolCallId, title };
       }
     }
     s.hadToolCalls = true;
@@ -835,26 +844,29 @@ export default function activate(ctx: ExtensionContext): void {
     s.commandOutputOverflow = 0;
   }
 
-  function showToolComplete(exitCode: number | null, resultDisplay?: ToolResultDisplay): void {
+  function showToolComplete(
+    exitCode: number | null,
+    resultDisplay?: ToolResultDisplay,
+    labelTitle?: string,
+  ): void {
     if (!s.renderer) return;
     stopCurrentSpinner();
     const elapsed = s.toolStartTime ? formatElapsed(Date.now() - s.toolStartTime) : "";
     const mark: string = ctx.call("tui:render-tool-complete", exitCode, elapsed, resultDisplay?.summary);
 
-    if (s.toolLineOpen && s.commandOutputLineCount === 0) {
+    if (!labelTitle && s.openTool && s.commandOutputLineCount === 0) {
       out().write(` ${mark}\n`);
-      s.toolLineOpen = false;
+      s.openTool = null;
     } else {
       closeToolLine();
       flushCommandOutput();
-      s.renderer.writeLine(`  ${mark}`);
+      s.renderer.writeLine(labelTitle
+        ? `  ${p.muted}⎿${p.reset} ${p.dim}${labelTitle}${p.reset} ${mark}`
+        : `  ${mark}`);
       drain();
     }
 
-    // Render structured body if present
-    if (resultDisplay?.body) {
-      renderResultBody(resultDisplay.body);
-    }
+    if (resultDisplay?.body) renderResultBody(resultDisplay.body);
   }
 
   function renderResultBody(body: ToolResultBody): void {
@@ -905,19 +917,24 @@ export default function activate(ctx: ExtensionContext): void {
   }
 
   function closeToolLine(): void {
-    if (s.toolLineOpen) {
+    if (s.openTool) {
       out().write("\n");
-      s.toolLineOpen = false;
+      // Stash identity so the completion renders as ⎿ labeled, not orphan ✓.
+      s.pendingToolCompletes.set(s.openTool.callId, { title: s.openTool.title });
+      s.openTool = null;
     }
   }
 
-  /** Finalize a group of collapsed tool calls, rendering the summary. */
+  /** Render the group aggregate ⎿ line, or skip if no members have
+   *  completed yet (late completes will render individually as ⎿ labeled). */
   function finalizeToolGroup(): void {
-    if (s.toolGroupCount <= 1) {
-      // 0–1 tools: standalone, nothing to finalize
+    const skipAggregate = s.toolGroupCount > 1 && s.toolGroupCompletedCount === 0;
+    if (s.toolGroupCount <= 1 || skipAggregate) {
       s.toolGroupKind = undefined;
       s.toolGroupCount = 0;
+      s.toolGroupCompletedCount = 0;
       s.toolGroupRendered = 0;
+      s.toolGroupAllOk = true;
       s.toolGroupSummaries = [];
       return;
     }
@@ -931,6 +948,7 @@ export default function activate(ctx: ExtensionContext): void {
     drain();
     s.toolGroupKind = undefined;
     s.toolGroupCount = 0;
+    s.toolGroupCompletedCount = 0;
     s.toolGroupAllOk = true;
     s.toolGroupRendered = 0;
     s.toolGroupSummaries = [];

@@ -126,6 +126,36 @@ export function truncateToWidth(str: string, maxWidth: number): string {
   return clean.slice(0, i) + "…";
 }
 
+/** Truncate to visible width while preserving SGR sequences — use when
+ *  input carries color/bold codes. `truncateToWidth` strips them. */
+export function truncateAnsiToWidth(str: string, maxWidth: number): string {
+  if (maxWidth <= 0) return "";
+  if (visibleLen(str) <= maxWidth) return str;
+  if (maxWidth === 1) return "…";
+  const target = maxWidth - 1;
+  let width = 0;
+  let out = "";
+  let i = 0;
+  while (i < str.length) {
+    if (str[i] === "\x1b" && str[i + 1] === "[") {
+      const end = str.indexOf("m", i);
+      if (end !== -1) {
+        out += str.slice(i, end + 1);
+        i = end + 1;
+        continue;
+      }
+    }
+    const cp = str.codePointAt(i) ?? 0;
+    const cw = charWidth(cp);
+    if (width + cw > target) break;
+    const chLen = cp > 0xffff ? 2 : 1;
+    out += str.slice(i, i + chLen);
+    width += cw;
+    i += chLen;
+  }
+  return out + "\x1b[0m…";
+}
+
 /**
  * Pad a string with spaces to fill `targetWidth` visible columns.
  * Accounts for CJK double-width characters.

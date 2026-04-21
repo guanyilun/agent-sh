@@ -253,6 +253,11 @@ export class InputHandler {
       } else if (ch === "\x04") {
         this.lineBuffer = "";
         this.ctx.writeToPty(ch);
+      } else if (ch === "\x0b" || ch === "\x15") {
+        // Ctrl-K / Ctrl-U kill the line in the shell; mirror that so the
+        // mode-trigger check sees an empty buffer. Not cursor-accurate.
+        this.lineBuffer = "";
+        this.ctx.writeToPty(ch);
       } else if (ch === "\x1b") {
         // Escape sequence — forward the entire sequence to the PTY but
         // don't let it corrupt lineBuffer.  Skip CSI (ESC [ ... final)
