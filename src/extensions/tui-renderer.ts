@@ -396,6 +396,14 @@ export default function activate(ctx: ExtensionContext): void {
         showToolCall(e.title, "", { ...e, groupContinuation: true });
         s.toolGroupRendered++;
       }
+      // If a standalone tool of a different kind starts before this group's
+      // members complete, finalizeToolGroup will clear toolGroupKind — late
+      // completions then fall through to the standalone path. Record the
+      // identity here so those late completes can render as labeled ⎿ lines
+      // instead of orphan checkmarks.
+      if (e.toolCallId) {
+        s.pendingToolCompletes.set(e.toolCallId, { title: e.title });
+      }
     } else {
       // Standalone tool — single in its batch kind, or not groupable
       finalizeToolGroup();
@@ -412,6 +420,7 @@ export default function activate(ctx: ExtensionContext): void {
       // Grouped tool — track success/failure and summaries, show aggregate on ⎿ line.
       // Don't restart spinner between grouped tools — it's already running from group start.
       if (e.resultDisplay?.summary) s.toolGroupSummaries.push(e.resultDisplay.summary);
+      if (e.toolCallId) s.pendingToolCompletes.delete(e.toolCallId);
       s.currentToolKind = undefined;
     } else {
       // Parallel read-only batches let multiple tools be started before any
