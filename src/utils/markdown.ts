@@ -3,86 +3,158 @@ import { palette as p } from "./palette.js";
 
 export const MAX_CONTENT_WIDTH = 90;
 
+// CJK line-breaking rules: closing punctuation must not start a line,
+// opening punctuation must not end a line. Both CJK fullwidth and ASCII
+// equivalents are included so mixed text wraps correctly.
+const CJK_NO_LINE_START = new Set([
+  "。", "，", "、", "．", "；", "：", "！", "？",
+  "）", "」", "』", "】", "》", "〉", "〕", "］", "｝",
+  "・", "々", "〜", "～", "ー",
+  ".", ",", ";", ":", "!", "?", ")", "]", "}",
+]);
+
+const CJK_NO_LINE_END = new Set([
+  "（", "「", "『", "【", "《", "〈", "〔", "［", "｛",
+  "(", "[", "{",
+]);
+
+/**
+ * Tokenize a visible-text run into units suitable for wrapping.
+ * Each width-2 character (CJK, fullwidth, emoji) becomes its own token so the
+ * wrapper can break between them; ASCII runs stay together as word tokens.
+ */
+function tokenizeVisible(text: string): string[] {
+  const tokens: string[] = [];
+  let ascii = "";
+  const flush = () => { if (ascii) { tokens.push(ascii); ascii = ""; } };
+  let i = 0;
+  while (i < text.length) {
+    const cp = text.codePointAt(i) ?? 0;
+    const chLen = cp > 0xffff ? 2 : 1;
+    const ch = text.slice(i, i + chLen);
+    if (ch === " ") {
+      flush();
+      let spaces = "";
+      while (i < text.length && text[i] === " ") { spaces += " "; i += 1; }
+      tokens.push(spaces);
+      continue;
+    }
+    if (charWidth(cp) === 2) {
+      flush();
+      tokens.push(ch);
+      i += chLen;
+      continue;
+    }
+    ascii += ch;
+    i += chLen;
+  }
+  flush();
+  return tokens;
+}
+
 /**
  * Word-wrap a string (which may contain ANSI codes) to a maximum visible width.
  * Returns an array of lines, each fitting within `maxWidth` visible characters.
+ *
+ * Handles CJK text by breaking between wide characters and applying basic
+ * CJK rules (closing punctuation sticks to the previous line; opening
+ * punctuation sticks to the next).
  */
 export function wrapLine(text: string, maxWidth: number): string[] {
   if (!(maxWidth > 0)) return [text]; // catches NaN, <=0, undefined
   if (visibleLen(text) <= maxWidth) return [text];
 
   const result: string[] = [];
-  // Split into segments: ANSI codes and visible text
   const segments = text.match(/(\x1b\[[^m]*m|[^\x1b]+)/g) || [text];
 
-  let currentLine = "";
-  let currentWidth = 0;
-  let activeStyles = ""; // track ANSI styles to reapply after wraps
+  let lineTokens: string[] = [];
+  let lineWidth = 0;
+  let activeStyles = "";
+  let lastVisibleIdx = -1;
+
+  const commit = () => {
+    result.push(lineTokens.join("") + p.reset);
+    lineTokens = activeStyles ? [activeStyles] : [];
+    lineWidth = 0;
+    lastVisibleIdx = -1;
+  };
 
   for (const seg of segments) {
     if (seg.startsWith("\x1b[")) {
-      // ANSI code — track it, add to current line
-      currentLine += seg;
-      if (seg === p.reset) {
-        activeStyles = "";
-      } else {
-        activeStyles += seg;
-      }
+      lineTokens.push(seg);
+      if (seg === p.reset) activeStyles = "";
+      else activeStyles += seg;
       continue;
     }
 
-    // Visible text — split into words
-    const words = seg.split(/( +)/);
-    for (const word of words) {
-      if (word.length === 0) continue;
+    for (const token of tokenizeVisible(seg)) {
+      const tokenWidth = visibleLen(token);
+      const isSpace = token[0] === " ";
 
-      const wordWidth = visibleLen(word);
-      if (currentWidth + wordWidth <= maxWidth) {
-        currentLine += word;
-        currentWidth += wordWidth;
-      } else if (currentWidth === 0) {
-        // Single word longer than maxWidth — hard break by visible width
-        let remaining = word;
+      if (lineWidth + tokenWidth <= maxWidth) {
+        lineTokens.push(token);
+        lineWidth += tokenWidth;
+        if (!isSpace) lastVisibleIdx = lineTokens.length - 1;
+        continue;
+      }
+
+      // Token doesn't fit on the current line.
+      if (isSpace) continue; // spaces at wrap points are dropped
+
+      if (lineWidth === 0) {
+        // Token longer than the entire line — hard-break by char width.
+        let remaining = token;
         while (remaining.length > 0) {
-          // Find the largest prefix that fits
-          let fitLen = 0;
-          let fitWidth = 0;
+          let fitLen = 0, fitWidth = 0;
           for (const ch of remaining) {
             const cw = charWidth(ch.codePointAt(0) ?? 0);
             if (fitWidth + cw > maxWidth) break;
             fitWidth += cw;
             fitLen += ch.length;
           }
-          if (fitLen === 0) {
-            // Even one char doesn't fit — force take one char to avoid infinite loop
-            fitLen = remaining[0]?.length ?? 1;
-          }
+          if (fitLen === 0) fitLen = remaining[0]?.length ?? 1;
           const chunk = remaining.slice(0, fitLen);
           remaining = remaining.slice(fitLen);
-          currentLine += chunk;
-          if (remaining.length > 0) {
-            result.push(currentLine + p.reset);
-            currentLine = activeStyles;
-            currentWidth = 0;
-          } else {
-            currentWidth += fitWidth;
-          }
+          lineTokens.push(chunk);
+          lineWidth += visibleLen(chunk);
+          lastVisibleIdx = lineTokens.length - 1;
+          if (remaining.length > 0) commit();
         }
-      } else {
-        // Wrap to next line
-        result.push(currentLine + p.reset);
-        currentLine = activeStyles;
-        currentWidth = 0;
-        // Skip leading spaces on new line
-        const trimmed = word.replace(/^ +/, "");
-        currentLine += trimmed;
-        currentWidth = visibleLen(trimmed);
+        continue;
       }
+
+      // Rule (a): closing punctuation must not start a line. Allow up to 2
+      // columns of overflow so the punctuation stays with its phrase.
+      if (CJK_NO_LINE_START.has(token)) {
+        lineTokens.push(token);
+        lineWidth += tokenWidth;
+        commit();
+        continue;
+      }
+
+      // Rule (b): opening punctuation must not end a line. Pull the trailing
+      // opener down to the next line with us.
+      let carried: string[] = [];
+      if (lastVisibleIdx >= 0 && CJK_NO_LINE_END.has(lineTokens[lastVisibleIdx]!)) {
+        carried = lineTokens.splice(lastVisibleIdx);
+        while (lineTokens.length > 0 && /^ +$/.test(lineTokens[lineTokens.length - 1]!)) {
+          lineTokens.pop();
+        }
+      }
+
+      commit();
+      for (const t of carried) {
+        lineTokens.push(t);
+        lineWidth += visibleLen(t);
+      }
+      lineTokens.push(token);
+      lineWidth += tokenWidth;
+      lastVisibleIdx = lineTokens.length - 1;
     }
   }
 
-  if (currentLine.length > 0) {
-    result.push(currentLine);
+  if (lineWidth > 0) {
+    result.push(lineTokens.join(""));
   }
 
   return result;
