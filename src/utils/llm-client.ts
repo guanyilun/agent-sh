@@ -14,6 +14,17 @@ export interface LlmClientConfig {
   apiKey: string;
   baseURL?: string;
   model: string;
+  /** Sent as OpenRouter X-Title; ignored by other providers. */
+  appName?: string;
+  /** Sent as OpenRouter HTTP-Referer; ignored by other providers. */
+  appUrl?: string;
+}
+
+function attributionHeaders(config: LlmClientConfig): Record<string, string> {
+  return {
+    "HTTP-Referer": config.appUrl ?? "https://agent-sh.dev",
+    "X-Title": config.appName ?? "agent-sh",
+  };
 }
 
 export class LlmClient {
@@ -24,6 +35,7 @@ export class LlmClient {
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseURL,
+      defaultHeaders: attributionHeaders(config),
     });
     this.model = config.model;
   }
@@ -34,6 +46,7 @@ export class LlmClient {
     this.client = new OpenAI({
       apiKey: newConfig.apiKey,
       baseURL: newConfig.baseURL,
+      defaultHeaders: attributionHeaders(newConfig),
     });
     this.model = newConfig.model;
   }

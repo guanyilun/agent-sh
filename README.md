@@ -4,6 +4,7 @@ An agent that lives in a shell — not a shell that lives in an agent.
 
 [![npm version](https://img.shields.io/npm/v/agent-sh.svg)](https://www.npmjs.com/package/agent-sh)
 [![license](https://img.shields.io/npm/l/agent-sh.svg)](https://github.com/guanyilun/agent-sh/blob/main/LICENSE)
+[![website](https://img.shields.io/badge/website-agent--sh.dev-blue)](https://agent-sh.dev)
 
 ![demo](assets/demo.gif)
 
