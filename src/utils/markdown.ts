@@ -283,10 +283,12 @@ export class MarkdownRenderer {
       }
     }
 
-    // Shrink columns proportionally if total exceeds content width
-    // Account for separators: " │ " between cols (3 chars each) + 2 outer padding
+    // Tables use the full terminal width (not the prose cap) since data-dense
+    // grids benefit from horizontal space; MAX_CONTENT_WIDTH is for readability
+    // of long-form text, not structured tables.
     const separatorWidth = (numCols - 1) * 3;
-    const availableWidth = this.contentWidth - separatorWidth;
+    const tableWidth = Math.max(10, this.width - 2);
+    const availableWidth = tableWidth - separatorWidth;
     const totalWidth = colWidths.reduce((a, b) => a + b, 0);
     if (totalWidth > availableWidth && availableWidth > numCols) {
       const scale = availableWidth / totalWidth;
