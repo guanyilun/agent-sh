@@ -312,6 +312,9 @@ export default function activate(ctx: ExtensionContext): void {
     if (!shouldRender()) return;
     s.isThinking = false;
     if (pendingUsage && s.renderer) {
+      // Flush any buffered partial line first — otherwise responses that
+      // don't end with a newline emit the usage line before their final text.
+      s.renderer.flush();
       const { prompt_tokens, completion_tokens } = pendingUsage;
       const maxTokens = backendInfo?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
       s.renderer.writeLine("");
