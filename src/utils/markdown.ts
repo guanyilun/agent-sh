@@ -283,9 +283,7 @@ export class MarkdownRenderer {
       }
     }
 
-    // Tables use the full terminal width (not the prose cap) since data-dense
-    // grids benefit from horizontal space; MAX_CONTENT_WIDTH is for readability
-    // of long-form text, not structured tables.
+    // Tables bypass the prose width cap — borders guide the eye, so wider is fine.
     const separatorWidth = (numCols - 1) * 3;
     const tableWidth = Math.max(10, this.width - 2);
     const availableWidth = tableWidth - separatorWidth;
