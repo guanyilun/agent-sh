@@ -14,6 +14,8 @@ export const BUILTIN_EXTENSIONS: Array<{
   load: () => Promise<ActivateFn>;
 }> = [
   { name: "agent-backend",    load: () => import("./agent-backend.js").then(m => m.default) },
+  { name: "openrouter",       load: () => import("./openrouter.js").then(m => m.default) },
+  { name: "openai",           load: () => import("./openai.js").then(m => m.default) },
   { name: "tui-renderer",     load: () => import("./tui-renderer.js").then(m => m.default) },
   { name: "slash-commands",    load: () => import("./slash-commands.js").then(m => m.default) },
   { name: "file-autocomplete", load: () => import("./file-autocomplete.js").then(m => m.default) },

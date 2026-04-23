@@ -102,52 +102,10 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   bus.on("core:extensions-loaded", () => {
     const settings = getSettings();
-
-    // Auto-detect common API-key env vars so a user with a key already
-    // exported doesn't need to edit settings.json to get started. Only
-    // fires if nothing else has registered a provider (extensions win).
-    if (providerRegistry.size === 0 && !config.apiKey) {
-      const openrouterKey = process.env.OPENROUTER_API_KEY;
-      const openaiKey = process.env.OPENAI_API_KEY;
-      // Curated picks across vendors — mirrors the openrouter extension's
-      // DEFAULT_MODELS so users without the extension get the same shortlist.
-      const OPENROUTER_DEFAULTS = [
-        "anthropic/claude-sonnet-4.5",
-        "google/gemini-2.5-pro-preview",
-        "openai/gpt-4.1",
-        "deepseek/deepseek-r1",
-        "meta-llama/llama-4-maverick",
-      ];
-      const OPENAI_DEFAULTS = [
-        "gpt-5",
-        "gpt-4.1",
-        "gpt-4o",
-        "gpt-4o-mini",
-        "o3",
-        "o3-mini",
-      ];
-      if (openrouterKey) {
-        providerRegistry.set("openrouter", {
-          id: "openrouter",
-          apiKey: openrouterKey,
-          baseURL: "https://openrouter.ai/api/v1",
-          defaultModel: OPENROUTER_DEFAULTS[0],
-          models: OPENROUTER_DEFAULTS,
-        });
-        bus.emit("ui:info", { message: "Auto-detected OPENROUTER_API_KEY — using openrouter provider. Load the openrouter extension for the full catalog." });
-      } else if (openaiKey) {
-        providerRegistry.set("openai", {
-          id: "openai",
-          apiKey: openaiKey,
-          defaultModel: OPENAI_DEFAULTS[0],
-          models: OPENAI_DEFAULTS,
-        });
-        bus.emit("ui:info", { message: "Auto-detected OPENAI_API_KEY — using openai provider." });
-      }
-    }
-
+    // If the user didn't pick a default, fall back to the first registered
+    // provider (built-in load order biases to openrouter → openai).
     const providerName = config.provider ?? settings.defaultProvider
-      ?? (providerRegistry.size === 1 ? providerRegistry.keys().next().value : undefined);
+      ?? (providerRegistry.size > 0 ? providerRegistry.keys().next().value : undefined);
     const activeProvider = providerName ? providerRegistry.get(providerName) ?? null : null;
 
     // User's persisted defaultModel wins over the provider's declared
