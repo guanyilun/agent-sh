@@ -1,17 +1,23 @@
 /**
- * Built-in OpenAI-compatible provider extension.
+ * OpenAI (and OpenAI-compatible) provider extension.
  *
- * Auto-activates if `OPENAI_API_KEY` is set. Honors `OPENAI_BASE_URL` so
- * local servers (Ollama, LM Studio, vLLM, llama.cpp) and self-hosted
- * gateways work without any settings.json edits:
+ * Registers OpenAI as a provider using `OPENAI_API_KEY`. Honors
+ * `OPENAI_BASE_URL` so local servers (Ollama, LM Studio, vLLM, llama.cpp)
+ * and self-hosted gateways work without settings.json edits:
  *
  *   export OPENAI_API_KEY=dummy
  *   export OPENAI_BASE_URL=http://localhost:11434/v1
  *
  * Against openai.com: registers with a curated model shortlist. Against
  * a custom endpoint: fetches `/models` to populate the catalog.
+ *
+ * Usage:
+ *   agent-sh -e ./examples/extensions/openai.ts
+ *
+ *   # Or add to settings.json:
+ *   { "extensions": ["./examples/extensions/openai.ts"] }
  */
-import type { ExtensionContext } from "../types.js";
+import type { ExtensionContext } from "agent-sh/types";
 
 const DEFAULT_MODELS = [
   "gpt-5",
@@ -24,7 +30,12 @@ const DEFAULT_MODELS = [
 
 export default function activate(ctx: ExtensionContext): void {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return;
+  if (!apiKey) {
+    ctx.bus.emit("ui:error", {
+      message: "OpenAI extension: OPENAI_API_KEY not set. Skipping.",
+    });
+    return;
+  }
 
   const baseURL = process.env.OPENAI_BASE_URL;
   const id = baseURL ? "openai-compatible" : "openai";
