@@ -608,8 +608,9 @@ export class AgentLoop implements AgentBackend {
       return `Could not connect to ${target} (${raw}). Check that the API endpoint is reachable.`;
     }
 
-    // Auth errors
-    if (status === 401 || raw.toLowerCase().includes("auth")) {
+    // Explicit signals only — bare "auth" hit "author" in echoed API params.
+    if (status === 401 || status === 403 ||
+        /\b(unauthorized|authentication|api[-_ ]?key|invalid[-_ ]?token)\b/i.test(raw)) {
       return `Authentication failed for ${provider ?? "provider"} (model: ${model}). Check your API key.`;
     }
 
@@ -1034,7 +1035,15 @@ export class AgentLoop implements AgentBackend {
       const toolCtx = this.compositor
         ? { ui: createToolUI(this.bus, this.compositor.surface("agent")) }
         : undefined;
-      const result = await tool.execute(args, onChunk, toolCtx);
+      // Surface thrown errors as tool results so the agent can self-correct
+      // instead of the throw killing the whole turn.
+      let result: Awaited<ReturnType<typeof tool.execute>>;
+      try {
+        result = await tool.execute(args, onChunk, toolCtx);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        result = { content: message, exitCode: 1, isError: true };
+      }
 
       // Invalidate read cache when a file is modified
       if (tool.modifiesFiles && typeof args.path === "string" && !result.isError) {
