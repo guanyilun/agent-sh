@@ -276,6 +276,26 @@ export class InputHandler {
             // SS3: ESC O <char>
             seq += next; i++;
             if (i + 1 < data.length) { i++; seq += data[i]!; }
+          } else if (next === "]") {
+            // OSC: ESC ] ... (BEL | ESC \). Forward as a unit so the payload
+            // bytes don't land in lineBuffer — otherwise OSC 10/11 color-query
+            // responses leak onto the bash command line after tmux exits.
+            let j = i + 2;
+            let termEnd = -1;
+            while (j < data.length) {
+              const c = data[j]!;
+              if (c === "\x07") { termEnd = j; break; }
+              if (c === "\x1b" && j + 1 < data.length && data[j + 1] === "\\") {
+                termEnd = j + 1; break;
+              }
+              j++;
+            }
+            if (termEnd !== -1) {
+              seq = data.slice(i, termEnd + 1);
+              i = termEnd;
+            } else {
+              seq += next; i++;
+            }
           } else {
             // ESC + single char (alt-key, etc.)
             seq += next; i++;
