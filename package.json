@@ -34,6 +34,10 @@
       "types": "./dist/extensions/index.d.ts",
       "default": "./dist/extensions/index.js"
     },
+    "./shell": {
+      "types": "./dist/shell/shell.d.ts",
+      "default": "./dist/shell/shell.js"
+    },
     "./utils/stream-transform": {
       "types": "./dist/utils/stream-transform.d.ts",
       "default": "./dist/utils/stream-transform.js"
