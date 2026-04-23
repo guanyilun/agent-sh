@@ -52,7 +52,9 @@ export OPENAI_BASE_URL=http://localhost:11434/v1    # point at your server
 agent-sh
 ```
 
-For richer configuration (multiple providers, runtime model switching, extensions), run `agent-sh init` to scaffold `~/.agent-sh/settings.json` with copy-pasteable examples. See the [Usage Guide](docs/usage.md) for the full list of supported providers.
+Once running, switch models at any time with `/model <name>` (tab-completes; selection persists across sessions).
+
+For richer configuration (multiple providers, extensions), run `agent-sh init` to scaffold `~/.agent-sh/settings.json` with copy-pasteable examples. See the [Usage Guide](docs/usage.md) for the full list of supported providers.
 
 Tip — add a shell alias:
 
