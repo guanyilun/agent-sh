@@ -143,7 +143,8 @@ export class AgentLoop implements AgentBackend {
     // Shell-history-shaped log. Default writes go through the advisable
     // `history:append` handler registered below; extensions swap the
     // backend without touching this wiring.
-    this.historyFile = new HistoryFile({ instanceId: this.instanceId });
+    const filePath = process.env.AGENT_SH_HISTORY_FILE || getSettings().historyFilePath;
+    this.historyFile = new HistoryFile({ instanceId: this.instanceId, filePath });
     this.conversation = new ConversationState(this.handlers, this.instanceId);
 
     // Fall back to a single-mode placeholder if the caller passed an
