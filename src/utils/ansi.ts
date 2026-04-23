@@ -101,8 +101,20 @@ export function visibleLen(str: string): number {
   const cleanStr = str.replace(/\x1b\[[^m]*m/g, "");
 
   let width = 0;
+  let prevWidth = 0;
   for (const char of cleanStr) {
-    width += charWidth(char.codePointAt(0) ?? 0);
+    const cp = char.codePointAt(0) ?? 0;
+    // U+FE0F (VS16) promotes the preceding char to emoji presentation.
+    // For chars we treated as width 1 (ambiguous-width emoji like ⚠ ❤ ☀),
+    // the cluster actually renders as 2 cols — top up the missing column.
+    if (cp === 0xfe0f && prevWidth === 1) {
+      width += 1;
+      prevWidth = 2;
+    } else {
+      const cw = charWidth(cp);
+      width += cw;
+      prevWidth = cw;
+    }
   }
   return width;
 }
@@ -114,27 +126,20 @@ export function visibleLen(str: string): number {
 export function truncateToWidth(str: string, maxWidth: number): string {
   const clean = str.replace(/\x1b\[[^m]*m/g, "");
   if (maxWidth <= 0) return "";
-  // First check if the entire string fits
-  let fullWidth = 0;
-  for (const char of clean) {
-    fullWidth += charWidth(char.codePointAt(0) ?? 0);
-  }
-  if (fullWidth <= maxWidth) return clean;
-  // String doesn't fit — truncate with "…"
-  // At maxWidth=1 the ellipsis alone fills the budget.
+  if (visibleLen(clean) <= maxWidth) return clean;
   if (maxWidth === 1) return "…";
-  // Reserve 1 column for "…", so target content width is maxWidth - 1
   const target = maxWidth - 1;
   let width = 0;
+  let prevWidth = 0;
   let i = 0;
   for (const char of clean) {
-    const cw = charWidth(char.codePointAt(0) ?? 0);
+    const cp = char.codePointAt(0) ?? 0;
+    const cw = cp === 0xfe0f && prevWidth === 1 ? 1 : charWidth(cp);
     if (width + cw > target) break;
     width += cw;
+    prevWidth = cp === 0xfe0f && prevWidth === 1 ? 2 : cw;
     i += char.length;
   }
-  // If nothing fit (first char is wider than target), just show the ellipsis
-  // rather than emit a character that would overflow the budget.
   if (i === 0) return "…";
   return clean.slice(0, i) + "…";
 }
@@ -147,6 +152,7 @@ export function truncateAnsiToWidth(str: string, maxWidth: number): string {
   if (maxWidth === 1) return "…";
   const target = maxWidth - 1;
   let width = 0;
+  let prevWidth = 0;
   let out = "";
   let i = 0;
   while (i < str.length) {
@@ -159,11 +165,12 @@ export function truncateAnsiToWidth(str: string, maxWidth: number): string {
       }
     }
     const cp = str.codePointAt(i) ?? 0;
-    const cw = charWidth(cp);
+    const cw = cp === 0xfe0f && prevWidth === 1 ? 1 : charWidth(cp);
     if (width + cw > target) break;
     const chLen = cp > 0xffff ? 2 : 1;
     out += str.slice(i, i + chLen);
     width += cw;
+    prevWidth = cp === 0xfe0f && prevWidth === 1 ? 2 : cw;
     i += chLen;
   }
   return out + "\x1b[0m…";
