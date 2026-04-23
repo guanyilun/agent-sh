@@ -1,4 +1,5 @@
 import stringWidth from "string-width";
+import stripAnsiPkg from "strip-ansi";
 
 // ── ANSI escape code constants ────────────────────────────────
 
@@ -130,12 +131,10 @@ export function padEndToWidth(str: string, targetWidth: number): string {
   return gap > 0 ? str + " ".repeat(gap) : str;
 }
 
-/** Strip all ANSI escape sequences (SGR, OSC, CSI, private mode) and carriage returns. */
+/** Strip ANSI escape sequences and carriage returns.
+ *  Delegates escape handling to the `strip-ansi` package (covers SGR, OSC,
+ *  CSI, private-mode, 8-bit CSI, and newer variants). `\r` is not an escape
+ *  but callers rely on it being stripped alongside. */
 export function stripAnsi(str: string): string {
-  return str
-    .replace(/\x1b\][^\x07]*\x07/g, "")        // OSC sequences
-    .replace(/\x1b\[[^m]*m/g, "")                // SGR (color) sequences
-    .replace(/\x1b\[\?[^a-zA-Z]*[a-zA-Z]/g, "") // private mode sequences
-    .replace(/\x1b\[[^a-zA-Z]*[a-zA-Z]/g, "")   // CSI sequences
-    .replace(/\r/g, "");                          // carriage returns
+  return stripAnsiPkg(str).replace(/\r/g, "");
 }
