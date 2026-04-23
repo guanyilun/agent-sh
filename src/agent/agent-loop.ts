@@ -190,10 +190,20 @@ export class AgentLoop implements AgentBackend {
     // here in the ctor so late-registered modes aren't dropped.
     onCtor("config:add-modes", ({ modes: extra }) => {
       const providers = new Set(extra.map((m) => m.provider).filter(Boolean));
+      const prev = this.modes[this.currentModeIndex];
       this.modes = [
         ...this.modes.filter((m) => !m.provider || !providers.has(m.provider)),
         ...extra,
       ];
+      // Preserve active model across provider re-registration — the index
+      // would otherwise slip when an async catalog fetch replaces the
+      // curated stub list with the full model set.
+      if (prev) {
+        const newIdx = this.modes.findIndex(
+          (m) => m.model === prev.model && m.provider === prev.provider,
+        );
+        if (newIdx !== -1) this.currentModeIndex = newIdx;
+      }
       this.bus.emit("config:changed", {});
     });
     // Fires before wire() too — agent-backend emits this from

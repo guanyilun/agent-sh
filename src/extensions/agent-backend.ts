@@ -110,9 +110,26 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
     modes = buildModes();
     if (modes.length === 0) modes = [{ model: effectiveModel }];
-    initialModeIndex = Math.max(0, modes.findIndex(
+    let foundIdx = modes.findIndex(
       (m) => m.model === effectiveModel && (!activeProvider || m.provider === activeProvider.id),
-    ));
+    );
+    // Persisted default may not be in the provider's curated list yet (e.g.
+    // openrouter's async catalog fetch hasn't returned). Prepend a stub so
+    // the initial config:set-modes activeIndex points at the real model —
+    // otherwise AgentLoop reconfigures llmClient back to modes[0].
+    if (foundIdx === -1 && activeProvider) {
+      modes = [
+        {
+          model: effectiveModel,
+          provider: activeProvider.id,
+          providerConfig: { apiKey: effectiveApiKey, baseURL: effectiveBaseURL },
+          supportsReasoningEffort: activeProvider.supportsReasoningEffort,
+        },
+        ...modes,
+      ];
+      foundIdx = 0;
+    }
+    initialModeIndex = Math.max(0, foundIdx);
 
     llmClient.reconfigure({ apiKey: effectiveApiKey, baseURL: effectiveBaseURL, model: effectiveModel });
     bus.emit("config:set-modes", { modes, activeIndex: initialModeIndex });
