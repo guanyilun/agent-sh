@@ -1,16 +1,15 @@
 # agent-sh
 
-An agent that lives in a shell — not a shell that lives in an agent.
+A real shell with an AI agent one keystroke away.
 
 [![npm version](https://img.shields.io/npm/v/agent-sh.svg)](https://www.npmjs.com/package/agent-sh)
 [![license](https://img.shields.io/npm/l/agent-sh.svg)](https://github.com/guanyilun/agent-sh/blob/main/LICENSE)
-[![website](https://img.shields.io/badge/website-agent--sh.dev-blue)](https://agent-sh.dev)
 
 ![demo](assets/demo.gif)
 
-Most AI terminal tools get this backwards: the LLM drives the experience and the shell is bolted on as an afterthought. No real PTY, no job control, no vim, fragile `cd` tracking. The agent is the main character and your terminal is a prop.
+I live in my terminal. A lot of the time I'm not coding — I'm deploying something, poking at a failing `rsync`, figuring out why `docker build` won't start, fixing a one-liner. And very often I need an AI agent to help. For serious coding work I use Claude Code. But for this other stuff, spinning up a full coding agent is overkill — and I got tired of copy-pasting errors into a chat window every time.
 
-agent-sh flips this. It's your shell first — full PTY, your rc config, your aliases, everything just works. But type `>` at the start of a line, and you're talking to an agent that has full context of what you've been doing.
+So I built agent-sh. Under the hood it's a normal shell on top of node-pty — your rc config, your aliases, vim and tmux all just work. But at the start of any line, type `>` and you're talking to a small agent that already sees your cwd, your last command, and its output. Nothing to set up, no project to explain.
 
 ```
 ~ $ ls -la                       # real shell command
@@ -19,6 +18,8 @@ agent-sh flips this. It's your shell first — full PTY, your rc config, your al
 ~ $ > explain the last error     # agent investigates using its own tools
 ~ $ > draft a commit message     # agent reads your diff and shell history
 ```
+
+I still use Claude Code and pi for serious coding work — this doesn't replace them. But for the quick stuff in the terminal, I reach for agent-sh almost every day now. The built-in agent is lightweight and good enough for most of what I throw at it, and when it isn't, bridge extensions let you plug [Claude Code](examples/extensions/claude-code-bridge/) or [pi](examples/extensions/pi-bridge/) in as the backend.
 
 ## Quick Start
 
