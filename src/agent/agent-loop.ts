@@ -213,6 +213,11 @@ export class AgentLoop implements AgentBackend {
         );
         if (newIdx !== -1) this.currentModeIndex = newIdx;
       }
+      if (activePreserved && prev) {
+        this.bus.emit("ui:info", {
+          message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
+        });
+      }
       this.bus.emit("config:changed", {});
     });
     // Fires before wire() too — agent-backend emits this from
