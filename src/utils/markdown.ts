@@ -287,12 +287,18 @@ export class MarkdownRenderer {
     const separatorWidth = (numCols - 1) * 3;
     const tableWidth = Math.max(10, this.width - 2);
     const availableWidth = tableWidth - separatorWidth;
-    const totalWidth = colWidths.reduce((a, b) => a + b, 0);
-    if (totalWidth > availableWidth && availableWidth > numCols) {
-      const scale = availableWidth / totalWidth;
-      for (let c = 0; c < numCols; c++) {
-        colWidths[c] = Math.max(1, Math.floor(colWidths[c]! * scale));
+    // Shrink the widest column one step at a time until the table fits.
+    // Preserves natural width on narrow columns — proportional scaling
+    // over-truncates when only one column is oversized.
+    let total = colWidths.reduce((a, b) => a + b, 0);
+    while (total > availableWidth && availableWidth > numCols) {
+      let maxIdx = 0;
+      for (let c = 1; c < numCols; c++) {
+        if (colWidths[c]! > colWidths[maxIdx]!) maxIdx = c;
       }
+      if (colWidths[maxIdx]! <= 1) break;
+      colWidths[maxIdx]!--;
+      total--;
     }
 
     // Render rows
@@ -308,9 +314,13 @@ export class MarkdownRenderer {
       const cells = row.map((cell, c) => {
         const w = colWidths[c]!;
         const rendered = this.renderInline(cell);
-        const text = visibleLen(rendered) > w
+        // Truncation can yield width < w when a CJK double-width char
+        // won't fit the remaining budget — always re-pad to keep cells
+        // aligned with the border grid.
+        const clipped = visibleLen(rendered) > w
           ? truncateAnsiToWidth(rendered, w)
-          : padEndToWidth(rendered, w);
+          : rendered;
+        const text = padEndToWidth(clipped, w);
         return isHeader ? `${p.bold}${text}${p.reset}` : text;
       });
       this.writeLine(`${p.dim}│${p.reset} ${cells.join(` ${p.dim}│${p.reset} `)} ${p.dim}│${p.reset}`);
