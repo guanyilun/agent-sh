@@ -190,10 +190,34 @@ export class AgentLoop implements AgentBackend {
     // here in the ctor so late-registered modes aren't dropped.
     onCtor("config:add-modes", ({ modes: extra }) => {
       const providers = new Set(extra.map((m) => m.provider).filter(Boolean));
+      const prev = this.modes[this.currentModeIndex];
+      // Keep the active mode even if the re-registration drops it (persisted
+      // model missing from a refreshed catalog) — otherwise currentModeIndex
+      // slips to modes[0] and the next stream() call uses a different model
+      // mid-turn.
+      const activePreserved =
+        prev &&
+        prev.provider &&
+        providers.has(prev.provider) &&
+        !extra.some((m) => m.model === prev.model && m.provider === prev.provider);
       this.modes = [
-        ...this.modes.filter((m) => !m.provider || !providers.has(m.provider)),
+        ...this.modes.filter((m) => {
+          if (activePreserved && m === prev) return true;
+          return !m.provider || !providers.has(m.provider);
+        }),
         ...extra,
       ];
+      if (prev) {
+        const newIdx = this.modes.findIndex(
+          (m) => m.model === prev.model && m.provider === prev.provider,
+        );
+        if (newIdx !== -1) this.currentModeIndex = newIdx;
+      }
+      if (activePreserved && prev) {
+        this.bus.emit("ui:info", {
+          message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
+        });
+      }
       this.bus.emit("config:changed", {});
     });
     // Fires before wire() too — agent-backend emits this from

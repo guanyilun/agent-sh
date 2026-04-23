@@ -276,6 +276,29 @@ export class InputHandler {
             // SS3: ESC O <char>
             seq += next; i++;
             if (i + 1 < data.length) { i++; seq += data[i]!; }
+          } else if (next === "]" || next === "P" || next === "_" || next === "^") {
+            // String sequences terminated by BEL or ST (ESC \):
+            //   OSC (ESC ]) — OSC 10/11 color-query responses
+            //   DCS (ESC P) — tmux XTVERSION query response (iTerm2 etc.)
+            //   APC (ESC _), PM (ESC ^) — rarer, same termination
+            // Forward as a unit so the payload doesn't leak into lineBuffer
+            // and onto the bash command line after a foreground app exits.
+            let j = i + 2;
+            let termEnd = -1;
+            while (j < data.length) {
+              const c = data[j]!;
+              if (c === "\x07") { termEnd = j; break; }
+              if (c === "\x1b" && j + 1 < data.length && data[j + 1] === "\\") {
+                termEnd = j + 1; break;
+              }
+              j++;
+            }
+            if (termEnd !== -1) {
+              seq = data.slice(i, termEnd + 1);
+              i = termEnd;
+            } else {
+              seq += next; i++;
+            }
           } else {
             // ESC + single char (alt-key, etc.)
             seq += next; i++;
