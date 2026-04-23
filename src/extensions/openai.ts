@@ -8,9 +8,8 @@
  *   export OPENAI_API_KEY=dummy
  *   export OPENAI_BASE_URL=http://localhost:11434/v1
  *
- * When `OPENAI_BASE_URL` is set, the curated model list is skipped —
- * the model catalog is unknowable for arbitrary compatible servers, so
- * the user picks via `--model` or `/model`.
+ * Against openai.com: registers with a curated model shortlist. Against
+ * a custom endpoint: fetches `/models` to populate the catalog.
  */
 import type { ExtensionContext } from "../types.js";
 
