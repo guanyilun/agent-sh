@@ -276,10 +276,13 @@ export class InputHandler {
             // SS3: ESC O <char>
             seq += next; i++;
             if (i + 1 < data.length) { i++; seq += data[i]!; }
-          } else if (next === "]") {
-            // OSC: ESC ] ... (BEL | ESC \). Forward as a unit so the payload
-            // bytes don't land in lineBuffer — otherwise OSC 10/11 color-query
-            // responses leak onto the bash command line after tmux exits.
+          } else if (next === "]" || next === "P" || next === "_" || next === "^") {
+            // String sequences terminated by BEL or ST (ESC \):
+            //   OSC (ESC ]) — OSC 10/11 color-query responses
+            //   DCS (ESC P) — tmux XTVERSION query response (iTerm2 etc.)
+            //   APC (ESC _), PM (ESC ^) — rarer, same termination
+            // Forward as a unit so the payload doesn't leak into lineBuffer
+            // and onto the bash command line after a foreground app exits.
             let j = i + 2;
             let termEnd = -1;
             while (j < data.length) {
