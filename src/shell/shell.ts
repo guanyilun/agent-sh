@@ -160,6 +160,15 @@ export class Shell implements InputContext {
         "",
         "# End-of-prompt marker: append to PS1 (\\[...\\] marks it zero-width)",
         'case "$PS1" in *9998*) ;; *) PS1="${PS1}\\[\\e]9998;READY\\a\\]";; esac',
+        "",
+        "# In-place prompt redraw trigger — mirrors the zsh \\e[9999~ widget.",
+        "# `redraw-current-line` calls rl_forced_update_display, which",
+        "# unconditionally re-emits the prompt at the cursor. We bind in both",
+        "# emacs and vi (insert + command) keymaps so `set -o vi` users aren't",
+        "# left out.",
+        `bind -m emacs '"\\e[9999~":redraw-current-line' 2>/dev/null`,
+        `bind -m vi-insert '"\\e[9999~":redraw-current-line' 2>/dev/null`,
+        `bind -m vi-command '"\\e[9999~":redraw-current-line' 2>/dev/null`,
       ];
 
       fs.writeFileSync(path.join(this.tmpDir, ".bashrc"), bashrcLines.join("\n") + "\n");
@@ -260,10 +269,9 @@ export class Shell implements InputContext {
 
   /**
    * Lightweight redraw: ask the shell to redraw its own prompt via a hidden
-   * ZLE widget (zsh) bound to \e[9999~. The shell knows how to draw its
-   * prompt correctly — we don't try to replay captured bytes.
-   *
-   * For bash, falls back to sending \n for a fresh prompt cycle.
+   * key binding (zsh ZLE widget / bash readline redraw-current-line), both
+   * wired to \e[9999~. The shell knows how to draw its prompt correctly —
+   * we don't try to replay captured bytes.
    */
   redrawPrompt(): void {
     // A stale echoSkip or paused flag (left over from handleProcessingDone
@@ -276,13 +284,7 @@ export class Shell implements InputContext {
       handled: false,
     });
     if (!result.handled) {
-      if (this.isZsh) {
-        // Trigger the hidden ZLE widget — zle reset-prompt redraws cleanly
-        this.ptyProcess.write("\x1b[9999~");
-      } else {
-        // Bash: no zle reset-prompt equivalent, use fresh prompt cycle
-        this.ptyProcess.write("\n");
-      }
+      this.ptyProcess.write("\x1b[9999~");
     }
   }
 
