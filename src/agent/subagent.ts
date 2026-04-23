@@ -44,10 +44,14 @@ export interface SubagentOptions {
    */
   dynamicContext?: string;
   /**
-   * Per-subagent token budget. When total (prompt+completion) tokens
-   * exceed this, the subagent terminates gracefully on the next
-   * iteration. The parent's daily budget still counts these tokens
-   * via onUsage; this is an additional per-call cap.
+   * Per-subagent completion-token budget. When the cumulative
+   * completion_tokens across iterations exceeds this, the subagent
+   * terminates gracefully on the next iteration. We deliberately don't
+   * count prompt tokens: the full history is resent each iteration, so
+   * prompt-inclusive counting double-charges context and makes a budget
+   * of N exhaust after O(log N) tool calls. Completion tokens measure
+   * the work the subagent actually produces. The parent's daily budget
+   * still sees real prompt+completion via onUsage.
    */
   budgetTokens?: number;
   /**
@@ -107,7 +111,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       await streamOnce(llmClient, systemPrompt, conversation, apiTools, model, signal, dynamicContext);
 
     if (usage) {
-      tokensConsumed += usage.total_tokens || 0;
+      tokensConsumed += usage.completion_tokens || 0;
       onUsage?.(usage);
     }
 
@@ -172,7 +176,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
   }
 
   if (budgetExhausted) {
-    const note = `\n\n[Subagent terminated: token budget (${budgetTokens}) exhausted after ${tokensConsumed} tokens. Returning partial progress.]`;
+    const note = `\n\n[Subagent terminated: completion-token budget (${budgetTokens}) exhausted after ${tokensConsumed} completion tokens. Returning partial progress.]`;
     return fullResponseText + note;
   }
 
