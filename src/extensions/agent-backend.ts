@@ -87,25 +87,6 @@ export default function agentBackend(ctx: ExtensionContext): void {
     instanceId: ctx.instanceId,
   });
 
-  bus.emit("agent:register-backend", {
-    name: "ash",
-    kill: () => agentLoop.kill(),
-    start: async () => {
-      if (!resolved) {
-        bus.emit("ui:error", { message: "Agent backend not started — no LLM provider available. See earlier messages." });
-        return;
-      }
-      agentLoop.wire();
-      bus.emit("agent:info", {
-        name: "ash",
-        version: PACKAGE_VERSION,
-        model: llmClient.model,
-        provider: modes[initialModeIndex]?.provider,
-        contextWindow: modes[initialModeIndex]?.contextWindow,
-      });
-    },
-  });
-
   bus.on("core:extensions-loaded", () => {
     const settings = getSettings();
     // If the user didn't pick a default, fall back to the first registered
@@ -122,14 +103,10 @@ export default function agentBackend(ctx: ExtensionContext): void {
     const effectiveBaseURL = config.baseURL ?? activeProvider?.baseURL;
     const effectiveModel = config.model ?? persistedModelFor(providerName) ?? activeProvider?.defaultModel;
 
-    if (!effectiveApiKey) {
-      bus.emit("ui:error", { message: "No LLM provider configured. Export OPENROUTER_API_KEY or OPENAI_API_KEY (built-in providers auto-activate), pass --api-key, or run `agent-sh init` for a settings.json template." });
-      return;
-    }
-    if (!effectiveModel) {
-      bus.emit("ui:error", { message: "No model specified. Use --model or configure a provider with defaultModel in ~/.agent-sh/settings.json" });
-      return;
-    }
+    // No provider → don't register ash at all, so another backend (e.g.
+    // claude-code-bridge) can own activation. index.ts hard-fails only
+    // when no backend ended up registered.
+    if (!effectiveApiKey || !effectiveModel) return;
 
     modes = buildModes();
     if (modes.length === 0) modes = [{ model: effectiveModel }];
@@ -140,7 +117,21 @@ export default function agentBackend(ctx: ExtensionContext): void {
     llmClient.reconfigure({ apiKey: effectiveApiKey, baseURL: effectiveBaseURL, model: effectiveModel });
     bus.emit("config:set-modes", { modes, activeIndex: initialModeIndex });
     resolved = true;
-    // start() emits agent:info after wiring.
+
+    bus.emit("agent:register-backend", {
+      name: "ash",
+      kill: () => agentLoop.kill(),
+      start: async () => {
+        agentLoop.wire();
+        bus.emit("agent:info", {
+          name: "ash",
+          version: PACKAGE_VERSION,
+          model: llmClient.model,
+          provider: modes[initialModeIndex]?.provider,
+          contextWindow: modes[initialModeIndex]?.contextWindow,
+        });
+      },
+    });
   });
 
   bus.on("provider:register", (p) => {

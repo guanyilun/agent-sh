@@ -295,6 +295,16 @@ async function main(): Promise<void> {
   // ── Activate agent backend ────────────────────────────────────
   // Extensions had their chance to register via agent:register-backend.
   // If none did, the built-in AgentLoop gets wired to bus events.
+  const { names: backendNames } = core.bus.emitPipe("config:get-backends", { names: [] as string[], active: null as string | null });
+  if (backendNames.length === 0) {
+    shell.kill();
+    console.error("\nagent-sh: no agent backend available.\n\n" +
+      "  Export OPENROUTER_API_KEY or OPENAI_API_KEY for zero-config launch, or\n" +
+      "  pass --api-key on the command line, or\n" +
+      "  run `agent-sh init` for a settings.json template.\n" +
+      "  Alternatively, install a bridge extension (claude-code-bridge, pi-bridge).\n");
+    process.exit(1);
+  }
   core.activateBackend();
 
   // ── Startup banner ───────────────────────────────────────────
