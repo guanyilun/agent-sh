@@ -19,16 +19,20 @@ import {
 } from "./nuclear-form.js";
 
 const HISTORY_PATH = path.join(CONFIG_DIR, "history");
-const LOCK_PATH = HISTORY_PATH + ".lock";
 const LOCK_STALE_MS = 10_000; // consider lock stale after 10s
 
 export class HistoryFile {
   readonly instanceId: string;
   private filePath: string;
+  private lockPath: string;
 
   constructor(opts?: { filePath?: string; instanceId?: string }) {
     this.filePath = opts?.filePath ?? HISTORY_PATH;
+    this.lockPath = this.filePath + ".lock";
     this.instanceId = opts?.instanceId ?? crypto.randomBytes(2).toString("hex");
+    // Custom paths may target a dir that doesn't exist yet; create sync so
+    // the first append() can't race with the mkdir.
+    try { fss.mkdirSync(path.dirname(this.filePath), { recursive: true }); } catch { /* ignore */ }
   }
 
   /**
@@ -230,15 +234,15 @@ export class HistoryFile {
     try {
       // Check for stale lock
       try {
-        const stat = await fs.stat(LOCK_PATH);
+        const stat = await fs.stat(this.lockPath);
         if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-          await fs.unlink(LOCK_PATH).catch(() => {});
+          await fs.unlink(this.lockPath).catch(() => {});
         }
       } catch {
         // Lock doesn't exist — good
       }
       // O_EXCL ensures atomicity
-      const fd = await fs.open(LOCK_PATH, fss.constants.O_CREAT | fss.constants.O_EXCL | fss.constants.O_WRONLY);
+      const fd = await fs.open(this.lockPath, fss.constants.O_CREAT | fss.constants.O_EXCL | fss.constants.O_WRONLY);
       await fd.close();
       return true;
     } catch {
@@ -247,6 +251,6 @@ export class HistoryFile {
   }
 
   private async releaseLock(): Promise<void> {
-    await fs.unlink(LOCK_PATH).catch(() => {});
+    await fs.unlink(this.lockPath).catch(() => {});
   }
 }
