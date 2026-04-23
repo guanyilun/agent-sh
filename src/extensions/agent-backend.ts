@@ -109,21 +109,38 @@ export default function agentBackend(ctx: ExtensionContext): void {
     if (providerRegistry.size === 0 && !config.apiKey) {
       const openrouterKey = process.env.OPENROUTER_API_KEY;
       const openaiKey = process.env.OPENAI_API_KEY;
+      // Curated picks across vendors — mirrors the openrouter extension's
+      // DEFAULT_MODELS so users without the extension get the same shortlist.
+      const OPENROUTER_DEFAULTS = [
+        "anthropic/claude-sonnet-4.5",
+        "google/gemini-2.5-pro-preview",
+        "openai/gpt-4.1",
+        "deepseek/deepseek-r1",
+        "meta-llama/llama-4-maverick",
+      ];
+      const OPENAI_DEFAULTS = [
+        "gpt-5",
+        "gpt-4.1",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "o3",
+        "o3-mini",
+      ];
       if (openrouterKey) {
         providerRegistry.set("openrouter", {
           id: "openrouter",
           apiKey: openrouterKey,
           baseURL: "https://openrouter.ai/api/v1",
-          defaultModel: "anthropic/claude-sonnet-4.5",
-          models: ["anthropic/claude-sonnet-4.5", "openai/gpt-4o", "google/gemini-2.5-pro"],
+          defaultModel: OPENROUTER_DEFAULTS[0],
+          models: OPENROUTER_DEFAULTS,
         });
-        bus.emit("ui:info", { message: "Auto-detected OPENROUTER_API_KEY — using openrouter provider. Load the openrouter extension for the full model catalog." });
+        bus.emit("ui:info", { message: "Auto-detected OPENROUTER_API_KEY — using openrouter provider. Load the openrouter extension for the full catalog." });
       } else if (openaiKey) {
         providerRegistry.set("openai", {
           id: "openai",
           apiKey: openaiKey,
-          defaultModel: "gpt-4o-mini",
-          models: ["gpt-4o-mini", "gpt-4o", "gpt-5"],
+          defaultModel: OPENAI_DEFAULTS[0],
+          models: OPENAI_DEFAULTS,
         });
         bus.emit("ui:info", { message: "Auto-detected OPENAI_API_KEY — using openai provider." });
       }
