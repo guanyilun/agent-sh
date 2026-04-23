@@ -11,11 +11,20 @@ type ActivateFn = (ctx: ExtensionContext) => void;
 
 export const BUILTIN_EXTENSIONS: Array<{
   name: string;
+  /** Optional gate — when present and returns false, the module isn't
+   *  imported at all. Keeps the kernel's startup cost proportional to
+   *  what's actually active (e.g. provider built-ins only load when
+   *  their env var is set). */
+  when?: () => boolean;
   load: () => Promise<ActivateFn>;
 }> = [
   { name: "agent-backend",    load: () => import("./agent-backend.js").then(m => m.default) },
-  { name: "openrouter",       load: () => import("./openrouter.js").then(m => m.default) },
-  { name: "openai",           load: () => import("./openai.js").then(m => m.default) },
+  { name: "openrouter",
+    when: () => !!process.env.OPENROUTER_API_KEY,
+    load: () => import("./openrouter.js").then(m => m.default) },
+  { name: "openai",
+    when: () => !!process.env.OPENAI_API_KEY,
+    load: () => import("./openai.js").then(m => m.default) },
   { name: "tui-renderer",     load: () => import("./tui-renderer.js").then(m => m.default) },
   { name: "slash-commands",    load: () => import("./slash-commands.js").then(m => m.default) },
   { name: "file-autocomplete", load: () => import("./file-autocomplete.js").then(m => m.default) },
@@ -23,8 +32,9 @@ export const BUILTIN_EXTENSIONS: Array<{
 ];
 
 /**
- * Load built-in extensions sequentially, skipping any in the disabled list.
- * Returns the names of extensions that were loaded.
+ * Load built-in extensions sequentially, skipping any in the disabled list
+ * or whose `when` predicate returns false. Returns the names of extensions
+ * that were loaded.
  */
 export async function loadBuiltinExtensions(
   ctx: ExtensionContext,
@@ -34,6 +44,7 @@ export async function loadBuiltinExtensions(
   const loaded: string[] = [];
   for (const ext of BUILTIN_EXTENSIONS) {
     if (disabledSet.has(ext.name)) continue;
+    if (ext.when && !ext.when()) continue;
     const activate = await ext.load();
     activate(ctx);
     loaded.push(ext.name);
