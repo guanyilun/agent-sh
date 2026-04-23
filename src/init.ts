@@ -8,9 +8,7 @@ const SETTINGS_PATH = path.join(CONFIG_DIR, "settings.json");
 const EXAMPLE_PATH = path.join(CONFIG_DIR, "settings.example.json");
 const AGENTS_PATH = path.join(CONFIG_DIR, "AGENTS.md");
 
-// Minimal working starter — all fields present, none filled in.
-// Keeps JSON valid for JSON.parse (no comments) while making the shape
-// discoverable at a glance.
+// Shape-discoverable stub — all fields present, none filled in.
 const STARTER_SETTINGS = {
   defaultProvider: null,
   providers: {},
@@ -19,8 +17,7 @@ const STARTER_SETTINGS = {
   disabledExtensions: [],
 };
 
-// Populated reference — not loaded at runtime; users copy blocks from
-// here into settings.json. Covers the common provider patterns.
+// Not loaded at runtime — users copy blocks from here into settings.json.
 const EXAMPLE_SETTINGS = {
   defaultProvider: "openrouter",
   providers: {
@@ -61,7 +58,7 @@ export function runInit(opts: { force: boolean }): void {
   fs.mkdirSync(EXTENSIONS_DIR, { recursive: true });
 
   const settingsResult = writeIfMissing(SETTINGS_PATH, JSON.stringify(STARTER_SETTINGS, null, 2) + "\n", opts.force);
-  // Example is always refreshed — it's reference material, not user state.
+  // Always refreshed — reference material, not user state.
   fs.writeFileSync(EXAMPLE_PATH, JSON.stringify(EXAMPLE_SETTINGS, null, 2) + "\n");
 
   console.log(`agent-sh initialized at ${CONFIG_DIR}`);

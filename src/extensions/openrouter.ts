@@ -1,22 +1,14 @@
 /**
- * Built-in OpenRouter provider extension.
- *
- * Auto-activates if `OPENROUTER_API_KEY` is set in the environment. Registers
- * the provider immediately with a curated default list so the first query
- * works, then fetches the full catalog in the background so `/model` shows
- * everything available on the user's OpenRouter account.
- *
- * Silent no-op when the env var is absent — the user opts in by exporting
- * the key rather than by editing settings.json.
+ * Built-in OpenRouter provider — auto-activates when OPENROUTER_API_KEY is set.
+ * Registers curated defaults synchronously so the first query works, then
+ * fetches the full catalog to populate /model autocomplete.
  */
 import type { ExtensionContext } from "../types.js";
 
 const BASE_URL = "https://openrouter.ai/api/v1";
 
-/** Curated picks used immediately while the full catalog loads.
- *  First entry is the cold-start default — chosen to be cheap so users
- *  can try agent-sh without a surprise bill. Change via /model (persists)
- *  or set providers.openrouter.defaultModel in settings.json. */
+// First entry is the cold-start default — kept cheap so trial users don't
+// get a surprise bill. Persisted /model selection overrides this.
 const DEFAULT_MODELS = [
   "deepseek/deepseek-v3.2",
   "anthropic/claude-sonnet-4.6",
@@ -40,8 +32,6 @@ export default function activate(ctx: ExtensionContext): void {
     models: DEFAULT_MODELS,
   });
 
-  // Async catalog fetch — update registration once it returns so /model
-  // autocomplete carries the full list. Failures fall back to curated.
   fetchModels(apiKey).then((models) => {
     if (models.length === 0) return;
     ctx.bus.emit("provider:register", {

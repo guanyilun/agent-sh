@@ -11,10 +11,8 @@ type ActivateFn = (ctx: ExtensionContext) => void;
 
 export const BUILTIN_EXTENSIONS: Array<{
   name: string;
-  /** Optional gate — when present and returns false, the module isn't
-   *  imported at all. Keeps the kernel's startup cost proportional to
-   *  what's actually active (e.g. provider built-ins only load when
-   *  their env var is set). */
+  // When present and false, the module isn't imported — keeps provider
+  // built-ins dormant unless their env var is set.
   when?: () => boolean;
   load: () => Promise<ActivateFn>;
 }> = [

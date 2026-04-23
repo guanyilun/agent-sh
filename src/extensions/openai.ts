@@ -1,15 +1,7 @@
 /**
- * Built-in OpenAI-compatible provider extension.
- *
- * Auto-activates if `OPENAI_API_KEY` is set. Honors `OPENAI_BASE_URL` so
- * local servers (Ollama, LM Studio, vLLM, llama.cpp) and self-hosted
- * gateways work without any settings.json edits:
- *
- *   export OPENAI_API_KEY=dummy
- *   export OPENAI_BASE_URL=http://localhost:11434/v1
- *
- * Against openai.com: registers with a curated model shortlist. Against
- * a custom endpoint: fetches `/models` to populate the catalog.
+ * Built-in OpenAI-compatible provider — auto-activates when OPENAI_API_KEY
+ * is set. OPENAI_BASE_URL redirects to local servers (Ollama, LM Studio,
+ * vLLM, llama.cpp) which then get their catalog via /models.
  */
 import type { ExtensionContext } from "../types.js";
 
@@ -39,9 +31,7 @@ export default function activate(ctx: ExtensionContext): void {
     return;
   }
 
-  // Custom endpoint — fetch the catalog from /models so the user doesn't
-  // need to pass --model. Register immediately with an empty list so the
-  // provider resolves; re-register once the fetch returns.
+  // Register empty immediately so the provider resolves; refill from /models.
   ctx.bus.emit("provider:register", { id, apiKey, baseURL, models: [] });
   fetchModels(baseURL, apiKey).then((models) => {
     if (models.length === 0) return;

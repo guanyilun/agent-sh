@@ -161,11 +161,8 @@ export class Shell implements InputContext {
         "# End-of-prompt marker: append to PS1 (\\[...\\] marks it zero-width)",
         'case "$PS1" in *9998*) ;; *) PS1="${PS1}\\[\\e]9998;READY\\a\\]";; esac',
         "",
-        "# In-place prompt redraw trigger — mirrors the zsh \\e[9999~ widget.",
-        "# `redraw-current-line` calls rl_forced_update_display, which",
-        "# unconditionally re-emits the prompt at the cursor. We bind in both",
-        "# emacs and vi (insert + command) keymaps so `set -o vi` users aren't",
-        "# left out.",
+        "# Mirrors the zsh \\e[9999~ reset-prompt widget — used by agent-sh",
+        "# to repaint the prompt in place. All keymaps so `set -o vi` works.",
         `bind -m emacs '"\\e[9999~":redraw-current-line' 2>/dev/null`,
         `bind -m vi-insert '"\\e[9999~":redraw-current-line' 2>/dev/null`,
         `bind -m vi-command '"\\e[9999~":redraw-current-line' 2>/dev/null`,
@@ -268,15 +265,12 @@ export class Shell implements InputContext {
   }
 
   /**
-   * Lightweight redraw: ask the shell to redraw its own prompt via a hidden
-   * key binding (zsh ZLE widget / bash readline redraw-current-line), both
-   * wired to \e[9999~. The shell knows how to draw its prompt correctly —
-   * we don't try to replay captured bytes.
+   * Ask the shell to redraw its own prompt in place via \e[9999~, which both
+   * zsh (ZLE widget) and bash (readline redraw-current-line) bind to repaint.
    */
   redrawPrompt(): void {
-    // A stale echoSkip or paused flag (left over from handleProcessingDone
-    // re-entering a mode) would swallow the redrawn prompt and make the
-    // terminal appear frozen. Reset both before emitting.
+    // Stale echoSkip/paused from handleProcessingDone re-entering a mode
+    // would swallow the redraw and freeze the terminal visually.
     this.echoSkip = false;
     this.paused = false;
     const result = this.bus.emitPipe("shell:redraw-prompt", {
