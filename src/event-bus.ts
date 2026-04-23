@@ -285,7 +285,9 @@ export interface ShellEvents {
     id: string;
     apiKey?: string;
     baseURL?: string;
-    defaultModel: string;
+    /** Optional — providers for custom endpoints may not know the catalog
+     *  at registration time. Falls back to models[0] when absent. */
+    defaultModel?: string;
     models?: (string | { id: string; reasoning?: boolean; contextWindow?: number })[];
     /** Provider supports the reasoning_effort parameter. Default: true. */
     supportsReasoningEffort?: boolean;
