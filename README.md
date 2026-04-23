@@ -7,7 +7,7 @@ A real shell with an AI agent one keystroke away.
 
 ![demo](assets/demo.gif)
 
-I live in my terminal. A lot of the time I'm not coding — I'm deploying something, poking at a failing `rsync`, figuring out why `docker build` won't start, fixing a one-liner. And very often I need an AI agent to help. For serious coding work I use Claude Code. But for this other stuff, spinning up a full coding agent is overkill — and I got tired of copy-pasting errors into a chat window every time.
+I live in my terminal. A lot of the time I'm not coding — I'm deploying something, poking at a failing `rsync`, figuring out why `docker build` won't start, fixing a one-liner. And very often I need an AI agent to help. Spinning up a full coding agent for this stuff is overkill, and I got tired of copy-pasting errors into a chat window every time.
 
 So I built agent-sh. Under the hood it's a normal shell on top of node-pty — your rc config, your aliases, vim and tmux all just work. But at the start of any line, type `>` and you're talking to a small agent that already sees your cwd, your last command, and its output. Nothing to set up, no project to explain.
 
