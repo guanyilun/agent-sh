@@ -51,20 +51,6 @@ const EXAMPLE_SETTINGS = {
   disabledExtensions: [],
 };
 
-const AGENTS_SEED = `# Agent Instructions
-
-Standing instructions for the agent in this account. Loaded on every session
-(see src/agent/system-prompt.ts).
-
-Example entries:
-- Preferred code style / project conventions.
-- Commands to avoid.
-- Topics or tools the agent should default to.
-
-Project-specific instructions live alongside the code in \`CLAUDE.md\` or
-\`AGENT.md\` and are picked up automatically when you \`cd\` into the project.
-`;
-
 function writeIfMissing(filePath: string, content: string, force: boolean): "written" | "kept" {
   if (!force && fs.existsSync(filePath)) return "kept";
   fs.writeFileSync(filePath, content);
@@ -77,13 +63,11 @@ export function runInit(opts: { force: boolean }): void {
   const settingsResult = writeIfMissing(SETTINGS_PATH, JSON.stringify(STARTER_SETTINGS, null, 2) + "\n", opts.force);
   // Example is always refreshed — it's reference material, not user state.
   fs.writeFileSync(EXAMPLE_PATH, JSON.stringify(EXAMPLE_SETTINGS, null, 2) + "\n");
-  const agentsResult = writeIfMissing(AGENTS_PATH, AGENTS_SEED, opts.force);
 
   console.log(`agent-sh initialized at ${CONFIG_DIR}`);
   console.log();
   console.log(`  settings.json         ${settingsResult}${opts.force ? "" : settingsResult === "kept" ? " (exists — pass --force to overwrite)" : ""}`);
   console.log(`  settings.example.json refreshed`);
-  console.log(`  AGENTS.md             ${agentsResult}`);
   console.log(`  extensions/           ready`);
   console.log();
   console.log("Next steps:");
@@ -91,4 +75,7 @@ export function runInit(opts: { force: boolean }): void {
   console.log(`  2. Copy a provider block from settings.example.json into \`providers\` and set \`defaultProvider\`.`);
   console.log(`  3. Export the referenced env var (e.g. \`export OPENROUTER_API_KEY=...\`).`);
   console.log(`  4. Run \`agent-sh\`.`);
+  console.log();
+  console.log(`Optional: create ${AGENTS_PATH} with standing instructions`);
+  console.log(`(code style, commands to avoid, etc.) to load them into every session.`);
 }
