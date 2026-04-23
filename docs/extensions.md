@@ -50,6 +50,7 @@ TypeScript and JavaScript are both supported (`.ts`, `.tsx`, `.mts`, `.js`, `.mj
 | `bus` | `EventBus` | Subscribe to events, emit events, register pipe handlers |
 | `contextManager` | `ContextManager` | Shell exchange history — `getCwd()`, `search(query)`, `getRecentSummary(n)`, `getEventsSince(afterId)`, `lastSeq()` |
 | `instanceId` | `string` | Stable per-instance identifier (4-char hex) |
+| `llm` | `LlmInterface` | Backend-agnostic LLM facade — `llm.ask({query, system?, maxTokens?})` for one-shot, `llm.session({system?}).send(msg)` for multi-turn, `llm.available` to check |
 | `quit` | `() => void` | Exit agent-sh |
 | `setPalette` | `(overrides) => void` | Override color palette slots for theming |
 | `createBlockTransform` | `(opts) => void` | Register an inline delimiter transform (e.g. `$$...$$`) |

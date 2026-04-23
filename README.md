@@ -22,7 +22,13 @@ agent-sh flips this. It's your shell first — full PTY, your rc config, your al
 
 ## Quick Start
 
-Install and launch:
+Install the latest from GitHub (recommended — development moves faster than npm releases):
+
+```bash
+npm install -g github:guanyilun/agent-sh
+```
+
+Or the last published npm release:
 
 ```bash
 npm install -g agent-sh
@@ -62,7 +68,7 @@ Tip — add a shell alias:
 alias ash="agent-sh"
 ```
 
-Requires Node.js 18+.
+Requires Node.js 18+. Currently supports **bash** and **zsh**; other shells (fish, nushell, etc.) are not yet wired up.
 
 ## Key Features
 

@@ -22,7 +22,6 @@ index.ts — interactive terminal frontend:
   │     tui-renderer      — markdown rendering, inline diffs, thinking display, spinner
   │     slash-commands    — /help, /model, /backend, /thinking, /compact, /context, /reload
   │     file-autocomplete — @ file path completion
-  │     command-suggest   — fix suggestions on failed commands (fast-path LLM)
   │
   ├── Shared utilities:
   │     palette           — semantic color system (accent, success, warning, error, muted)
@@ -81,7 +80,7 @@ The agent backend is a bus-driven component that registers via `agent:register-b
 
 The default backend is **ash**, loaded as a built-in extension (`src/extensions/agent-backend.ts`). It resolves LLM providers from settings, creates an `LlmClient`, builds the mode list for runtime model switching, and creates an `AgentLoop` that uses the `openai` SDK to call any OpenAI-compatible API. See [The Built-in Agent: ash](agent.md) for the full guide.
 
-The agent-backend extension also exposes the `LlmClient` via the handler registry (`llm:get-client`) so other extensions (like `command-suggest`) can make fast-path LLM calls.
+The agent-backend extension registers an `llm:invoke` handler that backs the `ctx.llm` facade on `ExtensionContext`, so any extension can call `ctx.llm.ask(...)` or `ctx.llm.session(...)` without knowing which backend is active. Backends with no LLM leave `ctx.llm.available` false.
 
 ### Extension Backends
 
@@ -155,8 +154,7 @@ agent-sh/
 │       ├── index.ts          # Declarative manifest + loader
 │       ├── agent-backend.ts  # LLM provider resolution + AgentLoop registration
 │       ├── tui-renderer.ts, slash-commands.ts
-│       ├── file-autocomplete.ts
-│       └── command-suggest.ts
+│       └── file-autocomplete.ts
 │
 ├── examples/                 # Example extensions and agent integrations
 │   └── extensions/
