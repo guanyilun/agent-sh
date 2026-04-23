@@ -7,12 +7,7 @@ import type { ExtensionContext } from "../types.js";
 
 const BASE_URL = "https://openrouter.ai/api/v1";
 
-// First entry is the cold-start default — kept cheap so trial users don't
-// get a surprise bill. Persisted /model selection overrides this.
-const DEFAULT_MODELS = [
-  "deepseek/deepseek-v3.2",
-  "anthropic/claude-sonnet-4.6",
-];
+const DEFAULT_MODELS = ["anthropic/claude-sonnet-4.6"];
 
 interface OpenRouterModel {
   id: string;

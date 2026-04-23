@@ -260,10 +260,7 @@ export default function activate(ctx: ExtensionContext): void {
       if (s.showThinkingText) {
         stopCurrentSpinner();
         if (!s.renderer) startAgentResponse();
-        s.renderer!.writeLine(`${p.dim}Thinking (ctrl+t to collapse)${p.reset}`);
-        drain();
       } else {
-        // Restart spinner with ctrl+t hint now that we know thinking is available
         startThinkingSpinner();
       }
     }
@@ -892,10 +889,7 @@ export default function activate(ctx: ExtensionContext): void {
     stopCurrentSpinner();
     const thinking = hasThinkingMode();
     s.spinnerLabel = thinking ? "Thinking" : "Working";
-    const hint = thinking
-      ? (s.showThinkingText ? "(ctrl+t to collapse)" : "(ctrl+t to expand)")
-      : "";
-    s.spinnerOpts = { hint: hint || undefined, startTime: s.spinnerStartTime };
+    s.spinnerOpts = { startTime: s.spinnerStartTime };
     s.spinner = createSpinner({ startTime: s.spinnerStartTime });
     s.spinnerInterval = setInterval(() => {
       if (s.spinner) {
@@ -1043,12 +1037,8 @@ export default function activate(ctx: ExtensionContext): void {
     if (s.spinner) {
       stopCurrentSpinner();
       if (s.showThinkingText) {
-        // Expanding: replace spinner with thinking text header
         if (!s.renderer) startAgentResponse();
-        s.renderer!.writeLine(`${p.dim}Thinking (ctrl+t to collapse)${p.reset}`);
-        drain();
       } else {
-        // Collapsing: restart spinner with updated hint
         startThinkingSpinner();
       }
       return;
