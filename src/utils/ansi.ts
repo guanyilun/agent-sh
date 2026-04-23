@@ -1,3 +1,5 @@
+import stringWidth from "string-width";
+
 // ── ANSI escape code constants ────────────────────────────────
 
 export const CYAN = "\x1b[36m";
@@ -11,137 +13,65 @@ export const RESET = "\x1b[0m";
 
 // ── ANSI utility functions ───────────────────────────────────
 
+// Reused across iterations. Segmenter construction is not free, and the API
+// is pure (no per-call state) so a module-level instance is safe.
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
 /**
- * Check if a Unicode code point is a wide character (CJK, fullwidth, emoji, etc.)
- * Returns 2 for wide chars, 1 for normal chars, 0 for combining chars.
+ * Width of a single Unicode code point in terminal columns.
  *
- * Based on East Asian Width and Unicode categories.
+ * For correct rendering of emoji clusters (ZWJ, flags, skin-tone, VS16)
+ * prefer `clusterWidth` or `visibleLen`, which segment graphemes first.
+ * This code-point-level primitive is kept for callers that iterate over
+ * chars for wrap-detection purposes (e.g. CJK line-break rules).
  */
 export function charWidth(codePoint: number): number {
-  // Combining characters (zero width)
-  if (codePoint >= 0x0300 && codePoint <= 0x036f) return 0; // Combining Diacritical Marks
-  if (codePoint >= 0x1ab0 && codePoint <= 0x1aff) return 0; // Combining Diacritical Marks Extended
-  if (codePoint >= 0x1dc0 && codePoint <= 0x1dff) return 0; // Combining Diacritical Marks Supplement
-  if (codePoint >= 0x20d0 && codePoint <= 0x20ff) return 0; // Combining Diacritical Marks for Symbols
-  if (codePoint >= 0xfe20 && codePoint <= 0xfe2f) return 0; // Combining Half Marks
-  if (codePoint >= 0xfe00 && codePoint <= 0xfe0f) return 0; // Variation Selectors
-  if (codePoint >= 0xe0100 && codePoint <= 0xe01ef) return 0; // Variation Selectors Supplement
+  return stringWidth(String.fromCodePoint(codePoint));
+}
 
-  // Emoji and symbols that render as wide (2 columns)
-  // Emoji presentation sequences and keycap
-  if (codePoint === 0x20e3) return 2; // Combining Enclosing Keycap
+/**
+ * Width of one grapheme cluster in terminal columns. Handles ZWJ sequences,
+ * regional-indicator flags, skin-tone modifiers, and VS16 emoji presentation.
+ */
+export function clusterWidth(cluster: string): number {
+  return stringWidth(cluster);
+}
 
-  // Emoji blocks
-  if (codePoint >= 0x1f600 && codePoint <= 0x1f64f) return 2; // Emoticons
-  if (codePoint >= 0x1f300 && codePoint <= 0x1f5ff) return 2; // Misc Symbols and Pictographs
-  if (codePoint >= 0x1f680 && codePoint <= 0x1f6ff) return 2; // Transport and Map
-  if (codePoint >= 0x1f700 && codePoint <= 0x1f77f) return 2; // Alchemical Symbols
-  if (codePoint >= 0x1f780 && codePoint <= 0x1f7ff) return 2; // Geometric Shapes Extended
-  if (codePoint >= 0x1f800 && codePoint <= 0x1f8ff) return 2; // Supplemental Arrows-C
-  if (codePoint >= 0x1f900 && codePoint <= 0x1f9ff) return 2; // Supplemental Symbols and Pictographs
-  if (codePoint >= 0x1fa00 && codePoint <= 0x1faff) return 2; // Chess Symbols, Symbols and Pictographs Extended-A
-  // NOTE: 0x2300-0x23ff (Misc Technical), 0x2600-0x26ff (Misc Symbols),
-  // and 0x2700-0x27bf (Dingbats) are mostly "Ambiguous" width — render as
-  // 1 column in non-CJK terminal locales (e.g. ❯, ⌘, ★, ♦). But a handful
-  // of dingbats have Emoji_Presentation=Yes and render as 2 cols everywhere.
-  if (
-    codePoint === 0x2705 || // ✅ white heavy check mark
-    codePoint === 0x270a || // ✊ raised fist
-    codePoint === 0x270b || // ✋ raised hand
-    codePoint === 0x2728 || // ✨ sparkles
-    codePoint === 0x274c || // ❌ cross mark
-    codePoint === 0x274e || // ❎ negative squared cross mark
-    (codePoint >= 0x2753 && codePoint <= 0x2755) || // ❓❔❕
-    codePoint === 0x2757 || // ❗ heavy exclamation mark
-    (codePoint >= 0x2795 && codePoint <= 0x2797) || // ➕➖➗
-    codePoint === 0x27b0 || // ➰ curly loop
-    codePoint === 0x27bf    // ➿ double curly loop
-  ) return 2;
-
-  // Regional indicator symbols (flag emoji components)
-  if (codePoint >= 0x1f1e6 && codePoint <= 0x1f1ff) return 2;
-
-  // CJK Unified Ideographs
-  if (codePoint >= 0x4e00 && codePoint <= 0x9fff) return 2;
-  // CJK Unified Ideographs Extension A
-  if (codePoint >= 0x3400 && codePoint <= 0x4dbf) return 2;
-  // Hangul Syllables
-  if (codePoint >= 0xac00 && codePoint <= 0xd7af) return 2;
-  // CJK Unified Ideographs Extension B-F and other CJK blocks
-  if (codePoint >= 0x20000 && codePoint <= 0x2ebef) return 2;
-  // Fullwidth ASCII variants
-  if (codePoint >= 0xff01 && codePoint <= 0xff5e) return 2;
-  // Fullwidth bracket forms
-  if (codePoint >= 0xff5f && codePoint <= 0xff60) return 2;
-  // Fullwidth symbol variants
-  if (codePoint >= 0xffe0 && codePoint <= 0xffe6) return 2;
-  // Japanese hiragana and katakana
-  if (codePoint >= 0x3040 && codePoint <= 0x309f) return 2;
-  if (codePoint >= 0x30a0 && codePoint <= 0x30ff) return 2;
-  // CJK symbols and punctuation
-  if (codePoint >= 0x3000 && codePoint <= 0x303f) return 2;
-  // Enclosed CJK letters and months
-  if (codePoint >= 0x3200 && codePoint <= 0x32ff) return 2;
-  // CJK compatibility
-  if (codePoint >= 0x3300 && codePoint <= 0x33ff) return 2;
-  // Hangul Jamo
-  if (codePoint >= 0x1100 && codePoint <= 0x11ff) return 2;
-  // Hangul compatibility Jamo
-  if (codePoint >= 0x3130 && codePoint <= 0x318f) return 2;
-
-  return 1;
+/** Strip SGR (color/style) sequences from a string. */
+function stripSGR(str: string): string {
+  return str.replace(/\x1b\[[^m]*m/g, "");
 }
 
 /**
  * Measure visible string length in terminal columns.
- * Excludes SGR (color/style) sequences and accounts for CJK double-width chars.
+ * Excludes SGR (color/style) sequences, and counts each grapheme cluster
+ * (emoji, CJK, combining marks) as one terminal-visible unit.
  */
 export function visibleLen(str: string): number {
-  // First strip ANSI escape sequences
-  const cleanStr = str.replace(/\x1b\[[^m]*m/g, "");
-
-  let width = 0;
-  let prevWidth = 0;
-  for (const char of cleanStr) {
-    const cp = char.codePointAt(0) ?? 0;
-    // U+FE0F (VS16) promotes the preceding char to emoji presentation.
-    // For chars we treated as width 1 (ambiguous-width emoji like ⚠ ❤ ☀),
-    // the cluster actually renders as 2 cols — top up the missing column.
-    if (cp === 0xfe0f && prevWidth === 1) {
-      width += 1;
-      prevWidth = 2;
-    } else {
-      const cw = charWidth(cp);
-      width += cw;
-      prevWidth = cw;
-    }
-  }
-  return width;
+  return stringWidth(stripSGR(str));
 }
 
 /**
  * Truncate a string to fit within `maxWidth` visible columns.
- * Accounts for CJK double-width characters. Appends `…` if truncated.
+ * Iterates by grapheme cluster so emoji sequences (ZWJ, flags, VS16) are
+ * kept intact rather than split mid-cluster. Appends `…` if truncated.
  */
 export function truncateToWidth(str: string, maxWidth: number): string {
-  const clean = str.replace(/\x1b\[[^m]*m/g, "");
+  const clean = stripSGR(str);
   if (maxWidth <= 0) return "";
   if (visibleLen(clean) <= maxWidth) return clean;
   if (maxWidth === 1) return "…";
   const target = maxWidth - 1;
   let width = 0;
-  let prevWidth = 0;
-  let i = 0;
-  for (const char of clean) {
-    const cp = char.codePointAt(0) ?? 0;
-    const cw = cp === 0xfe0f && prevWidth === 1 ? 1 : charWidth(cp);
+  let out = "";
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(clean)) {
+    const cw = clusterWidth(segment);
     if (width + cw > target) break;
     width += cw;
-    prevWidth = cp === 0xfe0f && prevWidth === 1 ? 2 : cw;
-    i += char.length;
+    out += segment;
   }
-  if (i === 0) return "…";
-  return clean.slice(0, i) + "…";
+  if (out === "") return "…";
+  return out + "…";
 }
 
 /** Truncate to visible width while preserving SGR sequences — use when
@@ -151,34 +81,49 @@ export function truncateAnsiToWidth(str: string, maxWidth: number): string {
   if (visibleLen(str) <= maxWidth) return str;
   if (maxWidth === 1) return "…";
   const target = maxWidth - 1;
+
+  // Walk the string preserving SGR escapes in-place; buffer text between
+  // escapes and segment it into graphemes to count width correctly.
   let width = 0;
-  let prevWidth = 0;
   let out = "";
+  let buf = "";
   let i = 0;
+  const flushBuf = (): boolean => {
+    if (!buf) return false;
+    for (const { segment } of GRAPHEME_SEGMENTER.segment(buf)) {
+      const cw = clusterWidth(segment);
+      if (width + cw > target) {
+        buf = "";
+        return true; // budget exhausted
+      }
+      width += cw;
+      out += segment;
+    }
+    buf = "";
+    return false;
+  };
+
   while (i < str.length) {
     if (str[i] === "\x1b" && str[i + 1] === "[") {
       const end = str.indexOf("m", i);
       if (end !== -1) {
+        if (flushBuf()) break;
         out += str.slice(i, end + 1);
         i = end + 1;
         continue;
       }
     }
     const cp = str.codePointAt(i) ?? 0;
-    const cw = cp === 0xfe0f && prevWidth === 1 ? 1 : charWidth(cp);
-    if (width + cw > target) break;
     const chLen = cp > 0xffff ? 2 : 1;
-    out += str.slice(i, i + chLen);
-    width += cw;
-    prevWidth = cp === 0xfe0f && prevWidth === 1 ? 2 : cw;
+    buf += str.slice(i, i + chLen);
     i += chLen;
   }
+  flushBuf();
   return out + "\x1b[0m…";
 }
 
 /**
  * Pad a string with spaces to fill `targetWidth` visible columns.
- * Accounts for CJK double-width characters.
  */
 export function padEndToWidth(str: string, targetWidth: number): string {
   const gap = targetWidth - visibleLen(str);
