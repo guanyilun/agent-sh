@@ -102,7 +102,10 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   bus.on("core:extensions-loaded", () => {
     const settings = getSettings();
-    const providerName = config.provider ?? settings.defaultProvider;
+    // If the user didn't pick a default, fall back to the first registered
+    // provider (built-in load order biases to openrouter → openai).
+    const providerName = config.provider ?? settings.defaultProvider
+      ?? (providerRegistry.size > 0 ? providerRegistry.keys().next().value : undefined);
     const activeProvider = providerName ? providerRegistry.get(providerName) ?? null : null;
 
     // User's persisted defaultModel wins over the provider's declared
@@ -114,7 +117,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     const effectiveModel = config.model ?? persistedModelFor(providerName) ?? activeProvider?.defaultModel;
 
     if (!effectiveApiKey) {
-      bus.emit("ui:error", { message: "No LLM provider configured. Set --api-key, configure a provider in ~/.agent-sh/settings.json, or load a provider extension (e.g. openrouter) that sets OPENROUTER_API_KEY." });
+      bus.emit("ui:error", { message: "No LLM provider configured. Export OPENROUTER_API_KEY or OPENAI_API_KEY (built-in providers auto-activate), pass --api-key, or run `agent-sh init` for a settings.json template." });
       return;
     }
     if (!effectiveModel) {

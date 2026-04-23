@@ -22,18 +22,45 @@ agent-sh flips this. It's your shell first — full PTY, your rc config, your al
 
 ## Quick Start
 
+Install and launch:
+
 ```bash
 npm install -g agent-sh
+```
+
+Pick one of the zero-config paths below — no settings file needed. agent-sh auto-activates a built-in provider when it sees a known key.
+
+**Hosted models via OpenRouter** (300+ models, one key):
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
 agent-sh
 ```
 
-Tip: add an alias to your shell config for quick access:
+**OpenAI:**
+
+```bash
+export OPENAI_API_KEY=sk-...
+agent-sh
+```
+
+**Local models** (Ollama, llama.cpp server, LM Studio, vLLM — anything OpenAI-compatible):
+
+```bash
+export OPENAI_API_KEY=ollama                        # any value; dummy is fine
+export OPENAI_BASE_URL=http://localhost:11434/v1    # point at your server
+agent-sh
+```
+
+Once running, switch models at any time with `/model <name>` (tab-completes; selection persists across sessions).
+
+For richer configuration (multiple providers, extensions), run `agent-sh init` to scaffold `~/.agent-sh/settings.json` with copy-pasteable examples. See the [Usage Guide](docs/usage.md) for the full list of supported providers.
+
+Tip — add a shell alias:
 
 ```bash
 alias ash="agent-sh"
 ```
-
-Set `OPENAI_API_KEY` in your environment (or configure providers in `~/.agent-sh/settings.json`). Works with any OpenAI-compatible API — see the [Usage Guide](docs/usage.md) for provider examples (OpenAI, Ollama, OpenRouter, Together, Groq, LM Studio, vLLM).
 
 Requires Node.js 18+.
 

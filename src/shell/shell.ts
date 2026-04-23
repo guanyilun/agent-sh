@@ -160,6 +160,12 @@ export class Shell implements InputContext {
         "",
         "# End-of-prompt marker: append to PS1 (\\[...\\] marks it zero-width)",
         'case "$PS1" in *9998*) ;; *) PS1="${PS1}\\[\\e]9998;READY\\a\\]";; esac',
+        "",
+        "# Mirrors the zsh \\e[9999~ reset-prompt widget — used by agent-sh",
+        "# to repaint the prompt in place. All keymaps so `set -o vi` works.",
+        `bind -m emacs '"\\e[9999~":redraw-current-line' 2>/dev/null`,
+        `bind -m vi-insert '"\\e[9999~":redraw-current-line' 2>/dev/null`,
+        `bind -m vi-command '"\\e[9999~":redraw-current-line' 2>/dev/null`,
       ];
 
       fs.writeFileSync(path.join(this.tmpDir, ".bashrc"), bashrcLines.join("\n") + "\n");
@@ -259,16 +265,12 @@ export class Shell implements InputContext {
   }
 
   /**
-   * Lightweight redraw: ask the shell to redraw its own prompt via a hidden
-   * ZLE widget (zsh) bound to \e[9999~. The shell knows how to draw its
-   * prompt correctly — we don't try to replay captured bytes.
-   *
-   * For bash, falls back to sending \n for a fresh prompt cycle.
+   * Ask the shell to redraw its own prompt in place via \e[9999~, which both
+   * zsh (ZLE widget) and bash (readline redraw-current-line) bind to repaint.
    */
   redrawPrompt(): void {
-    // A stale echoSkip or paused flag (left over from handleProcessingDone
-    // re-entering a mode) would swallow the redrawn prompt and make the
-    // terminal appear frozen. Reset both before emitting.
+    // Stale echoSkip/paused from handleProcessingDone re-entering a mode
+    // would swallow the redraw and freeze the terminal visually.
     this.echoSkip = false;
     this.paused = false;
     const result = this.bus.emitPipe("shell:redraw-prompt", {
@@ -276,13 +278,7 @@ export class Shell implements InputContext {
       handled: false,
     });
     if (!result.handled) {
-      if (this.isZsh) {
-        // Trigger the hidden ZLE widget — zle reset-prompt redraws cleanly
-        this.ptyProcess.write("\x1b[9999~");
-      } else {
-        // Bash: no zle reset-prompt equivalent, use fresh prompt cycle
-        this.ptyProcess.write("\n");
-      }
+      this.ptyProcess.write("\x1b[9999~");
     }
   }
 

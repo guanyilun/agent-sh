@@ -8,6 +8,7 @@ import { loadBuiltinExtensions } from "./extensions/index.js";
 import { loadExtensions } from "./extension-loader.js";
 import { getSettings } from "./settings.js";
 import { discoverSkills } from "./agent/skills.js";
+import { runInit } from "./init.js";
 import type { AgentShellConfig } from "./types.js";
 
 /**
@@ -108,6 +109,7 @@ function parseArgs(argv: string[]): AgentShellConfig {
       console.log(`agent-sh — a shell-first terminal where AI is one keystroke away
 
 Usage: agent-sh [options]
+       agent-sh init [--force]    Scaffold ~/.agent-sh/ (settings, examples, AGENTS.md)
 
 Provider Profiles:
   --provider <name>   Use a provider from ~/.agent-sh/settings.json
@@ -150,6 +152,13 @@ Inside the shell:
 }
 
 async function main(): Promise<void> {
+  // Subcommands — handled before the shell-launch path.
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs[0] === "init") {
+    runInit({ force: rawArgs.includes("--force") });
+    return;
+  }
+
   if (process.env.AGENT_SH) {
     console.error("agent-sh: already running inside an agent-sh session (nested sessions are not supported).");
     process.exit(1);
@@ -158,7 +167,7 @@ async function main(): Promise<void> {
   process.on("SIGTTOU", () => {});
   process.on("SIGTTIN", () => {});
 
-  const config = parseArgs(process.argv.slice(2));
+  const config = parseArgs(rawArgs);
 
   // Capture user's full shell environment
   const baseEnv: Record<string, string> = {};
@@ -297,6 +306,7 @@ async function main(): Promise<void> {
     const productName = `${p.accent}${p.bold}agent-sh${p.reset}`;
 
     const info = agentInfo as { name: string; version: string; model?: string; provider?: string } | null;
+    const backendReady = !!info?.model;
     const backendName = info?.name ?? "ash";
     const model = info?.model;
     const provider = info?.provider;
@@ -305,7 +315,7 @@ async function main(): Promise<void> {
       : null;
 
     let sections = "";
-    sections += `\n\n  ${p.muted}Backend:${p.reset} ${p.dim}${backendName}${p.reset}`;
+    sections += `\n\n  ${p.muted}Backend:${p.reset} ${p.dim}${backendName}${backendReady ? "" : " (not configured)"}${p.reset}`;
     if (modelValue) {
       sections += `\n  ${p.muted}Model:${p.reset} ${p.dim}${modelValue}${p.reset}`;
     }
@@ -330,7 +340,9 @@ async function main(): Promise<void> {
       }
     }
 
-    const hint = `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}>/help${p.muted} for commands${p.reset}`;
+    const hint = backendReady
+      ? `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}>/help${p.muted} for commands${p.reset}`
+      : `${p.muted}Set ${p.warning}OPENROUTER_API_KEY${p.muted} or ${p.warning}OPENAI_API_KEY${p.muted} and restart to enable AI${p.reset}`;
     const borderLine = `${p.muted}${"─".repeat(bannerW)}${p.reset}`;
 
     process.stdout.write(
