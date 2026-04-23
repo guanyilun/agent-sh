@@ -102,7 +102,35 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   bus.on("core:extensions-loaded", () => {
     const settings = getSettings();
-    const providerName = config.provider ?? settings.defaultProvider;
+
+    // Auto-detect common API-key env vars so a user with a key already
+    // exported doesn't need to edit settings.json to get started. Only
+    // fires if nothing else has registered a provider (extensions win).
+    if (providerRegistry.size === 0 && !config.apiKey) {
+      const openrouterKey = process.env.OPENROUTER_API_KEY;
+      const openaiKey = process.env.OPENAI_API_KEY;
+      if (openrouterKey) {
+        providerRegistry.set("openrouter", {
+          id: "openrouter",
+          apiKey: openrouterKey,
+          baseURL: "https://openrouter.ai/api/v1",
+          defaultModel: "anthropic/claude-sonnet-4.5",
+          models: ["anthropic/claude-sonnet-4.5", "openai/gpt-4o", "google/gemini-2.5-pro"],
+        });
+        bus.emit("ui:info", { message: "Auto-detected OPENROUTER_API_KEY — using openrouter provider. Load the openrouter extension for the full model catalog." });
+      } else if (openaiKey) {
+        providerRegistry.set("openai", {
+          id: "openai",
+          apiKey: openaiKey,
+          defaultModel: "gpt-4o-mini",
+          models: ["gpt-4o-mini", "gpt-4o", "gpt-5"],
+        });
+        bus.emit("ui:info", { message: "Auto-detected OPENAI_API_KEY — using openai provider." });
+      }
+    }
+
+    const providerName = config.provider ?? settings.defaultProvider
+      ?? (providerRegistry.size === 1 ? providerRegistry.keys().next().value : undefined);
     const activeProvider = providerName ? providerRegistry.get(providerName) ?? null : null;
 
     // User's persisted defaultModel wins over the provider's declared
@@ -114,7 +142,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     const effectiveModel = config.model ?? persistedModelFor(providerName) ?? activeProvider?.defaultModel;
 
     if (!effectiveApiKey) {
-      bus.emit("ui:error", { message: "No LLM provider configured. Set --api-key, configure a provider in ~/.agent-sh/settings.json, or load a provider extension (e.g. openrouter) that sets OPENROUTER_API_KEY." });
+      bus.emit("ui:error", { message: "No LLM provider configured. Export OPENROUTER_API_KEY or OPENAI_API_KEY for auto-setup, pass --api-key, or configure a provider in ~/.agent-sh/settings.json." });
       return;
     }
     if (!effectiveModel) {

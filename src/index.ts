@@ -297,6 +297,7 @@ async function main(): Promise<void> {
     const productName = `${p.accent}${p.bold}agent-sh${p.reset}`;
 
     const info = agentInfo as { name: string; version: string; model?: string; provider?: string } | null;
+    const backendReady = !!info?.model;
     const backendName = info?.name ?? "ash";
     const model = info?.model;
     const provider = info?.provider;
@@ -305,7 +306,7 @@ async function main(): Promise<void> {
       : null;
 
     let sections = "";
-    sections += `\n\n  ${p.muted}Backend:${p.reset} ${p.dim}${backendName}${p.reset}`;
+    sections += `\n\n  ${p.muted}Backend:${p.reset} ${p.dim}${backendName}${backendReady ? "" : " (not configured)"}${p.reset}`;
     if (modelValue) {
       sections += `\n  ${p.muted}Model:${p.reset} ${p.dim}${modelValue}${p.reset}`;
     }
@@ -330,7 +331,9 @@ async function main(): Promise<void> {
       }
     }
 
-    const hint = `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}>/help${p.muted} for commands${p.reset}`;
+    const hint = backendReady
+      ? `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}>/help${p.muted} for commands${p.reset}`
+      : `${p.muted}Set ${p.warning}OPENROUTER_API_KEY${p.muted} or ${p.warning}OPENAI_API_KEY${p.muted} and restart to enable AI${p.reset}`;
     const borderLine = `${p.muted}${"─".repeat(bannerW)}${p.reset}`;
 
     process.stdout.write(
