@@ -27,7 +27,7 @@ const EXAMPLE_SETTINGS = {
     openrouter: {
       apiKey: "$OPENROUTER_API_KEY",
       baseURL: "https://openrouter.ai/api/v1",
-      defaultModel: "anthropic/claude-sonnet-4.5",
+      defaultModel: "anthropic/claude-sonnet-4.6",
     },
     openai: {
       apiKey: "$OPENAI_API_KEY",

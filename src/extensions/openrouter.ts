@@ -13,13 +13,13 @@ import type { ExtensionContext } from "../types.js";
 
 const BASE_URL = "https://openrouter.ai/api/v1";
 
-/** Curated picks used immediately while the full catalog loads. */
+/** Curated picks used immediately while the full catalog loads.
+ *  First entry is the cold-start default — chosen to be cheap so users
+ *  can try agent-sh without a surprise bill. Change via /model (persists)
+ *  or set providers.openrouter.defaultModel in settings.json. */
 const DEFAULT_MODELS = [
-  "anthropic/claude-sonnet-4.5",
-  "google/gemini-2.5-pro-preview",
-  "openai/gpt-4.1",
-  "deepseek/deepseek-r1",
-  "meta-llama/llama-4-maverick",
+  "deepseek/deepseek-v3.2",
+  "anthropic/claude-sonnet-4.6",
 ];
 
 interface OpenRouterModel {
