@@ -191,13 +191,22 @@ export class AgentLoop implements AgentBackend {
     onCtor("config:add-modes", ({ modes: extra }) => {
       const providers = new Set(extra.map((m) => m.provider).filter(Boolean));
       const prev = this.modes[this.currentModeIndex];
+      // Keep the active mode even if the re-registration drops it (persisted
+      // model missing from a refreshed catalog) — otherwise currentModeIndex
+      // slips to modes[0] and the next stream() call uses a different model
+      // mid-turn.
+      const activePreserved =
+        prev &&
+        prev.provider &&
+        providers.has(prev.provider) &&
+        !extra.some((m) => m.model === prev.model && m.provider === prev.provider);
       this.modes = [
-        ...this.modes.filter((m) => !m.provider || !providers.has(m.provider)),
+        ...this.modes.filter((m) => {
+          if (activePreserved && m === prev) return true;
+          return !m.provider || !providers.has(m.provider);
+        }),
         ...extra,
       ];
-      // Preserve active model across provider re-registration — the index
-      // would otherwise slip when an async catalog fetch replaces the
-      // curated stub list with the full model set.
       if (prev) {
         const newIdx = this.modes.findIndex(
           (m) => m.model === prev.model && m.provider === prev.provider,
