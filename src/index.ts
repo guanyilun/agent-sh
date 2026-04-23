@@ -342,7 +342,7 @@ async function main(): Promise<void> {
 
     const hint = backendReady
       ? `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}>/help${p.muted} for commands${p.reset}`
-      : `${p.muted}Configure a provider in ${p.warning}~/.agent-sh/settings.json${p.muted} or load a provider extension to enable AI${p.reset}`;
+      : `${p.muted}Set ${p.warning}OPENROUTER_API_KEY${p.muted} or ${p.warning}OPENAI_API_KEY${p.muted} and restart to enable AI${p.reset}`;
     const borderLine = `${p.muted}${"─".repeat(bannerW)}${p.reset}`;
 
     process.stdout.write(

@@ -117,7 +117,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     const effectiveModel = config.model ?? persistedModelFor(providerName) ?? activeProvider?.defaultModel;
 
     if (!effectiveApiKey) {
-      bus.emit("ui:error", { message: "No LLM provider configured. Pass --api-key, configure a provider in ~/.agent-sh/settings.json, or load a provider extension (examples/extensions/openrouter.ts, openai.ts)." });
+      bus.emit("ui:error", { message: "No LLM provider configured. Export OPENROUTER_API_KEY or OPENAI_API_KEY for auto-setup, pass --api-key, or configure a provider in ~/.agent-sh/settings.json." });
       return;
     }
     if (!effectiveModel) {
