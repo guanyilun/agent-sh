@@ -58,8 +58,6 @@ export default function agentBackend(ctx: ExtensionContext): void {
   // wire the loop until we've resolved, so users never hit that path.
   const llmClient = new LlmClient({ apiKey: "not-configured", model: "not-configured" });
   ctx.define("llm:get-client", () => llmClient);
-  // Adapter behind ctx.llm — receives narrow {role, content}[] messages
-  // so extensions never see OpenAI SDK types.
   ctx.define("llm:invoke", (messages: { role: string; content: string }[], opts?: { maxTokens?: number }) => {
     return llmClient.complete({
       messages: messages as Parameters<typeof llmClient.complete>[0]["messages"],

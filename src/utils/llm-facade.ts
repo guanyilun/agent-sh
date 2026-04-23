@@ -1,9 +1,6 @@
 /**
- * Backend-agnostic LLM facade wired into every ExtensionContext.
- *
- * Delegates to an `llm:invoke` handler registered by the active backend.
- * Backends without an LLM don't define the handler; `available` stays
- * false and calls reject with a clear error.
+ * ctx.llm facade — delegates to an `llm:invoke` handler registered by the
+ * active backend. No handler → `available` is false and calls reject.
  */
 import type { HandlerRegistry } from "./handler-registry.js";
 import type { LlmInterface, LlmMessage, LlmSession } from "../types.js";
