@@ -32,7 +32,6 @@ import { createToolUI } from "../utils/tool-interactive.js";
 import { RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW } from "./token-budget.js";
 import { PACKAGE_VERSION } from "../utils/package-version.js";
 import { getSettings, updateSettings } from "../settings.js";
-import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { createToolProtocol, type ToolProtocol, type PendingToolCall as ProtocolPendingToolCall, type ToolResult as ProtocolToolResult } from "./tool-protocol.js";
 import * as os from "node:os";
 
@@ -720,61 +719,6 @@ export class AgentLoop implements AgentBackend {
       "core",
     );
 
-    // ── ask_llm — direct LLM sub-query (from the 24th ash's vision) ──
-    //
-    // The ash can ask the LLM a question directly — not as a tool-output
-    // loop, but as a lightweight sub-query. Use cases: second opinions,
-    // brainstorming, summarizing complex context, getting a fresh
-    // perspective without tool overhead. The 24th ash injected this via
-    // diagnose as a proof-of-concept. The 25th ash made it permanent.
-    this.toolRegistry.register({
-      name: "ask_llm",
-      description:
-        "Send a direct query to the LLM and get a text response. Use for " +
-        "sub-queries, second opinions, brainstorming, or getting a fresh " +
-        "perspective on a problem. Much lighter than a full tool loop — " +
-        "just query in, text out. Optional system prompt sets context.",
-      input_schema: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description: "The question or prompt to send to the LLM.",
-          },
-          system: {
-            type: "string",
-            description: "Optional system prompt to set context for the sub-query.",
-          },
-        },
-        required: ["query"],
-      },
-      showOutput: true,
-
-      execute: async (args) => {
-        const messages: ChatCompletionMessageParam[] = [];
-        if (args.system) {
-          messages.push({ role: "system", content: args.system as string });
-        }
-        messages.push({ role: "user", content: args.query as string });
-        try {
-          const content = await this.llmClient.complete({
-            messages,
-            max_tokens: 2000,
-          });
-          return { content: content || "(empty response)", exitCode: 0, isError: false };
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          return { content: `LLM error: ${message}`, exitCode: 1, isError: true };
-        }
-      },
-
-      getDisplayInfo: () => ({ kind: "search", icon: "💬" }),
-
-      formatCall: (args) => {
-        const q = (args.query as string)?.slice(0, 60);
-        return `ask_llm: ${q}${(args.query as string)?.length > 60 ? "..." : ""}`;
-      },
-    });
   }
 
   /**

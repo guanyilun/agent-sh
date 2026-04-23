@@ -53,6 +53,27 @@ export interface AgentMode {
   supportsReasoningEffort?: boolean;
 }
 
+/**
+ * Backend-agnostic LLM interface exposed via `ctx.llm`. Backends fulfill it
+ * by defining an `llm:invoke` handler; those without an LLM leave
+ * `available` false and calls reject.
+ */
+export interface LlmMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface LlmSession {
+  send(message: string): Promise<string>;
+  history(): ReadonlyArray<LlmMessage>;
+}
+
+export interface LlmInterface {
+  readonly available: boolean;
+  ask(opts: { query: string; system?: string; maxTokens?: number }): Promise<string>;
+  session(opts?: { system?: string; maxTokens?: number }): LlmSession;
+}
+
 export interface AgentShellConfig {
   shell?: string;
   model?: string;
@@ -120,6 +141,9 @@ export interface ExtensionContext {
   registerSkill: (name: string, description: string, filePath: string) => void;
   /** Remove a registered skill by name. */
   removeSkill: (name: string) => void;
+
+  // ── LLM access (backend-agnostic) ─────────────────────────
+  llm: LlmInterface;
 
   // ── Named handler registry (Emacs-style advice) ───────────
   /** Register a named handler. */
