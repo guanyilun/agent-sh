@@ -53,6 +53,36 @@ export interface AgentMode {
   supportsReasoningEffort?: boolean;
 }
 
+/**
+ * Backend-agnostic LLM interface exposed to extensions via `ctx.llm`.
+ *
+ * Extensions never touch the underlying client or SDK message types — they
+ * call `ask` for one-shot queries and `session` for multi-turn conversations.
+ * Backends fulfill this by defining an `llm:invoke` handler (see
+ * extensions/agent-backend.ts). Backends that lack an LLM leave `available`
+ * false, and calls throw a clear error.
+ */
+export interface LlmMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface LlmSession {
+  /** Send a follow-up; prior turns are retained internally. */
+  send(message: string): Promise<string>;
+  /** Snapshot of the conversation so far. */
+  history(): ReadonlyArray<LlmMessage>;
+}
+
+export interface LlmInterface {
+  /** True when a backend has registered an LLM adapter. */
+  readonly available: boolean;
+  /** One-shot query. */
+  ask(opts: { query: string; system?: string; maxTokens?: number }): Promise<string>;
+  /** Multi-turn session; message history is kept in the returned object. */
+  session(opts?: { system?: string; maxTokens?: number }): LlmSession;
+}
+
 export interface AgentShellConfig {
   shell?: string;
   model?: string;
@@ -120,6 +150,14 @@ export interface ExtensionContext {
   registerSkill: (name: string, description: string, filePath: string) => void;
   /** Remove a registered skill by name. */
   removeSkill: (name: string) => void;
+
+  // ── LLM access (backend-agnostic) ─────────────────────────
+  /**
+   * Backend-agnostic LLM facade. Extensions call `ctx.llm.ask(...)` or
+   * `ctx.llm.session(...)` without knowing whether ash, claude-code-bridge,
+   * pi-bridge, etc. is driving. Backends with no LLM leave `available: false`.
+   */
+  llm: LlmInterface;
 
   // ── Named handler registry (Emacs-style advice) ───────────
   /** Register a named handler. */

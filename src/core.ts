@@ -19,6 +19,7 @@
 import { EventBus, type ContentBlock } from "./event-bus.js";
 import { ContextManager } from "./context-manager.js";
 import type { AgentShellConfig, ExtensionContext, RemoteSessionOptions, RemoteSession } from "./types.js";
+import { createLlmFacade } from "./utils/llm-facade.js";
 import { setPalette } from "./utils/palette.js";
 import * as streamTransform from "./utils/stream-transform.js";
 import * as settingsMod from "./settings.js";
@@ -35,7 +36,7 @@ const STORAGE_ROOT = path.join(os.homedir(), ".agent-sh");
 // Re-export types that library consumers need
 export { EventBus } from "./event-bus.js";
 export type { ShellEvents } from "./event-bus.js";
-export type { AgentShellConfig, ExtensionContext } from "./types.js";
+export type { AgentShellConfig, ExtensionContext, LlmInterface, LlmMessage, LlmSession } from "./types.js";
 export { palette, setPalette, resetPalette } from "./utils/palette.js";
 export type { ColorPalette } from "./utils/palette.js";
 export type { AgentBackend, ToolDefinition } from "./agent/types.js";
@@ -201,6 +202,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         bus,
         contextManager,
         instanceId,
+        llm: createLlmFacade(handlers),
         quit: opts.quit,
         setPalette,
         createBlockTransform: (o) => streamTransform.createBlockTransform(bus, o),
