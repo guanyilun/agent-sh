@@ -1208,7 +1208,7 @@ export class AgentLoop implements AgentBackend {
       // Stream LLM response with retry
       const result = await this.streamWithRetry(systemPrompt, dynamicContext, signal);
 
-      const { text, toolCalls: streamedToolCalls, reasoning, reasoningField, reasoningDetails } = result;
+      const { text, toolCalls: streamedToolCalls, extras } = result;
 
       const toolCalls = this.handlers.call("tool-protocol:extract-calls", {
         text,
@@ -1218,7 +1218,7 @@ export class AgentLoop implements AgentBackend {
       fullResponseText += text;
 
       // Record the assistant message via protocol
-      this.toolProtocol.recordAssistant(this.conversation, text, toolCalls, reasoning, reasoningField, reasoningDetails);
+      this.toolProtocol.recordAssistant(this.conversation, text, toolCalls, extras);
       this.bus.emit("conversation:message-appended", {
         role: "assistant",
         content: text,
@@ -1624,19 +1624,17 @@ export class AgentLoop implements AgentBackend {
   ): Promise<{
     text: string;
     toolCalls: PendingToolCall[];
-    reasoning?: string;
-    reasoningField?: string;
-    reasoningDetails?: unknown[];
+    /** Provider-specific fields (reasoning, reasoning_content,
+     *  reasoning_details, …) to echo back on the next turn. Opaque to
+     *  the agent loop; addAssistantMessage spreads them onto the
+     *  assistant message verbatim. */
+    extras?: Record<string, unknown>;
   }> {
     let text = "";
-    // Accumulate reasoning under whichever field name the provider used
-    // so we can echo back the exact shape we received. Different providers
-    // disagree: OpenRouter emits `reasoning`, DeepSeek direct emits
-    // `reasoning_content`, Anthropic via bridge uses block-shaped
-    // `reasoning_details`. First-seen name wins for the string accumulator.
-    // reasoning_details streams as per-chunk fragments keyed by index —
-    // merge .text into one block per index or the provider rejects the
-    // fragmented shape on echo-back.
+    // Accumulate reasoning under whichever field name the provider used.
+    // OpenRouter emits `reasoning`, DeepSeek direct emits `reasoning_content`.
+    // reasoning_details arrives as per-chunk fragments keyed by index —
+    // merge .text per index or the provider 400s the fragmented shape.
     let reasoningField: string | null = null;
     let reasoning = "";
     const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();
@@ -1780,15 +1778,16 @@ export class AgentLoop implements AgentBackend {
       try { JSON.parse(s); } catch { tc.argumentsJson = "{}"; }
     }
 
-    const reasoningDetails = reasoningDetailsByIndex.size > 0
-      ? [...reasoningDetailsByIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v)
-      : undefined;
+    const extras: Record<string, unknown> = {};
+    if (reasoning && reasoningField) extras[reasoningField] = reasoning;
+    if (reasoningDetailsByIndex.size > 0) {
+      extras.reasoning_details = [...reasoningDetailsByIndex.entries()]
+        .sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+    }
     return {
       text,
       toolCalls: pendingToolCalls,
-      reasoning: reasoning || undefined,
-      reasoningField: reasoningField ?? undefined,
-      reasoningDetails,
+      extras: Object.keys(extras).length > 0 ? extras : undefined,
     };
   }
 }

@@ -133,14 +133,13 @@ export class ConversationState {
   addAssistantMessage(
     content: string | null,
     toolCalls?: { id: string; function: { name: string; arguments: string } }[],
-    reasoning?: string,
-    reasoningField?: string,
-    reasoningDetails?: unknown[],
+    extras?: Record<string, unknown>,
   ): void {
-    // Echo reasoning back under the same field name the stream used
-    // (reasoning vs reasoning_content — varies by provider). Providers
-    // that didn't stream reasoning get neither, so no spurious field
-    // appears on requests to non-reasoning models.
+    // extras is opaque provider-specific payload to echo back on
+    // subsequent turns (e.g. reasoning_content, reasoning_details). The
+    // stream parser (or an extension) decides what to collect; we just
+    // preserve the shape. Providers that didn't stream these fields
+    // receive an assistant message without them.
     const base: Record<string, unknown> = { role: "assistant", content: content ?? (toolCalls?.length ? null : "") };
     if (toolCalls?.length) {
       base.tool_calls = toolCalls.map((tc) => ({
@@ -149,8 +148,7 @@ export class ConversationState {
         function: tc.function,
       }));
     }
-    if (reasoning && reasoningField) base[reasoningField] = reasoning;
-    if (reasoningDetails && reasoningDetails.length > 0) base.reasoning_details = reasoningDetails;
+    if (extras) Object.assign(base, extras);
     this.messages.push(base as unknown as ChatCompletionMessageParam);
     this.invalidateMessagesCache();
   }

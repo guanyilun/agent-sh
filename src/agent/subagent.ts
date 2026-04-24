@@ -107,7 +107,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     }
 
     // Stream LLM response
-    const { text, toolCalls, assistantContent, assistantToolCalls, reasoning, reasoningField, reasoningDetails, usage } =
+    const { text, toolCalls, assistantContent, assistantToolCalls, extras, usage } =
       await streamOnce(llmClient, systemPrompt, conversation, apiTools, model, signal, dynamicContext);
 
     if (usage) {
@@ -117,7 +117,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
 
     fullResponseText += text;
 
-    conversation.addAssistantMessage(assistantContent, assistantToolCalls, reasoning, reasoningField, reasoningDetails);
+    conversation.addAssistantMessage(assistantContent, assistantToolCalls, extras);
 
     // No tool calls → done
     if (toolCalls.length === 0) break;
@@ -197,9 +197,7 @@ async function streamOnce(
   toolCalls: PendingToolCall[];
   assistantContent: string | null;
   assistantToolCalls: { id: string; function: { name: string; arguments: string } }[] | undefined;
-  reasoning?: string;
-  reasoningField?: string;
-  reasoningDetails?: unknown[];
+  extras?: Record<string, unknown>;
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
 }> {
   let text = "";
@@ -289,17 +287,18 @@ async function streamOnce(
     ? pendingToolCalls.map(tc => ({ id: tc.id, function: { name: tc.name, arguments: tc.argumentsJson } }))
     : undefined;
 
-  const reasoningDetails = reasoningDetailsByIndex.size > 0
-    ? [...reasoningDetailsByIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v)
-    : undefined;
+  const extras: Record<string, unknown> = {};
+  if (reasoning && reasoningField) extras[reasoningField] = reasoning;
+  if (reasoningDetailsByIndex.size > 0) {
+    extras.reasoning_details = [...reasoningDetailsByIndex.entries()]
+      .sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+  }
   return {
     text,
     toolCalls: pendingToolCalls,
     assistantContent: text || null,
     assistantToolCalls,
-    reasoning: reasoning || undefined,
-    reasoningField: reasoningField ?? undefined,
-    reasoningDetails,
+    extras: Object.keys(extras).length > 0 ? extras : undefined,
     usage,
   };
 }
