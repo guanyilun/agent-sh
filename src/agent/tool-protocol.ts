@@ -55,6 +55,8 @@ export interface ToolProtocol {
     conv: ConversationState,
     text: string,
     toolCalls: PendingToolCall[],
+    reasoning?: string,
+    reasoningDetails?: unknown[],
   ): void;
 
   /** Record all tool results for a batch as conversation messages. */
@@ -107,6 +109,8 @@ export class ApiToolProtocol implements ToolProtocol {
     conv: ConversationState,
     text: string,
     toolCalls: PendingToolCall[],
+    reasoning?: string,
+    reasoningDetails?: unknown[],
   ): void {
     const calls = toolCalls.length
       ? toolCalls.map((tc) => ({
@@ -114,7 +118,7 @@ export class ApiToolProtocol implements ToolProtocol {
           function: { name: tc.name, arguments: tc.argumentsJson },
         }))
       : undefined;
-    conv.addAssistantMessage(text || null, calls);
+    conv.addAssistantMessage(text || null, calls, reasoning, reasoningDetails);
   }
 
   recordResults(conv: ConversationState, results: ToolResult[]): void {
@@ -197,8 +201,10 @@ export class InlineToolProtocol implements ToolProtocol {
     conv: ConversationState,
     text: string,
     _toolCalls: PendingToolCall[],
+    reasoning?: string,
+    reasoningDetails?: unknown[],
   ): void {
-    conv.addAssistantMessage(text || null);
+    conv.addAssistantMessage(text || null, undefined, reasoning, reasoningDetails);
   }
 
   recordResults(conv: ConversationState, results: ToolResult[]): void {
@@ -481,6 +487,8 @@ export class DeferredToolProtocol implements ToolProtocol {
     conv: ConversationState,
     text: string,
     toolCalls: PendingToolCall[],
+    reasoning?: string,
+    reasoningDetails?: unknown[],
   ): void {
     const calls = toolCalls.length
       ? toolCalls.map((tc) => ({
@@ -488,7 +496,7 @@ export class DeferredToolProtocol implements ToolProtocol {
           function: { name: tc.name, arguments: tc.argumentsJson },
         }))
       : undefined;
-    conv.addAssistantMessage(text || null, calls);
+    conv.addAssistantMessage(text || null, calls, reasoning, reasoningDetails);
   }
 
   recordResults(conv: ConversationState, results: ToolResult[]): void {
@@ -594,6 +602,8 @@ export class DeferredLookupProtocol implements ToolProtocol {
     conv: ConversationState,
     text: string,
     toolCalls: PendingToolCall[],
+    reasoning?: string,
+    reasoningDetails?: unknown[],
   ): void {
     const calls = toolCalls.length
       ? toolCalls.map((tc) => ({
@@ -601,7 +611,7 @@ export class DeferredLookupProtocol implements ToolProtocol {
           function: { name: tc.name, arguments: tc.argumentsJson },
         }))
       : undefined;
-    conv.addAssistantMessage(text || null, calls);
+    conv.addAssistantMessage(text || null, calls, reasoning, reasoningDetails);
   }
 
   recordResults(conv: ConversationState, results: ToolResult[]): void {

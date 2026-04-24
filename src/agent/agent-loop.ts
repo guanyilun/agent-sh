@@ -1209,7 +1209,7 @@ export class AgentLoop implements AgentBackend {
       // Stream LLM response with retry
       const result = await this.streamWithRetry(systemPrompt, dynamicContext, signal);
 
-      const { text, toolCalls: streamedToolCalls } = result;
+      const { text, toolCalls: streamedToolCalls, reasoning, reasoningDetails } = result;
 
       const toolCalls = this.handlers.call("tool-protocol:extract-calls", {
         text,
@@ -1219,7 +1219,7 @@ export class AgentLoop implements AgentBackend {
       fullResponseText += text;
 
       // Record the assistant message via protocol
-      this.toolProtocol.recordAssistant(this.conversation, text, toolCalls);
+      this.toolProtocol.recordAssistant(this.conversation, text, toolCalls, reasoning, reasoningDetails);
       this.bus.emit("conversation:message-appended", {
         role: "assistant",
         content: text,
@@ -1625,8 +1625,12 @@ export class AgentLoop implements AgentBackend {
   ): Promise<{
     text: string;
     toolCalls: PendingToolCall[];
+    reasoning?: string;
+    reasoningDetails?: unknown[];
   }> {
     let text = "";
+    let reasoning = "";
+    const reasoningDetails: unknown[] = [];
     const pendingToolCalls: PendingToolCall[] = [];
 
     const rawMessages = [
@@ -1704,11 +1708,15 @@ export class AgentLoop implements AgentBackend {
         }
       }
 
-      // Reasoning/thinking tokens (non-standard, e.g. DeepSeek)
-      if ((delta as any)?.reasoning_content) {
-        this.bus.emit("agent:thinking-chunk", {
-          text: (delta as any).reasoning_content,
-        });
+      // Reasoning tokens (non-standard, varies by provider)
+      const rsn = (delta as any)?.reasoning ?? (delta as any)?.reasoning_content;
+      if (rsn) {
+        reasoning += rsn;
+        this.bus.emit("agent:thinking-chunk", { text: rsn });
+      }
+      const rd = (delta as any)?.reasoning_details;
+      if (Array.isArray(rd) && rd.length > 0) {
+        for (const d of rd) reasoningDetails.push(d);
       }
 
       // Tool calls (streamed incrementally)
@@ -1756,6 +1764,8 @@ export class AgentLoop implements AgentBackend {
     return {
       text,
       toolCalls: pendingToolCalls,
+      reasoning: reasoning || undefined,
+      reasoningDetails: reasoningDetails.length > 0 ? reasoningDetails : undefined,
     };
   }
 }

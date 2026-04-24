@@ -133,20 +133,24 @@ export class ConversationState {
   addAssistantMessage(
     content: string | null,
     toolCalls?: { id: string; function: { name: string; arguments: string } }[],
+    reasoning?: string,
+    reasoningDetails?: unknown[],
   ): void {
+    // Reasoning models (DeepSeek v3.x+, Claude thinking, OpenRouter reasoning
+    // routes) require their own reasoning tokens echoed back on subsequent
+    // turns. Missing reasoning → model degrades: emits tool calls as text
+    // content instead of structured tool_calls.
+    const base: Record<string, unknown> = { role: "assistant", content: content ?? (toolCalls?.length ? null : "") };
     if (toolCalls?.length) {
-      this.messages.push({
-        role: "assistant",
-        content: content ?? null,
-        tool_calls: toolCalls.map((tc) => ({
-          id: tc.id,
-          type: "function" as const,
-          function: tc.function,
-        })),
-      });
-    } else {
-      this.messages.push({ role: "assistant", content: content ?? "" });
+      base.tool_calls = toolCalls.map((tc) => ({
+        id: tc.id,
+        type: "function" as const,
+        function: tc.function,
+      }));
     }
+    if (reasoning) base.reasoning = reasoning;
+    if (reasoningDetails && reasoningDetails.length > 0) base.reasoning_details = reasoningDetails;
+    this.messages.push(base as unknown as ChatCompletionMessageParam);
     this.invalidateMessagesCache();
   }
 

@@ -107,7 +107,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     }
 
     // Stream LLM response
-    const { text, toolCalls, assistantContent, assistantToolCalls, usage } =
+    const { text, toolCalls, assistantContent, assistantToolCalls, reasoning, reasoningDetails, usage } =
       await streamOnce(llmClient, systemPrompt, conversation, apiTools, model, signal, dynamicContext);
 
     if (usage) {
@@ -117,7 +117,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
 
     fullResponseText += text;
 
-    conversation.addAssistantMessage(assistantContent, assistantToolCalls);
+    conversation.addAssistantMessage(assistantContent, assistantToolCalls, reasoning, reasoningDetails);
 
     // No tool calls → done
     if (toolCalls.length === 0) break;
@@ -197,9 +197,13 @@ async function streamOnce(
   toolCalls: PendingToolCall[];
   assistantContent: string | null;
   assistantToolCalls: { id: string; function: { name: string; arguments: string } }[] | undefined;
+  reasoning?: string;
+  reasoningDetails?: unknown[];
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
 }> {
   let text = "";
+  let reasoning = "";
+  const reasoningDetails: unknown[] = [];
   const pendingToolCalls: PendingToolCall[] = [];
   let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null = null;
 
@@ -238,6 +242,11 @@ async function streamOnce(
       text += delta.content;
     }
 
+    const rsn = (delta as any)?.reasoning ?? (delta as any)?.reasoning_content;
+    if (rsn) reasoning += rsn;
+    const rd = (delta as any)?.reasoning_details;
+    if (Array.isArray(rd)) for (const d of rd) reasoningDetails.push(d);
+
     if (delta?.tool_calls) {
       for (const tc of delta.tool_calls) {
         const idx = tc.index;
@@ -263,5 +272,13 @@ async function streamOnce(
     ? pendingToolCalls.map(tc => ({ id: tc.id, function: { name: tc.name, arguments: tc.argumentsJson } }))
     : undefined;
 
-  return { text, toolCalls: pendingToolCalls, assistantContent: text || null, assistantToolCalls, usage };
+  return {
+    text,
+    toolCalls: pendingToolCalls,
+    assistantContent: text || null,
+    assistantToolCalls,
+    reasoning: reasoning || undefined,
+    reasoningDetails: reasoningDetails.length > 0 ? reasoningDetails : undefined,
+    usage,
+  };
 }
