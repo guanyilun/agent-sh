@@ -70,7 +70,7 @@ interface RenderState {
   spinnerStartTime: number;
 
   // ── Tool output ──
-  openTool: { callId: string; title: string } | null;
+  openTool: { callId: string; title: string; kind?: string; displayDetail?: string } | null;
   /** Tools whose start line was closed before their complete fired.
    *  Their ✓ renders as a labeled ⎿ line instead of an orphan.
    *  `orphaned` = the group was finalized before they returned, so the
@@ -442,7 +442,7 @@ export default function activate(ctx: ExtensionContext): void {
       if (pending?.orphaned) {
         showOrphanedComplete(e.exitCode, e.resultDisplay, pending.title, pending.kind, pending.displayDetail);
       } else {
-        showToolComplete(e.exitCode, e.resultDisplay, pending?.title);
+        showToolComplete(e.exitCode, e.resultDisplay, pending?.displayDetail ?? pending?.title);
       }
       s.currentToolKind = undefined;
       s.spinnerStartTime = 0;
@@ -853,7 +853,14 @@ export default function activate(ctx: ExtensionContext): void {
         drain();
       } else {
         out().write(`  ${batchPrefix}${lines[lines.length - 1]}`);
-        if (extra?.toolCallId) s.openTool = { callId: extra.toolCallId, title };
+        if (extra?.toolCallId) {
+          s.openTool = {
+            callId: extra.toolCallId,
+            title,
+            kind: extra.kind,
+            displayDetail: extra.displayDetail ?? extractDetail(extra),
+          };
+        }
       }
     }
     s.hadToolCalls = true;
@@ -960,7 +967,11 @@ export default function activate(ctx: ExtensionContext): void {
     if (s.openTool) {
       out().write("\n");
       // Stash identity so the completion renders as ⎿ labeled, not orphan ✓.
-      s.pendingToolCompletes.set(s.openTool.callId, { title: s.openTool.title });
+      s.pendingToolCompletes.set(s.openTool.callId, {
+        title: s.openTool.title,
+        kind: s.openTool.kind,
+        displayDetail: s.openTool.displayDetail,
+      });
       s.openTool = null;
     }
   }
