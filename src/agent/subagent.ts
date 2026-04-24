@@ -205,7 +205,7 @@ async function streamOnce(
   let text = "";
   let reasoning = "";
   let reasoningField: string | null = null;
-  const reasoningDetails: unknown[] = [];
+  const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();
   const pendingToolCalls: PendingToolCall[] = [];
   let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null = null;
 
@@ -252,7 +252,16 @@ async function streamOnce(
       }
     }
     if (Array.isArray(d?.reasoning_details)) {
-      for (const x of d.reasoning_details) reasoningDetails.push(x);
+      for (const x of d.reasoning_details) {
+        const idx = typeof x?.index === "number" ? x.index : reasoningDetailsByIndex.size;
+        const prev = reasoningDetailsByIndex.get(idx);
+        if (!prev) {
+          reasoningDetailsByIndex.set(idx, { ...x });
+        } else {
+          if (typeof x.text === "string") prev.text = (prev.text ?? "") + x.text;
+          for (const [k, v] of Object.entries(x)) if (k !== "text" && prev[k] === undefined) prev[k] = v;
+        }
+      }
     }
 
     if (delta?.tool_calls) {
@@ -280,6 +289,9 @@ async function streamOnce(
     ? pendingToolCalls.map(tc => ({ id: tc.id, function: { name: tc.name, arguments: tc.argumentsJson } }))
     : undefined;
 
+  const reasoningDetails = reasoningDetailsByIndex.size > 0
+    ? [...reasoningDetailsByIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v)
+    : undefined;
   return {
     text,
     toolCalls: pendingToolCalls,
@@ -287,7 +299,7 @@ async function streamOnce(
     assistantToolCalls,
     reasoning: reasoning || undefined,
     reasoningField: reasoningField ?? undefined,
-    reasoningDetails: reasoningDetails.length > 0 ? reasoningDetails : undefined,
+    reasoningDetails,
     usage,
   };
 }

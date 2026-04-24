@@ -1634,9 +1634,12 @@ export class AgentLoop implements AgentBackend {
     // disagree: OpenRouter emits `reasoning`, DeepSeek direct emits
     // `reasoning_content`, Anthropic via bridge uses block-shaped
     // `reasoning_details`. First-seen name wins for the string accumulator.
+    // reasoning_details streams as per-chunk fragments keyed by index —
+    // merge .text into one block per index or the provider rejects the
+    // fragmented shape on echo-back.
     let reasoningField: string | null = null;
     let reasoning = "";
-    const reasoningDetails: unknown[] = [];
+    const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();
     const pendingToolCalls: PendingToolCall[] = [];
 
     const rawMessages = [
@@ -1723,7 +1726,16 @@ export class AgentLoop implements AgentBackend {
         }
       }
       if (Array.isArray(d?.reasoning_details)) {
-        for (const x of d.reasoning_details) reasoningDetails.push(x);
+        for (const x of d.reasoning_details) {
+          const idx = typeof x?.index === "number" ? x.index : reasoningDetailsByIndex.size;
+          const prev = reasoningDetailsByIndex.get(idx);
+          if (!prev) {
+            reasoningDetailsByIndex.set(idx, { ...x });
+          } else {
+            if (typeof x.text === "string") prev.text = (prev.text ?? "") + x.text;
+            for (const [k, v] of Object.entries(x)) if (k !== "text" && prev[k] === undefined) prev[k] = v;
+          }
+        }
       }
 
       // Tool calls (streamed incrementally)
@@ -1768,12 +1780,15 @@ export class AgentLoop implements AgentBackend {
       try { JSON.parse(s); } catch { tc.argumentsJson = "{}"; }
     }
 
+    const reasoningDetails = reasoningDetailsByIndex.size > 0
+      ? [...reasoningDetailsByIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v)
+      : undefined;
     return {
       text,
       toolCalls: pendingToolCalls,
       reasoning: reasoning || undefined,
       reasoningField: reasoningField ?? undefined,
-      reasoningDetails: reasoningDetails.length > 0 ? reasoningDetails : undefined,
+      reasoningDetails,
     };
   }
 }
