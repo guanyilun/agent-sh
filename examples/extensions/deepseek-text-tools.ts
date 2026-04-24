@@ -1,8 +1,8 @@
 /**
  * Recovers DeepSeek-style text-format tool calls (`name{...}` in
  * assistant content) when a provider drops structured tool_calls.
- * Opt-in via DEEPSEEK_TEXT_FALLBACK=1. Skips fenced code to avoid
- * dispatching examples the model is discussing.
+ * Skips fenced code to avoid dispatching examples the model is
+ * discussing.
  */
 import type { ExtensionContext } from "agent-sh/types";
 
@@ -13,9 +13,6 @@ interface PendingToolCall {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const enabled = process.env.DEEPSEEK_TEXT_FALLBACK === "1";
-  if (!enabled) return;
-
   let counter = 0;
 
   ctx.advise(
