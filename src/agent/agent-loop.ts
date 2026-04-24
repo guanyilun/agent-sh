@@ -753,10 +753,9 @@ export class AgentLoop implements AgentBackend {
   private registerHandlers(): void {
     const h = this.handlers;
 
-    // Tool-call extraction. Default delegates to the active toolProtocol.
-    // Extensions advise this to inject fallback parsers (e.g. DeepSeek's
-    // text-format `name{json}` pattern when a provider drops structured
-    // tool_calls) without touching the protocol class hierarchy.
+    // Advisable so extensions can inject fallback parsers (e.g. recover
+    // text-format `name{json}` calls when a provider drops structured
+    // tool_calls) without subclassing the protocol.
     h.define("tool-protocol:extract-calls", (args: {
       text: string;
       streamedCalls: ProtocolPendingToolCall[];
@@ -1212,7 +1211,6 @@ export class AgentLoop implements AgentBackend {
 
       const { text, toolCalls: streamedToolCalls } = result;
 
-      // Extract tool calls via advisable handler (default: active protocol).
       const toolCalls = this.handlers.call("tool-protocol:extract-calls", {
         text,
         streamedCalls: streamedToolCalls,
@@ -1658,9 +1656,6 @@ export class AgentLoop implements AgentBackend {
       this.toolRegistry.all().map((t) => t.name),
     );
 
-    // Observability hook: extensions (wire loggers, request recorders,
-    // response classifiers) listen to llm:request and llm:chunk to
-    // capture the exact request/response shape without touching core.
     const requestParams = {
       messages,
       tools: apiTools,

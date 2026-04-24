@@ -1,23 +1,7 @@
 /**
- * Wire log — captures every LLM request + stream chunk to disk for
- * debugging protocol issues (tool-call collapse, streaming bugs,
- * provider response shape questions).
- *
- * Enable by renaming to wire-log.ts (or adding to settings.json
- * extensions list). Outputs to $AGENT_SH_WIRE_DIR or ~/.agent-sh/wire
- * by default. One directory per session, one pair of files per turn:
- *
- *   2026-04-24T13-33-57-213Z.request.json   — messages, tools, model
- *   2026-04-24T13-33-57-213Z.chunks.jsonl   — one streaming chunk per line
- *
- * Replay a captured request via curl:
- *   jq 'del(.stream, .stream_options)' <file>.request.json |
- *     curl -sS $OPENAI_BASE_URL/chat/completions \
- *       -H "Authorization: Bearer $OPENAI_API_KEY" \
- *       -H "Content-Type: application/json" -d @-
- *
- * Disk cost: ~tens of KB per turn. Strip with `rm -rf ~/.agent-sh/wire`
- * when done.
+ * Dumps every LLM request + streamed chunk to $AGENT_SH_WIRE_DIR
+ * (default ~/.agent-sh/wire) for offline replay via curl. Paired files
+ * per turn: <stamp>.request.json and <stamp>.chunks.jsonl.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -29,9 +13,8 @@ export default function activate(ctx: ExtensionContext): void {
     ?? path.join(os.homedir(), ".agent-sh", "wire");
   fs.mkdirSync(dir, { recursive: true });
 
-  // Pair request with its chunks via a shared timestamp. The llm:chunk
-  // listener has no direct link back to the request that triggered it,
-  // so we anchor on the most recent llm:request stamp.
+  // llm:chunk has no back-pointer to its request, so anchor both on
+  // the timestamp set when llm:request fires.
   let currentStamp: string | null = null;
 
   ctx.bus.on("llm:request", (req) => {

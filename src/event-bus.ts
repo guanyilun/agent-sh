@@ -54,10 +54,8 @@ export interface ShellEvents {
   // Token usage (emitted after each LLM call, when available)
   "agent:usage": { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 
-  // Wire-level observability. Fires once per LLM streaming request (with
-  // the exact params agent-loop sends) and once per received chunk.
-  // Intended for debug/wire-capture extensions — keep listeners cheap
-  // since llm:chunk fires thousands of times per session.
+  // Wire-level observability for debug/capture extensions. llm:chunk
+  // fires on every streamed chunk — keep listeners cheap.
   "llm:request": {
     messages: unknown[];
     tools?: unknown;
