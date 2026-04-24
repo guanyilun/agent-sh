@@ -897,14 +897,15 @@ export default function activate(ctx: ExtensionContext): void {
     kind: string | undefined,
     displayDetail: string | undefined,
   ): void {
-    if (!s.renderer) return;
     if (s.orphanContHeaderKind !== kind) {
       stopCurrentSpinner();
       closeToolLine();
       flushCommandOutput();
+      if (!s.renderer) startAgentResponse();
+      showCollapsedThinking();
       const icon = (kind && KIND_ICONS[kind]) ?? "▶";
       const label = kind ?? "tool";
-      s.renderer.writeLine(`${p.muted}${icon} ${label} (cont.)${p.reset}`);
+      s.renderer!.writeLine(`${p.muted}${icon} ${label} (cont.)${p.reset}`);
       drain();
       s.orphanContHeaderKind = kind;
     }
