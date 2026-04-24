@@ -753,6 +753,15 @@ export class AgentLoop implements AgentBackend {
   private registerHandlers(): void {
     const h = this.handlers;
 
+    // Tool-call extraction. Default delegates to the active toolProtocol.
+    // Extensions advise this to inject fallback parsers (e.g. DeepSeek's
+    // text-format `name{json}` pattern when a provider drops structured
+    // tool_calls) without touching the protocol class hierarchy.
+    h.define("tool-protocol:extract-calls", (args: {
+      text: string;
+      streamedCalls: ProtocolPendingToolCall[];
+    }) => this.toolProtocol.extractToolCalls(args.text, args.streamedCalls));
+
     // System prompt: static identity + behavioral instructions.
     // Extensions can use registerInstruction() for a managed section,
     // or advise this handler directly for full control.
@@ -1203,9 +1212,11 @@ export class AgentLoop implements AgentBackend {
 
       const { text, toolCalls: streamedToolCalls } = result;
 
-      // Extract tool calls via protocol (API mode uses streamed calls,
-      // inline mode parses XML from text)
-      const toolCalls = this.toolProtocol.extractToolCalls(text, streamedToolCalls);
+      // Extract tool calls via advisable handler (default: active protocol).
+      const toolCalls = this.handlers.call("tool-protocol:extract-calls", {
+        text,
+        streamedCalls: streamedToolCalls,
+      }) as ProtocolPendingToolCall[];
 
       fullResponseText += text;
 
@@ -1647,16 +1658,22 @@ export class AgentLoop implements AgentBackend {
       this.toolRegistry.all().map((t) => t.name),
     );
 
-    const stream = await this.llmClient.stream({
+    // Observability hook: extensions (wire loggers, request recorders,
+    // response classifiers) listen to llm:request and llm:chunk to
+    // capture the exact request/response shape without touching core.
+    const requestParams = {
       messages,
       tools: apiTools,
       model: this.currentModel,
       reasoning_effort: this.shouldSendReasoningEffort() ? this.thinkingLevel : undefined,
-      signal,
-    });
+    };
+    this.bus.emit("llm:request", requestParams);
+
+    const stream = await this.llmClient.stream({ ...requestParams, signal });
 
     for await (const chunk of stream) {
       if (signal.aborted) break;
+      this.bus.emit("llm:chunk", { chunk });
 
       // Token usage (may arrive in a chunk with empty choices)
       if ((chunk as any).usage) {
