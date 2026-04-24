@@ -1208,7 +1208,7 @@ export class AgentLoop implements AgentBackend {
       // Stream LLM response with retry
       const result = await this.streamWithRetry(systemPrompt, dynamicContext, signal);
 
-      const { text, toolCalls: streamedToolCalls, reasoning, reasoningDetails } = result;
+      const { text, toolCalls: streamedToolCalls, reasoning, reasoningField, reasoningDetails } = result;
 
       const toolCalls = this.handlers.call("tool-protocol:extract-calls", {
         text,
@@ -1218,7 +1218,7 @@ export class AgentLoop implements AgentBackend {
       fullResponseText += text;
 
       // Record the assistant message via protocol
-      this.toolProtocol.recordAssistant(this.conversation, text, toolCalls, reasoning, reasoningDetails);
+      this.toolProtocol.recordAssistant(this.conversation, text, toolCalls, reasoning, reasoningField, reasoningDetails);
       this.bus.emit("conversation:message-appended", {
         role: "assistant",
         content: text,
@@ -1625,9 +1625,16 @@ export class AgentLoop implements AgentBackend {
     text: string;
     toolCalls: PendingToolCall[];
     reasoning?: string;
+    reasoningField?: string;
     reasoningDetails?: unknown[];
   }> {
     let text = "";
+    // Accumulate reasoning under whichever field name the provider used
+    // so we can echo back the exact shape we received. Different providers
+    // disagree: OpenRouter emits `reasoning`, DeepSeek direct emits
+    // `reasoning_content`, Anthropic via bridge uses block-shaped
+    // `reasoning_details`. First-seen name wins for the string accumulator.
+    let reasoningField: string | null = null;
     let reasoning = "";
     const reasoningDetails: unknown[] = [];
     const pendingToolCalls: PendingToolCall[] = [];
@@ -1707,15 +1714,16 @@ export class AgentLoop implements AgentBackend {
         }
       }
 
-      // Reasoning tokens (non-standard, varies by provider)
-      const rsn = (delta as any)?.reasoning ?? (delta as any)?.reasoning_content;
-      if (rsn) {
-        reasoning += rsn;
-        this.bus.emit("agent:thinking-chunk", { text: rsn });
+      const d = delta as any;
+      for (const name of ["reasoning", "reasoning_content"] as const) {
+        if (typeof d?.[name] === "string" && d[name].length > 0) {
+          reasoning += d[name];
+          reasoningField ??= name;
+          this.bus.emit("agent:thinking-chunk", { text: d[name] });
+        }
       }
-      const rd = (delta as any)?.reasoning_details;
-      if (Array.isArray(rd) && rd.length > 0) {
-        for (const d of rd) reasoningDetails.push(d);
+      if (Array.isArray(d?.reasoning_details)) {
+        for (const x of d.reasoning_details) reasoningDetails.push(x);
       }
 
       // Tool calls (streamed incrementally)
@@ -1764,6 +1772,7 @@ export class AgentLoop implements AgentBackend {
       text,
       toolCalls: pendingToolCalls,
       reasoning: reasoning || undefined,
+      reasoningField: reasoningField ?? undefined,
       reasoningDetails: reasoningDetails.length > 0 ? reasoningDetails : undefined,
     };
   }

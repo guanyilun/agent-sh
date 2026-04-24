@@ -134,12 +134,13 @@ export class ConversationState {
     content: string | null,
     toolCalls?: { id: string; function: { name: string; arguments: string } }[],
     reasoning?: string,
+    reasoningField?: string,
     reasoningDetails?: unknown[],
   ): void {
-    // Reasoning models (DeepSeek v3.x+, Claude thinking, OpenRouter reasoning
-    // routes) require their own reasoning tokens echoed back on subsequent
-    // turns. Missing reasoning → model degrades: emits tool calls as text
-    // content instead of structured tool_calls.
+    // Echo reasoning back under the same field name the stream used
+    // (reasoning vs reasoning_content — varies by provider). Providers
+    // that didn't stream reasoning get neither, so no spurious field
+    // appears on requests to non-reasoning models.
     const base: Record<string, unknown> = { role: "assistant", content: content ?? (toolCalls?.length ? null : "") };
     if (toolCalls?.length) {
       base.tool_calls = toolCalls.map((tc) => ({
@@ -148,7 +149,7 @@ export class ConversationState {
         function: tc.function,
       }));
     }
-    if (reasoning) base.reasoning = reasoning;
+    if (reasoning && reasoningField) base[reasoningField] = reasoning;
     if (reasoningDetails && reasoningDetails.length > 0) base.reasoning_details = reasoningDetails;
     this.messages.push(base as unknown as ChatCompletionMessageParam);
     this.invalidateMessagesCache();
