@@ -899,6 +899,7 @@ export default function activate(ctx: ExtensionContext): void {
   ): void {
     if (!s.renderer) return;
     if (s.orphanContHeaderKind !== kind) {
+      stopCurrentSpinner();
       closeToolLine();
       flushCommandOutput();
       const icon = (kind && KIND_ICONS[kind]) ?? "▶";
@@ -983,6 +984,7 @@ export default function activate(ctx: ExtensionContext): void {
       s.toolGroupSummaries = [];
       return;
     }
+    stopCurrentSpinner();
     closeToolLine();
     if (!s.renderer) startAgentResponse();
     const groupLine: string = ctx.call(
