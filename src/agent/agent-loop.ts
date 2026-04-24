@@ -1624,17 +1624,13 @@ export class AgentLoop implements AgentBackend {
   ): Promise<{
     text: string;
     toolCalls: PendingToolCall[];
-    /** Provider-specific fields (reasoning, reasoning_content,
-     *  reasoning_details, …) to echo back on the next turn. Opaque to
-     *  the agent loop; addAssistantMessage spreads them onto the
-     *  assistant message verbatim. */
+    /** Provider-specific fields (reasoning, reasoning_details, …) to
+     *  echo back verbatim on the next turn. */
     extras?: Record<string, unknown>;
   }> {
     let text = "";
-    // Accumulate reasoning under whichever field name the provider used.
-    // OpenRouter emits `reasoning`, DeepSeek direct emits `reasoning_content`.
-    // reasoning_details arrives as per-chunk fragments keyed by index —
-    // merge .text per index or the provider 400s the fragmented shape.
+    // reasoning_details streams as per-chunk fragments keyed by index;
+    // merge .text per index or the provider rejects the fragmented shape.
     let reasoningField: string | null = null;
     let reasoning = "";
     const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();

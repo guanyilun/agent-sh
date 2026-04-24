@@ -135,11 +135,9 @@ export class ConversationState {
     toolCalls?: { id: string; function: { name: string; arguments: string } }[],
     extras?: Record<string, unknown>,
   ): void {
-    // extras is opaque provider-specific payload to echo back on
-    // subsequent turns (e.g. reasoning_content, reasoning_details). The
-    // stream parser (or an extension) decides what to collect; we just
-    // preserve the shape. Providers that didn't stream these fields
-    // receive an assistant message without them.
+    // extras is opaque provider payload to echo back (reasoning_content,
+    // reasoning_details, etc.). Spread verbatim; shape is the stream
+    // parser's concern.
     const base: Record<string, unknown> = { role: "assistant", content: content ?? (toolCalls?.length ? null : "") };
     if (toolCalls?.length) {
       base.tool_calls = toolCalls.map((tc) => ({
@@ -175,14 +173,10 @@ export class ConversationState {
   }
 
   /**
-   * Thinking-mode providers (DeepSeek) reject a request if ANY assistant
-   * message is missing reasoning_content when the conversation established
-   * a thinking-mode context. Two gaps cause this:
-   *   (1) text-only assistant turns where the model didn't emit reasoning,
-   *   (2) messages from before reasoning capture was enabled.
-   * Also: providers that stream `reasoning` (OpenRouter) expect the echo
-   * as `reasoning_content`. We cross-alias to keep addAssistantMessage
-   * shape-preserving while satisfying the strictest input contract.
+   * DeepSeek 400s if any assistant in a thinking-mode conversation is
+   * missing reasoning_content. Cross-alias here (OpenRouter streams as
+   * `reasoning`, DeepSeek input expects `reasoning_content`) and stub
+   * gaps (text-only turns, pre-fix messages) with empty string.
    */
   private normalizeReasoningConsistency(
     messages: ChatCompletionMessageParam[],

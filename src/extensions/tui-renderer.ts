@@ -434,10 +434,8 @@ export default function activate(ctx: ExtensionContext): void {
       if (e.toolCallId) s.pendingToolCompletes.delete(e.toolCallId);
       s.toolGroupCompletedCount++;
       s.currentToolKind = undefined;
-      // Eager finalize: render the aggregate as soon as all members of
-      // this batch's group have returned. Otherwise permission previews
-      // or out-of-band renders from the next tool can push the └ line
-      // below its children.
+      // Finalize as soon as all members return so aggregate lands right
+      // after its children, not below out-of-band renders from the next tool.
       const batchGroup = batchGroups.get(s.toolGroupKind);
       if (batchGroup && s.toolGroupCompletedCount >= batchGroup.total) {
         finalizeToolGroup();
