@@ -434,6 +434,14 @@ export default function activate(ctx: ExtensionContext): void {
       if (e.toolCallId) s.pendingToolCompletes.delete(e.toolCallId);
       s.toolGroupCompletedCount++;
       s.currentToolKind = undefined;
+      // Eager finalize: render the aggregate as soon as all members of
+      // this batch's group have returned. Otherwise permission previews
+      // or out-of-band renders from the next tool can push the └ line
+      // below its children.
+      const batchGroup = batchGroups.get(s.toolGroupKind);
+      if (batchGroup && s.toolGroupCompletedCount >= batchGroup.total) {
+        finalizeToolGroup();
+      }
     } else {
       // Tools that lost the inline slot render as a labeled ⎿. Orphans
       // (group finalized before they returned) reroute via showOrphanedComplete.
