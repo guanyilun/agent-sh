@@ -72,8 +72,13 @@ interface RenderState {
   // ── Tool output ──
   openTool: { callId: string; title: string } | null;
   /** Tools whose start line was closed before their complete fired.
-   *  Their ✓ renders as a labeled ⎿ line instead of an orphan. */
-  pendingToolCompletes: Map<string, { title: string }>;
+   *  Their ✓ renders as a labeled ⎿ line instead of an orphan.
+   *  `orphaned` is set when the group they belonged to was finalized
+   *  (e.g. by a cross-kind standalone tool arriving mid-batch), so the
+   *  ⎿ child indent would make them look like children of whatever
+   *  rendered in between. Orphaned entries render flush-left as their
+   *  own standalone tool-complete lines instead. */
+  pendingToolCompletes: Map<string, { title: string; kind?: string; displayDetail?: string; orphaned?: boolean }>;
   currentToolKind: string | undefined;
   toolStartTime: number;
   toolExitCode: number | null;
@@ -81,6 +86,12 @@ interface RenderState {
   commandOutputLineCount: number;
   commandOutputOverflow: number;
   commandOverflowLines: string[];
+
+  /** Kind of the most recently emitted "(cont.)" header for orphan
+   *  completions. Lets consecutive orphans of the same kind share one
+   *  header instead of re-emitting per completion. Cleared on any
+   *  non-orphan render. */
+  orphanContHeaderKind: string | undefined;
 
   // ── Tool grouping (collapse sequential same-type read-only tools) ──
   toolGroupKind: string | undefined;
@@ -112,6 +123,7 @@ function createRenderState(): RenderState {
     spinnerStartTime: 0,
     openTool: null,
     pendingToolCompletes: new Map(),
+    orphanContHeaderKind: undefined,
     currentToolKind: undefined,
     toolStartTime: 0,
     toolExitCode: null,
@@ -334,6 +346,7 @@ export default function activate(ctx: ExtensionContext): void {
     if (!shouldRender()) return;
     fencedTransform.flush();
     finalizeToolGroup();
+    s.orphanContHeaderKind = undefined;
     batchGroups = new Map();
     for (const group of e.groups) {
       batchGroups.set(group.kind, {
@@ -350,6 +363,7 @@ export default function activate(ctx: ExtensionContext): void {
     stopCurrentSpinner();
     s.currentToolKind = e.kind;
     s.toolStartTime = Date.now();
+    s.orphanContHeaderKind = undefined;
 
     if (e.title === "user_shell") {
       finalizeToolGroup();
@@ -399,9 +413,15 @@ export default function activate(ctx: ExtensionContext): void {
         s.toolGroupRendered++;
       }
       // Record identity so late completes (after a premature finalize
-      // from a cross-kind standalone start) can render as labeled ⎿ lines.
+      // from a cross-kind standalone start) can render as labeled ⎿
+      // lines under their own group, or as standalone orphans if the
+      // group got interrupted before any completes landed.
       if (e.toolCallId) {
-        s.pendingToolCompletes.set(e.toolCallId, { title: e.title });
+        s.pendingToolCompletes.set(e.toolCallId, {
+          title: e.title,
+          kind,
+          displayDetail: e.displayDetail ?? extractDetail(e),
+        });
       }
     } else {
       // Standalone tool — single in its batch kind, or not groupable
@@ -424,9 +444,16 @@ export default function activate(ctx: ExtensionContext): void {
       s.currentToolKind = undefined;
     } else {
       // Route by callId — tools that lost the inline slot get a labeled ⎿ line.
+      // Orphaned pendings (group was interrupted mid-batch) render as
+      // standalone flush-left lines so they don't appear to be children
+      // of whatever tool rendered between them and their original header.
       const pending = e.toolCallId ? s.pendingToolCompletes.get(e.toolCallId) : undefined;
       if (pending) s.pendingToolCompletes.delete(e.toolCallId!);
-      showToolComplete(e.exitCode, e.resultDisplay, pending?.title);
+      if (pending?.orphaned) {
+        showOrphanedComplete(e.exitCode, e.resultDisplay, pending.title, pending.kind, pending.displayDetail);
+      } else {
+        showToolComplete(e.exitCode, e.resultDisplay, pending?.title);
+      }
       s.currentToolKind = undefined;
       s.spinnerStartTime = 0;
       startThinkingSpinner();
@@ -869,6 +896,34 @@ export default function activate(ctx: ExtensionContext): void {
     if (resultDisplay?.body) renderResultBody(resultDisplay.body);
   }
 
+  /** Render a completion whose batch group was finalized before any
+   *  member completed (e.g. a cross-kind standalone tool arrived mid-
+   *  batch). We re-emit the group header in muted "(cont.)" form so the
+   *  ⎿ line that follows has a real parent above it, then render the
+   *  completion as a normal labeled ⎿ child. Subsequent orphans of the
+   *  same kind reuse the already-emitted continuation header. */
+  function showOrphanedComplete(
+    exitCode: number | null,
+    resultDisplay: ToolResultDisplay | undefined,
+    title: string,
+    kind: string | undefined,
+    displayDetail: string | undefined,
+  ): void {
+    if (!s.renderer) return;
+    if (s.orphanContHeaderKind !== kind) {
+      closeToolLine();
+      flushCommandOutput();
+      const icon = (kind && KIND_ICONS[kind]) ?? "▶";
+      const label = kind ?? "tool";
+      s.renderer.writeLine(`${p.muted}${icon} ${label} (cont.)${p.reset}`);
+      drain();
+      s.orphanContHeaderKind = kind;
+    }
+    // Match grouped rendering: show displayDetail (pattern, path, etc.)
+    // instead of the tool name, falling back to title if no detail.
+    showToolComplete(exitCode, resultDisplay, displayDetail || title);
+  }
+
   function renderResultBody(body: ToolResultBody): void {
     if (!s.renderer) return;
     const lines: string[] = ctx.call("render:result-body", body, cappedW()) ?? [];
@@ -925,6 +980,17 @@ export default function activate(ctx: ExtensionContext): void {
   /** Render the group aggregate ⎿ line, or skip if no members have
    *  completed yet (late completes will render individually as ⎿ labeled). */
   function finalizeToolGroup(): void {
+    // Any pending completes belonging to this group that haven't returned
+    // yet will arrive later — after a sibling tool has rendered in between
+    // and after the group state is reset. Mark them orphaned now so the
+    // completion handler re-emits a "(cont.)" header before the ⎿ line.
+    // Covers all three finalize exits: <=1 member, skipAggregate, and
+    // post-aggregate-drawn with stragglers still in flight.
+    if (s.toolGroupKind) {
+      for (const pending of s.pendingToolCompletes.values()) {
+        if (pending.kind === s.toolGroupKind) pending.orphaned = true;
+      }
+    }
     const skipAggregate = s.toolGroupCount > 1 && s.toolGroupCompletedCount === 0;
     if (s.toolGroupCount <= 1 || skipAggregate) {
       s.toolGroupKind = undefined;
