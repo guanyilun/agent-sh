@@ -30,6 +30,15 @@ npm run dev
 DEBUG=1 agent-sh --api-key "$KEY" --model gpt-4o
 ```
 
+## Updating
+
+To pick up the latest changes, re-run the install command — npm refetches the git HEAD (or latest npm release) and replaces the global install in place. No uninstall step needed.
+
+```bash
+npm install -g github:guanyilun/agent-sh   # latest from GitHub main
+npm install -g agent-sh@latest             # latest npm release
+```
+
 ## Provider Examples
 
 agent-sh works with any OpenAI-compatible API. Here are common configurations:
