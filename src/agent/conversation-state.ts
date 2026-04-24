@@ -133,20 +133,21 @@ export class ConversationState {
   addAssistantMessage(
     content: string | null,
     toolCalls?: { id: string; function: { name: string; arguments: string } }[],
+    extras?: Record<string, unknown>,
   ): void {
+    // extras is opaque provider payload to echo back (reasoning_content,
+    // reasoning_details, etc.). Spread verbatim; shape is the stream
+    // parser's concern.
+    const base: Record<string, unknown> = { role: "assistant", content: content ?? (toolCalls?.length ? null : "") };
     if (toolCalls?.length) {
-      this.messages.push({
-        role: "assistant",
-        content: content ?? null,
-        tool_calls: toolCalls.map((tc) => ({
-          id: tc.id,
-          type: "function" as const,
-          function: tc.function,
-        })),
-      });
-    } else {
-      this.messages.push({ role: "assistant", content: content ?? "" });
+      base.tool_calls = toolCalls.map((tc) => ({
+        id: tc.id,
+        type: "function" as const,
+        function: tc.function,
+      }));
     }
+    if (extras) Object.assign(base, extras);
+    this.messages.push(base as unknown as ChatCompletionMessageParam);
     this.invalidateMessagesCache();
   }
 
@@ -168,7 +169,32 @@ export class ConversationState {
   }
 
   getMessages(): ChatCompletionMessageParam[] {
-    return this.messages;
+    return this.normalizeReasoningConsistency(this.messages);
+  }
+
+  /**
+   * DeepSeek 400s if any assistant in a thinking-mode conversation is
+   * missing reasoning_content. Cross-alias here (OpenRouter streams as
+   * `reasoning`, DeepSeek input expects `reasoning_content`) and stub
+   * gaps (text-only turns, pre-fix messages) with empty string.
+   */
+  private normalizeReasoningConsistency(
+    messages: ChatCompletionMessageParam[],
+  ): ChatCompletionMessageParam[] {
+    const needsNormalize = messages.some(
+      (m) => m.role === "assistant" && (
+        (m as any).reasoning !== undefined ||
+        (m as any).reasoning_content !== undefined ||
+        (m as any).reasoning_details !== undefined
+      ),
+    );
+    if (!needsNormalize) return messages;
+    return messages.map((m) => {
+      if (m.role !== "assistant") return m;
+      const a = m as any;
+      if (a.reasoning_content !== undefined) return m;
+      return { ...m, reasoning_content: a.reasoning ?? "" } as ChatCompletionMessageParam;
+    });
   }
 
   /**

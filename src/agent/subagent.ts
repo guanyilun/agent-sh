@@ -107,7 +107,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     }
 
     // Stream LLM response
-    const { text, toolCalls, assistantContent, assistantToolCalls, usage } =
+    const { text, toolCalls, assistantContent, assistantToolCalls, extras, usage } =
       await streamOnce(llmClient, systemPrompt, conversation, apiTools, model, signal, dynamicContext);
 
     if (usage) {
@@ -117,7 +117,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
 
     fullResponseText += text;
 
-    conversation.addAssistantMessage(assistantContent, assistantToolCalls);
+    conversation.addAssistantMessage(assistantContent, assistantToolCalls, extras);
 
     // No tool calls → done
     if (toolCalls.length === 0) break;
@@ -197,9 +197,13 @@ async function streamOnce(
   toolCalls: PendingToolCall[];
   assistantContent: string | null;
   assistantToolCalls: { id: string; function: { name: string; arguments: string } }[] | undefined;
+  extras?: Record<string, unknown>;
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
 }> {
   let text = "";
+  let reasoning = "";
+  let reasoningField: string | null = null;
+  const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();
   const pendingToolCalls: PendingToolCall[] = [];
   let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null = null;
 
@@ -238,6 +242,26 @@ async function streamOnce(
       text += delta.content;
     }
 
+    const d = delta as any;
+    for (const name of ["reasoning", "reasoning_content"] as const) {
+      if (typeof d?.[name] === "string" && d[name].length > 0) {
+        reasoning += d[name];
+        reasoningField ??= name;
+      }
+    }
+    if (Array.isArray(d?.reasoning_details)) {
+      for (const x of d.reasoning_details) {
+        const idx = typeof x?.index === "number" ? x.index : reasoningDetailsByIndex.size;
+        const prev = reasoningDetailsByIndex.get(idx);
+        if (!prev) {
+          reasoningDetailsByIndex.set(idx, { ...x });
+        } else {
+          if (typeof x.text === "string") prev.text = (prev.text ?? "") + x.text;
+          for (const [k, v] of Object.entries(x)) if (k !== "text" && prev[k] === undefined) prev[k] = v;
+        }
+      }
+    }
+
     if (delta?.tool_calls) {
       for (const tc of delta.tool_calls) {
         const idx = tc.index;
@@ -263,5 +287,18 @@ async function streamOnce(
     ? pendingToolCalls.map(tc => ({ id: tc.id, function: { name: tc.name, arguments: tc.argumentsJson } }))
     : undefined;
 
-  return { text, toolCalls: pendingToolCalls, assistantContent: text || null, assistantToolCalls, usage };
+  const extras: Record<string, unknown> = {};
+  if (reasoning && reasoningField) extras[reasoningField] = reasoning;
+  if (reasoningDetailsByIndex.size > 0) {
+    extras.reasoning_details = [...reasoningDetailsByIndex.entries()]
+      .sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+  }
+  return {
+    text,
+    toolCalls: pendingToolCalls,
+    assistantContent: text || null,
+    assistantToolCalls,
+    extras: Object.keys(extras).length > 0 ? extras : undefined,
+    usage,
+  };
 }

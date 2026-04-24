@@ -54,6 +54,16 @@ export interface ShellEvents {
   // Token usage (emitted after each LLM call, when available)
   "agent:usage": { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 
+  // Wire-level observability for debug/capture extensions. llm:chunk
+  // fires on every streamed chunk — keep listeners cheap.
+  "llm:request": {
+    messages: unknown[];
+    tools?: unknown;
+    model?: string;
+    reasoning_effort?: string;
+  };
+  "llm:chunk": { chunk: unknown };
+
   // Agent lifecycle
   "agent:processing-start": Record<string, never>;
   "agent:processing-done": Record<string, never>;

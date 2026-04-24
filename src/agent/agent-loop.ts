@@ -753,6 +753,13 @@ export class AgentLoop implements AgentBackend {
   private registerHandlers(): void {
     const h = this.handlers;
 
+    // Advisable so extensions can inject fallback parsers without
+    // subclassing the protocol.
+    h.define("tool-protocol:extract-calls", (args: {
+      text: string;
+      streamedCalls: ProtocolPendingToolCall[];
+    }) => this.toolProtocol.extractToolCalls(args.text, args.streamedCalls));
+
     // System prompt: static identity + behavioral instructions.
     // Extensions can use registerInstruction() for a managed section,
     // or advise this handler directly for full control.
@@ -1201,16 +1208,17 @@ export class AgentLoop implements AgentBackend {
       // Stream LLM response with retry
       const result = await this.streamWithRetry(systemPrompt, dynamicContext, signal);
 
-      const { text, toolCalls: streamedToolCalls } = result;
+      const { text, toolCalls: streamedToolCalls, extras } = result;
 
-      // Extract tool calls via protocol (API mode uses streamed calls,
-      // inline mode parses XML from text)
-      const toolCalls = this.toolProtocol.extractToolCalls(text, streamedToolCalls);
+      const toolCalls = this.handlers.call("tool-protocol:extract-calls", {
+        text,
+        streamedCalls: streamedToolCalls,
+      }) as ProtocolPendingToolCall[];
 
       fullResponseText += text;
 
       // Record the assistant message via protocol
-      this.toolProtocol.recordAssistant(this.conversation, text, toolCalls);
+      this.toolProtocol.recordAssistant(this.conversation, text, toolCalls, extras);
       this.bus.emit("conversation:message-appended", {
         role: "assistant",
         content: text,
@@ -1616,8 +1624,16 @@ export class AgentLoop implements AgentBackend {
   ): Promise<{
     text: string;
     toolCalls: PendingToolCall[];
+    /** Provider-specific fields (reasoning, reasoning_details, …) to
+     *  echo back verbatim on the next turn. */
+    extras?: Record<string, unknown>;
   }> {
     let text = "";
+    // reasoning_details streams as per-chunk fragments keyed by index;
+    // merge .text per index or the provider rejects the fragmented shape.
+    let reasoningField: string | null = null;
+    let reasoning = "";
+    const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();
     const pendingToolCalls: PendingToolCall[] = [];
 
     const rawMessages = [
@@ -1647,16 +1663,19 @@ export class AgentLoop implements AgentBackend {
       this.toolRegistry.all().map((t) => t.name),
     );
 
-    const stream = await this.llmClient.stream({
+    const requestParams = {
       messages,
       tools: apiTools,
       model: this.currentModel,
       reasoning_effort: this.shouldSendReasoningEffort() ? this.thinkingLevel : undefined,
-      signal,
-    });
+    };
+    this.bus.emit("llm:request", requestParams);
+
+    const stream = await this.llmClient.stream({ ...requestParams, signal });
 
     for await (const chunk of stream) {
       if (signal.aborted) break;
+      this.bus.emit("llm:chunk", { chunk });
 
       // Token usage (may arrive in a chunk with empty choices)
       if ((chunk as any).usage) {
@@ -1692,11 +1711,25 @@ export class AgentLoop implements AgentBackend {
         }
       }
 
-      // Reasoning/thinking tokens (non-standard, e.g. DeepSeek)
-      if ((delta as any)?.reasoning_content) {
-        this.bus.emit("agent:thinking-chunk", {
-          text: (delta as any).reasoning_content,
-        });
+      const d = delta as any;
+      for (const name of ["reasoning", "reasoning_content"] as const) {
+        if (typeof d?.[name] === "string" && d[name].length > 0) {
+          reasoning += d[name];
+          reasoningField ??= name;
+          this.bus.emit("agent:thinking-chunk", { text: d[name] });
+        }
+      }
+      if (Array.isArray(d?.reasoning_details)) {
+        for (const x of d.reasoning_details) {
+          const idx = typeof x?.index === "number" ? x.index : reasoningDetailsByIndex.size;
+          const prev = reasoningDetailsByIndex.get(idx);
+          if (!prev) {
+            reasoningDetailsByIndex.set(idx, { ...x });
+          } else {
+            if (typeof x.text === "string") prev.text = (prev.text ?? "") + x.text;
+            for (const [k, v] of Object.entries(x)) if (k !== "text" && prev[k] === undefined) prev[k] = v;
+          }
+        }
       }
 
       // Tool calls (streamed incrementally)
@@ -1741,9 +1774,16 @@ export class AgentLoop implements AgentBackend {
       try { JSON.parse(s); } catch { tc.argumentsJson = "{}"; }
     }
 
+    const extras: Record<string, unknown> = {};
+    if (reasoning && reasoningField) extras[reasoningField] = reasoning;
+    if (reasoningDetailsByIndex.size > 0) {
+      extras.reasoning_details = [...reasoningDetailsByIndex.entries()]
+        .sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+    }
     return {
       text,
       toolCalls: pendingToolCalls,
+      extras: Object.keys(extras).length > 0 ? extras : undefined,
     };
   }
 }
