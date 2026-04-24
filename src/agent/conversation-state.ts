@@ -171,7 +171,36 @@ export class ConversationState {
   }
 
   getMessages(): ChatCompletionMessageParam[] {
-    return this.messages;
+    return this.normalizeReasoningConsistency(this.messages);
+  }
+
+  /**
+   * Thinking-mode providers (DeepSeek) reject a request if ANY assistant
+   * message is missing reasoning_content when the conversation established
+   * a thinking-mode context. Two gaps cause this:
+   *   (1) text-only assistant turns where the model didn't emit reasoning,
+   *   (2) messages from before reasoning capture was enabled.
+   * Also: providers that stream `reasoning` (OpenRouter) expect the echo
+   * as `reasoning_content`. We cross-alias to keep addAssistantMessage
+   * shape-preserving while satisfying the strictest input contract.
+   */
+  private normalizeReasoningConsistency(
+    messages: ChatCompletionMessageParam[],
+  ): ChatCompletionMessageParam[] {
+    const needsNormalize = messages.some(
+      (m) => m.role === "assistant" && (
+        (m as any).reasoning !== undefined ||
+        (m as any).reasoning_content !== undefined ||
+        (m as any).reasoning_details !== undefined
+      ),
+    );
+    if (!needsNormalize) return messages;
+    return messages.map((m) => {
+      if (m.role !== "assistant") return m;
+      const a = m as any;
+      if (a.reasoning_content !== undefined) return m;
+      return { ...m, reasoning_content: a.reasoning ?? "" } as ChatCompletionMessageParam;
+    });
   }
 
   /**
