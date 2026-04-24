@@ -18,8 +18,11 @@ Extensions are loaded from three sources (in order, deduplicated):
 
 **CLI flag** (`-e` / `--extensions`):
 ```bash
+agent-sh -e my-ext-package -e ./local-ext.ts
+agent-sh -e my-ext-package,another-package   # comma-separated also works
+
+# from a repo checkout in dev:
 npm start -- -e my-ext-package -e ./local-ext.ts
-npm start -- -e my-ext-package,another-package   # comma-separated also works
 ```
 
 **Settings file** (`~/.agent-sh/settings.json`):
@@ -186,7 +189,7 @@ During `activate()`, emit `agent:register-backend` to register your backend. Mul
 Here's a minimal working backend:
 
 ```typescript
-import type { ExtensionContext } from "../../src/types.js";
+import type { ExtensionContext } from "agent-sh/types";
 
 export default function activate({ bus }: ExtensionContext): void {
   // 1. Register — claims the backend role before activateBackend() runs
@@ -395,7 +398,7 @@ These are registered by the `agent-backend` built-in extension (AgentLoop) and l
 | `system-prompt:build` | `() → string` | Assemble the cached system prompt. Advise to append identity blocks, memory files, learned lessons, etc. Rebuilt on cwd change, not every query. |
 | `dynamic-context:build` | `() → string` | Build the per-iteration user-role injection. Rebuilt before every LLM call. Default: `<shell>` + `<environment>` XML-tagged sections. Advisors add more tagged sections. |
 | `conversation:prepare` | `(messages[]) → messages[]` | Transform the full message array before it's sent to the LLM. Default: pass through. |
-| `conversation:compact` | `({target, keepRecent, force}) → { before, after, evictedCount }` | Compaction strategy. Default: pins the first turn + the last `keepRecent` turns and evicts the middle by priority × recency. Advise for richer strategies (topic pinning, LLM summarization). |
+| `conversation:compact` | `({target, keepRecent, force}) → { before, after, evictedCount } \| null` | Compaction strategy (returns null when nothing is compacted). Default: pins the first turn + the last `keepRecent` turns and evicts the middle by priority × recency. Advise for richer strategies (topic pinning, LLM summarization). |
 | `conversation:get-messages` | `() → messages[]` | Read the current in-memory messages array. Used by compaction advisors to compute a replacement. |
 | `conversation:replace-messages` | `(messages[]) → void` | Install a replacement messages array. The corresponding mutate-side of the compaction pattern. |
 | `conversation:estimate-tokens` | `() → number` | Local chars/4 estimate of the conversation size. |
@@ -779,7 +782,7 @@ Rendering components follow a **return lines, don't write** convention — each 
 By default, agent-sh runs in **yolo mode** — all tool calls and file writes are auto-approved. To add permission prompts, load the example extension:
 
 ```bash
-npm start -- -e ./examples/extensions/interactive-prompts.ts
+agent-sh -e ./examples/extensions/interactive-prompts.ts
 
 # Or install permanently:
 cp examples/extensions/interactive-prompts.ts ~/.agent-sh/extensions/
@@ -801,4 +804,4 @@ export default function activate({ setPalette }) {
 }
 ```
 
-Load a theme like any other extension: `npm start -- -e ./my-theme.ts`
+Load a theme like any other extension: `agent-sh -e ./my-theme.ts`
