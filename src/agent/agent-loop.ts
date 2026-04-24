@@ -753,9 +753,8 @@ export class AgentLoop implements AgentBackend {
   private registerHandlers(): void {
     const h = this.handlers;
 
-    // Advisable so extensions can inject fallback parsers (e.g. recover
-    // text-format `name{json}` calls when a provider drops structured
-    // tool_calls) without subclassing the protocol.
+    // Advisable so extensions can inject fallback parsers without
+    // subclassing the protocol.
     h.define("tool-protocol:extract-calls", (args: {
       text: string;
       streamedCalls: ProtocolPendingToolCall[];
