@@ -57,6 +57,10 @@ Built-in extensions are loaded from a declarative manifest and can be individual
 
 The shell and the agent are **separate worlds** by default. The PTY runs your real shell; the agent runs its tools in isolated child processes. A `cd` by the agent's `bash` tool doesn't change your shell's cwd.
 
+### Command-boundary detection
+
+agent-sh injects three invisible OSC sequences into its inner shell — `\e]9999;id=<tag>;PROMPT\a` (precmd), `\e]9997;id=<tag>;<cmd>\a` (preexec), `\e]9998;id=<tag>;READY\a` (prompt rendered). `<tag>` is the process's `instanceId`. The OutputParser reacts only to its own tag; markers with a different tag (or none) are treated as opaque foreground output. That's what keeps a nested agent-sh — for example, an `ash` launched inside an SSH session — from cross-triggering the outer instance's command lifecycle.
+
 The connection between them is **context**: each query includes shell context (recent commands, output, cwd). The agent sees what you've been doing but can't touch your shell state.
 
 Extensions can cross this boundary using `shell:exec-request`. The core event bus makes this easy to wire up — an extension just registers a tool that emits the event and returns the result. We don't include a PTY tool as built-in because the right behavior depends on user preference (confirmation prompts? output capture? restricted commands?). See `examples/extensions/user-shell.ts` for a ready-made implementation.
