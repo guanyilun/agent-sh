@@ -48,6 +48,8 @@ export interface AgentShellCore {
   contextManager: ContextManager;
   /** Handler registry for define/advise/call. */
   handlers: HandlerRegistry;
+  /** Unique id for this agent process; used for shell-marker tagging and lineage tracking. */
+  instanceId: string;
   /** Activate the agent backend (call after extensions load). */
   activateBackend(): void;
   /** Convenience: emit agent:submit and await the response. */
@@ -146,6 +148,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     bus,
     contextManager,
     handlers,
+    instanceId,
 
     activateBackend() {
       // Silent — backend info is shown in the startup banner.

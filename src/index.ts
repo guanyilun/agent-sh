@@ -234,6 +234,7 @@ async function main(): Promise<void> {
     rows,
     shell: config.shell || process.env.SHELL || "/bin/bash",
     cwd: process.cwd(),
+    instanceId: core.instanceId,
     onShowAgentInfo: () => {
       if (agentInfo) {
         return { info: `${p.dim}${agentInfo.name}${agentInfo.model ? ` (${agentInfo.model})` : ""}${p.reset}` };

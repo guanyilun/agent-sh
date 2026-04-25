@@ -36,6 +36,7 @@ export class Shell implements InputContext {
     rows: number;
     shell: string;
     cwd: string;
+    instanceId: string;
   }) {
 
     // Build environment — filter out undefined values (node-pty's native
@@ -64,8 +65,10 @@ export class Shell implements InputContext {
     const shellBin = (isZsh || isBash) ? opts.shell : "/bin/bash";
     let shellArgs: string[];
 
+    // Per-instance tag so nested agent-sh hooks don't cross-trigger.
+    const instanceTag = `id=${opts.instanceId}`;
     const osc7Cmd = 'printf "\\e]7;file://%s%s\\a" "$(hostname)" "$PWD"';
-    const promptMarker = 'printf "\\e]9999;PROMPT\\a"';
+    const promptMarker = `printf "\\e]9999;${instanceTag};PROMPT\\a"`;
     const titleCmd = 'printf "\\e]0;⚡ agent-sh: %s\\a" "${PWD/#$HOME/~}"';
 
     this.isZsh = isZsh;
@@ -92,7 +95,7 @@ export class Shell implements InputContext {
         "# Preexec hook: emit actual command text so agent-sh can track",
         "# history-recalled and tab-completed commands accurately",
         "__agent_sh_preexec() {",
-        '  printf "\\e]9997;%s\\a" "$1"',
+        `  printf "\\e]9997;${instanceTag};%s\\a" "$1"`,
         "}",
         "preexec_functions+=(__agent_sh_preexec)",
       ];
@@ -105,11 +108,11 @@ export class Shell implements InputContext {
         "  zle -A zle-line-init __agent_sh_orig_line_init",
         "  __agent_sh_line_init() {",
         "    zle __agent_sh_orig_line_init",
-        '    printf "\\e]9998;READY\\a"',
+        `    printf "\\e]9998;${instanceTag};READY\\a"`,
         "  }",
         "else",
         "  __agent_sh_line_init() {",
-        '    printf "\\e]9998;READY\\a"',
+        `    printf "\\e]9998;${instanceTag};READY\\a"`,
         "  }",
         "fi",
         "zle -N zle-line-init __agent_sh_line_init",
@@ -154,12 +157,12 @@ export class Shell implements InputContext {
         "  __agent_sh_preexec_ran=1",
         "  local this_cmd",
         `  this_cmd=$(HISTTIMEFORMAT='' builtin history 1 | command sed 's/^ *[0-9]* *//')`,
-        `  printf '\\e]9997;%s\\a' "$this_cmd"`,
+        `  printf '\\e]9997;${instanceTag};%s\\a' "$this_cmd"`,
         "}",
         "trap '__agent_sh_emit_preexec' DEBUG",
         "",
         "# End-of-prompt marker: append to PS1 (\\[...\\] marks it zero-width)",
-        'case "$PS1" in *9998*) ;; *) PS1="${PS1}\\[\\e]9998;READY\\a\\]";; esac',
+        `case "$PS1" in *9998*) ;; *) PS1="\${PS1}\\[\\e]9998;${instanceTag};READY\\a\\]";; esac`,
         "",
         "# Mirrors the zsh \\e[9999~ reset-prompt widget — used by agent-sh",
         "# to repaint the prompt in place. All keymaps so `set -o vi` works.",
@@ -206,7 +209,7 @@ export class Shell implements InputContext {
 
     this.bus = opts.bus;
     this.handlers = opts.handlers;
-    this.outputParser = new OutputParser(opts.bus, opts.cwd);
+    this.outputParser = new OutputParser(opts.bus, opts.cwd, instanceTag);
 
     // Ensure temp dir cleanup on abnormal exit (SIGKILL won't fire this,
     // but it covers uncaught exceptions and normal process.exit paths)
