@@ -265,8 +265,10 @@ let sessionCwd: string = process.cwd();
 // Track tool output chunks per toolCallId so we can send accumulated content
 const toolOutputBuffers = new Map<string, string>();
 
-// Track the active prompt request id so we can respond when processing is done
+// promptTurnInFlight binds the request id to the next turn that starts, so
+// unsolicited turns (peer_send auto-wake, wakeups) don't satisfy it.
 let activePromptRequestId: number | string | null = null;
+let promptTurnInFlight = false;
 
 // Track always-allowed permission kinds
 const alwaysAllowed = new Set<string>();
@@ -325,24 +327,33 @@ function wireEvents(core: AgentShellCore): void {
     sendUsageUpdate(prompt_tokens, completion_tokens);
   });
 
+  bus.on("agent:processing-start", () => {
+    if (activePromptRequestId !== null && !promptTurnInFlight) {
+      promptTurnInFlight = true;
+    }
+  });
+
   bus.on("agent:processing-done", () => {
-    if (activePromptRequestId !== null) {
+    if (promptTurnInFlight && activePromptRequestId !== null) {
       sendResult(activePromptRequestId, { stopReason: "end_turn" });
       activePromptRequestId = null;
+      promptTurnInFlight = false;
     }
   });
 
   bus.on("agent:error", ({ message }) => {
-    if (activePromptRequestId !== null) {
+    if (promptTurnInFlight && activePromptRequestId !== null) {
       sendError(activePromptRequestId, -32603, message);
       activePromptRequestId = null;
+      promptTurnInFlight = false;
     }
   });
 
   bus.on("agent:cancelled", () => {
-    if (activePromptRequestId !== null) {
+    if (promptTurnInFlight && activePromptRequestId !== null) {
       sendResult(activePromptRequestId, { stopReason: "cancelled" });
       activePromptRequestId = null;
+      promptTurnInFlight = false;
     }
   });
 
@@ -472,8 +483,8 @@ function handleSessionPrompt(id: number | string, params: Record<string, unknown
     return;
   }
 
-  // Store the request id — we'll respond when agent:processing-done fires
   activePromptRequestId = id;
+  promptTurnInFlight = false;
   core.bus.emit("agent:submit", { query });
 }
 
