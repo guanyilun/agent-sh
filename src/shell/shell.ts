@@ -1,7 +1,6 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import * as crypto from "crypto";
 import * as pty from "node-pty";
 import type { EventBus } from "../event-bus.js";
 import { InputHandler, type InputContext } from "./input-handler.js";
@@ -37,6 +36,7 @@ export class Shell implements InputContext {
     rows: number;
     shell: string;
     cwd: string;
+    instanceId: string;
   }) {
 
     // Build environment — filter out undefined values (node-pty's native
@@ -65,8 +65,8 @@ export class Shell implements InputContext {
     const shellBin = (isZsh || isBash) ? opts.shell : "/bin/bash";
     let shellArgs: string[];
 
-    // Random per-instance tag so nested agent-sh hooks don't cross-trigger.
-    const instanceTag = `id=${crypto.randomBytes(4).toString("hex")}`;
+    // Per-instance tag so nested agent-sh hooks don't cross-trigger.
+    const instanceTag = `id=${opts.instanceId}`;
     const osc7Cmd = 'printf "\\e]7;file://%s%s\\a" "$(hostname)" "$PWD"';
     const promptMarker = `printf "\\e]9999;${instanceTag};PROMPT\\a"`;
     const titleCmd = 'printf "\\e]0;⚡ agent-sh: %s\\a" "${PWD/#$HOME/~}"';

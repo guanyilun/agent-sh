@@ -10,7 +10,7 @@ agent-sh detects shell command boundaries by reading three OSC escape sequences 
 | 9997 | `id=<tag>;<cmd>` or `<cmd>`   | shell is starting `<cmd>`         |
 | 9998 | `id=<tag>;READY` or `READY`   | prompt rendering finished         |
 
-`<tag>` is a random hex string each agent-sh instance generates at startup.
+`<tag>` is the agent-sh instance id (6 hex chars), the same id surfaced as `instanceId` in the extension context.
 
 ## Parser semantics
 
