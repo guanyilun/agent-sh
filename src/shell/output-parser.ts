@@ -1,6 +1,14 @@
 import type { EventBus } from "../event-bus.js";
 import { stripAnsi } from "../utils/ansi.js";
 
+// Marker formats:
+//   self-tagged: \e]<num>;id=<tag>;<body>\a   — emitted by our own shell hooks
+//   untagged:    \e]<num>;<body>\a            — public form, foreign shells
+// Mismatched-tag markers come from nested agent-sh instances; we ignore them.
+const PROMPT_RE = /\x1b\]9999;(?:id=([a-f0-9]+);)?PROMPT\x07/;
+const PREEXEC_RE = /\x1b\]9997;(?:id=([a-f0-9]+);)?([^\x07]*)\x07/;
+const READY_RE = /\x1b\]9998;(?:id=([a-f0-9]+);)?READY\x07/;
+
 /**
  * Parses PTY output to detect command boundaries, track cwd,
  * and emit shell events. Owns the command lifecycle state.
@@ -8,14 +16,17 @@ import { stripAnsi } from "../utils/ansi.js";
 export class OutputParser {
   private bus: EventBus;
   private cwd: string;
+  private ownTag: string;
   private currentOutputCapture = "";
   private lastCommand = "";
   private foregroundBusy = false;
   private promptReady = false;
 
-  constructor(bus: EventBus, initialCwd: string) {
+  constructor(bus: EventBus, initialCwd: string, ownTag: string) {
     this.bus = bus;
     this.cwd = initialCwd;
+    // Strip the "id=" prefix; we compare the value alone.
+    this.ownTag = ownTag.startsWith("id=") ? ownTag.slice(3) : ownTag;
   }
 
   /** Process a chunk of PTY output data. */
@@ -59,18 +70,18 @@ export class OutputParser {
    * completion. Returns data with the OSC stripped out.
    */
   private handlePreexec(data: string): string {
-    const marker = "\x1b]9997;";
-    const idx = data.indexOf(marker);
-    if (idx === -1) return data;
+    const match = PREEXEC_RE.exec(data);
+    if (!match) return data;
 
-    const endIdx = data.indexOf("\x07", idx + marker.length);
-    if (endIdx === -1) return data; // incomplete OSC, wait for next chunk
+    const tag = match[1];
+    if (tag !== undefined && tag !== this.ownTag) {
+      // Nested instance's marker — strip and ignore.
+      return data.slice(0, match.index) + data.slice(match.index + match[0].length);
+    }
 
-    const command = data.slice(idx + marker.length, endIdx);
-
-    // Authoritative command from the shell — override any lineBuffer guess
+    const command = match[2]!;
     this.lastCommand = command;
-    this.currentOutputCapture = ""; // discard echoed text accumulated before preexec
+    this.currentOutputCapture = ""; // discard echo accumulated before preexec
 
     if (!this.foregroundBusy) {
       this.foregroundBusy = true;
@@ -78,8 +89,7 @@ export class OutputParser {
     }
     this.bus.emit("shell:command-start", { command, cwd: this.cwd });
 
-    // Return only data after the OSC — everything before was the echo
-    return data.slice(endIdx + 1);
+    return data.slice(match.index + match[0].length);
   }
 
   private parseOSC7(data: string): void {
@@ -98,9 +108,15 @@ export class OutputParser {
    * Each time a prompt appears, we finalize the previous command's output.
    */
   private parsePromptMarker(data: string): void {
-    const marker = "\x1b]9999;PROMPT\x07";
-    const markerIdx = data.indexOf(marker);
-    if (markerIdx !== -1) {
+    const match = PROMPT_RE.exec(data);
+    if (match) {
+      const tag = match[1];
+      if (tag !== undefined && tag !== this.ownTag) {
+        // Nested instance's marker — treat as opaque foreground output.
+        this.currentOutputCapture += data;
+        return;
+      }
+      const markerIdx = match.index;
       // Capture any output that arrived in the same chunk before the marker
       if (markerIdx > 0) {
         this.currentOutputCapture += data.slice(0, markerIdx);
@@ -140,9 +156,11 @@ export class OutputParser {
    * and the shell is ready for input.
    */
   private parsePromptEnd(data: string): void {
-    if (data.includes("\x1b]9998;READY\x07")) {
-      this.promptReady = true;
-    }
+    const match = READY_RE.exec(data);
+    if (!match) return;
+    const tag = match[1];
+    if (tag !== undefined && tag !== this.ownTag) return;
+    this.promptReady = true;
   }
 
   private removeEchoedCommand(output: string, command: string): string {
