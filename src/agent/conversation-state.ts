@@ -169,7 +169,39 @@ export class ConversationState {
   }
 
   getMessages(): ChatCompletionMessageParam[] {
-    return this.normalizeReasoningConsistency(this.messages);
+    return this.normalizeReasoningConsistency(this.stubDanglingToolCalls(this.messages));
+  }
+
+  /**
+   * If a stream was interrupted mid-tool-execution, an assistant message
+   * with tool_calls can land in history without matching tool results.
+   * Strict providers (DeepSeek) 400 on this. Stub each missing result
+   * with a [cancelled] marker so the protocol stays valid.
+   */
+  private stubDanglingToolCalls(
+    messages: ChatCompletionMessageParam[],
+  ): ChatCompletionMessageParam[] {
+    const result: ChatCompletionMessageParam[] = [];
+    let i = 0;
+    while (i < messages.length) {
+      const msg = messages[i]!;
+      result.push(msg);
+      i++;
+      if (msg.role !== "assistant" || !("tool_calls" in msg) || !msg.tool_calls) continue;
+      const seen = new Set<string>();
+      while (i < messages.length && messages[i]!.role === "tool") {
+        const t = messages[i]! as ChatCompletionMessageParam & { role: "tool"; tool_call_id: string };
+        seen.add(t.tool_call_id);
+        result.push(t);
+        i++;
+      }
+      for (const tc of msg.tool_calls) {
+        if (!seen.has(tc.id)) {
+          result.push({ role: "tool", tool_call_id: tc.id, content: "[cancelled]" });
+        }
+      }
+    }
+    return result;
   }
 
   /**

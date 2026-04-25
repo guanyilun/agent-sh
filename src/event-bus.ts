@@ -347,7 +347,7 @@ type AsyncPipeListener<T> = (payload: T) => T | Promise<T>;
  *   can modify the payload before passing to the next
  */
 export class EventBus {
-  private emitter = new EventEmitter();
+  private emitter = new EventEmitter().setMaxListeners(0);
   private pipeListeners = new Map<string, PipeListener<any>[]>();
   private asyncPipeListeners = new Map<string, AsyncPipeListener<any>[]>();
 
