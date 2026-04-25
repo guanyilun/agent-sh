@@ -1,10 +1,8 @@
 import type { EventBus } from "../event-bus.js";
 import { stripAnsi } from "../utils/ansi.js";
 
-// Marker formats:
-//   self-tagged: \e]<num>;id=<tag>;<body>\a   — emitted by our own shell hooks
-//   untagged:    \e]<num>;<body>\a            — public form, foreign shells
-// Mismatched-tag markers come from nested agent-sh instances; we ignore them.
+// Self-emitted form: \e]<num>;id=<own>;<body>\a — only this is honored.
+// Anything else (mismatched tag, untagged) is ignored as opaque foreground output.
 const PROMPT_RE = /\x1b\]9999;(?:id=([a-f0-9]+);)?PROMPT\x07/;
 const PREEXEC_RE = /\x1b\]9997;(?:id=([a-f0-9]+);)?([^\x07]*)\x07/;
 const READY_RE = /\x1b\]9998;(?:id=([a-f0-9]+);)?READY\x07/;
@@ -73,9 +71,8 @@ export class OutputParser {
     const match = PREEXEC_RE.exec(data);
     if (!match) return data;
 
-    const tag = match[1];
-    if (tag !== undefined && tag !== this.ownTag) {
-      // Nested instance's marker — strip and ignore.
+    if (match[1] !== this.ownTag) {
+      // Nested instance or untagged foreign emission — strip and ignore.
       return data.slice(0, match.index) + data.slice(match.index + match[0].length);
     }
 
@@ -110,9 +107,9 @@ export class OutputParser {
   private parsePromptMarker(data: string): void {
     const match = PROMPT_RE.exec(data);
     if (match) {
-      const tag = match[1];
-      if (tag !== undefined && tag !== this.ownTag) {
-        // Nested instance's marker — treat as opaque foreground output.
+      if (match[1] !== this.ownTag) {
+        // Nested instance or untagged foreign emission — treat as opaque
+        // foreground output, do not finalize our own command.
         this.currentOutputCapture += data;
         return;
       }
@@ -158,8 +155,7 @@ export class OutputParser {
   private parsePromptEnd(data: string): void {
     const match = READY_RE.exec(data);
     if (!match) return;
-    const tag = match[1];
-    if (tag !== undefined && tag !== this.ownTag) return;
+    if (match[1] !== this.ownTag) return;
     this.promptReady = true;
   }
 
