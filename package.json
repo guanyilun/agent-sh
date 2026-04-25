@@ -89,7 +89,13 @@
   },
   "files": [
     "dist",
-    "examples"
+    "examples/extensions/*.ts",
+    "examples/extensions/*/package.json",
+    "examples/extensions/*/tsconfig.json",
+    "examples/extensions/*/README.md",
+    "examples/extensions/*/src",
+    "examples/extensions/*/index.ts",
+    "examples/extensions/*/index.js"
   ],
   "scripts": {
     "dev": "tsx src/index.ts",
