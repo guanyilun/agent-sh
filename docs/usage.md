@@ -32,12 +32,13 @@ DEBUG=1 agent-sh --api-key "$KEY" --model gpt-4o
 
 ## Updating
 
-To pick up the latest changes, re-run the install command — npm refetches the git HEAD (or latest npm release) and replaces the global install in place. No uninstall step needed.
+To pick up the latest changes, re-run the install command — npm replaces the global install in place. No uninstall step needed.
 
 ```bash
-npm install -g github:guanyilun/agent-sh   # latest from GitHub main
-npm install -g agent-sh@latest             # latest npm release
+npm install -g agent-sh@latest             # latest npm release (recommended)
 ```
+
+For unreleased changes on `main`, use the clone-and-link flow from the [Quick Start](../README.md#quick-start) — `npm install -g github:...` builds on your machine and can fail if the TypeScript toolchain doesn't extract cleanly.
 
 ## Provider Examples
 
