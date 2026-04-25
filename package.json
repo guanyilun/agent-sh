@@ -127,6 +127,8 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@xterm/addon-serialize": "^0.13.0",
+    "@xterm/headless": "^5.5.0",
     "cli-highlight": "^2.1.11",
     "diff": "^9.0.0",
     "marked": "^17.0.6",
