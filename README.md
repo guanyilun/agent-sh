@@ -23,16 +23,22 @@ I still use Claude Code and pi for serious coding work — this doesn't replace 
 
 ## Quick Start
 
-Install the latest from GitHub (recommended — development moves faster than npm releases):
-
-```bash
-npm install -g github:guanyilun/agent-sh
-```
-
-Or the last published npm release:
+Install from npm:
 
 ```bash
 npm install -g agent-sh
+```
+
+Re-run the same command to update. Patch releases ship frequently; `npm update -g agent-sh` works too.
+
+For unreleased changes on `main`, clone and link locally — this avoids `npm install -g github:...`, which builds on your machine and requires a working TypeScript toolchain:
+
+```bash
+git clone https://github.com/guanyilun/agent-sh.git
+cd agent-sh
+npm install        # installs devDependencies (typescript, etc.)
+npm run build      # produces dist/
+npm link           # exposes `agent-sh` globally
 ```
 
 Pick one of the zero-config paths below — no settings file needed. agent-sh auto-activates a built-in provider when it sees a known key.
