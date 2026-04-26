@@ -47,6 +47,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
           contextWindow: mc?.contextWindow ?? p.contextWindow,
           reasoning: mc?.reasoning,
           supportsReasoningEffort: p.supportsReasoningEffort,
+          echoReasoning: mc?.echoReasoning,
         });
       }
     }
@@ -154,13 +155,13 @@ export default function agentBackend(ctx: ExtensionContext): void {
   bus.on("provider:register", (p) => {
     const rawModels = p.models ?? (p.defaultModel ? [p.defaultModel] : []);
     const modelIds: string[] = [];
-    const caps = new Map<string, { reasoning?: boolean; contextWindow?: number }>();
+    const caps = new Map<string, { reasoning?: boolean; contextWindow?: number; echoReasoning?: boolean }>();
     for (const m of rawModels) {
       if (typeof m === "string") {
         modelIds.push(m);
       } else {
         modelIds.push(m.id);
-        caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow });
+        caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, echoReasoning: m.echoReasoning });
       }
     }
     providerRegistry.set(p.id, {
@@ -182,6 +183,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
         contextWindow: mc?.contextWindow,
         reasoning: mc?.reasoning,
         supportsReasoningEffort: p.supportsReasoningEffort,
+        echoReasoning: mc?.echoReasoning,
       };
     });
     bus.emit("config:add-modes", { modes: addModes });
@@ -224,6 +226,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
         contextWindow: mc?.contextWindow ?? p.contextWindow,
         reasoning: mc?.reasoning,
         supportsReasoningEffort: p.supportsReasoningEffort,
+        echoReasoning: mc?.echoReasoning,
       };
     });
     bus.emit("config:set-modes", { modes: newModes });

@@ -1795,11 +1795,14 @@ export class AgentLoop implements AgentBackend {
       try { JSON.parse(s); } catch { tc.argumentsJson = "{}"; }
     }
 
+    // Echo reasoning only for modes that opt in (e.g. DeepSeek-R1).
     const extras: Record<string, unknown> = {};
-    if (reasoning && reasoningField) extras[reasoningField] = reasoning;
-    if (reasoningDetailsByIndex.size > 0) {
-      extras.reasoning_details = [...reasoningDetailsByIndex.entries()]
-        .sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+    if (this.currentMode.echoReasoning) {
+      if (reasoning && reasoningField) extras[reasoningField] = reasoning;
+      if (reasoningDetailsByIndex.size > 0) {
+        extras.reasoning_details = [...reasoningDetailsByIndex.entries()]
+          .sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+      }
     }
     return {
       text,
