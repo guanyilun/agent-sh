@@ -111,6 +111,7 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
     registerTool: scopedRegisterTool,
     unregisterTool: ctx.unregisterTool,
     registerCommand: scopedRegisterCommand,
+    onDispose: (fn: () => void) => { cleanups.push(fn); },
   };
 
   const dispose = () => {

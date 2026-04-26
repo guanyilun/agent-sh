@@ -172,6 +172,11 @@ export interface ExtensionContext {
    */
   compositor: Compositor;
 
+  // ── Lifecycle ──────────────────────────────────────────────────
+  /** Teardown callback fired on /reload. For resources the scoped context
+   *  can't track: process listeners, timers, watchers, sockets. */
+  onDispose: (fn: () => void) => void;
+
   // ── Remote sessions ────────────────────────────────────────────
   /**
    * Create a remote session that routes agent output to a surface and

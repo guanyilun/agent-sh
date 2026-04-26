@@ -232,6 +232,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         list: () => handlers.list(),
         get terminalBuffer() { return getTerminalBuffer(); },
         compositor,
+        onDispose: () => {},
         createRemoteSession: (opts: RemoteSessionOptions): RemoteSession => {
           const { surface } = opts;
           const cleanups: (() => void)[] = [];
