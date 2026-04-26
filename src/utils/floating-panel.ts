@@ -37,6 +37,7 @@ import { TerminalBuffer } from "./terminal-buffer.js";
 import { HandlerRegistry } from "./handler-registry.js";
 import type { EventBus } from "../event-bus.js";
 import type { BorderStyle } from "./box-frame.js";
+import { StdoutSurface, type RenderSurface } from "./compositor.js";
 
 // ── ANSI constants ──────────────────────────────────────────────
 
@@ -114,6 +115,11 @@ export interface FloatingPanelConfig {
    * `{prefix}:submit`, etc. Use different prefixes for multiple panels.
    */
   handlerPrefix?: string;
+  /**
+   * Surface providing viewport (columns, rows, onResize) and the write
+   * sink for panel output. Defaults to a fresh StdoutSurface.
+   */
+  surface?: RenderSurface;
 }
 
 /**
@@ -205,8 +211,9 @@ export type Phase = "idle" | "input" | "active" | "done";
 
 export class FloatingPanel {
   // ── Configuration ───────────────────────────────────────────
-  private readonly config: Required<Omit<FloatingPanelConfig, "terminalBuffer">>;
+  private readonly config: Required<Omit<FloatingPanelConfig, "terminalBuffer" | "surface">>;
   private readonly bus: EventBus;
+  private readonly surface: RenderSurface;
   private readonly border: { tl: string; tr: string; bl: string; br: string; h: string; v: string };
   private readonly externalBuffer: TerminalBuffer | undefined;
   private readonly prefix: string;
@@ -249,7 +256,7 @@ export class FloatingPanel {
   private title = "";
   private footer = "";
   private renderTimer: ReturnType<typeof setTimeout> | null = null;
-  private resizeHandler: (() => void) | null = null;
+  private resizeUnsub: (() => void) | null = null;
   private prevFrame: string[] = [];
   private suppressNextRedraw = false;
   private autoDismissTimer: ReturnType<typeof setTimeout> | null = null;
@@ -262,6 +269,7 @@ export class FloatingPanel {
 
   constructor(bus: EventBus, config: FloatingPanelConfig, handlers?: HandlerRegistry) {
     this.bus = bus;
+    this.surface = config.surface ?? new StdoutSurface();
     this.externalBuffer = config.terminalBuffer;
     this.prefix = config.handlerPrefix ?? "panel";
     this.handlers = handlers ?? new HandlerRegistry();
@@ -607,8 +615,7 @@ export class FloatingPanel {
       process.stdout.write("\x1b[?1049h");
     }
 
-    this.resizeHandler = () => { this.prevFrame = []; this.render(); };
-    process.stdout.on("resize", this.resizeHandler);
+    this.resizeUnsub = this.surface.onResize(() => { this.prevFrame = []; this.render(); });
 
     this.render();
   }
@@ -827,10 +834,10 @@ export class FloatingPanel {
 
   // ── Geometry ───────────────────────────────────────────────
 
-  /** Compute box geometry from config + current terminal size. */
+  /** Compute box geometry from config + current viewport. */
   computeGeometry(): BoxGeometry {
-    const cols = process.stdout.columns || 80;
-    const rows = process.stdout.rows || 24;
+    const cols = this.surface.columns;
+    const rows = this.surface.rows;
     const boxW = Math.min(this.resolveSize(this.config.width, cols - 4), this.config.maxWidth);
     const boxH = Math.min(
       this.resolveSize(this.config.height, rows - 4),
@@ -921,10 +928,8 @@ export class FloatingPanel {
 
   /** Full screen teardown: exit alt screen, release stdout, force redraw. */
   private teardownScreen(): void {
-    if (this.resizeHandler) {
-      process.stdout.off("resize", this.resizeHandler);
-      this.resizeHandler = null;
-    }
+    this.resizeUnsub?.();
+    this.resizeUnsub = null;
     this.suppressNextRedraw = true;
 
     // Re-check alt screen state: the program we overlaid may have exited
@@ -952,8 +957,8 @@ export class FloatingPanel {
       // or the overlaid program exited (e.g. agent quit vim) and we
       // discarded its stale buffer — SIGWINCH makes the shell redraw
       // its prompt cleanly.
-      const cols = process.stdout.columns || 80;
-      const rows = process.stdout.rows || 24;
+      const cols = this.surface.columns;
+      const rows = this.surface.rows;
       this.bus.emit("shell:pty-resize", { cols, rows: rows - 1 });
       setTimeout(() => {
         this.bus.emit("shell:pty-resize", { cols, rows });
