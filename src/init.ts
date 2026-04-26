@@ -1,8 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
-
-const CONFIG_DIR = path.join(os.homedir(), ".agent-sh");
+import { CONFIG_DIR } from "./settings.js";
 const EXTENSIONS_DIR = path.join(CONFIG_DIR, "extensions");
 const SETTINGS_PATH = path.join(CONFIG_DIR, "settings.json");
 const EXAMPLE_PATH = path.join(CONFIG_DIR, "settings.example.json");

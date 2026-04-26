@@ -28,10 +28,8 @@ import { TerminalBuffer } from "./utils/terminal-buffer.js";
 import crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { DefaultCompositor, StdoutSurface } from "./utils/compositor.js";
-
-const STORAGE_ROOT = path.join(os.homedir(), ".agent-sh");
+import { CONFIG_DIR } from "./settings.js";
 
 // Re-export types that library consumers need
 export { EventBus } from "./event-bus.js";
@@ -213,7 +211,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
           streamTransform.createFencedBlockTransform(bus, o),
         getExtensionSettings: settingsMod.getExtensionSettings,
         getStoragePath: (namespace: string) => {
-          const dir = path.join(STORAGE_ROOT, namespace);
+          const dir = path.join(CONFIG_DIR, namespace);
           fs.mkdirSync(dir, { recursive: true });
           return dir;
         },

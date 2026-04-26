@@ -13,7 +13,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { getSettings } from "../settings.js";
+import { CONFIG_DIR, getSettings } from "../settings.js";
 
 export interface Skill {
   name: string;
@@ -144,7 +144,7 @@ export function discoverGlobalSkills(): Skill[] {
   const seen = new Set<string>();
   const skills: Skill[] = [];
 
-  addUnique(skills, scanDir(path.join(os.homedir(), ".agent-sh", "skills")), seen);
+  addUnique(skills, scanDir(path.join(CONFIG_DIR, "skills")), seen);
 
   const settings = getSettings();
   for (const p of settings.skillPaths ?? []) {
