@@ -8,11 +8,7 @@ import { TuiInputView } from "./tui-input-view.js";
 
 const HISTORY_FILE = path.join(CONFIG_DIR, "input-history");
 
-/**
- * Narrow contract between InputHandler and its host (Shell).
- * InputHandler never touches the PTY or EventBus directly —
- * it goes through this interface for all cross-cutting concerns.
- */
+/** Narrow contract between InputHandler and its host (Shell). */
 export interface InputContext {
   isForegroundBusy(): boolean;
   getCwd(): string;
@@ -23,11 +19,7 @@ export interface InputContext {
   freshPrompt(): void;
 }
 
-/**
- * Controller for the input-mode line editor and shell-passthrough buffer.
- * Owns: line buffer, mode dispatch, history, autocomplete model, key
- * decoding. Delegates all rendering to TuiInputView.
- */
+/** Line editor + shell-passthrough buffer. Delegates rendering to TuiInputView. */
 export class InputHandler {
   private ctx: InputContext;
   private lineBuffer = "";
@@ -84,7 +76,6 @@ export class InputHandler {
       const data = fs.readFileSync(HISTORY_FILE, "utf-8");
       this.history = data.split("\n").filter(Boolean);
     } catch {
-      // No history file yet
     }
   }
 
@@ -95,7 +86,6 @@ export class InputHandler {
       const lines = this.history.slice(-historySize);
       fs.writeFileSync(HISTORY_FILE, lines.join("\n") + "\n");
     } catch {
-      // Non-critical — ignore write failures
     }
   }
 
@@ -155,12 +145,12 @@ export class InputHandler {
         this.lineBuffer = "";
         this.ctx.writeToPty(ch);
       } else if (ch === "\x0b" || ch === "\x15") {
-        // Ctrl-K / Ctrl-U kill the line in the shell.
+        // Ctrl-K / Ctrl-U: shell kills the line; mirror so lineBuffer stays in sync.
         this.lineBuffer = "";
         this.ctx.writeToPty(ch);
       } else if (ch === "\x1b") {
-        // Forward whole escape sequence as a unit so payload bytes don't
-        // leak into lineBuffer (e.g. OSC color-query response after a TUI app exits).
+        // Forward whole escape sequence as a unit — otherwise payload bytes
+        // (e.g. OSC color-query response) can leak into lineBuffer.
         let seq = ch;
         if (i + 1 < data.length) {
           const next = data[i + 1]!;

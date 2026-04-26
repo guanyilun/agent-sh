@@ -115,10 +115,7 @@ export interface FloatingPanelConfig {
    * `{prefix}:submit`, etc. Use different prefixes for multiple panels.
    */
   handlerPrefix?: string;
-  /**
-   * Surface providing viewport (columns, rows, onResize) and the write
-   * sink for panel output. Defaults to a fresh StdoutSurface.
-   */
+  /** Render sink + viewport. Defaults to a fresh StdoutSurface. */
   surface?: RenderSurface;
 }
 

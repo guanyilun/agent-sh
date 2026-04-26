@@ -67,8 +67,7 @@ export const nullSurface: RenderSurface = {
   onResize() { return () => {}; },
 };
 
-/** Surface backed by process.stdout. The only file allowed to read
- *  process.stdout dimensions or subscribe to its "resize" event. */
+/** Surface backed by process.stdout — the only sanctioned bridge to it. */
 export class StdoutSurface implements RenderSurface {
   write(text: string): void {
     if (process.stdout.writable) {

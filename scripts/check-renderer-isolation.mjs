@@ -1,11 +1,7 @@
 #!/usr/bin/env node
 /**
- * Guard: process.stdout / process.stdin must only appear in files that
- * are allowed to be terminal-coupled. Anything else means a renderer
- * leak — a web/DOM/IDE renderer would have to fork core to fix it.
- *
- * Run with:  node scripts/check-renderer-isolation.mjs
- * Exits 1 (failing CI) on any unauthorized reference.
+ * Fails CI if process.stdout / process.stdin appears outside the four
+ * files allowed to be terminal-coupled. Run via `npm run check:isolation`.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -13,8 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../src", import.meta.url));
 
-// Files allowed to read/write process.stdout or process.stdin.
-// Each entry is justified — if you add one, add the reason inline.
+// Files allowed to touch process.stdout / process.stdin. Add a reason inline.
 const ALLOWED = new Set([
   "utils/compositor.ts",        // StdoutSurface — the only sanctioned bridge
   "utils/terminal-buffer.ts",   // xterm-headless dim-background, TUI-only

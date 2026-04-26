@@ -1,11 +1,7 @@
 /**
- * Terminal renderer for the input mode prompt and autocomplete dropdown.
- *
- * Owns all screen-state (cursor row/col tracking, autocomplete line count)
- * and ANSI redraw mechanics. The controller (InputHandler) calls into this
- * view via a small VM shape and never writes to stdout directly.
- *
- * A future web renderer implements the same shape against DOM.
+ * Terminal renderer for the input-mode prompt and autocomplete dropdown.
+ * Owns screen state (cursor row/col, autocomplete line count) and the
+ * ANSI redraw. The controller drives it via a small VM shape.
  */
 
 import { visibleLen } from "../utils/ansi.js";
@@ -43,7 +39,7 @@ export class TuiInputView {
   }
 
   enableModeKeys(): void {
-    // Kitty progressive enhancement (Shift+Enter → \x1b[13;2u) + bracket paste.
+    // Kitty progressive enhancement + bracket paste (Shift+Enter → \x1b[13;2u).
     this.surface.write("\x1b[>1u\x1b[?2004h");
   }
 
@@ -51,7 +47,6 @@ export class TuiInputView {
     this.surface.write("\x1b[<u\x1b[?2004l");
   }
 
-  /** Move to the start of the prompt area and clear everything below. */
   clearPromptArea(): void {
     if (this.cursorRowsBelow > 0) {
       this.surface.write(`\x1b[${this.cursorRowsBelow}A`);
@@ -60,7 +55,6 @@ export class TuiInputView {
     this.cursorRowsBelow = 0;
   }
 
-  /** Render the mode prompt line. Updates internal cursor tracking. */
   drawPrompt(vm: PromptVM): void {
     const termW = this.surface.columns;
 
@@ -84,7 +78,7 @@ export class TuiInputView {
       this.cursorRowsBelow = N > 0 ? Math.ceil(N / termW) - 1 : 0;
       this.cursorTermCol = N === 0 ? 1 : (N % termW === 0 ? termW : (N % termW) + 1);
     } else if (!display.includes("\n")) {
-      // Single-line: terminal handles wrapping; DECSC/DECRC handle cursor.
+      // DECSC/DECRC bracket the after-cursor text so the cursor lands mid-line.
       const before = display.slice(0, dCursor);
       const after = display.slice(dCursor);
       this.surface.write(
@@ -97,7 +91,6 @@ export class TuiInputView {
       this.cursorRowsBelow = cursorVisCol > 0 ? Math.ceil(cursorVisCol / termW) - 1 : 0;
       this.cursorTermCol = cursorVisCol === 0 ? 1 : (cursorVisCol % termW === 0 ? termW : (cursorVisCol % termW) + 1);
     } else {
-      // Multi-line: render each line with continuation indent.
       const lines = display.split("\n");
       const indent = " ".repeat(promptVisLen);
 
@@ -169,13 +162,13 @@ export class TuiInputView {
     if (this.autocompleteLines > 0) {
       this.surface.write(`\x1b[${this.autocompleteLines}A`);
     }
-    // Absolute column set; \n above may have scrolled, invalidating DECSC.
+    // Absolute column set — preceding \n may have scrolled, invalidating DECSC.
     this.surface.write(`\x1b[${this.cursorTermCol}G`);
   }
 
   clearAutocomplete(): void {
     if (this.autocompleteLines <= 0) return;
-    // CSI B (cursor down, bounded) — \n would scroll.
+    // CSI B (cursor down, bounded) so we don't scroll on the last row.
     for (let i = 0; i < this.autocompleteLines; i++) {
       this.surface.write("\x1b[B\x1b[2K");
     }
