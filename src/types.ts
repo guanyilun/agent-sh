@@ -172,6 +172,12 @@ export interface ExtensionContext {
    */
   compositor: Compositor;
 
+  // ── Lifecycle ──────────────────────────────────────────────────
+  /** Register a teardown callback fired when the extension is disposed
+   *  (e.g. /reload). Use for resources the scoped context can't track:
+   *  process listeners, timers, file watchers, sockets. */
+  onDispose: (fn: () => void) => void;
+
   // ── Remote sessions ────────────────────────────────────────────
   /**
    * Create a remote session that routes agent output to a surface and
