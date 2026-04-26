@@ -100,7 +100,6 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
-    "check:isolation": "node scripts/check-renderer-isolation.mjs",
     "start": "node dist/index.js",
     "prepare": "npm run build"
   },
