@@ -232,7 +232,6 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         list: () => handlers.list(),
         get terminalBuffer() { return getTerminalBuffer(); },
         compositor,
-        // Default no-op — scoped contexts override to track for /reload teardown.
         onDispose: () => {},
         createRemoteSession: (opts: RemoteSessionOptions): RemoteSession => {
           const { surface } = opts;
