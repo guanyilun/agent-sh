@@ -612,7 +612,7 @@ export class FloatingPanel {
 
     this.usedAltScreen = !(this.buffer?.altScreen);
     if (this.usedAltScreen) {
-      process.stdout.write("\x1b[?1049h");
+      this.surface.write("\x1b[?1049h");
     }
 
     this.resizeUnsub = this.surface.onResize(() => { this.prevFrame = []; this.render(); });
@@ -918,7 +918,7 @@ export class FloatingPanel {
     out.push(SYNC_END);
 
     if (this.prevFrame.length === 0 || dirty) {
-      process.stdout.write(out.join(""));
+      this.surface.write(out.join(""));
     }
 
     this.prevFrame = frame;
@@ -938,7 +938,7 @@ export class FloatingPanel {
     const programExited = !this.usedAltScreen && !stillInAltScreen;
 
     if (this.usedAltScreen) {
-      process.stdout.write("\x1b[?1049l");
+      this.surface.write("\x1b[?1049l");
     }
 
     // Replay PTY output that arrived while the overlay was active.
@@ -947,7 +947,7 @@ export class FloatingPanel {
     // from before the overlay opened, losing any shell output produced
     // during the session.
     if (this.ptyBuffer) {
-      process.stdout.write(this.ptyBuffer);
+      this.surface.write(this.ptyBuffer);
     }
     this.ptyBuffer = "";
     this.bus.emit("shell:stdout-release", {});
@@ -990,7 +990,7 @@ export class FloatingPanel {
     const serialized = this.buffer.serialize();
     if (serialized && serialized !== this.prevSerialized) {
       this.prevSerialized = serialized;
-      process.stdout.write(`${SYNC_START}\x1b[H${serialized}${SYNC_END}`);
+      this.surface.write(`${SYNC_START}\x1b[H${serialized}${SYNC_END}`);
     }
   }
 
