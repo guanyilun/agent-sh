@@ -19,6 +19,8 @@ export interface ModelCapabilityConfig {
   reasoning?: boolean;
   /** Context window size in tokens for this specific model. */
   contextWindow?: number;
+  /** Echo reasoning_content back on assistant turns. Required by DeepSeek. */
+  echoReasoning?: boolean;
 }
 
 /** Provider profile — a named LLM configuration. */
@@ -33,6 +35,9 @@ export interface ProviderConfig {
   models?: (string | ModelCapabilityConfig)[];
   /** Context window size in tokens (e.g. 128000). Used for usage display. */
   contextWindow?: number;
+  /** Case-insensitive regex sources matched against model id; matches default
+   *  to echoReasoning=true. Per-model echoReasoning still wins. */
+  echoReasoningPatterns?: string[];
 }
 
 export interface Settings {
@@ -258,7 +263,7 @@ export interface ResolvedProvider {
   /** Provider supports the reasoning_effort parameter. Default: true. */
   supportsReasoningEffort?: boolean;
   /** Per-model capabilities, keyed by model id. */
-  modelCapabilities?: Map<string, { reasoning?: boolean; contextWindow?: number }>;
+  modelCapabilities?: Map<string, { reasoning?: boolean; contextWindow?: number; echoReasoning?: boolean }>;
 }
 
 /**
@@ -272,14 +277,14 @@ export function resolveProvider(name: string): ResolvedProvider | null {
 
   const rawModels = provider.models ?? (provider.defaultModel ? [provider.defaultModel] : []);
   const modelIds: string[] = [];
-  const caps = new Map<string, { reasoning?: boolean; contextWindow?: number }>();
+  const caps = new Map<string, { reasoning?: boolean; contextWindow?: number; echoReasoning?: boolean }>();
   for (const m of rawModels) {
     if (typeof m === "string") {
       modelIds.push(m);
     } else {
       modelIds.push(m.id);
-      if (m.reasoning !== undefined || m.contextWindow !== undefined) {
-        caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow });
+      if (m.reasoning !== undefined || m.contextWindow !== undefined || m.echoReasoning !== undefined) {
+        caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, echoReasoning: m.echoReasoning });
       }
     }
   }

@@ -51,6 +51,9 @@ export interface AgentMode {
   reasoning?: boolean;
   /** Provider supports the reasoning_effort parameter. */
   supportsReasoningEffort?: boolean;
+  /** Echo reasoning_content back on assistant turns. Required by DeepSeek;
+   *  default off (leaky shims may forward it to the model as OOD input). */
+  echoReasoning?: boolean;
 }
 
 /**
