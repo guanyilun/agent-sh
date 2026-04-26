@@ -70,6 +70,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   // short enough to read/remember. Legacy content may have 16-char iids; any
   // parsers should accept ≥6 hex chars.
   const instanceId = crypto.randomBytes(3).toString("hex");
+  bus.setSource(instanceId);
   const settings = settingsMod.getSettings();
 
   // Expose raw CLI config so the agent backend extension can resolve
