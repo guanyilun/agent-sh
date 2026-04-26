@@ -6,7 +6,7 @@ import type { EventBus } from "../event-bus.js";
 import { InputHandler, type InputContext } from "./input-handler.js";
 import { OutputParser } from "./output-parser.js";
 import { getSettings } from "../settings.js";
-import { RefCounter } from "../utils/output-writer.js";
+import { RefCounter } from "../utils/ref-counter.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface ShellHandlers {
