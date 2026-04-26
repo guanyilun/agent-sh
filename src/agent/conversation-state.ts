@@ -103,6 +103,11 @@ export class ConversationState {
   private lastApiTokenCount: number | null = null;
   private lastApiMessageCount: number = 0;
 
+  // Notes queued when addSystemNote fires mid-tool-pair; flushed once
+  // the trailing tool_result lands. Splicing into the gap breaks
+  // reasoning_content pairing and is rejected by strict providers.
+  private pendingNotes: string[] = [];
+
   constructor(handlers?: HandlerFunctions, instanceId: string = "0000") {
     this.handlers = handlers ?? null;
     this.instanceId = instanceId;
@@ -155,16 +160,50 @@ export class ConversationState {
     this.messages.push({ role: "tool", tool_call_id: toolCallId, content });
     if (isError) this.toolErrors.add(toolCallId);
     this.invalidateMessagesCache();
+    this.flushPendingNotes();
   }
 
   /** Add tool results as a user message (for inline tool protocol). */
   addToolResultInline(content: string): void {
     this.messages.push({ role: "user", content });
     this.invalidateMessagesCache();
+    this.flushPendingNotes();
   }
 
+  /** Safe from any context: queues if mid-tool-pair, appends otherwise. */
   addSystemNote(text: string): void {
+    if (this.hasOpenToolCalls()) {
+      this.pendingNotes.push(text);
+      return;
+    }
     this.messages.push({ role: "user", content: text });
+    this.invalidateMessagesCache();
+  }
+
+  private hasOpenToolCalls(): boolean {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const msg = this.messages[i]!;
+      if (msg.role === "tool") continue;
+      if (msg.role !== "assistant") return false;
+      if (!("tool_calls" in msg) || !msg.tool_calls) return false;
+      const answered = new Set<string>();
+      for (let j = i + 1; j < this.messages.length; j++) {
+        const m = this.messages[j]!;
+        if (m.role !== "tool") break;
+        answered.add((m as { tool_call_id: string }).tool_call_id);
+      }
+      return msg.tool_calls.some((tc) => !answered.has(tc.id));
+    }
+    return false;
+  }
+
+  private flushPendingNotes(): void {
+    if (this.pendingNotes.length === 0) return;
+    if (this.hasOpenToolCalls()) return;
+    for (const text of this.pendingNotes) {
+      this.messages.push({ role: "user", content: text });
+    }
+    this.pendingNotes = [];
     this.invalidateMessagesCache();
   }
 
@@ -240,6 +279,7 @@ export class ConversationState {
     this.invalidateMessagesCache();
     this.lastApiTokenCount = null;
     this.lastApiMessageCount = 0;
+    this.flushPendingNotes();
   }
 
   private pruneToolErrors(): void {
@@ -559,6 +599,7 @@ export class ConversationState {
     this.nuclearEntries = [];
     this.nuclearBySeq.clear();
     this.recallArchive.clear();
+    this.pendingNotes = [];
     this.invalidateMessagesCache();
     this.lastApiTokenCount = null;
     this.lastApiMessageCount = 0;
