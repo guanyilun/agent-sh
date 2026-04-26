@@ -1,4 +1,4 @@
-import { executeCommand } from "../../executor.js";
+import { executeCommand, killSession } from "../../executor.js";
 import type { EventBus } from "../../event-bus.js";
 import type { ToolDefinition } from "../types.js";
 
@@ -45,7 +45,7 @@ export function createBashTool(opts: {
       locations: [],
     }),
 
-    async execute(args, onChunk) {
+    async execute(args, onChunk, ctx) {
       const command = args.command as string;
       const timeout = ((args.timeout as number) ?? 60) * 1000;
 
@@ -72,7 +72,13 @@ export function createBashTool(opts: {
         onOutput: onChunk,
       });
 
-      await done;
+      const onAbort = () => killSession(session);
+      ctx?.signal?.addEventListener("abort", onAbort, { once: true });
+      try {
+        await done;
+      } finally {
+        ctx?.signal?.removeEventListener("abort", onAbort);
+      }
 
       const content = session.truncated
         ? `[output truncated, showing last portion]\n${session.output}`

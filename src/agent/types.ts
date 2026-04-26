@@ -64,7 +64,9 @@ export interface ToolUI {
 
 /** Context passed to tool execute() as optional third parameter. */
 export interface ToolExecutionContext {
-  ui: ToolUI;
+  ui?: ToolUI;
+  /** Aborted on Ctrl-C — tools with subprocess work should listen and clean up. */
+  signal?: AbortSignal;
 }
 
 export interface ToolDefinition {

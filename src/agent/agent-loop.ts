@@ -21,7 +21,7 @@ import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { computeDiff, computeEditDiff, computeInputDiff } from "../utils/diff.js";
-import type { AgentBackend, ToolDefinition } from "./types.js";
+import type { AgentBackend, ToolDefinition, ToolExecutionContext } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { ConversationState, type CompactResult } from "./conversation-state.js";
 import { HistoryFile } from "./history-file.js";
@@ -55,6 +55,19 @@ type PendingToolCall = ProtocolPendingToolCall;
  * the LLM via the API `tools` param (or via load_tool in deferred-
  * lookup mode) — this only trims the always-visible catalog.
  */
+/** Reject on abort; orphaned `p` keeps running but its result is dropped. */
+function raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error("cancelled"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error("cancelled"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => { signal.removeEventListener("abort", onAbort); resolve(v); },
+      (e) => { signal.removeEventListener("abort", onAbort); reject(e); },
+    );
+  });
+}
+
 function summarizeDescription(desc: string): string {
   const firstLine = desc.split("\n", 1)[0]!;
   const sentenceEnd = firstLine.search(/[.!?](\s|$)/);
@@ -951,10 +964,14 @@ export class AgentLoop implements AgentBackend {
       this.bus.emit("conversation:message-appended", { role: "system", content: text });
     });
 
+    // Fires on user-abort; extensions advise per tool name for cleanup.
+    h.define("tool:cancel", (_ctx: {
+      name: string;
+      args: Record<string, unknown>;
+      reason: "user-aborted";
+    }) => {});
+
     // Wraps each tool call: permission → execute → emit events.
-    // Extensions advise to add safe-mode, logging, metrics, custom policies.
-    // The ctx.onChunk callback is exposed so advisors can wrap it to
-    // intercept/transform streamed tool output (e.g. secret redaction).
     h.define("tool:execute", async (ctx: {
       name: string; id: string;
       args: Record<string, unknown>;
@@ -962,8 +979,9 @@ export class AgentLoop implements AgentBackend {
       onChunk?: (chunk: string) => void;
       batchIndex?: number;
       batchTotal?: number;
+      signal: AbortSignal;
     }) => {
-      const { name, id, args, tool } = ctx;
+      const { name, id, args, tool, signal } = ctx;
 
       // Validate required input fields before display/permission/execute.
       // Some models emit wrong arg names (e.g. `file_path` instead of `path`),
@@ -1063,15 +1081,17 @@ export class AgentLoop implements AgentBackend {
       const onChunk = (tool.showOutput !== false && !diffShown)
         ? ctx.onChunk
         : undefined;
-      const toolCtx = this.compositor
-        ? { ui: createToolUI(this.bus, this.compositor.surface("agent")) }
-        : undefined;
-      // Surface thrown errors as tool results so the agent can self-correct
-      // instead of the throw killing the whole turn.
+      const toolCtx: ToolExecutionContext = { signal };
+      if (this.compositor) {
+        toolCtx.ui = createToolUI(this.bus, this.compositor.surface("agent"));
+      }
       let result: Awaited<ReturnType<typeof tool.execute>>;
       try {
-        result = await tool.execute(args, onChunk, toolCtx);
+        result = await raceAbort(tool.execute(args, onChunk, toolCtx), signal);
       } catch (err) {
+        if (signal.aborted) {
+          try { this.handlers.call("tool:cancel", { name, args, reason: "user-aborted" }); } catch {}
+        }
         const message = err instanceof Error ? err.message : String(err);
         result = { content: message, exitCode: 1, isError: true };
       }
@@ -1332,7 +1352,8 @@ export class AgentLoop implements AgentBackend {
         const result = await this.handlers.call(
           "tool:execute",
           { name: tc.name, id: tc.id, args, tool, onChunk: defaultOnChunk,
-            batchIndex, batchTotal: batchTotal > 1 ? batchTotal : undefined },
+            batchIndex, batchTotal: batchTotal > 1 ? batchTotal : undefined,
+            signal },
         );
 
         // Truncate large outputs to avoid blowing context
