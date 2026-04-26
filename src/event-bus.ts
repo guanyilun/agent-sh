@@ -340,6 +340,16 @@ type Listener<T> = (payload: T) => void;
 type PipeListener<T> = (payload: T) => T;
 type AsyncPipeListener<T> = (payload: T) => T | Promise<T>;
 
+/** Envelope stamped on every emitted event. */
+export interface BusMeta {
+  source: string;   // emitting agent's instanceId
+  ts: number;       // milliseconds since epoch
+  id: string;       // monotonic per-bus, "<source>:<n>"
+  name: string;     // event name
+}
+
+export type AnyListener = (name: string, payload: unknown, meta: BusMeta) => void;
+
 /**
  * Typed event bus with two modes:
  * - emit/on/off: fire-and-forget notifications
@@ -350,6 +360,39 @@ export class EventBus {
   private emitter = new EventEmitter().setMaxListeners(0);
   private pipeListeners = new Map<string, PipeListener<any>[]>();
   private asyncPipeListeners = new Map<string, AsyncPipeListener<any>[]>();
+  private source = "0000";
+  private nextSeq = 0;
+  private anyListeners: AnyListener[] = [];
+
+  /** Set the source id stamped onto every emitted event. */
+  setSource(src: string): void {
+    this.source = src;
+  }
+
+  /** Subscribe to every emitted event with full envelope. Returns unsubscribe. */
+  onAny(fn: AnyListener): () => void {
+    this.anyListeners.push(fn);
+    return () => {
+      const i = this.anyListeners.indexOf(fn);
+      if (i !== -1) this.anyListeners.splice(i, 1);
+    };
+  }
+
+  /** Stamp + dispatch — used by every emit path. */
+  private dispatch(name: string, payload: unknown): void {
+    if (this.anyListeners.length > 0) {
+      const meta: BusMeta = {
+        source: this.source,
+        ts: Date.now(),
+        id: `${this.source}:${this.nextSeq++}`,
+        name,
+      };
+      for (const fn of this.anyListeners) {
+        try { fn(name, payload, meta); } catch { /* swallow */ }
+      }
+    }
+    this.emitter.emit(name, payload);
+  }
 
   /** Subscribe to a fire-and-forget event. */
   on<K extends keyof ShellEvents>(
@@ -372,7 +415,19 @@ export class EventBus {
     event: K,
     payload: ShellEvents[K],
   ): void {
-    this.emitter.emit(event, payload);
+    this.dispatch(event, payload);
+  }
+
+  /** Re-dispatch an event with externally-supplied meta. Used by bridges
+   *  and replay tools to preserve the original source/ts/id of remote or
+   *  recorded events instead of restamping them as locally originated. */
+  relay(meta: BusMeta, payload: unknown): void {
+    if (this.anyListeners.length > 0) {
+      for (const fn of this.anyListeners) {
+        try { fn(meta.name, payload, meta); } catch { /* swallow */ }
+      }
+    }
+    this.emitter.emit(meta.name, payload);
   }
 
   /**
@@ -394,7 +449,7 @@ export class EventBus {
       }
       transformed = payload; // fall back to untransformed
     }
-    this.emitter.emit(event, transformed);
+    this.dispatch(event, transformed);
   }
 
   /** Register a transform listener for a pipeline event. */
@@ -475,7 +530,7 @@ export class EventBus {
     payload: ShellEvents[K],
   ): Promise<ShellEvents[K]> {
     // Phase 1: notify (lets renderers prepare for interactive I/O)
-    this.emitter.emit(event, payload);
+    this.dispatch(event, payload);
 
     // Phase 2: transform (extensions provide decisions)
     const listeners = this.asyncPipeListeners.get(event);
