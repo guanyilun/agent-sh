@@ -8,7 +8,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-export const CONFIG_DIR = path.join(os.homedir(), ".agent-sh");
+/** Root config directory. Override via AGENT_SH_HOME for isolated instances
+ *  (testing, multi-agent setups). Path is resolved at module load. */
+export const CONFIG_DIR = process.env.AGENT_SH_HOME
+  ? path.resolve(process.env.AGENT_SH_HOME)
+  : path.join(os.homedir(), ".agent-sh");
 const SETTINGS_PATH = path.join(CONFIG_DIR, "settings.json");
 
 /** Per-model capability overrides. */

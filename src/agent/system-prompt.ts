@@ -16,9 +16,8 @@ export function formatSkillsBlock(skills: Skill[]): string {
     + skills.map(s => `- **${s.name}**: ${s.description}\n  Path: ${s.filePath}`).join("\n\n");
 }
 
-// Resolve to the user's home-based config dir — user's standing instructions to the agent
-import * as os from "node:os";
-const GLOBAL_AGENTS_MD = path.join(os.homedir(), ".agent-sh", "AGENTS.md");
+import { CONFIG_DIR } from "../settings.js";
+const GLOBAL_AGENTS_MD = path.join(CONFIG_DIR, "AGENTS.md");
 
 // ── File caches ─────────────────────────────────────────────────────
 // Convention files (CLAUDE.md/AGENT.md) are walked synchronously from
