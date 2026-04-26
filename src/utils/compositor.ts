@@ -40,6 +40,10 @@ export interface RenderSurface {
   writeLine(line: string): void;
   /** Available width in columns. */
   readonly columns: number;
+  /** Available height in rows. */
+  readonly rows: number;
+  /** Subscribe to size changes. Returns unsubscribe. */
+  onResize(cb: (cols: number, rows: number) => void): () => void;
 }
 
 export interface Compositor {
@@ -59,9 +63,11 @@ export const nullSurface: RenderSurface = {
   write() {},
   writeLine() {},
   get columns() { return 80; },
+  get rows() { return 24; },
+  onResize() { return () => {}; },
 };
 
-/** Surface backed by process.stdout. */
+/** Surface backed by process.stdout — the only sanctioned bridge to it. */
 export class StdoutSurface implements RenderSurface {
   write(text: string): void {
     if (process.stdout.writable) {
@@ -73,6 +79,14 @@ export class StdoutSurface implements RenderSurface {
   }
   get columns(): number {
     return process.stdout.columns || 80;
+  }
+  get rows(): number {
+    return process.stdout.rows || 24;
+  }
+  onResize(cb: (cols: number, rows: number) => void): () => void {
+    const handler = () => cb(this.columns, this.rows);
+    process.stdout.on("resize", handler);
+    return () => { process.stdout.off("resize", handler); };
   }
 }
 
@@ -135,6 +149,8 @@ export class DefaultCompositor implements Compositor {
         target.writeLine(line);
       },
       get columns() { return target.columns; },
+      get rows() { return target.rows; },
+      onResize: (cb) => target.onResize(cb),
     };
   }
 }
