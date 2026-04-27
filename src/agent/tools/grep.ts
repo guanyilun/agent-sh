@@ -1,5 +1,6 @@
 import { executeCommand } from "../../executor.js";
 import type { ToolDefinition } from "../types.js";
+import { expandHome } from "./expand-home.js";
 
 export function createGrepTool(getCwd: () => string): ToolDefinition {
   return {
@@ -90,7 +91,7 @@ export function createGrepTool(getCwd: () => string): ToolDefinition {
 
     async execute(args) {
       const pattern = args.pattern as string;
-      const searchPath = (args.path as string) ?? ".";
+      const searchPath = expandHome((args.path as string) ?? ".");
       const include = args.include as string | undefined;
       const mode = (args.output_mode as string) ?? "files_with_matches";
       const caseInsensitive = args.case_insensitive as boolean | undefined;

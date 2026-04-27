@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ToolDefinition } from "../types.js";
 import { computeDiff, computeEditDiff } from "../../utils/diff.js";
+import { expandHome } from "./expand-home.js";
 
 /**
  * Find the closest matching region in the file content to help diagnose
@@ -87,7 +88,7 @@ export function createEditFileTool(getCwd: () => string): ToolDefinition {
     },
 
     async execute(args, onChunk) {
-      const filePath = args.path as string;
+      const filePath = expandHome(args.path as string);
       const oldText = args.old_text as string;
       const newText = args.new_text as string;
       const replaceAll = (args.replace_all as boolean) ?? false;

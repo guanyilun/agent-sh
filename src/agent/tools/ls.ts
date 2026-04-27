@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ToolDefinition } from "../types.js";
+import { expandHome } from "./expand-home.js";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
@@ -42,7 +43,7 @@ export function createLsTool(getCwd: () => string): ToolDefinition {
     },
 
     async execute(args) {
-      const dirPath = (args.path as string) ?? ".";
+      const dirPath = expandHome((args.path as string) ?? ".");
       const absPath = path.resolve(getCwd(), dirPath);
 
       try {

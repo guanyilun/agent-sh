@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { executeCommand } from "../../executor.js";
 import type { ToolDefinition } from "../types.js";
+import { expandHome } from "./expand-home.js";
 
 export function createGlobTool(getCwd: () => string): ToolDefinition {
   return {
@@ -45,7 +46,7 @@ export function createGlobTool(getCwd: () => string): ToolDefinition {
 
     async execute(args) {
       const pattern = args.pattern as string;
-      const searchPath = (args.path as string) ?? ".";
+      const searchPath = expandHome((args.path as string) ?? ".");
 
       // Use ripgrep for correct glob matching + .gitignore awareness
       const shellEsc = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";

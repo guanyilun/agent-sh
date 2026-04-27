@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ToolDefinition } from "../types.js";
 import { computeDiff } from "../../utils/diff.js";
+import { expandHome } from "./expand-home.js";
 
 export function createWriteFileTool(getCwd: () => string): ToolDefinition {
   return {
@@ -41,7 +42,7 @@ export function createWriteFileTool(getCwd: () => string): ToolDefinition {
     },
 
     async execute(args, onChunk) {
-      const filePath = args.path as string;
+      const filePath = expandHome(args.path as string);
       const content = args.content as string;
       const absPath = path.resolve(getCwd(), filePath);
 

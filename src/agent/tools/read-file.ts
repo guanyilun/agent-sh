@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ToolDefinition } from "../types.js";
+import { expandHome } from "./expand-home.js";
 
 /** Tracks the last-read state of a file for deduplication. */
 export interface FileReadState {
@@ -57,7 +58,7 @@ export function createReadFileTool(
     },
 
     async execute(args) {
-      const filePath = args.path as string;
+      const filePath = expandHome(args.path as string);
       const absPath = path.resolve(getCwd(), filePath);
       const reqOffset = (args.offset as number) ?? 1;
       const reqLimit = args.limit as number | undefined;
