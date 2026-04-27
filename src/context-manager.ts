@@ -142,7 +142,9 @@ export class ContextManager {
     const lastSeq = this.exchanges[this.exchanges.length - 1]!.id;
 
     // Outputs already carry head+tail+spillPath stubs from capture time.
-    const body = fresh.map((ex) => this.formatExchangeTruncated(ex)).join("\n");
+    const parts = fresh.map((ex) => this.formatExchangeTruncated(ex)).filter((s) => s.length > 0);
+    if (parts.length === 0) return null;
+    const body = parts.join("\n");
     return {
       text: `<shell-events>\n${body}</shell-events>`,
       lastSeq,
@@ -193,7 +195,9 @@ export class ContextManager {
         return s;
       }
       case "agent_query":
-        return `#${ex.id} [you] > ${ex.query}\n`;
+        // Suppress: query already appears as the turn's user message.
+        // Kept in `exchanges` so search() can find it by id.
+        return "";
     }
   }
 
