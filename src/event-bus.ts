@@ -246,6 +246,22 @@ export interface ShellEvents {
     budgetTokens: number;
   };
 
+  "context:snapshot": {
+    messages: unknown[];
+    contextWindow: number;
+    activeTokens: number;
+  };
+
+  // Strategies share one seam so after-compact metrics and cache
+  // invalidation run uniformly across kernel + manual edits.
+  "context:compact": {
+    strategy?:
+      | { kind: "two-tier-pin"; target: number; keepRecent?: number; force?: boolean }
+      | { kind: "rewind"; toIndex: number }
+      | { kind: "replace"; messages: unknown[] };
+    stats?: { before: number; after: number; evictedCount: number };
+  };
+
 
   // Extension registers itself as agent backend (extension → core)
   "agent:register-backend": {

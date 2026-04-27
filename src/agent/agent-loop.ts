@@ -352,6 +352,19 @@ export class AgentLoop implements AgentBackend {
       budgetTokens: this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     }));
 
+    this.bus.onPipe("context:snapshot", (payload) => {
+      payload.messages = this.conversation.getMessages();
+      payload.contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+      payload.activeTokens = this.conversation.estimateTokens();
+      return payload;
+    });
+
+    this.bus.onPipeAsync("context:compact", async (payload) => {
+      const stats = await this.compactWithHooks(0, undefined, false, payload.strategy);
+      if (stats) payload.stats = { before: stats.before, after: stats.after, evictedCount: stats.evictedCount };
+      return payload;
+    });
+
     // Prior-session preamble (non-blocking). Both the read and the
     // layout go through advisable handlers.
     Promise.resolve(this.handlers.call("history:read-recent"))
@@ -557,11 +570,13 @@ export class AgentLoop implements AgentBackend {
     target: number,
     keepRecent?: number,
     force?: boolean,
+    strategy?: ShellEvents["context:compact"]["strategy"],
   ): CompactResult | null {
     const stats = this.handlers.call("conversation:compact", {
       target,
       keepRecent,
       force: !!force,
+      strategy,
     }) as CompactResult | null;
     if (stats) {
       this.bus.emit("conversation:after-compact", {
@@ -953,8 +968,33 @@ export class AgentLoop implements AgentBackend {
 
     // Compaction strategy — default delegates to the two-tier pin
     // strategy in ConversationState; advisors replace wholesale.
-    h.define("conversation:compact", (opts: { target: number; keepRecent?: number; force?: boolean }) => {
-      return this.conversation.compact(opts.target, opts.keepRecent, opts.force);
+    h.define("conversation:compact", (opts: {
+      target?: number;
+      keepRecent?: number;
+      force?: boolean;
+      strategy?:
+        | { kind: "two-tier-pin"; target: number; keepRecent?: number; force?: boolean }
+        | { kind: "rewind"; toIndex: number }
+        | { kind: "replace"; messages: unknown[] };
+    }) => {
+      const strategy = opts.strategy;
+      // Synthesize a CompactResult for manual edits so conversation:after-compact
+      // listeners (metrics, file-read cache, system-prompt cache) still run.
+      if (strategy?.kind === "rewind" || strategy?.kind === "replace") {
+        const before = this.conversation.estimatePromptTokens();
+        const beforeLen = this.conversation.getMessages().length;
+        const next = strategy.kind === "rewind"
+          ? this.conversation.getMessages().slice(0, strategy.toIndex)
+          : (strategy.messages as ReturnType<ConversationState["getMessages"]>);
+        this.conversation.replaceMessages(next);
+        const after = this.conversation.estimatePromptTokens();
+        const afterLen = this.conversation.getMessages().length;
+        return { before, after, evictedCount: Math.max(0, beforeLen - afterLen) } as CompactResult;
+      }
+      const tgt = strategy?.kind === "two-tier-pin" ? strategy.target : opts.target!;
+      const keep = strategy?.kind === "two-tier-pin" ? strategy.keepRecent : opts.keepRecent;
+      const force = strategy?.kind === "two-tier-pin" ? strategy.force : opts.force;
+      return this.conversation.compact(tgt, keep, force);
     });
 
     // Inject a system note mid-loop — used by extensions (subagents,
