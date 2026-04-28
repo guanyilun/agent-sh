@@ -5,6 +5,7 @@
  * Also provides a spinner/timer component for in-progress tools.
  */
 import * as path from "node:path";
+import * as os from "node:os";
 import { visibleLen } from "./ansi.js";
 import { palette as p } from "./palette.js";
 
@@ -298,7 +299,7 @@ function shortenPath(p: string | undefined | null, cwd: string): string {
   if (!p || typeof p !== "string") return "";
   if (p.startsWith(cwd + "/")) return p.slice(cwd.length + 1);
   if (p.startsWith(cwd)) return p.slice(cwd.length) || ".";
-  const home = process.env.HOME;
+  const home = process.env.HOME ?? os.homedir();
   if (home && p.startsWith(home + "/")) return "~/" + p.slice(home.length + 1);
   return p;
 }

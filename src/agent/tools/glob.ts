@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { executeCommand } from "../../executor.js";
+import { executeArgv } from "../../executor.js";
 import type { ToolDefinition } from "../types.js";
 import { expandHome } from "./expand-home.js";
 
@@ -49,18 +49,21 @@ export function createGlobTool(getCwd: () => string): ToolDefinition {
       const searchPath = expandHome((args.path as string) ?? ".");
 
       // Use ripgrep for correct glob matching + .gitignore awareness
-      const shellEsc = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
-      const parts = [
-        "rg", "--files",
-        "--glob", shellEsc(pattern),
-        shellEsc(searchPath),
-      ];
-      const { session, done } = executeCommand({
-        command: parts.join(" "),
+      const { session, done } = executeArgv({
+        file: "rg",
+        args: ["--files", "--glob", pattern, searchPath],
         cwd: getCwd(),
         timeout: 10_000,
       });
       await done;
+
+      if (session.exitCode === -1 && session.output.startsWith("Failed to spawn")) {
+        return {
+          content: "ripgrep (rg) not found on PATH. Install ripgrep to use the glob tool.",
+          exitCode: 1,
+          isError: true,
+        };
+      }
 
       if (!session.output.trim()) {
         return {
