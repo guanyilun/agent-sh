@@ -11,6 +11,9 @@ export interface ExecutorSession {
   exitCode: number | null;
   done: boolean;
   truncated: boolean;
+  /** True when the binary couldn't be launched (ENOENT, EACCES). Lets callers
+   *  distinguish "tool missing" from "tool ran and exited with -1". */
+  spawnFailed: boolean;
   process: ChildProcess | null;
   resolve?: () => void;
 }
@@ -38,6 +41,7 @@ export function executeCommand(opts: {
     exitCode: null,
     done: false,
     truncated: false,
+    spawnFailed: false,
     process: null,
   };
 
@@ -62,6 +66,7 @@ export function executeCommand(opts: {
     });
   } catch (err) {
     session.exitCode = -1;
+    session.spawnFailed = true;
     session.output = `Failed to spawn: ${err instanceof Error ? err.message : String(err)}`;
     session.done = true;
     session.resolve?.();
@@ -111,6 +116,8 @@ export function executeCommand(opts: {
     cancelKill?.();
     if (!session.done) {
       session.exitCode = -1;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "EACCES") session.spawnFailed = true;
       session.output += `\nProcess error: ${err.message}`;
       session.done = true;
       session.process = null;
@@ -145,6 +152,7 @@ export function executeArgv(opts: {
     exitCode: null,
     done: false,
     truncated: false,
+    spawnFailed: false,
     process: null,
   };
 
@@ -167,6 +175,7 @@ export function executeArgv(opts: {
     });
   } catch (err) {
     session.exitCode = -1;
+    session.spawnFailed = true;
     session.output = `Failed to spawn ${opts.file}: ${err instanceof Error ? err.message : String(err)}`;
     session.done = true;
     session.resolve?.();
@@ -212,6 +221,8 @@ export function executeArgv(opts: {
     clearTimeout(timer);
     if (!session.done) {
       session.exitCode = -1;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "EACCES") session.spawnFailed = true;
       session.output += `\nProcess error: ${err.message}`;
       session.done = true;
       session.process = null;
@@ -231,14 +242,17 @@ export function killSession(session: ExecutorSession): () => void {
   const proc = session.process;
   if (!proc || !proc.pid) return () => {};
 
-  try {
-    process.kill(-proc.pid, "SIGTERM");
-  } catch {}
+  // Try process-group kill first (works for executeCommand's detached bash
+  // children); fall back to direct kill (executeArgv's non-detached spawn,
+  // and Windows where negative pids aren't supported).
+  try { process.kill(-proc.pid, "SIGTERM"); } catch {}
+  try { proc.kill("SIGTERM"); } catch {}
 
   let settled = false;
   const fallback = setTimeout(() => {
     if (!settled && !session.done && proc.pid) {
       try { process.kill(-proc.pid, "SIGKILL"); } catch {}
+      try { proc.kill("SIGKILL"); } catch {}
     }
   }, 5000);
 
