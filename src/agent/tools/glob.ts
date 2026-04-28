@@ -19,11 +19,11 @@ export function createGlobTool(getCwd: () => string): ToolDefinition {
       properties: {
         pattern: {
           type: "string",
-          description: "Glob pattern (e.g., 'src/**/*.ts', '*.json')",
+          description: "Glob pattern (e.g., 'src/**/*.ts', '*.json'). Do NOT put `~` or absolute prefixes here — pass the directory in `path` instead.",
         },
         path: {
           type: "string",
-          description: "Base directory to search (default: cwd)",
+          description: "Base directory to search (default: cwd). Supports `~` and `~/...` for the home directory.",
         },
       },
       required: ["pattern"],
