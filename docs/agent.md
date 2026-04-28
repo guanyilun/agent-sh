@@ -273,8 +273,8 @@ For OpenRouter, the flag is set automatically: model ids matching the built-in p
 }
 ```
 
-- `echoReasoningPatterns` — regex sources merged with the built-in list.
-- Per-model `echoReasoning` — explicit override that always wins over patterns.
+- `echoReasoningPatterns` — regex **source strings** (no `/.../` delimiters), each compiled with the case-insensitive flag and tested against the model id. Examples: `"deepseek"` (substring match), `"^vendor/.*-r1$"` (anchored). Merged with the built-in `deepseek` pattern.
+- Per-model `echoReasoning` — explicit boolean override that always wins over patterns.
 - Invalid regexes are silently skipped, so a typo can't break provider registration.
 
 ### Tool interface
