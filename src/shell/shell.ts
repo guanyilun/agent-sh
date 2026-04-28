@@ -146,6 +146,7 @@ export class Shell implements InputContext {
         ...(showIndicator ? [`  ${titleCmd}`] : []),
         "  __agent_sh_preexec_ran=0",
         "}",
+        `PROMPT_COMMAND="\${PROMPT_COMMAND%;}"`,
         `PROMPT_COMMAND="\${PROMPT_COMMAND:+\$PROMPT_COMMAND;}__agent_sh_precmd"`,
         "",
         "# Preexec hook via DEBUG trap: emit actual command text so agent-sh",
