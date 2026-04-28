@@ -251,6 +251,32 @@ The agent supports configurable thinking/reasoning levels for models that suppor
 - Query current state via `config:get-thinking` pipe
 - The agent validates that the current model/provider supports reasoning before enabling
 
+### Echoing reasoning back to the model
+
+DeepSeek-family models require their previous-turn `reasoning_content` / `reasoning_details` to be echoed back on the next assistant message. Most other reasoning models do **not** want that — feeding prior chain-of-thought back through lenient OpenAI-compatible shims can register as out-of-distribution input and degrade quality.
+
+agent-sh gates this behavior per-mode via the `AgentMode.echoReasoning` flag (default `false`). Reasoning extras are only attached to assistant messages when the active mode opts in.
+
+For OpenRouter, the flag is set automatically: model ids matching the built-in pattern `/deepseek/i` (V3, V3.2, V4, rebadges) get `echoReasoning: true`. You can extend or override this in `settings.json`:
+
+```json
+{
+  "providers": {
+    "openrouter": {
+      "echoReasoningPatterns": ["my-custom-deepseek-fork"],
+      "models": [
+        { "id": "deepseek/deepseek-v3.2", "echoReasoning": false },
+        { "id": "openai/gpt-5.5",         "reasoning": true }
+      ]
+    }
+  }
+}
+```
+
+- `echoReasoningPatterns` — regex sources merged with the built-in list.
+- Per-model `echoReasoning` — explicit override that always wins over patterns.
+- Invalid regexes are silently skipped, so a typo can't break provider registration.
+
 ### Tool interface
 
 Every tool implements this interface:
