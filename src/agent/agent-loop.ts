@@ -20,6 +20,7 @@ import { setMaxListeners } from "node:events";
 import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { computeDiff, computeEditDiff, computeInputDiff } from "../utils/diff.js";
 import type { AgentBackend, ToolDefinition, ToolExecutionContext } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
@@ -33,7 +34,6 @@ import { RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW } from "./token-budget.js";
 import { PACKAGE_VERSION } from "../utils/package-version.js";
 import { getSettings, updateSettings } from "../settings.js";
 import { createToolProtocol, type ToolProtocol, type PendingToolCall as ProtocolPendingToolCall, type ToolResult as ProtocolToolResult } from "./tool-protocol.js";
-import * as os from "node:os";
 
 // Core tool factories
 import { createBashTool } from "./tools/bash.js";
@@ -1079,7 +1079,7 @@ export class AgentLoop implements AgentBackend {
               permKind = "file-write";
               // Shorten path for display
               const cwd = process.cwd();
-              const home = process.env.HOME;
+              const home = process.env.HOME ?? os.homedir();
               let displayPath = absPath;
               if (absPath.startsWith(cwd + "/")) displayPath = absPath.slice(cwd.length + 1);
               else if (home && absPath.startsWith(home + "/")) displayPath = "~/" + absPath.slice(home.length + 1);

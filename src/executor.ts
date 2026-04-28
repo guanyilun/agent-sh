@@ -122,6 +122,107 @@ export function executeCommand(opts: {
 }
 
 /**
+ * Spawn a binary directly (no shell). Use for invoking known tools like `rg`
+ * with structured args — avoids shell-quoting bugs and works on platforms
+ * without /bin/bash.
+ */
+export function executeArgv(opts: {
+  file: string;
+  args: string[];
+  cwd: string;
+  env?: Record<string, string>;
+  timeout?: number;
+  maxOutputBytes?: number;
+  onOutput?: (chunk: string) => void;
+}): { session: ExecutorSession; done: Promise<void> } {
+  const timeout = opts.timeout ?? DEFAULT_TIMEOUT;
+  const maxOutput = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT;
+
+  const session: ExecutorSession = {
+    id: "",
+    command: `${opts.file} ${opts.args.join(" ")}`,
+    output: "",
+    exitCode: null,
+    done: false,
+    truncated: false,
+    process: null,
+  };
+
+  const done = new Promise<void>((resolve) => {
+    session.resolve = resolve;
+  });
+
+  const env: Record<string, string> = {};
+  const source = opts.env ?? process.env;
+  for (const [k, v] of Object.entries(source)) {
+    if (v !== undefined) env[k] = v;
+  }
+
+  let child: ChildProcess;
+  try {
+    child = spawn(opts.file, opts.args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd: opts.cwd,
+      env,
+    });
+  } catch (err) {
+    session.exitCode = -1;
+    session.output = `Failed to spawn ${opts.file}: ${err instanceof Error ? err.message : String(err)}`;
+    session.done = true;
+    session.resolve?.();
+    return { session, done };
+  }
+
+  session.process = child;
+
+  const handleData = (data: Buffer) => {
+    const raw = data.toString("utf-8");
+    const clean = stripAnsi(raw);
+    session.output += clean;
+    if (session.output.length > maxOutput) {
+      session.output = session.output.slice(-maxOutput);
+      session.truncated = true;
+    }
+    opts.onOutput?.(raw);
+  };
+
+  child.stdout?.on("data", handleData);
+  child.stderr?.on("data", handleData);
+
+  const timer = setTimeout(() => {
+    if (!session.done && session.process) {
+      try { session.process.kill("SIGTERM"); } catch {}
+      setTimeout(() => {
+        if (!session.done && session.process) {
+          try { session.process.kill("SIGKILL"); } catch {}
+        }
+      }, 5000).unref();
+    }
+  }, timeout);
+
+  child.on("exit", (code, signal) => {
+    clearTimeout(timer);
+    session.exitCode = code ?? (signal ? -1 : null);
+    session.done = true;
+    session.process = null;
+    session.resolve?.();
+  });
+
+  child.on("error", (err) => {
+    clearTimeout(timer);
+    if (!session.done) {
+      session.exitCode = -1;
+      session.output += `\nProcess error: ${err.message}`;
+      session.done = true;
+      session.process = null;
+      session.resolve?.();
+    }
+  });
+
+  return { session, done };
+}
+
+/**
  * Kill a running session's process group: SIGTERM, then SIGKILL after 5s.
  * Returns a cleanup that cancels the pending SIGKILL — callers should invoke
  * it once the process has exited.

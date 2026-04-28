@@ -1,4 +1,5 @@
-import { executeCommand } from "../../executor.js";
+import { executeArgv } from "../../executor.js";
+import { resolveRgPath } from "../../utils/ripgrep-path.js";
 import type { ToolDefinition } from "../types.js";
 import { expandHome } from "./expand-home.js";
 
@@ -100,44 +101,52 @@ export function createGrepTool(getCwd: () => string): ToolDefinition {
       const headLimit = args.head_limit as number | undefined;
       const offset = (args.offset as number) ?? 0;
 
-      const shellEsc = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
-      const parts = ["rg", "--color=never"];
+      const rgArgs: string[] = ["--color=never"];
 
       // Mode-specific flags
       if (mode === "files_with_matches") {
-        parts.push("--files-with-matches");
+        rgArgs.push("--files-with-matches");
       } else if (mode === "count") {
-        parts.push("--count");
+        rgArgs.push("--count");
       } else {
         // content mode
-        parts.push("--line-number", "--no-heading");
+        rgArgs.push("--line-number", "--no-heading");
         if (contextBefore != null && contextBefore > 0) {
-          parts.push(`-B${contextBefore}`);
+          rgArgs.push(`-B${contextBefore}`);
         }
         if (contextAfter != null && contextAfter > 0) {
-          parts.push(`-A${contextAfter}`);
+          rgArgs.push(`-A${contextAfter}`);
         }
         // If neither -A nor -B specified, use --max-count to limit per-file
         if (contextBefore == null && contextAfter == null) {
-          parts.push("--max-count=50");
+          rgArgs.push("--max-count=50");
         }
       }
 
       if (caseInsensitive) {
-        parts.push("-i");
+        rgArgs.push("-i");
       }
       if (include) {
-        parts.push("--glob", shellEsc(include));
+        rgArgs.push("--glob", include);
       }
-      parts.push("-e", shellEsc(pattern), shellEsc(searchPath));
+      rgArgs.push("-e", pattern, searchPath);
 
-      const { session, done } = executeCommand({
-        command: parts.join(" "),
+      const { session, done } = executeArgv({
+        file: resolveRgPath(),
+        args: rgArgs,
         cwd: getCwd(),
         timeout: 10_000,
         maxOutputBytes: 64 * 1024,
       });
       await done;
+
+      if (session.exitCode === -1 && session.output.startsWith("Failed to spawn")) {
+        return {
+          content: "ripgrep not available — the bundled binary failed to load and `rg` is not on PATH. Reinstall agent-sh, or install ripgrep manually (https://github.com/BurntSushi/ripgrep#installation).",
+          exitCode: 1,
+          isError: true,
+        };
+      }
 
       if (session.exitCode === 1 && !session.output.trim()) {
         // If the pattern looks like a filename (e.g. "SKILL.md", "package.json"),
