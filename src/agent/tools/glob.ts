@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { executeArgv } from "../../executor.js";
+import { resolveRgPath } from "../../utils/ripgrep-path.js";
 import type { ToolDefinition } from "../types.js";
 import { expandHome } from "./expand-home.js";
 
@@ -50,7 +51,7 @@ export function createGlobTool(getCwd: () => string): ToolDefinition {
 
       // Use ripgrep for correct glob matching + .gitignore awareness
       const { session, done } = executeArgv({
-        file: "rg",
+        file: resolveRgPath(),
         args: ["--files", "--glob", pattern, searchPath],
         cwd: getCwd(),
         timeout: 10_000,
@@ -59,7 +60,7 @@ export function createGlobTool(getCwd: () => string): ToolDefinition {
 
       if (session.exitCode === -1 && session.output.startsWith("Failed to spawn")) {
         return {
-          content: "ripgrep (rg) not found on PATH. Install ripgrep to use the glob tool.",
+          content: "ripgrep not available — the bundled binary failed to load and `rg` is not on PATH. Reinstall agent-sh, or install ripgrep manually (https://github.com/BurntSushi/ripgrep#installation).",
           exitCode: 1,
           isError: true,
         };

@@ -1,4 +1,5 @@
 import { executeArgv } from "../../executor.js";
+import { resolveRgPath } from "../../utils/ripgrep-path.js";
 import type { ToolDefinition } from "../types.js";
 import { expandHome } from "./expand-home.js";
 
@@ -131,7 +132,7 @@ export function createGrepTool(getCwd: () => string): ToolDefinition {
       rgArgs.push("-e", pattern, searchPath);
 
       const { session, done } = executeArgv({
-        file: "rg",
+        file: resolveRgPath(),
         args: rgArgs,
         cwd: getCwd(),
         timeout: 10_000,
@@ -141,7 +142,7 @@ export function createGrepTool(getCwd: () => string): ToolDefinition {
 
       if (session.exitCode === -1 && session.output.startsWith("Failed to spawn")) {
         return {
-          content: "ripgrep (rg) not found on PATH. Install ripgrep to use the grep tool.",
+          content: "ripgrep not available — the bundled binary failed to load and `rg` is not on PATH. Reinstall agent-sh, or install ripgrep manually (https://github.com/BurntSushi/ripgrep#installation).",
           exitCode: 1,
           isError: true,
         };

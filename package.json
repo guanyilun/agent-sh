@@ -127,6 +127,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@vscode/ripgrep": "^1.17.1",
     "@xterm/addon-serialize": "^0.13.0",
     "@xterm/headless": "^5.5.0",
     "cli-highlight": "^2.1.11",
