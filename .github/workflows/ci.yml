@@ -22,6 +22,10 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+        env:
+          # @vscode/ripgrep postinstall downloads from GitHub releases; without a
+          # token it hits anonymous rate limits on shared CI IPs.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Type-check + build
         run: npm run build
