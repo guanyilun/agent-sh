@@ -8,7 +8,7 @@ import { getSettings } from "../settings.js";
 
 const BASE_URL = "https://openrouter.ai/api/v1";
 
-const DEFAULT_MODELS = ["anthropic/claude-sonnet-4.6"];
+const DEFAULT_MODELS = ["deepseek/deepseek-v4-flash"];
 
 // Built-in defaults for models requiring reasoning_content echoed back
 // (server 400s without it). Extend or override in settings.json:
