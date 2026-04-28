@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Type-check + build
+        run: npm run build
+
+      - name: Confirm bundled ripgrep is present
+        shell: bash
+        run: |
+          node -e "const {rgPath}=require('@vscode/ripgrep');require('fs').accessSync(rgPath);console.log('rg at',rgPath)"
+          node -e "const {rgPath}=require('@vscode/ripgrep');require('child_process').execFileSync(rgPath,['--version'],{stdio:'inherit'})"
+
+      - name: Smoke-test executeArgv via bundled rg
+        shell: bash
+        run: |
+          node --input-type=module -e "
+            import { executeArgv } from './dist/executor.js';
+            import { resolveRgPath } from './dist/utils/ripgrep-path.js';
+            const rg = resolveRgPath();
+            const { session, done } = executeArgv({ file: rg, args: ['--files', '--glob', '*.json', '.'], cwd: process.cwd(), timeout: 10000 });
+            await done;
+            const lines = session.output.split('\n').filter(Boolean).length;
+            if (session.exitCode !== 0 || lines === 0) {
+              console.error('rg smoke test failed: exit=' + session.exitCode + ' lines=' + lines);
+              console.error(session.output);
+              process.exit(1);
+            }
+            console.log('ok: exit=' + session.exitCode + ' lines=' + lines);
+          "
