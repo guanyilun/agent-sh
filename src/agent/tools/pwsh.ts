@@ -1,14 +1,10 @@
-import { executeArgv } from "../../executor.js";
+import { executeArgv, killSession } from "../../executor.js";
 import type { EventBus } from "../../event-bus.js";
 import type { ToolDefinition } from "../types.js";
 
-// Use modern PowerShell 7+ (`pwsh`). Windows users without it can install via
-// `winget install Microsoft.PowerShell`. Legacy Windows PowerShell 5
-// (`powershell.exe`) is intentionally not auto-fallback — its tool surface
-// and behavior diverge enough that "it works on my machine" failures aren't
-// worth the polyfill code.
-const PWSH_BIN = "pwsh";
-
+// Targets PowerShell 7+ (`pwsh`). Legacy `powershell.exe` is intentionally
+// not auto-fallback — its tool surface diverges enough that compatibility
+// shims aren't worth the maintenance.
 export function createPwshTool(opts: {
   getCwd: () => string;
   getEnv: () => Record<string, string>;
@@ -58,7 +54,6 @@ export function createPwshTool(opts: {
       const command = args.command as string;
       const timeout = ((args.timeout as number) ?? 60) * 1000;
 
-      // Let extensions intercept before execution
       const intercepted = opts.bus.emitPipe("agent:terminal-intercept", {
         command,
         cwd: opts.getCwd(),
@@ -74,7 +69,7 @@ export function createPwshTool(opts: {
       }
 
       const { session, done } = executeArgv({
-        file: PWSH_BIN,
+        file: "pwsh",
         args: ["-NoProfile", "-NonInteractive", "-Command", command],
         cwd: opts.getCwd(),
         env: opts.getEnv(),
@@ -82,9 +77,7 @@ export function createPwshTool(opts: {
         onOutput: onChunk,
       });
 
-      const onAbort = () => {
-        try { session.process?.kill("SIGTERM"); } catch {}
-      };
+      const onAbort = () => killSession(session);
       ctx?.signal?.addEventListener("abort", onAbort, { once: true });
       try {
         await done;
@@ -92,7 +85,7 @@ export function createPwshTool(opts: {
         ctx?.signal?.removeEventListener("abort", onAbort);
       }
 
-      if (session.exitCode === -1 && session.output.startsWith("Failed to spawn")) {
+      if (session.spawnFailed) {
         return {
           content: "PowerShell (pwsh) not found on PATH. Install PowerShell 7: winget install Microsoft.PowerShell.",
           exitCode: 1,

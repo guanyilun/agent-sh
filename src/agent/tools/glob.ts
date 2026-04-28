@@ -58,7 +58,7 @@ export function createGlobTool(getCwd: () => string): ToolDefinition {
       });
       await done;
 
-      if (session.exitCode === -1 && session.output.startsWith("Failed to spawn")) {
+      if (session.spawnFailed) {
         return {
           content: "ripgrep not available — the bundled binary failed to load and `rg` is not on PATH. Reinstall agent-sh, or install ripgrep manually (https://github.com/BurntSushi/ripgrep#installation).",
           exitCode: 1,
