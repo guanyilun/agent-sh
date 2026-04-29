@@ -312,7 +312,7 @@ export class AgentLoop implements AgentBackend {
         return;
       }
       const mode = this.currentMode;
-      if (level !== "off" && mode.reasoning === false) {
+      if (level !== "off" && !mode.reasoning) {
         this.bus.emit("ui:error", { message: `Model ${mode.model} does not support thinking.` });
         return;
       }
@@ -326,7 +326,7 @@ export class AgentLoop implements AgentBackend {
     });
     this.bus.onPipe("config:get-thinking", () => {
       const mode = this.currentMode;
-      const supported = mode.reasoning !== false && mode.supportsReasoningEffort !== false;
+      const supported = !!mode.reasoning && mode.supportsReasoningEffort !== false;
       return { level: this.thinkingLevel, levels: AgentLoop.THINKING_LEVELS, supported };
     });
     on("agent:reset-session", () => {
@@ -546,7 +546,7 @@ export class AgentLoop implements AgentBackend {
 
   private reasoningParams(): Record<string, unknown> {
     const mode = this.currentMode;
-    if (mode.reasoning === false) return {};
+    if (!mode.reasoning) return {};
     if (mode.supportsReasoningEffort === false) return {};
     if (mode.buildReasoningParams) return mode.buildReasoningParams(this.thinkingLevel);
     if (this.thinkingLevel === "off") return {};

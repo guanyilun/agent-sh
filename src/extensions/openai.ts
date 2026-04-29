@@ -6,12 +6,12 @@
 import type { ExtensionContext } from "../types.js";
 
 const DEFAULT_MODELS = [
-  "gpt-5",
-  "gpt-4.1",
-  "gpt-4o",
-  "gpt-4o-mini",
-  "o3",
-  "o3-mini",
+  { id: "gpt-5", reasoning: true },
+  { id: "gpt-4.1", reasoning: false },
+  { id: "gpt-4o", reasoning: false },
+  { id: "gpt-4o-mini", reasoning: false },
+  { id: "o3", reasoning: true },
+  { id: "o3-mini", reasoning: true },
 ];
 
 export default function activate(ctx: ExtensionContext): void {
@@ -25,7 +25,7 @@ export default function activate(ctx: ExtensionContext): void {
     ctx.bus.emit("provider:register", {
       id,
       apiKey,
-      defaultModel: DEFAULT_MODELS[0],
+      defaultModel: DEFAULT_MODELS[0].id,
       models: DEFAULT_MODELS,
     });
     return;
