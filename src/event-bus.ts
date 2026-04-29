@@ -284,7 +284,7 @@ export interface ShellEvents {
   // Switch to a specific model by name (slash command → backend)
   "config:switch-model": { model: string };
   // Query available models (sync pipe — for autocomplete)
-  "config:get-models": { models: { model: string; provider: string }[]; active: string | null };
+  "config:get-models": { models: { model: string; provider: string }[]; active: { model: string; provider: string } | null };
   // Set thinking/reasoning effort level (slash command → backend)
   "config:set-thinking": { level: string };
   // Query current thinking level (sync pipe — for autocomplete)
