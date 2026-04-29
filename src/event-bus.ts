@@ -317,6 +317,7 @@ export interface ShellEvents {
     models?: (string | { id: string; reasoning?: boolean; contextWindow?: number; echoReasoning?: boolean })[];
     /** Provider supports the reasoning_effort parameter. Default: true. */
     supportsReasoningEffort?: boolean;
+    buildReasoningParams?: (level: string) => Record<string, unknown>;
   };
 
   // Tool/instruction registration (extension → active agent backend)

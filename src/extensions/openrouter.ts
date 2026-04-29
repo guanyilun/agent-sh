@@ -16,6 +16,12 @@ const DEFAULT_MODELS = ["deepseek/deepseek-v4-flash"];
 //   providers.openrouter.models[*].echoReasoning = true | false
 const BUILTIN_ECHO_REASONING_PATTERNS: RegExp[] = [/deepseek/i];
 
+function buildReasoningParams(level: string): Record<string, unknown> {
+  return level === "off"
+    ? { reasoning: { enabled: false } }
+    : { reasoning: { effort: level } };
+}
+
 interface OpenRouterModel {
   id: string;
   supported_parameters?: string[];
@@ -32,6 +38,7 @@ export default function activate(ctx: ExtensionContext): void {
     baseURL: BASE_URL,
     defaultModel: DEFAULT_MODELS[0],
     models: DEFAULT_MODELS,
+    buildReasoningParams,
   });
 
   fetchModels(apiKey).then((models) => {
@@ -44,6 +51,7 @@ export default function activate(ctx: ExtensionContext): void {
       baseURL: BASE_URL,
       defaultModel: DEFAULT_MODELS[0],
       supportsReasoningEffort: true,
+      buildReasoningParams,
       models: models.map((m) => ({
         id: m.id,
         reasoning: m.supported_parameters?.includes("reasoning") ?? false,

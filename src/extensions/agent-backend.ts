@@ -23,13 +23,8 @@ function persistedModelFor(providerName: string | undefined): string | undefined
   return getSettings().providers?.[providerName]?.defaultModel;
 }
 
-function reasoningBuilderFor(providerId: string): (level: string) => Record<string, unknown> {
-  if (providerId === "openrouter") {
-    return (level) => level === "off"
-      ? { reasoning: { enabled: false } }
-      : { reasoning: { effort: level } };
-  }
-  return (level) => level === "off" ? {} : { reasoning_effort: level };
+function defaultReasoningBuilder(level: string): Record<string, unknown> {
+  return level === "off" ? {} : { reasoning_effort: level };
 }
 
 export default function agentBackend(ctx: ExtensionContext): void {
@@ -183,7 +178,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       modelCapabilities: caps.size > 0 ? caps : undefined,
     });
 
-    const buildReasoningParams = reasoningBuilderFor(p.id);
+    const buildReasoningParams = p.buildReasoningParams ?? defaultReasoningBuilder;
     const addModes: AgentMode[] = modelIds.map((m) => {
       const mc = caps.get(m);
       return {
