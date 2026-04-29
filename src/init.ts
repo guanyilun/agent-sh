@@ -39,9 +39,7 @@ const EXAMPLE_SETTINGS = {
       defaultModel: "llama3.3",
     },
   },
-  extensions: [
-    "./examples/extensions/openrouter.ts",
-  ],
+  extensions: [],
   disabledBuiltins: [],
   disabledExtensions: [],
 };
