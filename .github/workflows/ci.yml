@@ -4,38 +4,48 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
-  build-and-smoke:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm run build
+
+  cross-platform:
+    # Skipped by default. Trigger manually from the Actions tab when touching
+    # executor.ts, ripgrep-path.ts, native deps, or anything else with a
+    # cross-platform surface; main-branch pushes also run it as a backstop.
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node: [20]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
-
+          node-version: 20
       - name: Install dependencies
         run: npm install
         env:
           # @vscode/ripgrep postinstall downloads from GitHub releases; without a
           # token it hits anonymous rate limits on shared CI IPs.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Type-check + build
-        run: npm run build
-
+      - run: npm run build
       - name: Confirm bundled ripgrep is present
         shell: bash
         run: |
           node -e "const {rgPath}=require('@vscode/ripgrep');require('fs').accessSync(rgPath);console.log('rg at',rgPath)"
           node -e "const {rgPath}=require('@vscode/ripgrep');require('child_process').execFileSync(rgPath,['--version'],{stdio:'inherit'})"
-
       - name: Smoke-test executeArgv via bundled rg
         shell: bash
         run: |
