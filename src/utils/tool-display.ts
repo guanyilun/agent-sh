@@ -112,9 +112,9 @@ export function renderToolCall(
 
   // Build a compact detail string to append after the title
   let detail = "";
-  if (mode === "full" && tool.displayDetail) {
+  if (tool.displayDetail) {
     detail = tool.displayDetail;
-  } else if (mode === "full") {
+  } else {
     if (tool.command) {
       detail = `$ ${tool.command}`;
     } else if (tool.locations && tool.locations.length > 0) {

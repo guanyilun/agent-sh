@@ -628,6 +628,7 @@ export class DeferredLookupProtocol implements ToolProtocol {
     return [
       {
         name: "load_tool",
+        displayName: "Load tools",
         description:
           "Load extension tool schemas so you can call them natively on the next turn.",
         input_schema: {
@@ -642,6 +643,11 @@ export class DeferredLookupProtocol implements ToolProtocol {
           required: ["names"],
         },
         showOutput: false,
+        getDisplayInfo: () => ({ kind: "read" }),
+        formatCall: (args) => {
+          const names = Array.isArray(args.names) ? (args.names as string[]) : [];
+          return names.join(", ");
+        },
         async execute(args) {
           const names = Array.isArray(args.names) ? (args.names as string[]) : [];
           if (names.length === 0) {
