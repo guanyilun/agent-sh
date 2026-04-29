@@ -370,6 +370,28 @@ function wireEvents(core: AgentShellCore): void {
 
 // ── ACP method handlers ─────────────────────────────────────────────
 
+function waitForModelsToSettle(
+  core: AgentShellCore,
+  quietMs: number,
+  maxMs: number,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    let timer: NodeJS.Timeout;
+    const arm = () => {
+      clearTimeout(timer);
+      const remaining = maxMs - (Date.now() - start);
+      timer = setTimeout(done, Math.max(0, Math.min(quietMs, remaining)));
+    };
+    const done = () => {
+      core.bus.off("config:add-modes", arm);
+      resolve();
+    };
+    core.bus.on("config:add-modes", arm);
+    arm();
+  });
+}
+
 function getModelsPayload(): Record<string, unknown> | undefined {
   if (!core) return undefined;
   const info = core.bus.emitPipe("config:get-models", { models: [], active: null });
@@ -443,6 +465,9 @@ async function handleSessionNew(id: number | string, params: Record<string, unkn
     core.bus.emit("core:extensions-loaded", {});
 
     core.activateBackend();
+
+    // Wait for async catalog registrations (e.g. openrouter's full list).
+    await waitForModelsToSettle(core, 300, 2500);
   }
 
   sessionId = `session-${Date.now()}`;
