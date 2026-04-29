@@ -375,7 +375,7 @@ function getModelsPayload(): Record<string, unknown> | undefined {
   const info = core.bus.emitPipe("config:get-models", { models: [], active: null });
   if (!info.models.length) return undefined;
   return {
-    currentModelId: info.active ?? info.models[0]?.model,
+    currentModelId: info.active?.model ?? info.models[0]?.model,
     availableModels: info.models.map((m) => ({
       modelId: m.model,
       name: m.provider ? `${m.provider}/${m.model}` : m.model,
