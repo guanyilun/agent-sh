@@ -33,6 +33,11 @@ const EXAMPLE_SETTINGS = {
       baseURL: "https://api.anthropic.com/v1",
       defaultModel: "claude-sonnet-4-5",
     },
+    ollama: {
+      apiKey: "ollama",
+      baseURL: "http://localhost:11434/v1",
+      defaultModel: "llama3.3",
+    },
   },
   extensions: [],
   disabledBuiltins: [],
