@@ -174,7 +174,7 @@ agent-sh/
 │       ├── solarized-theme.ts   # Theme example
 │       ├── secret-guard.ts      # Secret redaction
 │       ├── latex-images.ts      # LaTeX equation rendering
-│       ├── openrouter.ts        # OpenRouter provider helper
+│       ├── ollama.ts            # Ollama provider (local + cloud)
 │       ├── claude-code-bridge/  # Claude Code SDK backend
 │       ├── pi-bridge/           # Pi agent backend
 │       ├── ash-mcp-bridge/      # MCP server bridge
