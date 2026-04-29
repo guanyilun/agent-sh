@@ -54,6 +54,7 @@ export interface AgentMode {
   /** Echo reasoning_content back on assistant turns. Required by DeepSeek;
    *  default off (leaky shims may forward it to the model as OOD input). */
   echoReasoning?: boolean;
+  buildReasoningParams?: (level: string) => Record<string, unknown>;
 }
 
 /**
