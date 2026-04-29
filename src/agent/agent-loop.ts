@@ -282,7 +282,12 @@ export class AgentLoop implements AgentBackend {
       this.abortController?.abort(e.silent ? "silent" : undefined);
     });
     on("config:switch-model", ({ model: target }) => {
-      const idx = this.modes.findIndex((m) => m.model === target);
+      const atIdx = target.lastIndexOf("@");
+      const modelId = atIdx > 0 ? target.slice(0, atIdx) : target;
+      const providerHint = atIdx > 0 ? target.slice(atIdx + 1) : undefined;
+      const idx = this.modes.findIndex((m) =>
+        m.model === modelId && (!providerHint || m.provider === providerHint),
+      );
       if (idx === -1) {
         this.bus.emit("ui:error", { message: `Unknown model: ${target}` });
         return;
