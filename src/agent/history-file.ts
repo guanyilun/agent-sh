@@ -14,8 +14,9 @@ import {
   type NuclearEntry,
   serializeEntry,
   deserializeEntry,
-  formatNuclearLine,
   isReadOnly,
+  compileSearchRegex,
+  matchEntry,
 } from "./nuclear-form.js";
 
 const HISTORY_PATH = path.join(CONFIG_DIR, "history");
@@ -30,8 +31,8 @@ export interface HistoryAdapter {
 
 export class InMemoryHistory implements HistoryAdapter {
   private entries: NuclearEntry[];
-  constructor(opts?: { initial?: NuclearEntry[] }) {
-    this.entries = opts?.initial ? [...opts.initial] : [];
+  constructor(initial: NuclearEntry[] = []) {
+    this.entries = [...initial];
   }
   async append(entries: NuclearEntry[]): Promise<void> {
     this.entries.push(...entries);
@@ -42,13 +43,11 @@ export class InMemoryHistory implements HistoryAdapter {
   }
   async search(query: string): Promise<{ entry: NuclearEntry; line: string }[]> {
     if (!query.trim()) return [];
-    const re = new RegExp(query, "i");
+    const re = compileSearchRegex(query);
     const out: { entry: NuclearEntry; line: string }[] = [];
     for (let i = this.entries.length - 1; i >= 0; i--) {
-      const e = this.entries[i]!;
-      if (isReadOnly(e)) continue;
-      const text = [e.sum, e.body].filter(Boolean).join("\n");
-      if (re.test(text)) out.push({ entry: e, line: formatNuclearLine(e) });
+      const m = matchEntry(this.entries[i]!, re);
+      if (m) out.push(m);
     }
     return out;
   }
@@ -113,17 +112,7 @@ export class HistoryFile implements HistoryAdapter {
    */
   async search(query: string): Promise<{ entry: NuclearEntry; line: string }[]> {
     if (!query.trim()) return [];
-
-    let regex: RegExp;
-    try {
-      regex = new RegExp(query, "i");
-    } catch {
-      const words = query.split(/\s+/).filter((w) => w.length > 0);
-      const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-      const lookaheads = escaped.map((w) => `(?=.*${w})`).join("");
-      regex = new RegExp(lookaheads, "i");
-    }
-
+    const regex = compileSearchRegex(query);
     const budgetBytes = 20 * 1024 * 1024;
     let scanned = 0;
     const results: { entry: NuclearEntry; line: string }[] = [];
@@ -131,12 +120,9 @@ export class HistoryFile implements HistoryAdapter {
       scanned += line.length + 1;
       if (scanned > budgetBytes) break;
       const entry = deserializeEntry(line);
-      if (!entry || isReadOnly(entry)) continue;
-      // Body can hold ~4000 chars the summary truncates — search both.
-      const searchText = [entry.sum, entry.body].filter(Boolean).join("\n");
-      if (regex.test(searchText)) {
-        results.push({ entry, line: formatNuclearLine(entry) });
-      }
+      if (!entry) continue;
+      const m = matchEntry(entry, regex);
+      if (m) results.push(m);
     }
     return results;
   }
