@@ -21,7 +21,50 @@ import {
 const HISTORY_PATH = path.join(CONFIG_DIR, "history");
 const LOCK_STALE_MS = 10_000; // consider lock stale after 10s
 
-export class HistoryFile {
+export interface HistoryAdapter {
+  append(entries: NuclearEntry[]): Promise<void>;
+  readRecent(maxEntries?: number): Promise<NuclearEntry[]>;
+  search(query: string): Promise<{ entry: NuclearEntry; line: string }[]>;
+  findBySeq(seq: number): Promise<NuclearEntry | null>;
+}
+
+export class InMemoryHistory implements HistoryAdapter {
+  private entries: NuclearEntry[];
+  constructor(opts?: { initial?: NuclearEntry[] }) {
+    this.entries = opts?.initial ? [...opts.initial] : [];
+  }
+  async append(entries: NuclearEntry[]): Promise<void> {
+    this.entries.push(...entries);
+  }
+  async readRecent(maxEntries?: number): Promise<NuclearEntry[]> {
+    const filtered = this.entries.filter((e) => !isReadOnly(e));
+    return maxEntries ? filtered.slice(-maxEntries) : filtered;
+  }
+  async search(query: string): Promise<{ entry: NuclearEntry; line: string }[]> {
+    if (!query.trim()) return [];
+    const re = new RegExp(query, "i");
+    const out: { entry: NuclearEntry; line: string }[] = [];
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const e = this.entries[i]!;
+      if (isReadOnly(e)) continue;
+      const text = [e.sum, e.body].filter(Boolean).join("\n");
+      if (re.test(text)) out.push({ entry: e, line: formatNuclearLine(e) });
+    }
+    return out;
+  }
+  async findBySeq(seq: number): Promise<NuclearEntry | null> {
+    return this.entries.find((e) => e.seq === seq) ?? null;
+  }
+}
+
+export class NoopHistory implements HistoryAdapter {
+  async append(): Promise<void> {}
+  async readRecent(): Promise<NuclearEntry[]> { return []; }
+  async search(): Promise<{ entry: NuclearEntry; line: string }[]> { return []; }
+  async findBySeq(): Promise<NuclearEntry | null> { return null; }
+}
+
+export class HistoryFile implements HistoryAdapter {
   readonly instanceId: string;
   private filePath: string;
   private lockPath: string;

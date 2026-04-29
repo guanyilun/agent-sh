@@ -90,6 +90,9 @@ export interface AgentShellConfig {
   baseURL?: string;
   /** Named provider to use from settings.json. */
   provider?: string;
+
+  /** Conversation history backend. Defaults to the on-disk HistoryFile. */
+  history?: import("./agent/history-file.js").HistoryAdapter;
 }
 
 /**
