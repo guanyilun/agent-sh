@@ -146,6 +146,11 @@ export interface ExtensionContext {
   /** Remove a registered skill by name. */
   removeSkill: (name: string) => void;
 
+  // ── Provider configuration ────────────────────────────────
+  providers: {
+    configure: (id: string, opts: { reasoningParams?: (level: string) => Record<string, unknown> }) => void;
+  };
+
   // ── LLM access (backend-agnostic) ─────────────────────────
   llm: LlmInterface;
 

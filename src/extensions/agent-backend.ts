@@ -156,6 +156,14 @@ export default function agentBackend(ctx: ExtensionContext): void {
     });
   });
 
+  const providerHooks = new Map<string, { reasoningParams?: (level: string) => Record<string, unknown> }>();
+
+  bus.on("provider:configure", ({ id, reasoningParams }) => {
+    const prev = providerHooks.get(id) ?? {};
+    if (reasoningParams !== undefined) prev.reasoningParams = reasoningParams;
+    providerHooks.set(id, prev);
+  });
+
   bus.on("provider:register", (p) => {
     const rawModels = p.models ?? (p.defaultModel ? [p.defaultModel] : []);
     const modelIds: string[] = [];
@@ -178,7 +186,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       modelCapabilities: caps.size > 0 ? caps : undefined,
     });
 
-    const buildReasoningParams = p.buildReasoningParams ?? defaultReasoningBuilder;
+    const buildReasoningParams = providerHooks.get(p.id)?.reasoningParams ?? defaultReasoningBuilder;
     const addModes: AgentMode[] = modelIds.map((m) => {
       const mc = caps.get(m);
       return {

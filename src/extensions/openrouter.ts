@@ -32,13 +32,14 @@ export default function activate(ctx: ExtensionContext): void {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return;
 
+  ctx.providers.configure("openrouter", { reasoningParams: buildReasoningParams });
+
   ctx.bus.emit("provider:register", {
     id: "openrouter",
     apiKey,
     baseURL: BASE_URL,
     defaultModel: DEFAULT_MODELS[0],
     models: DEFAULT_MODELS,
-    buildReasoningParams,
   });
 
   fetchModels(apiKey).then((models) => {
@@ -51,7 +52,6 @@ export default function activate(ctx: ExtensionContext): void {
       baseURL: BASE_URL,
       defaultModel: DEFAULT_MODELS[0],
       supportsReasoningEffort: true,
-      buildReasoningParams,
       models: models.map((m) => ({
         id: m.id,
         reasoning: m.supported_parameters?.includes("reasoning") ?? false,

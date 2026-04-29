@@ -205,6 +205,9 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         contextManager,
         instanceId,
         llm: createLlmFacade(handlers),
+        providers: {
+          configure: (id, opts) => bus.emit("provider:configure", { id, ...opts }),
+        },
         quit: opts.quit,
         setPalette,
         createBlockTransform: (o) => streamTransform.createBlockTransform(bus, o),
