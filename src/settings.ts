@@ -42,6 +42,9 @@ export interface ProviderConfig {
   /** Case-insensitive regex sources matched against model id; matches default
    *  to echoReasoning=true. Per-model echoReasoning still wins. */
   echoReasoningPatterns?: string[];
+  /** Borrow another registered provider's reasoning request shape by id
+   *  (e.g. "openrouter"). Defaults to OpenAI-compat. */
+  reasoningShape?: string;
 }
 
 export interface Settings {
@@ -268,6 +271,8 @@ export interface ResolvedProvider {
   supportsReasoningEffort?: boolean;
   /** Per-model capabilities, keyed by model id. */
   modelCapabilities?: Map<string, { reasoning?: boolean; contextWindow?: number; echoReasoning?: boolean }>;
+  /** Borrow another registered provider's reasoning request shape by id. */
+  reasoningShape?: string;
 }
 
 /**
@@ -303,6 +308,7 @@ export function resolveProvider(name: string): ResolvedProvider | null {
     models: modelIds.length ? modelIds : (defaultModel ? [defaultModel] : []),
     contextWindow: provider.contextWindow,
     modelCapabilities: caps.size > 0 ? caps : undefined,
+    reasoningShape: provider.reasoningShape,
   };
 }
 

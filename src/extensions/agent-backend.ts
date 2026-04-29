@@ -38,10 +38,14 @@ export default function agentBackend(ctx: ExtensionContext): void {
     if (p) providerRegistry.set(name, p);
   }
 
+  const providerHooks = new Map<string, { reasoningParams?: (level: string) => Record<string, unknown> }>();
+
   const buildModes = (): AgentMode[] => {
     const allModes: AgentMode[] = [];
     for (const [id, p] of providerRegistry) {
       if (!p.apiKey) continue;
+      const shapeId = p.reasoningShape ?? id;
+      const buildReasoningParams = providerHooks.get(shapeId)?.reasoningParams ?? defaultReasoningBuilder;
       for (const model of p.models) {
         const mc = p.modelCapabilities?.get(model);
         allModes.push({
@@ -52,6 +56,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
           reasoning: mc?.reasoning,
           supportsReasoningEffort: p.supportsReasoningEffort,
           echoReasoning: mc?.echoReasoning,
+          buildReasoningParams,
         });
       }
     }
@@ -155,8 +160,6 @@ export default function agentBackend(ctx: ExtensionContext): void {
       },
     });
   });
-
-  const providerHooks = new Map<string, { reasoningParams?: (level: string) => Record<string, unknown> }>();
 
   bus.on("provider:configure", ({ id, reasoningParams }) => {
     const prev = providerHooks.get(id) ?? {};
