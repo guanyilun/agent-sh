@@ -16,6 +16,12 @@ const DEFAULT_MODELS = ["deepseek/deepseek-v4-flash"];
 //   providers.openrouter.models[*].echoReasoning = true | false
 const BUILTIN_ECHO_REASONING_PATTERNS: RegExp[] = [/deepseek/i];
 
+function buildReasoningParams(level: string): Record<string, unknown> {
+  return level === "off"
+    ? { reasoning: { enabled: false } }
+    : { reasoning: { effort: level } };
+}
+
 interface OpenRouterModel {
   id: string;
   supported_parameters?: string[];
@@ -25,6 +31,8 @@ interface OpenRouterModel {
 export default function activate(ctx: ExtensionContext): void {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return;
+
+  ctx.providers.configure("openrouter", { reasoningParams: buildReasoningParams });
 
   ctx.bus.emit("provider:register", {
     id: "openrouter",

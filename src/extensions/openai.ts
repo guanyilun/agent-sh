@@ -1,43 +1,46 @@
 /**
- * Built-in OpenAI-compatible provider — auto-activates when OPENAI_API_KEY
- * is set. OPENAI_BASE_URL redirects to local servers (Ollama, LM Studio,
- * vLLM, llama.cpp) which then get their catalog via /models.
+ * Built-in OpenAI-compatible provider. Two activation paths:
+ *   - OPENAI_API_KEY only       → cloud OpenAI, ships a curated catalog.
+ *   - OPENAI_BASE_URL (any key) → local/3rd-party server (Ollama, LM Studio,
+ *                                  vLLM, llama.cpp); the catalog is fetched
+ *                                  from the server's /models endpoint.
  */
 import type { ExtensionContext } from "../types.js";
 
-const DEFAULT_MODELS = [
-  "gpt-5",
-  "gpt-4.1",
-  "gpt-4o",
-  "gpt-4o-mini",
-  "o3",
-  "o3-mini",
+const OPENAI_CLOUD_MODELS = [
+  { id: "gpt-5", reasoning: true },
+  { id: "gpt-4.1", reasoning: false },
+  { id: "gpt-4o", reasoning: false },
+  { id: "gpt-4o-mini", reasoning: false },
+  { id: "o3", reasoning: true },
+  { id: "o3-mini", reasoning: true },
 ];
 
 export default function activate(ctx: ExtensionContext): void {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return;
-
+  const apiKey = process.env.OPENAI_API_KEY ?? "";
   const baseURL = process.env.OPENAI_BASE_URL;
-  const id = baseURL ? "openai-compatible" : "openai";
 
   if (!baseURL) {
+    if (!apiKey) return;
     ctx.bus.emit("provider:register", {
-      id,
+      id: "openai",
       apiKey,
-      defaultModel: DEFAULT_MODELS[0],
-      models: DEFAULT_MODELS,
+      defaultModel: OPENAI_CLOUD_MODELS[0].id,
+      models: OPENAI_CLOUD_MODELS,
     });
     return;
   }
 
-  // Register empty immediately so the provider resolves; refill from /models.
-  ctx.bus.emit("provider:register", { id, apiKey, baseURL, models: [] });
+  const id = "openai-compatible";
+  // Local servers (Ollama, llama.cpp) often need no key; the SDK still
+  // requires a non-empty string for construction.
+  const sdkKey = apiKey || "no-key";
+  ctx.bus.emit("provider:register", { id, apiKey: sdkKey, baseURL, models: [] });
   fetchModels(baseURL, apiKey).then((models) => {
     if (models.length === 0) return;
     ctx.bus.emit("provider:register", {
       id,
-      apiKey,
+      apiKey: sdkKey,
       baseURL,
       defaultModel: models[0],
       models,
@@ -46,9 +49,9 @@ export default function activate(ctx: ExtensionContext): void {
 }
 
 async function fetchModels(baseURL: string, apiKey: string): Promise<string[]> {
-  const res = await fetch(`${baseURL.replace(/\/$/, "")}/models`, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
+  const headers: Record<string, string> = {};
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  const res = await fetch(`${baseURL.replace(/\/$/, "")}/models`, { headers });
   if (!res.ok) return [];
   const data = await res.json() as { data?: { id: string }[] };
   return (data.data ?? []).map((m) => m.id);

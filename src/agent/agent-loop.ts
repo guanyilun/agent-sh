@@ -232,6 +232,16 @@ export class AgentLoop implements AgentBackend {
           message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
         });
       }
+      const active = this.modes[this.currentModeIndex];
+      if (active && active.contextWindow !== prev?.contextWindow) {
+        this.bus.emit("agent:info", {
+          name: "ash",
+          version: PACKAGE_VERSION,
+          model: active.model,
+          provider: active.provider,
+          contextWindow: active.contextWindow,
+        });
+      }
       this.bus.emit("config:changed", {});
     });
     // Fires before wire() too — agent-backend emits this from
@@ -544,13 +554,13 @@ export class AgentLoop implements AgentBackend {
     this.abortController?.abort();
   }
 
-  /** Check if reasoning_effort should be sent for the current model/provider. */
-  private shouldSendReasoningEffort(): boolean {
-    if (this.thinkingLevel === "off") return false;
+  private reasoningParams(): Record<string, unknown> {
     const mode = this.currentMode;
-    if (mode.reasoning === false) return false;
-    if (mode.supportsReasoningEffort === false) return false;
-    return true;
+    if (mode.reasoning === false) return {};
+    if (mode.supportsReasoningEffort === false) return {};
+    if (mode.buildReasoningParams) return mode.buildReasoningParams(this.thinkingLevel);
+    if (this.thinkingLevel === "off") return {};
+    return { reasoning_effort: this.thinkingLevel };
   }
 
 
@@ -1732,7 +1742,7 @@ export class AgentLoop implements AgentBackend {
       messages,
       tools: apiTools,
       model: this.currentModel,
-      reasoning_effort: this.shouldSendReasoningEffort() ? this.thinkingLevel : undefined,
+      ...this.reasoningParams(),
     };
     this.bus.emit("llm:request", requestParams);
 

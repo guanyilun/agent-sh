@@ -319,6 +319,11 @@ export interface ShellEvents {
     supportsReasoningEffort?: boolean;
   };
 
+  "provider:configure": {
+    id: string;
+    reasoningParams?: (level: string) => Record<string, unknown>;
+  };
+
   // Tool/instruction registration (extension → active agent backend)
   "agent:register-tool": { tool: import("./agent/types.js").ToolDefinition; extensionName?: string };
   "agent:unregister-tool": { name: string };

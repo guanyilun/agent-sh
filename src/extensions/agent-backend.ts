@@ -23,6 +23,10 @@ function persistedModelFor(providerName: string | undefined): string | undefined
   return getSettings().providers?.[providerName]?.defaultModel;
 }
 
+function defaultReasoningBuilder(level: string): Record<string, unknown> {
+  return level === "off" ? {} : { reasoning_effort: level };
+}
+
 export default function agentBackend(ctx: ExtensionContext): void {
   const { bus } = ctx;
   const config: AgentShellConfig = ctx.call("config:get-shell-config") ?? {};
@@ -34,10 +38,14 @@ export default function agentBackend(ctx: ExtensionContext): void {
     if (p) providerRegistry.set(name, p);
   }
 
+  const providerHooks = new Map<string, { reasoningParams?: (level: string) => Record<string, unknown> }>();
+
   const buildModes = (): AgentMode[] => {
     const allModes: AgentMode[] = [];
     for (const [id, p] of providerRegistry) {
       if (!p.apiKey) continue;
+      const shapeId = p.reasoningShape ?? id;
+      const buildReasoningParams = providerHooks.get(shapeId)?.reasoningParams ?? defaultReasoningBuilder;
       for (const model of p.models) {
         const mc = p.modelCapabilities?.get(model);
         allModes.push({
@@ -48,6 +56,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
           reasoning: mc?.reasoning,
           supportsReasoningEffort: p.supportsReasoningEffort,
           echoReasoning: mc?.echoReasoning,
+          buildReasoningParams,
         });
       }
     }
@@ -152,6 +161,12 @@ export default function agentBackend(ctx: ExtensionContext): void {
     });
   });
 
+  bus.on("provider:configure", ({ id, reasoningParams }) => {
+    const prev = providerHooks.get(id) ?? {};
+    if (reasoningParams !== undefined) prev.reasoningParams = reasoningParams;
+    providerHooks.set(id, prev);
+  });
+
   bus.on("provider:register", (p) => {
     const rawModels = p.models ?? (p.defaultModel ? [p.defaultModel] : []);
     const modelIds: string[] = [];
@@ -174,6 +189,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       modelCapabilities: caps.size > 0 ? caps : undefined,
     });
 
+    const buildReasoningParams = providerHooks.get(p.id)?.reasoningParams ?? defaultReasoningBuilder;
     const addModes: AgentMode[] = modelIds.map((m) => {
       const mc = caps.get(m);
       return {
@@ -184,6 +200,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
         reasoning: mc?.reasoning,
         supportsReasoningEffort: p.supportsReasoningEffort,
         echoReasoning: mc?.echoReasoning,
+        buildReasoningParams,
       };
     });
     bus.emit("config:add-modes", { modes: addModes });
