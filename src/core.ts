@@ -40,6 +40,8 @@ export type { ColorPalette } from "./utils/palette.js";
 export type { AgentBackend, ToolDefinition } from "./agent/types.js";
 export { runSubagent, type SubagentOptions } from "./agent/subagent.js";
 export { LlmClient } from "./utils/llm-client.js";
+export { HistoryFile, InMemoryHistory, NoopHistory, type HistoryAdapter } from "./agent/history-file.js";
+export type { NuclearEntry } from "./agent/nuclear-form.js";
 
 export interface AgentShellCore {
   bus: EventBus;

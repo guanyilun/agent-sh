@@ -5,6 +5,7 @@ import type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils
 import type { ToolDefinition } from "./agent/types.js";
 import type { TerminalBuffer } from "./utils/terminal-buffer.js";
 import type { Compositor } from "./utils/compositor.js";
+import type { HistoryAdapter } from "./agent/history-file.js";
 
 export type { ContentBlock } from "./event-bus.js";
 export type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
@@ -90,6 +91,9 @@ export interface AgentShellConfig {
   baseURL?: string;
   /** Named provider to use from settings.json. */
   provider?: string;
+
+  /** Conversation history backend. Defaults to the on-disk HistoryFile. */
+  history?: HistoryAdapter;
 }
 
 /**

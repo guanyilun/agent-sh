@@ -14,14 +14,56 @@ import {
   type NuclearEntry,
   serializeEntry,
   deserializeEntry,
-  formatNuclearLine,
   isReadOnly,
+  compileSearchRegex,
+  matchEntry,
 } from "./nuclear-form.js";
 
 const HISTORY_PATH = path.join(CONFIG_DIR, "history");
 const LOCK_STALE_MS = 10_000; // consider lock stale after 10s
 
-export class HistoryFile {
+export interface HistoryAdapter {
+  append(entries: NuclearEntry[]): Promise<void>;
+  readRecent(maxEntries?: number): Promise<NuclearEntry[]>;
+  search(query: string): Promise<{ entry: NuclearEntry; line: string }[]>;
+  findBySeq(seq: number): Promise<NuclearEntry | null>;
+}
+
+export class InMemoryHistory implements HistoryAdapter {
+  private entries: NuclearEntry[];
+  constructor(initial: NuclearEntry[] = []) {
+    this.entries = [...initial];
+  }
+  async append(entries: NuclearEntry[]): Promise<void> {
+    this.entries.push(...entries);
+  }
+  async readRecent(maxEntries?: number): Promise<NuclearEntry[]> {
+    const filtered = this.entries.filter((e) => !isReadOnly(e));
+    return maxEntries ? filtered.slice(-maxEntries) : filtered;
+  }
+  async search(query: string): Promise<{ entry: NuclearEntry; line: string }[]> {
+    if (!query.trim()) return [];
+    const re = compileSearchRegex(query);
+    const out: { entry: NuclearEntry; line: string }[] = [];
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const m = matchEntry(this.entries[i]!, re);
+      if (m) out.push(m);
+    }
+    return out;
+  }
+  async findBySeq(seq: number): Promise<NuclearEntry | null> {
+    return this.entries.find((e) => e.seq === seq) ?? null;
+  }
+}
+
+export class NoopHistory implements HistoryAdapter {
+  async append(): Promise<void> {}
+  async readRecent(): Promise<NuclearEntry[]> { return []; }
+  async search(): Promise<{ entry: NuclearEntry; line: string }[]> { return []; }
+  async findBySeq(): Promise<NuclearEntry | null> { return null; }
+}
+
+export class HistoryFile implements HistoryAdapter {
   readonly instanceId: string;
   private filePath: string;
   private lockPath: string;
@@ -70,17 +112,7 @@ export class HistoryFile {
    */
   async search(query: string): Promise<{ entry: NuclearEntry; line: string }[]> {
     if (!query.trim()) return [];
-
-    let regex: RegExp;
-    try {
-      regex = new RegExp(query, "i");
-    } catch {
-      const words = query.split(/\s+/).filter((w) => w.length > 0);
-      const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-      const lookaheads = escaped.map((w) => `(?=.*${w})`).join("");
-      regex = new RegExp(lookaheads, "i");
-    }
-
+    const regex = compileSearchRegex(query);
     const budgetBytes = 20 * 1024 * 1024;
     let scanned = 0;
     const results: { entry: NuclearEntry; line: string }[] = [];
@@ -88,12 +120,9 @@ export class HistoryFile {
       scanned += line.length + 1;
       if (scanned > budgetBytes) break;
       const entry = deserializeEntry(line);
-      if (!entry || isReadOnly(entry)) continue;
-      // Body can hold ~4000 chars the summary truncates — search both.
-      const searchText = [entry.sum, entry.body].filter(Boolean).join("\n");
-      if (regex.test(searchText)) {
-        results.push({ entry, line: formatNuclearLine(entry) });
-      }
+      if (!entry) continue;
+      const m = matchEntry(entry, regex);
+      if (m) results.push(m);
     }
     return results;
   }

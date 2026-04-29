@@ -285,6 +285,25 @@ export function isReadOnly(entry: NuclearEntry): boolean {
   return READ_ONLY_TOOLS.has(entry.tool) || extraReadOnlyTools.has(entry.tool);
 }
 
+/** Compile a search query, falling back to whitespace-split AND-of-words on invalid regex. */
+export function compileSearchRegex(query: string): RegExp {
+  try {
+    return new RegExp(query, "i");
+  } catch {
+    const words = query.split(/\s+/).filter((w) => w.length > 0);
+    const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const lookaheads = escaped.map((w) => `(?=.*${w})`).join("");
+    return new RegExp(lookaheads, "i");
+  }
+}
+
+/** Match a writable entry against a search regex; null if filtered or no match. */
+export function matchEntry(entry: NuclearEntry, re: RegExp): { entry: NuclearEntry; line: string } | null {
+  if (isReadOnly(entry)) return null;
+  const text = [entry.sum, entry.body].filter(Boolean).join("\n");
+  return re.test(text) ? { entry, line: formatNuclearLine(entry) } : null;
+}
+
 // ── Internal helpers ──────────────────────────────────────────────
 
 function truncate(text: string, maxLen: number): string {

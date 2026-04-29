@@ -95,6 +95,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     initialModeIndex,
     compositor: ctx.compositor,
     instanceId: ctx.instanceId,
+    history: config.history,
   });
 
   bus.on("core:extensions-loaded", () => {

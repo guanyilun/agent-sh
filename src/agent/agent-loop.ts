@@ -25,7 +25,7 @@ import { computeDiff, computeEditDiff, computeInputDiff } from "../utils/diff.js
 import type { AgentBackend, ToolDefinition, ToolExecutionContext } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { ConversationState, type CompactResult } from "./conversation-state.js";
-import { HistoryFile } from "./history-file.js";
+import { HistoryFile, type HistoryAdapter } from "./history-file.js";
 import { nucleate, formatNuclearLine, isReadOnly, type NuclearEntry } from "./nuclear-form.js";
 import { STATIC_SYSTEM_PROMPT, buildDynamicContext, buildStaticByCwd, formatSkillsBlock, loadGlobalAgentsMd } from "./system-prompt.js";
 import type { Compositor } from "../utils/compositor.js";
@@ -86,12 +86,13 @@ export interface AgentLoopConfig {
   compositor?: Compositor;
   /** Instance ID from core — ensures history entries match the ID in prompts. */
   instanceId?: string;
+  history?: HistoryAdapter;
 }
 
 export class AgentLoop implements AgentBackend {
   private abortController: AbortController | null = null;
   private toolRegistry = new ToolRegistry();
-  private historyFile: HistoryFile;
+  private history: HistoryAdapter;
   private conversation: ConversationState;
   private fileReadCache: FileReadCache = new Map();
   private modes: AgentMode[];
@@ -157,7 +158,7 @@ export class AgentLoop implements AgentBackend {
     // `history:append` handler registered below; extensions swap the
     // backend without touching this wiring.
     const filePath = process.env.AGENT_SH_HISTORY_FILE || getSettings().historyFilePath;
-    this.historyFile = new HistoryFile({ instanceId: this.instanceId, filePath });
+    this.history = config.history ?? new HistoryFile({ instanceId: this.instanceId, filePath });
     this.conversation = new ConversationState(this.handlers, this.instanceId);
 
     // Fall back to a single-mode placeholder if the caller passed an
@@ -967,11 +968,11 @@ export class AgentLoop implements AgentBackend {
     h.define("history:append", (entries: NuclearEntry[]) => {
       if (!entries || entries.length === 0) return;
       const writable = entries.filter((e) => !isReadOnly(e));
-      if (writable.length > 0) this.historyFile.append(writable).catch(() => {});
+      if (writable.length > 0) this.history.append(writable).catch(() => {});
     });
-    h.define("history:search", async (query: string) => this.historyFile.search(query));
-    h.define("history:find-by-seq", async (seq: number) => this.historyFile.findBySeq(seq));
-    h.define("history:read-recent", async (max?: number) => this.historyFile.readRecent(max));
+    h.define("history:search", async (query: string) => this.history.search(query));
+    h.define("history:find-by-seq", async (seq: number) => this.history.findBySeq(seq));
+    h.define("history:read-recent", async (max?: number) => this.history.readRecent(max));
 
     // Prior-session preamble renderer. Default: flat chronological list.
     h.define("conversation:format-prior-history", (entries: NuclearEntry[]) => {
