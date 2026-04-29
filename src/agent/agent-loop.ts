@@ -314,7 +314,8 @@ export class AgentLoop implements AgentBackend {
     });
     this.bus.onPipe("config:get-models", (payload) => {
       const models = this.modes.map((m) => ({ model: m.model, provider: m.provider ?? "" }));
-      const active = this.modes[this.currentModeIndex]?.model ?? null;
+      const cur = this.modes[this.currentModeIndex];
+      const active = cur ? { model: cur.model, provider: cur.provider ?? "" } : null;
       return { models, active };
     });
     on("config:set-thinking", ({ level }) => {

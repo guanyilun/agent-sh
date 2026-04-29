@@ -51,11 +51,10 @@ export default function activate(ctx: ExtensionContext): void {
     handler: (args) => {
       const name = args.trim();
       if (!name) {
-        const { models, active } = bus.emitPipe("config:get-models", { models: [], active: null });
-        const current = models.find((m) => m.model === active);
-        const label = current
-          ? `${current.model}${current.provider ? ` [${current.provider}]` : ""}`
-          : active ?? "none";
+        const { active } = bus.emitPipe("config:get-models", { models: [], active: null });
+        const label = active
+          ? `${active.model}${active.provider ? ` [${active.provider}]` : ""}`
+          : "none";
         bus.emit("ui:info", { message: `Model: ${label}` });
       } else {
         bus.emit("config:switch-model", { model: name });
@@ -212,7 +211,7 @@ export default function activate(ctx: ExtensionContext): void {
       .slice(0, 15)
       .map((m) => ({
         name: `/model ${m.model}`,
-        description: `${m.provider ? `[${m.provider}]` : ""}${m.model === active ? " (active)" : ""}`,
+        description: `${m.provider ? `[${m.provider}]` : ""}${active && m.model === active.model && m.provider === active.provider ? " (active)" : ""}`,
       }));
     if (items.length === 0) return payload;
     return { ...payload, items: [...payload.items, ...items] };
