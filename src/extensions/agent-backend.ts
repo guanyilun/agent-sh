@@ -88,7 +88,6 @@ export default function agentBackend(ctx: ExtensionContext): void {
   // would hit a no-op stub.
   const agentLoop = new AgentLoop({
     bus,
-    contextManager: ctx.contextManager,
     llmClient,
     handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list },
     modes,

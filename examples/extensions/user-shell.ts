@@ -18,7 +18,7 @@ import type { ToolDefinition } from "agent-sh/agent/types";
 
 export default function activate(ctx: ExtensionContext): void {
   const { bus, registerTool, registerInstruction } = ctx;
-  const getCwd = () => ctx.contextManager.getCwd();
+  const getCwd = () => ctx.call("cwd") as string;
 
   // ── Tool ───────────────────────────────────────────────────────
 

@@ -51,7 +51,6 @@ TypeScript and JavaScript are both supported (`.ts`, `.tsx`, `.mts`, `.js`, `.mj
 | Property | Type | Description |
 |---|---|---|
 | `bus` | `EventBus` | Subscribe to events, emit events, register pipe handlers |
-| `contextManager` | `ContextManager` | Shell exchange history — `getCwd()`, `search(query)`, `getRecentSummary(n)`, `getEventsSince(afterId)`, `lastSeq()` |
 | `instanceId` | `string` | Stable per-instance identifier (4-char hex) |
 | `llm` | `LlmInterface` | Backend-agnostic LLM facade — `llm.ask({query, system?, maxTokens?})` for one-shot, `llm.session({system?}).send(msg)` for multi-turn, `llm.available` to check |
 | `quit` | `() => void` | Exit agent-sh |
@@ -73,7 +72,6 @@ TypeScript and JavaScript are both supported (`.ts`, `.tsx`, `.mts`, `.js`, `.mj
 | `advise` | `(name, wrapper) => () => void` | Wrap a named handler (receives `next` + args). Returns an `unadvise()` function. |
 | `call` | `(name, ...args) => any` | Call a named handler |
 | `list` | `() => string[]` | Names of all registered handlers (for diagnostic/introspection use) |
-| `terminalBuffer` | `TerminalBuffer \| null` | Shared headless xterm.js buffer mirroring PTY output (lazy singleton, null if `@xterm/headless` not installed) |
 | `compositor` | `Compositor` | Routes named render streams to surfaces. See [TUI Composition](tui-composition.md) |
 | `createRemoteSession` | `(opts: RemoteSessionOptions) => RemoteSession` | Create a remote session that routes agent output to a surface. See [Remote Sessions](#remote-sessions) |
 
@@ -340,7 +338,7 @@ cd ~/.agent-sh/extensions/pi-bridge && npm install
 
 Neither bridge bundles PTY tools. If you want the external agent to observe or mutate the user's live terminal, write a companion extension that registers tools in the target SDK's tool format:
 
-- **`terminal_read`** — reads `ctx.terminalBuffer.readScreen()` and returns the text + cursor + alt-screen state
+- **`terminal_read`** — calls `ctx.call("terminal-buffer").readScreen()` and returns the text + cursor + alt-screen state
 - **`terminal_keys`** — emits `shell:pty-write` to send keystrokes to the PTY
 - **`user_shell`** — emits `shell:exec-request` and awaits the result, for `cd`/`export`/`source`-level state mutation
 
@@ -356,6 +354,26 @@ Both bridges follow the same 4-step structure:
 4. **Handle cancellation and reset** — wire `agent:cancel-request` and `agent:reset-session`
 
 The difference between the two bridges is just SDK shape: Claude Code uses an async iterator you `for await` over; pi uses a subscription callback. The translation layer is the same. Keep PTY tools out — they belong in companion extensions.
+
+##### Forwarding query context
+
+Extensions register per-query producers via `ctx.registerContextProducer(name, fn, { mode: "per-query" })` — for example, the `shell-context` built-in contributes a `<shell_events>` block of recent shell activity. The kernel exposes the joined producer output through the `query-context:build` handler. Each backend chooses how to surface that data when forwarding a query — there's no kernel-imposed transport.
+
+For a bridge, the recommended pattern is:
+
+```typescript
+bus.on("agent:submit", async ({ query }) => {
+  const queryCtx = (ctx.call("query-context:build") as string).trim();
+  const enriched = queryCtx
+    ? `<query_context>\n${queryCtx}\n</query_context>\n\n${query}`
+    : query;
+  await externalSdk.send(enriched);
+});
+```
+
+The wrapping tag is the bridge's call — drop the XML envelope and inline the text if that reads cleaner in the target SDK, or splice into the system prompt instead of the user message. Document what your bridge does so extension authors know what reaches the external agent.
+
+Per-request producers (`mode: "per-request"`) only fire under backends that expose the LLM loop. Bridges that hand off to an external SDK can't fire them, since they don't see iterations — extensions wanting cross-backend reach should prefer `mode: "per-query"`.
 
 ## Named Handlers (Advice System)
 
@@ -607,10 +625,10 @@ Each trigger character can only be claimed by one mode. Slash commands and readl
 
 ## Terminal Buffer
 
-A headless xterm.js terminal that mirrors the real terminal's output. Accessed via `ctx.terminalBuffer` (lazy singleton, shared across extensions). Returns `null` if `@xterm/headless` is not installed.
+A headless xterm.js terminal that mirrors the real terminal's output. Registered as a handler by the shell frontend (`src/shell/`); access via `ctx.call("terminal-buffer")`. Returns `null` if `@xterm/headless` is not installed, or if the shell frontend isn't loaded (e.g. in library/headless consumers).
 
 ```typescript
-const tb = ctx.terminalBuffer;
+const tb = ctx.call("terminal-buffer");
 if (tb) {
   const { text, altScreen, cursorX, cursorY } = tb.readScreen();
   console.log(altScreen ? "vim/htop is running" : "normal shell");
@@ -641,7 +659,7 @@ import { FloatingPanel } from "agent-sh/utils/floating-panel";
 const panel = new FloatingPanel(bus, {
   trigger: "\x1c",       // Ctrl+\ to toggle
   dimBackground: true,
-  terminalBuffer: ctx.terminalBuffer ?? undefined,
+  terminalBuffer: ctx.call("terminal-buffer") ?? undefined,
 });
 ```
 

@@ -45,15 +45,14 @@ core.activateBackend();
 const response = await core.query("explain this codebase");
 ```
 
-`createCore()` returns a headless kernel — the event bus, context manager, handler registry, and compositor, with no terminal, LLM, or agent attached. You load extensions (including the agent backend) and wire your own I/O by listening to bus events.
+`createCore()` returns a headless kernel — the event bus, handler registry, and compositor, with no terminal, shell, LLM, or agent attached. You load extensions (including the agent backend, and optionally the shell-context built-in) and wire your own I/O by listening to bus events.
 
 ## AgentShellCore API
 
 | Method | Description |
 |---|---|
 | `bus` | The event bus — same one extensions use. See [Extensions: Event Bus](extensions.md#event-bus) |
-| `contextManager` | Access exchange history, working directory, context assembly |
-| `handlers` | Named handler registry for `define`/`advise`/`call` |
+| `handlers` | Named handler registry for `define`/`advise`/`call`. Core defines `cwd` (returns `process.cwd()`); shell-context advises it with the PTY-tracked value when loaded |
 | `query(text, opts?)` | Convenience wrapper: emits `agent:submit`, collects response chunks, resolves with the full text |
 | `activateBackend()` | Activates the chosen agent backend. Call after loading extensions |
 | `extensionContext(opts)` | Creates an `ExtensionContext` — use this to load extensions in library mode |

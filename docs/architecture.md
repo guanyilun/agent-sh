@@ -4,20 +4,21 @@ agent-sh is a shell with a pluggable AI backend. The shell is the product — th
 
 ## Design Philosophy: Pure Kernel + Everything Is an Extension
 
-The core (`createCore()`) is a frontend-agnostic kernel — it wires up the EventBus, ContextManager, HandlerRegistry, and Compositor with zero knowledge of terminals, PTYs, LLMs, or rendering. **The core has no agent and no LLM client.** The built-in agent backend, provider management, TUI rendering, and all other features are loaded as extensions.
+The core (`createCore()`) is a frontend-agnostic kernel — it wires up the EventBus, HandlerRegistry, and Compositor with zero knowledge of terminals, PTYs, LLMs, shells, or rendering. **The core has no agent, no LLM client, and no shell coupling.** The built-in agent backend, shell tracking, provider management, TUI rendering, and all other features are loaded as extensions.
 
 ```
 createCore() — pure kernel:
   │     EventBus          — typed pub/sub + transform pipelines
-  │     ContextManager    — exchange recording, context assembly
   │     HandlerRegistry   — named function registry (define/advise/call)
   │     Compositor        — routes named render streams to surfaces
   │     Multi-backend     — coordinates which agent backend is active
+  │     Default `cwd` handler returning `process.cwd()`
   │
 index.ts — interactive terminal frontend:
   │     Shell             — PTY lifecycle (delegates to InputHandler + OutputParser)
   │
   ├── Built-in extensions (loaded via declarative manifest, individually disableable):
+  │     shell-context     — PTY exchange tracking, cwd advisor, <shell_events> producer
   │     agent-backend     — LLM provider resolution, LlmClient, AgentLoop ("ash" backend)
   │     tui-renderer      — markdown rendering, inline diffs, thinking display, spinner
   │     slash-commands    — /help, /model, /backend, /thinking, /compact, /context, /reload
@@ -112,16 +113,17 @@ agent-sh/
 │   ├── index.ts              # Interactive terminal entry point (CLI args, Shell, extensions)
 │   ├── core.ts               # createCore() — pure kernel (no LLM, no agent)
 │   ├── event-bus.ts          # Typed EventBus: emit/on, emitPipe, emitPipeAsync, emitTransform
-│   ├── context-manager.ts    # Shell exchange log, context assembly, recall API
 │   ├── settings.ts           # User settings (~/.agent-sh/settings.json)
 │   ├── extension-loader.ts   # Extension loading (-e, settings.json, extensions dir)
 │   ├── executor.ts           # Isolated child process execution (shared by shell + bash tool)
 │   ├── types.ts              # Shared type definitions
 │   │
-│   ├── shell/                # Interactive terminal frontend (PTY, input, output)
+│   ├── shell/                # Frontend bootstrap (special-cased; not in src/extensions/)
+│   │   ├── index.ts          # activateShell(ctx, opts): owns Shell, compositor stdout defaults, terminal-buffer handler
 │   │   ├── shell.ts          # PTY lifecycle + wiring (InputHandler + OutputParser)
 │   │   ├── input-handler.ts  # Keyboard input, agent mode, bus-driven autocomplete
-│   │   └── output-parser.ts  # OSC parsing, command boundary detection
+│   │   ├── output-parser.ts  # OSC parsing, command boundary detection
+│   │   └── tui-input-view.ts # Input rendering + line editor integration
 │   │
 │   ├── agent/                # Agent subsystem (used by agent-backend extension)
 │   │   ├── types.ts          # AgentBackend, ToolDefinition, ToolResult
@@ -156,6 +158,7 @@ agent-sh/
 │   │
 │   └── extensions/           # Built-in extensions (loaded via manifest, disableable)
 │       ├── index.ts          # Declarative manifest + loader
+│       ├── shell-context.ts  # Shell exchange tracking, cwd advisor, <shell_events>
 │       ├── agent-backend.ts  # LLM provider resolution + AgentLoop registration
 │       ├── tui-renderer.ts, slash-commands.ts
 │       └── file-autocomplete.ts

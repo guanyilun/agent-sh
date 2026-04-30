@@ -4,6 +4,10 @@
  * These extensions ship with agent-sh and load before user extensions.
  * They receive unscoped contexts (not reloadable) and can be individually
  * disabled via the `disabledBuiltins` setting in ~/.agent-sh/settings.json.
+ *
+ * For order-critical frontend bootstrap (the PTY shell), see `src/shell/`.
+ * That module exposes its own `activate(ctx, opts)` entry point, loaded
+ * specially from `src/index.ts` rather than through this manifest.
  */
 import type { ExtensionContext } from "../types.js";
 
@@ -16,6 +20,7 @@ export const BUILTIN_EXTENSIONS: Array<{
   when?: () => boolean;
   load: () => Promise<ActivateFn>;
 }> = [
+  { name: "shell-context",   load: () => import("./shell-context.js").then(m => m.default) },
   { name: "agent-backend",    load: () => import("./agent-backend.js").then(m => m.default) },
   { name: "openrouter",
     when: () => !!process.env.OPENROUTER_API_KEY,

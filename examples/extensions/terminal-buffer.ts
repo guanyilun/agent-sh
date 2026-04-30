@@ -34,8 +34,9 @@ function settle(ms = 100): Promise<void> {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, terminalBuffer: tb, registerTool, registerInstruction } = ctx;
-  if (!tb) return; // @xterm/headless not installed
+  const { bus, registerTool, registerInstruction } = ctx;
+  const tb = ctx.call("terminal-buffer");
+  if (!tb) return; // @xterm/headless not installed, or shell frontend not loaded
 
   registerTool({
     name: "terminal_read",

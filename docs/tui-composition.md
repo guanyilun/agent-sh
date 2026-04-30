@@ -94,7 +94,7 @@ interface Compositor {
 | `"query"` | User query display (the bordered input box) |
 | `"status"` | Info messages, errors, suggestions |
 
-All three default to `StdoutSurface`.
+The shell frontend (`src/shell/`) sets all three to `StdoutSurface` during `activateShell`. A library or web consumer that doesn't load the shell frontend has no defaults — it must call `compositor.setDefault(...)` itself.
 
 ### Redirecting a stream
 
@@ -139,7 +139,8 @@ The overlay agent redirects *all* render streams to a floating panel when active
 import { FloatingPanel } from "agent-sh/utils/floating-panel";
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, compositor, terminalBuffer } = ctx;
+  const { bus, compositor } = ctx;
+  const terminalBuffer = ctx.call("terminal-buffer");
 
   const panel = new FloatingPanel(bus, { trigger: "\x1c", terminalBuffer: terminalBuffer ?? undefined });
   const panelSurface = createPanelSurface(panel);
@@ -172,7 +173,8 @@ An extension that captures just diff output into a separate panel:
 import { FloatingPanel } from "agent-sh/utils/floating-panel";
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, compositor, terminalBuffer } = ctx;
+  const { bus, compositor } = ctx;
+  const terminalBuffer = ctx.call("terminal-buffer");
 
   const panel = new FloatingPanel(bus, { trigger: "\x04", terminalBuffer: terminalBuffer ?? undefined });
   const surface = createPanelSurface(panel);

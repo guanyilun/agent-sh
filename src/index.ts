@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import * as path from "node:path";
-import { Shell } from "./shell/shell.js";
+import { activateShell, type ShellHandle } from "./shell/index.js";
 import { createCore } from "./core.js";
 import { palette as p } from "./utils/palette.js";
 import { loadBuiltinExtensions } from "./extensions/index.js";
@@ -212,29 +212,36 @@ async function main(): Promise<void> {
   const cols = process.stdout.columns || 80;
   const rows = process.stdout.rows || 24;
 
+  // Bound after activateShell — cleanup is wired into extCtx.quit before the
+  // shell exists, so the closure captures the var by reference.
+  let shell: ShellHandle | null = null;
+
   const cleanup = () => {
     core.kill();
-    shell.kill();
+    shell?.kill();
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
     }
     process.exit(0);
   };
 
+  // ── Extension context (must precede shell activation) ────────
+  if (process.env.DEBUG) {
+    console.error('[agent-sh] Setting up extensions...');
+  }
+  const extCtx = core.extensionContext({ quit: cleanup });
+
+  // ── Shell frontend bootstrap (special-cased; see src/shell/index.ts) ──
   if (process.env.DEBUG) {
     console.error('[agent-sh] Creating Shell...');
   }
-
   await new Promise(resolve => setTimeout(resolve, 100));
 
-  const shell = new Shell({
-    bus,
-    handlers: core.handlers,
+  shell = activateShell(extCtx, {
     cols,
     rows,
-    shell: config.shell || process.env.SHELL || "/bin/bash",
+    shellPath: config.shell || process.env.SHELL || "/bin/bash",
     cwd: process.cwd(),
-    instanceId: core.instanceId,
     onShowAgentInfo: () => {
       if (agentInfo) {
         return { info: `${p.dim}${agentInfo.name}${agentInfo.model ? ` (${agentInfo.model})` : ""}${p.reset}` };
@@ -258,12 +265,6 @@ async function main(): Promise<void> {
     },
     returnToSelf: true,
   });
-
-  // ── Extensions ────────────────────────────────────────────────
-  if (process.env.DEBUG) {
-    console.error('[agent-sh] Setting up extensions...');
-  }
-  const extCtx = core.extensionContext({ quit: cleanup });
 
   // Load built-in extensions (individually disableable via settings.disabledBuiltins)
   await loadBuiltinExtensions(extCtx, getSettings().disabledBuiltins);
@@ -298,7 +299,7 @@ async function main(): Promise<void> {
   // If none did, the built-in AgentLoop gets wired to bus events.
   const { names: backendNames } = core.bus.emitPipe("config:get-backends", { names: [] as string[], active: null as string | null });
   if (backendNames.length === 0) {
-    shell.kill();
+    shell?.kill();
     console.error("\nagent-sh: no agent backend available.\n\n" +
       "  Export OPENROUTER_API_KEY or OPENAI_API_KEY for zero-config launch, or\n" +
       "  pass --api-key on the command line, or\n" +
@@ -390,11 +391,9 @@ async function main(): Promise<void> {
     }
   });
 
-  process.stdout.on("resize", () => {
-    shell.resize(process.stdout.columns || 80, process.stdout.rows || 24);
-  });
+  // resize forwarding is set up inside activateShell; nothing to wire here.
 
-  shell.onExit((e) => {
+  shell!.onExit((e) => {
     core.kill();
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);

@@ -1,9 +1,10 @@
 /**
  * Core kernel — the minimum viable agent-sh.
  *
- * Wires up EventBus + ContextManager without any frontend or agent backend.
+ * Wires up EventBus + HandlerRegistry without any frontend or agent backend.
  * Consumers attach their own I/O (Shell, WebSocket, REST, tests) by
- * subscribing to bus events.
+ * subscribing to bus events. Shell-specific tracking lives in the
+ * shell-context built-in extension.
  *
  * Agent backends are loaded as extensions and register themselves via
  * the agent:register-backend bus event. The built-in "ash" backend is
@@ -17,18 +18,16 @@
  *   const response = await core.query("hello");
  */
 import { EventBus, type ContentBlock } from "./event-bus.js";
-import { ContextManager } from "./context-manager.js";
 import type { AgentShellConfig, ExtensionContext, RemoteSessionOptions, RemoteSession } from "./types.js";
 import { createLlmFacade } from "./utils/llm-facade.js";
 import { setPalette } from "./utils/palette.js";
 import * as streamTransform from "./utils/stream-transform.js";
 import * as settingsMod from "./settings.js";
 import { HandlerRegistry } from "./utils/handler-registry.js";
-import { TerminalBuffer } from "./utils/terminal-buffer.js";
 import crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DefaultCompositor, StdoutSurface } from "./utils/compositor.js";
+import { DefaultCompositor } from "./utils/compositor.js";
 import { CONFIG_DIR } from "./settings.js";
 
 // Re-export types that library consumers need
@@ -45,7 +44,6 @@ export type { NuclearEntry } from "./agent/nuclear-form.js";
 
 export interface AgentShellCore {
   bus: EventBus;
-  contextManager: ContextManager;
   /** Handler registry for define/advise/call. */
   handlers: HandlerRegistry;
   /** Unique id for this agent process; used for shell-marker tagging and lineage tracking. */
@@ -65,7 +63,6 @@ export interface AgentShellCore {
 export function createCore(config: AgentShellConfig): AgentShellCore {
   const bus = new EventBus();
   const handlers = new HandlerRegistry();
-  const contextManager = new ContextManager(bus, handlers);
   // 3 bytes = 6 hex chars, ~16M values — ample for per-lineage uniqueness and
   // short enough to read/remember. Legacy content may have 16-char iids; any
   // parsers should accept ≥6 hex chars.
@@ -76,6 +73,16 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   // Expose raw CLI config so the agent backend extension can resolve
   // providers and create the LLM client.
   handlers.define("config:get-shell-config", () => config);
+
+  // Default; shell-context advises with the PTY-tracked cwd when loaded.
+  handlers.define("cwd", () => process.cwd());
+
+  // Empty defaults so registerContextProducer can advise regardless of
+  // backend. Each backend chooses whether to consume the strings — ash
+  // wraps them in <dynamic_context>/<query_context>; bridges may pull
+  // query-context:build and splice into the target SDK however they like.
+  handlers.define("dynamic-context:build", () => "");
+  handlers.define("query-context:build", () => "");
 
   // ── Multi-backend registry ───────────────────────────────────
   type Backend = { name: string; kill: () => void; start?: () => Promise<void> };
@@ -131,23 +138,13 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   });
 
   // ── Compositor ──────────────────────────────────────────────
+  // Generic surface-routing primitive. No defaults here — the active
+  // frontend (src/shell/, a web bridge, headless test harness, etc.)
+  // sets its own surfaces during activation.
   const compositor = new DefaultCompositor(bus);
-  const stdoutSurface = new StdoutSurface();
-  compositor.setDefault("agent", stdoutSurface);
-  compositor.setDefault("query", stdoutSurface);
-  compositor.setDefault("status", stdoutSurface);
-
-  // ── Lazy singleton terminal buffer ──────────────────────────
-  let terminalBufferSingleton: TerminalBuffer | null | undefined; // undefined = not yet created
-  const getTerminalBuffer = (): TerminalBuffer | null => {
-    if (terminalBufferSingleton !== undefined) return terminalBufferSingleton;
-    terminalBufferSingleton = TerminalBuffer.createWired(bus);
-    return terminalBufferSingleton;
-  };
 
   return {
     bus,
-    contextManager,
     handlers,
     instanceId,
 
@@ -204,7 +201,6 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     extensionContext(opts) {
       const ctx: ExtensionContext = {
         bus,
-        contextManager,
         instanceId,
         llm: createLlmFacade(handlers),
         providers: {
@@ -247,7 +243,6 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         advise: (name, wrapper) => handlers.advise(name, wrapper),
         call: (name, ...args) => handlers.call(name, ...args),
         list: () => handlers.list(),
-        get terminalBuffer() { return getTerminalBuffer(); },
         compositor,
         onDispose: () => {},
         createRemoteSession: (opts: RemoteSessionOptions): RemoteSession => {

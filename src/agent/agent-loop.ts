@@ -13,7 +13,6 @@
  */
 import type { EventBus, ShellEvents } from "../event-bus.js";
 import type { AgentMode } from "../types.js";
-import type { ContextManager } from "../context-manager.js";
 import type { LlmClient } from "../utils/llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
@@ -80,7 +79,6 @@ function summarizeDescription(desc: string): string {
 
 export interface AgentLoopConfig {
   bus: EventBus;
-  contextManager: ContextManager;
   llmClient: LlmClient;
   handlers: HandlerFunctions;
   modes?: AgentMode[];
@@ -136,21 +134,15 @@ export class AgentLoop implements AgentBackend {
   private static readonly THINKING_LEVELS = ["off", "low", "medium", "high"];
 
   private bus: EventBus;
-  private contextManager: ContextManager;
   private llmClient: LlmClient;
   private handlers: HandlerFunctions;
   private thinkingLevel = "off";
   private compositor: Compositor | null = null;
   private toolProtocol: ToolProtocol;
   private instanceId: string;
-  // Cursor into ContextManager's exchange stream. Events with id > this
-  // have not yet been shown to the LLM. The query-context:build advisor
-  // emits the delta into each new user message, then advances the cursor.
-  private lastShellSeq = 0;
 
   constructor(config: AgentLoopConfig) {
     this.bus = config.bus;
-    this.contextManager = config.contextManager;
     this.llmClient = config.llmClient;
     this.handlers = config.handlers;
     this.compositor = config.compositor ?? null;
@@ -702,7 +694,7 @@ export class AgentLoop implements AgentBackend {
   }
 
   private registerCoreTools(): void {
-    const getCwd = () => this.contextManager.getCwd();
+    const getCwd = () => this.handlers.call("cwd") as string;
     const getEnv = () => {
       const env: Record<string, string> = {};
       for (const [k, v] of Object.entries(process.env)) {
@@ -830,7 +822,7 @@ export class AgentLoop implements AgentBackend {
       // Placed here so they enter the provider's prompt cache with the
       // system prompt, and only re-materialize when cwd changes invalidate
       // cachedSystemPrompt in executeLoop.
-      const projectStatic = buildStaticByCwd(this.contextManager.getCwd());
+      const projectStatic = buildStaticByCwd(this.handlers.call("cwd") as string);
       if (projectStatic) parts.push(projectStatic);
 
       // Extension sections (tools, skills, instructions grouped by extension)
@@ -920,31 +912,9 @@ export class AgentLoop implements AgentBackend {
 
     h.define("agent:get-self", () => this);
 
-    // Two symmetric context handlers, both empty by default. Extensions
-    // (and the kernel) advise them to contribute — directly, or via
-    // ctx.registerContextProducer which dispatches by mode.
-    //
-    //   dynamic-context:build  — per-request, fires on every LLM call,
-    //                            output ephemerally wrapped in
-    //                            <dynamic_context> onto trailing message.
-    //   query-context:build    — per-query, fires once in handleQuery,
-    //                            output frozen into the user message
-    //                            inside <query_context>.
-    h.define("dynamic-context:build", () => "");
-    h.define("query-context:build", () => "");
-
-    // Shell events are a per-query signal: what the user did in their
-    // shell between agent turns. Migrated from an inline prepend in
-    // handleQuery to an advisor here so it composes uniformly with any
-    // other per-query producer (notifications, inbox deltas, etc.).
-    h.advise("query-context:build", (next) => {
-      const base = next() as string;
-      const delta = this.contextManager.getEventsSince(this.lastShellSeq);
-      if (!delta) return base;
-      this.lastShellSeq = delta.lastSeq;
-      const part = `<shell_events>\n${delta.text}\n</shell_events>`;
-      return base ? `${base}\n\n${part}` : part;
-    });
+    // dynamic-context:build / query-context:build are defined in core.ts.
+    // ash consumes them via the envelope wrapping in streamResponse +
+    // handleQuery; other backends may ignore.
 
     // Full control over what the LLM sees: takes messages[], returns messages[].
     // Default: pass through. Extensions can advise to compact, summarize,
@@ -1267,7 +1237,7 @@ export class AgentLoop implements AgentBackend {
     // so live signals (budget, in-flight subagents, metacognitive warnings)
     // are fresh.
     let cachedSystemPrompt: string | undefined;
-    let lastCwd = this.contextManager.getCwd();
+    let lastCwd = this.handlers.call("cwd") as string;
 
     while (!signal.aborted) {
       // Auto-compact when total context approaches the window limit.
@@ -1292,7 +1262,7 @@ export class AgentLoop implements AgentBackend {
         cachedSystemPrompt = undefined;
       }
 
-      const currentCwd = this.contextManager.getCwd();
+      const currentCwd = this.handlers.call("cwd") as string;
       if (currentCwd !== lastCwd) {
         cachedSystemPrompt = undefined;
         lastCwd = currentCwd;

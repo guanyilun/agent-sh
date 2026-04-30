@@ -48,7 +48,8 @@ function createPanelSurface(panel: FloatingPanel): RenderSurface {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, registerInstruction, createRemoteSession, terminalBuffer } = ctx;
+  const { bus, registerInstruction, createRemoteSession } = ctx;
+  const terminalBuffer = ctx.call("terminal-buffer");
 
   const panel = new FloatingPanel(bus, {
     trigger: "\x1c", // Ctrl+\

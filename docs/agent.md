@@ -197,7 +197,7 @@ Extensions can add tools that cross the shell↔agent boundary via `shell:exec-r
 | `list_skills` | List available skills (name, description, path) | No | No |
 | `conversation_recall` | Browse/search/expand evicted turns from the in-session archive and `~/.agent-sh/history` | No | No |
 
-**Common pattern**: all file-based tools resolve relative paths from the current working directory (`contextManager.getCwd()`).
+**Common pattern**: all file-based tools resolve relative paths from the current working directory, looked up via the `cwd` handler (`ctx.call("cwd")`). The shell-context built-in advises this with the PTY-tracked cwd; without it, tools fall back to `process.cwd()`.
 
 ### Tool-specific enhancements
 

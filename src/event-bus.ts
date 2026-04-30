@@ -70,7 +70,7 @@ export interface ShellEvents {
   "agent:cancelled": Record<string, never>;
   "agent:error": { message: string };
 
-  // Tool execution (agent-initiated — used by ContextManager for data recording)
+  // Tool execution (agent-initiated — surfaced for UI/observability extensions).
   "agent:tool-call": { tool: string; args: Record<string, unknown> };
   "agent:tool-output": {
     tool: string;

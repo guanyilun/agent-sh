@@ -9,8 +9,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionContext } from "../types.js";
 
-export default function activate({ bus, contextManager }: ExtensionContext): void {
-  bus.onPipe("autocomplete:request", (payload) => {
+export default function activate(ctx: ExtensionContext): void {
+  ctx.bus.onPipe("autocomplete:request", (payload) => {
     const atPos = payload.buffer.lastIndexOf("@");
     if (atPos < 0 || (atPos > 0 && payload.buffer[atPos - 1] !== " ")) {
       return payload;
@@ -20,7 +20,7 @@ export default function activate({ bus, contextManager }: ExtensionContext): voi
       return payload;
     }
 
-    const files = listFiles(afterAt, contextManager.getCwd());
+    const files = listFiles(afterAt, ctx.call("cwd") as string);
     if (files.length === 0) return payload;
     return { ...payload, items: [...payload.items, ...files] };
   });

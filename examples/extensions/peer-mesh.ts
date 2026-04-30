@@ -190,10 +190,11 @@ class PeerServer {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, contextManager, registerCommand, registerTool, registerInstruction, define } = ctx;
+  const { bus, registerCommand, registerTool, registerInstruction, define } = ctx;
+  const getCwd = () => ctx.call("cwd") as string;
   const startTime = Date.now();
 
-  const server = new PeerServer(ctx.instanceId, contextManager.getCwd(), (...args) => ctx.call(...args));
+  const server = new PeerServer(ctx.instanceId, getCwd(), (...args) => ctx.call(...args));
   server.start();
 
   // Track PTY idle window so peer:terminal-send doesn't stomp on a busy shell.
@@ -203,13 +204,13 @@ export default function activate(ctx: ExtensionContext): void {
   define("peer:info", () => ({
     id: ctx.instanceId,
     pid: process.pid,
-    cwd: contextManager.getCwd(),
+    cwd: getCwd(),
     uptime: Math.round((Date.now() - startTime) / 1000),
   }));
   server.expose("peer:info");
 
   define("peer:terminal-read", () => {
-    const tb = ctx.terminalBuffer;
+    const tb = ctx.call("terminal-buffer");
     if (!tb) return { text: "(terminal buffer not available)", altScreen: false };
     return tb.readScreen({ includeScrollback: true });
   });
@@ -229,15 +230,17 @@ export default function activate(ctx: ExtensionContext): void {
     }
     bus.emit("shell:pty-write", { data: interpretEscapes(keys) });
     await new Promise((r) => setTimeout(r, typeof settleMs === "number" ? settleMs : SETTLE_MS));
-    const tb = ctx.terminalBuffer;
+    const tb = ctx.call("terminal-buffer");
     return { sent: true, screen: tb ? tb.readScreen({ includeScrollback: false }) : null };
   });
   server.expose("peer:terminal-send");
 
-  define("peer:context-recent", (n: number = 15) => contextManager.getRecentSummary(n));
+  // If shell-context isn't loaded, the underlying handler is undefined
+  // and these calls surface a clear error to the requesting peer.
+  define("peer:context-recent", (n: number = 15) => ctx.call("shell:context-recent", n));
   server.expose("peer:context-recent");
 
-  define("peer:context-search", (query: string) => contextManager.search(query));
+  define("peer:context-search", (query: string) => ctx.call("shell:context-search", query));
   server.expose("peer:context-search");
 
   // ── Inbox + drained turn ──────────────────────────────────────
