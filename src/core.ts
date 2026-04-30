@@ -80,6 +80,20 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   // (tools, file-autocomplete) call ctx.call("cwd") regardless.
   handlers.define("cwd", () => process.cwd());
 
+  // Two symmetric context handlers, both empty by default. Extensions
+  // contribute via ctx.registerContextProducer (which advises one of these
+  // by mode), and backends *consume* the resulting strings however they
+  // like — by wrapping in envelopes onto messages, augmenting system
+  // prompts, or ignoring entirely. The kernel owns only the registration
+  // surface; what to do with the data is the active backend's call.
+  //
+  //   dynamic-context:build  — per-request: meaningful only for backends
+  //                            that expose the LLM loop (e.g. ash).
+  //   query-context:build    — per-query: any backend can pull this when
+  //                            forwarding a user query (bridges should).
+  handlers.define("dynamic-context:build", () => "");
+  handlers.define("query-context:build", () => "");
+
   // ── Multi-backend registry ───────────────────────────────────
   type Backend = { name: string; kill: () => void; start?: () => Promise<void> };
   const backends = new Map<string, Backend>();

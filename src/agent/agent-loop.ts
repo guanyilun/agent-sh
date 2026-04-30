@@ -912,18 +912,10 @@ export class AgentLoop implements AgentBackend {
 
     h.define("agent:get-self", () => this);
 
-    // Two symmetric context handlers, both empty by default. Extensions
-    // (and the kernel) advise them to contribute — directly, or via
-    // ctx.registerContextProducer which dispatches by mode.
-    //
-    //   dynamic-context:build  — per-request, fires on every LLM call,
-    //                            output ephemerally wrapped in
-    //                            <dynamic_context> onto trailing message.
-    //   query-context:build    — per-query, fires once in handleQuery,
-    //                            output frozen into the user message
-    //                            inside <query_context>.
-    h.define("dynamic-context:build", () => "");
-    h.define("query-context:build", () => "");
+    // dynamic-context:build / query-context:build are kernel-defined empty
+    // defaults (see core.ts). ash advises them via the wrapping logic
+    // around streamResponse and handleQuery. Other backends may ignore them
+    // entirely — the envelope conventions are ash's, not the kernel's.
 
     // Full control over what the LLM sees: takes messages[], returns messages[].
     // Default: pass through. Extensions can advise to compact, summarize,
