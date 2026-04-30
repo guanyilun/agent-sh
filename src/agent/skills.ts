@@ -101,21 +101,6 @@ function scanDir(dir: string): Skill[] {
   return skills;
 }
 
-/** Find the git root from a directory. */
-function findGitRoot(dir: string): string | null {
-  let current = path.resolve(dir);
-  while (true) {
-    try {
-      fs.accessSync(path.join(current, ".git"));
-      return current;
-    } catch {
-      const parent = path.dirname(current);
-      if (parent === current) return null;
-      current = parent;
-    }
-  }
-}
-
 /** Expand ~ to home directory. */
 function expandHome(p: string): string {
   if (p.startsWith("~/") || p === "~") {
@@ -161,18 +146,19 @@ export function invalidateGlobalSkillsCache(): void {
 
 /**
  * Discover project-level skills from .agents/skills/ in cwd hierarchy.
- * Scans from cwd up to git root.
+ * Walks from cwd up to $HOME (or filesystem root if cwd is outside HOME).
+ * Git boundaries are ignored — nested repos under a skills-bearing parent
+ * would otherwise hide the parent's skills.
  */
 export function discoverProjectSkills(cwd: string): Skill[] {
   const seen = new Set<string>();
   const skills: Skill[] = [];
-  const gitRoot = findGitRoot(cwd);
+  const home = path.resolve(os.homedir());
   let current = path.resolve(cwd);
 
   while (true) {
     addUnique(skills, scanDir(path.join(current, ".agents", "skills")), seen);
-
-    if (gitRoot && current === gitRoot) break;
+    if (current === home) break;
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
