@@ -1,5 +1,21 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { stripAnsi } from "./utils/ansi.js";
+
+let cachedBashPath: string | null | undefined;
+
+/** Resolve a usable bash binary, or null if none is on PATH.
+ *  Unix: `/bin/bash` (canonical, present on every Linux/macOS install).
+ *  Windows: probe via `where bash` so Git Bash users keep working. */
+export function findBash(): string | null {
+  if (cachedBashPath !== undefined) return cachedBashPath;
+  if (process.platform !== "win32") {
+    cachedBashPath = "/bin/bash";
+    return cachedBashPath;
+  }
+  const r = spawnSync("where", ["bash"], { encoding: "utf-8" });
+  cachedBashPath = r.status === 0 ? r.stdout.split(/\r?\n/)[0]!.trim() || null : null;
+  return cachedBashPath;
+}
 
 const DEFAULT_TIMEOUT = 60_000;
 const DEFAULT_MAX_OUTPUT = 256 * 1024; // 256KB
@@ -56,9 +72,11 @@ export function executeCommand(opts: {
     if (v !== undefined) env[k] = v;
   }
 
+  const bashPath = findBash();
   let child: ChildProcess;
   try {
-    child = spawn("/bin/bash", ["-c", opts.command], {
+    if (!bashPath) throw new Error("bash not found on PATH");
+    child = spawn(bashPath, ["-c", opts.command], {
       stdio: ["ignore", "pipe", "pipe"],
       cwd: opts.cwd,
       env,

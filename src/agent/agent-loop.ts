@@ -38,6 +38,7 @@ import { createToolProtocol, type ToolProtocol, type PendingToolCall as Protocol
 // Core tool factories
 import { createBashTool } from "./tools/bash.js";
 import { createPwshTool } from "./tools/pwsh.js";
+import { findBash } from "../executor.js";
 import { createReadFileTool, type FileReadCache } from "./tools/read-file.js";
 import { createWriteFileTool } from "./tools/write-file.js";
 import { createEditFileTool } from "./tools/edit-file.js";
@@ -709,9 +710,9 @@ export class AgentLoop implements AgentBackend {
       return env;
     };
 
-    this.toolRegistry.register(
-      createBashTool({ getCwd, getEnv, bus: this.bus }),
-    );
+    if (findBash() !== null) {
+      this.toolRegistry.register(createBashTool({ getCwd, getEnv, bus: this.bus }));
+    }
     if (process.platform === "win32") {
       this.toolRegistry.register(createPwshTool({ getCwd, getEnv, bus: this.bus }));
     }
