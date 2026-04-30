@@ -102,9 +102,19 @@ export default function agentBackend(ctx: ExtensionContext): void {
     const settings = getSettings();
     // If the user didn't pick a default, fall back to the first registered
     // provider (built-in load order biases to openrouter → openai).
-    const providerName = config.provider ?? settings.defaultProvider
+    let providerName = config.provider ?? settings.defaultProvider
       ?? (providerRegistry.size > 0 ? providerRegistry.keys().next().value : undefined);
-    const activeProvider = providerName ? providerRegistry.get(providerName) ?? null : null;
+    let activeProvider = providerName ? providerRegistry.get(providerName) ?? null : null;
+
+    // If the chosen provider has no usable apiKey (e.g. settings names
+    // ollama-cloud but OLLAMA_API_KEY isn't set in this process's env),
+    // fall through to the first registered provider that does. Without
+    // this, a stale defaultProvider strands every other working provider.
+    if (!config.apiKey && !activeProvider?.apiKey) {
+      for (const [id, p] of providerRegistry) {
+        if (p.apiKey) { providerName = id; activeProvider = p; break; }
+      }
+    }
 
     // User's persisted defaultModel wins over the provider's declared
     // default. Dynamic providers (openrouter) re-register with their
