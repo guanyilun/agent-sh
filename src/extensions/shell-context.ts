@@ -1,18 +1,7 @@
 /**
- * Shell context extension.
- *
- * Owns everything shell-related that the agent loop used to depend on:
- * tracking PTY commands and cwd, spilling long outputs, and contributing
- * the `<shell_events>` per-query envelope. Loads as a built-in so the
- * default agent-sh experience is unchanged, but a frontend without a
- * shell (e.g. agent-sh-hub) simply doesn't load it and the agent loop
- * runs cwd-aware via `process.cwd()`.
- *
- * Public surface:
- *   - advises  `cwd`                    — returns PTY-tracked cwd
- *   - producer `shell-events` (per-query) — emits <shell_events> delta
- *   - handler  `shell:context-recent`  — recent shell-command summary
- *   - handler  `shell:context-search`  — regex search over shell exchanges
+ * Tracks PTY commands and cwd, spills long outputs, contributes the
+ * `<shell_events>` per-query envelope. Frontends without a PTY skip this
+ * built-in and the agent runs cwd-aware via core's process.cwd() default.
  */
 import type { ExtensionContext } from "../types.js";
 import { getSettings } from "../settings.js";
@@ -41,12 +30,11 @@ export default function activate(ctx: ExtensionContext): void {
   let agentShellActive = false;
   let lastSeq = 0;
 
-  // ── Track PTY events ──────────────────────────────────────────
   bus.on("shell:command-done", (e) => {
     const lines = e.output.split("\n");
     const s = getSettings();
 
-    // Spill long outputs to a tempfile so the agent can `read_file` them
+    // Long outputs spill to a tempfile so the agent can `read_file` them
     // on demand instead of carrying the full text in LLM context.
     let output = e.output;
     let spillPath: string | undefined;
@@ -56,7 +44,6 @@ export default function activate(ctx: ExtensionContext): void {
         spillPath = spillOutput(id, e.output);
         output = buildSpillStub(lines, s.shellHeadLines, s.shellTailLines, spillPath);
       } catch {
-        // Disk full / permission error — keep output in memory.
         output = e.output;
         spillPath = undefined;
       }
@@ -80,12 +67,9 @@ export default function activate(ctx: ExtensionContext): void {
   bus.on("shell:agent-exec-start", () => { agentShellActive = true; });
   bus.on("shell:agent-exec-done", () => { agentShellActive = false; });
 
-  // ── cwd handler ───────────────────────────────────────────────
-  // core defines a default returning process.cwd(); we override with
-  // the PTY-tracked value.
+  // Override core's process.cwd() default with the PTY-tracked value.
   ctx.advise("cwd", () => currentCwd);
 
-  // ── Per-query shell-events producer ───────────────────────────
   ctx.registerContextProducer("shell-events", () => {
     const fresh = exchanges.filter(
       (ex) => ex.id > lastSeq && ex.source !== "agent",
@@ -98,7 +82,6 @@ export default function activate(ctx: ExtensionContext): void {
     return `<shell_events>\n${text}\n</shell_events>`;
   }, { mode: "per-query" });
 
-  // ── Recent + search handlers (consumed by peer-mesh and similar) ──
   ctx.define("shell:context-recent", (n: number = 25) => {
     const recent = exchanges.slice(-n);
     if (recent.length === 0) return "No exchanges yet.";
@@ -144,8 +127,6 @@ export default function activate(ctx: ExtensionContext): void {
     return parts.join("\n");
   });
 }
-
-// ── Internal helpers ───────────────────────────────────────────
 
 function formatExchangeTruncated(ex: ShellExchange): string {
   const label = ex.source === "agent" ? "agent → shell" : "shell";

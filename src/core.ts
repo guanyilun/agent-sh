@@ -74,22 +74,13 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   // providers and create the LLM client.
   handlers.define("config:get-shell-config", () => config);
 
-  // Default cwd is the host process cwd. The shell-context built-in
-  // advises this with the PTY-tracked cwd when it's loaded; consumers
-  // (tools, file-autocomplete) call ctx.call("cwd") regardless.
+  // Default; shell-context advises with the PTY-tracked cwd when loaded.
   handlers.define("cwd", () => process.cwd());
 
-  // Two symmetric context handlers, both empty by default. Extensions
-  // contribute via ctx.registerContextProducer (which advises one of these
-  // by mode), and backends *consume* the resulting strings however they
-  // like — by wrapping in envelopes onto messages, augmenting system
-  // prompts, or ignoring entirely. The kernel owns only the registration
-  // surface; what to do with the data is the active backend's call.
-  //
-  //   dynamic-context:build  — per-request: meaningful only for backends
-  //                            that expose the LLM loop (e.g. ash).
-  //   query-context:build    — per-query: any backend can pull this when
-  //                            forwarding a user query (bridges should).
+  // Empty defaults so registerContextProducer can advise regardless of
+  // backend. Each backend chooses whether to consume the strings — ash
+  // wraps them in <dynamic_context>/<query_context>; bridges may pull
+  // query-context:build and splice into the target SDK however they like.
   handlers.define("dynamic-context:build", () => "");
   handlers.define("query-context:build", () => "");
 

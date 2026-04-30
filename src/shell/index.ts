@@ -1,14 +1,7 @@
 /**
- * Shell frontend bootstrap.
- *
- * Constructs the user-facing PTY shell and wires its lifecycle through the
- * extension API. Loaded specially from `src/index.ts` (not via the built-in
- * extensions manifest in `src/extensions/`) because shell ownership of stdin
- * raw mode and the PTY process is order-critical: it must exist before any
- * other code touches input or signals.
- *
- * For pluggable capability extensions (file-autocomplete, slash-commands,
- * provider built-ins, etc.) see `src/extensions/`.
+ * Frontend bootstrap. Loaded directly from src/index.ts (not the built-in
+ * extensions manifest) because PTY + stdin raw mode ownership is order-
+ * critical. For pluggable capability extensions see `src/extensions/`.
  */
 import type { ExtensionContext } from "../types.js";
 import { Shell } from "./shell.js";
@@ -43,20 +36,14 @@ export function activateShell(
   ctx: ExtensionContext,
   opts: ShellActivateOptions,
 ): ShellHandle {
-  // ── Compositor defaults ──────────────────────────────────────
-  // The kernel's Compositor is generic; the choice of stdout as the
-  // default surface is shell-frontend-specific (a hub or web frontend
-  // would set its own surfaces). We assert it here, not in core.
+  // Stdout-as-default is a frontend choice, not a kernel one — a hub or
+  // web bridge would point these at its own surfaces.
   const stdoutSurface = new StdoutSurface();
   ctx.compositor.setDefault("agent", stdoutSurface);
   ctx.compositor.setDefault("query", stdoutSurface);
   ctx.compositor.setDefault("status", stdoutSurface);
 
-  // ── Terminal buffer handler ──────────────────────────────────
-  // The xterm.js headless mirror is a PTY-derived artifact, so it lives
-  // with the shell extension. Lazy because @xterm/headless is optional
-  // and creating the buffer is non-trivial; null when the package isn't
-  // installed. Consumers call ctx.call("terminal-buffer").
+  // Lazy because @xterm/headless is optional; null when not installed.
   let terminalBufferSingleton: TerminalBuffer | null | undefined;
   ctx.define("terminal-buffer", (): TerminalBuffer | null => {
     if (terminalBufferSingleton !== undefined) return terminalBufferSingleton;

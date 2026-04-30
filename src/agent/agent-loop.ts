@@ -912,10 +912,9 @@ export class AgentLoop implements AgentBackend {
 
     h.define("agent:get-self", () => this);
 
-    // dynamic-context:build / query-context:build are kernel-defined empty
-    // defaults (see core.ts). ash advises them via the wrapping logic
-    // around streamResponse and handleQuery. Other backends may ignore them
-    // entirely — the envelope conventions are ash's, not the kernel's.
+    // dynamic-context:build / query-context:build are defined in core.ts.
+    // ash consumes them via the envelope wrapping in streamResponse +
+    // handleQuery; other backends may ignore.
 
     // Full control over what the LLM sees: takes messages[], returns messages[].
     // Default: pass through. Extensions can advise to compact, summarize,

@@ -235,9 +235,8 @@ export default function activate(ctx: ExtensionContext): void {
   });
   server.expose("peer:terminal-send");
 
-  // Forwards to the shell-context built-in. If shell-context isn't loaded
-  // (e.g. headless frontend), the underlying handler is undefined and these
-  // calls degrade to a clear error to the requesting peer.
+  // If shell-context isn't loaded, the underlying handler is undefined
+  // and these calls surface a clear error to the requesting peer.
   define("peer:context-recent", (n: number = 15) => ctx.call("shell:context-recent", n));
   server.expose("peer:context-recent");
 
