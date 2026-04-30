@@ -118,10 +118,12 @@ agent-sh/
 │   ├── executor.ts           # Isolated child process execution (shared by shell + bash tool)
 │   ├── types.ts              # Shared type definitions
 │   │
-│   ├── shell/                # Interactive terminal frontend (PTY, input, output)
+│   ├── shell/                # Frontend bootstrap (special-cased; not in src/extensions/)
+│   │   ├── index.ts          # activateShell(ctx, opts): owns Shell, compositor stdout defaults, terminal-buffer handler
 │   │   ├── shell.ts          # PTY lifecycle + wiring (InputHandler + OutputParser)
 │   │   ├── input-handler.ts  # Keyboard input, agent mode, bus-driven autocomplete
-│   │   └── output-parser.ts  # OSC parsing, command boundary detection
+│   │   ├── output-parser.ts  # OSC parsing, command boundary detection
+│   │   └── tui-input-view.ts # Input rendering + line editor integration
 │   │
 │   ├── agent/                # Agent subsystem (used by agent-backend extension)
 │   │   ├── types.ts          # AgentBackend, ToolDefinition, ToolResult
