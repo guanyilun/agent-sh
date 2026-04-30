@@ -4,6 +4,10 @@
  * These extensions ship with agent-sh and load before user extensions.
  * They receive unscoped contexts (not reloadable) and can be individually
  * disabled via the `disabledBuiltins` setting in ~/.agent-sh/settings.json.
+ *
+ * For order-critical frontend bootstrap (the PTY shell), see `src/shell/`.
+ * That module exposes its own `activate(ctx, opts)` entry point, loaded
+ * specially from `src/index.ts` rather than through this manifest.
  */
 import type { ExtensionContext } from "../types.js";
 
