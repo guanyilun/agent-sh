@@ -13,6 +13,7 @@ import type { EventBus } from "../event-bus.js";
 import type { LlmClient } from "../utils/llm-client.js";
 import type { ToolDefinition } from "./types.js";
 import { ConversationState } from "./conversation-state.js";
+import { wrapTrailingWithDynamicContext } from "../utils/message-utils.js";
 
 interface PendingToolCall {
   id: string;
@@ -207,16 +208,11 @@ async function streamOnce(
   const pendingToolCalls: PendingToolCall[] = [];
   let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null = null;
 
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-    { role: "system", content: systemPrompt },
-  ];
-  if (dynamicContext) {
-    messages.push({ role: "user", content: `<context>\n${dynamicContext}\n</context>` });
-    messages.push({ role: "assistant", content: "Understood." });
-  }
-
   const stream = await llmClient.stream({
-    messages: [...messages, ...conversation.getMessages()],
+    messages: [
+      { role: "system", content: systemPrompt },
+      ...wrapTrailingWithDynamicContext(conversation.getMessages(), dynamicContext ?? ""),
+    ],
     tools: apiTools.length > 0 ? apiTools : undefined,
     model,
     signal,

@@ -149,6 +149,11 @@ export default function activate(ctx: ExtensionContext): void {
 
   let state: PaneState | null = null;
 
+  // Tell the LLM it's running inside an interactive pane session.
+  ctx.registerContextProducer("interactive-session", () =>
+    state?.mode === "rsplit" ? "interactive-session: true" : null,
+  );
+
   registerInstruction("Tmux Interactive Session", [
     "When the dynamic context includes `interactive-session: true`, the user is chatting",
     "with you in a side pane next to their terminal. They may have a program running in",
@@ -229,7 +234,6 @@ export default function activate(ctx: ExtensionContext): void {
       const session = createRemoteSession({
         surface,
         suppressQueryBox: true,
-        interactive: true,
       });
 
       state = { mode: "rsplit", paneId, ttyFd, session, server, client, sockPath, scriptPath };

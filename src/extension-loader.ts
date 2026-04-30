@@ -86,6 +86,13 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
     cleanups.push(() => bus.emit("agent:remove-skill", { name }));
   };
 
+  // Track dynamic-context producer registrations
+  const scopedRegisterContextProducer: typeof ctx.registerContextProducer = (name, producer) => {
+    const dispose = ctx.registerContextProducer(name, producer);
+    cleanups.push(dispose);
+    return dispose;
+  };
+
   // Track tool registrations — extension name captured in scope
   const scopedRegisterTool: typeof ctx.registerTool = (tool) => {
     bus.emit("agent:register-tool", { tool, extensionName });
@@ -108,6 +115,7 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
     removeInstruction: ctx.removeInstruction,
     registerSkill: scopedRegisterSkill,
     removeSkill: ctx.removeSkill,
+    registerContextProducer: scopedRegisterContextProducer,
     registerTool: scopedRegisterTool,
     unregisterTool: ctx.unregisterTool,
     registerCommand: scopedRegisterCommand,

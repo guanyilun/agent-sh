@@ -245,7 +245,6 @@ For most extensions that route output to a different surface, use `createRemoteS
 const session = ctx.createRemoteSession({
   surface: panelSurface,
   suppressQueryBox: true,   // session has own input
-  interactive: true,         // enable terminal_read/terminal_keys context
 });
 
 session.submit("what's on screen?");

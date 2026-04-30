@@ -39,17 +39,19 @@ Owned by `ConversationState`. This is the OpenAI-shaped messages array (`user` /
 - Assistant messages (the LLM's replies)
 - Tool calls and tool results
 
-The two streams merge at one point: when the user submits a new query, new shell events are prepended to that user message as a `<shell-events>` delta. They then live inside the conversation array as regular bytes, but they are never stored separately in both places.
+The two streams merge at one point: when the user submits a new query, new shell events are wrapped inside `<shell_events>` (itself nested in the per-query `<query_context>` envelope) and prepended to that user message. They then live inside the conversation array as regular bytes, but they are never stored separately in both places.
 
 ## How shell activity reaches the LLM
 
-Each exchange (a shell command + output, or an agent-query marker) gets a sequential `id` as it's captured. The agent keeps a `lastShellSeq` cursor — the highest id it has already sent to the model. On each new user query:
+Each exchange (a shell command + output, or an agent-query marker) gets a sequential `id` as it's captured. The agent keeps a `lastShellSeq` cursor — the highest id it has already sent to the model.
+
+Shell events are emitted as a per-query producer (advising `query-context:build` in `agent-loop.ts`):
 
 1. `getEventsSince(lastShellSeq)` returns every exchange with a higher id.
-2. The delta is formatted as `<shell-events>...</shell-events>` and prepended to the user's query inside a single user message.
+2. The body is wrapped as `<shell_events>...</shell_events>`, joined alongside any other per-query producer output, and the whole bundle is wrapped in `<query_context>...</query_context>` and prepended to the user's query inside a single user message.
 3. `lastShellSeq` advances to the new high-water mark.
 
-The delta is sent **once per user query**, not per tool-use step inside the agent loop. Inside the loop (where the LLM calls tools, sees results, calls more tools), no new shell events are injected — injecting mid-loop would break the `tool_call → tool_result` chain some providers require.
+The delta is sent **once per user query**, not per tool-use step inside the agent loop. Inside the loop (where the LLM calls tools, sees results, calls more tools), no new shell events are injected — injecting mid-loop would break the `tool_call → tool_result` chain some providers require, and per-tool-call shell visibility isn't the right semantic anyway.
 
 Prior-turn shell events remain visible in later turns because they're embedded in earlier user messages in the conversation history. They are not *re-sent* as fresh bytes — the provider's prefix cache amortizes them to O(1) per turn.
 
@@ -122,7 +124,7 @@ People often conflate shell output truncation and conversation compaction. They'
 
 | | Shell output truncation | Conversation compaction |
 |---|---|---|
-| **Stream** | Shell context (`<shell-events>` deltas) | Conversation messages array |
+| **Stream** | Shell context (`<shell_events>` deltas) | Conversation messages array |
 | **When** | Once, at the moment each exchange is captured | On threshold crossing, `/compact`, or overflow retry |
 | **State change** | Permanent: `ex.output` becomes head+tail+path | Permanent: evicted turns collapse to one-liners |
 | **Full-text location** | Tempfile on disk | In-memory archive + `~/.agent-sh/history` |

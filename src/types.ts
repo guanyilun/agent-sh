@@ -24,8 +24,6 @@ export interface RemoteSessionOptions {
   suppressQueryBox?: boolean;
   /** Suppress usage stats line (default: true). */
   suppressUsage?: boolean;
-  /** Set interactive-session dynamic context (default: false). */
-  interactive?: boolean;
 }
 
 export interface RemoteSession {
@@ -150,6 +148,35 @@ export interface ExtensionContext {
   /** Remove a registered skill by name. */
   removeSkill: (name: string) => void;
 
+  // ── Dynamic context registration ──────────────────────────
+  /**
+   * Register a context producer — a function that contributes a string
+   * (or `null` to skip) into one of two lifecycles:
+   *
+   * - `mode: "per-request"` (default) — fires on **every LLM request**,
+   *   including each tool-loop iteration. Output is ephemerally wrapped
+   *   in `<dynamic_context>` onto the trailing message at request time;
+   *   never persisted. Use for "current state" signals (in-flight work,
+   *   active mode, threshold warnings).
+   *
+   * - `mode: "per-query"` — fires **once at user-query start** in
+   *   handleQuery. Output is wrapped in `<query_context>` and frozen into
+   *   the user message; persists in conversation history. Use for
+   *   "what happened between turns" signals (shell events, accumulated
+   *   notifications, calendar/inbox deltas).
+   *
+   * In both modes producers run in registration order, non-null outputs
+   * joined with blank lines. When nothing contributes, no envelope tag
+   * is emitted.
+   *
+   * Returns a dispose fn that unregisters the producer.
+   */
+  registerContextProducer: (
+    name: string,
+    producer: () => string | null,
+    opts?: { mode?: "per-request" | "per-query" },
+  ) => () => void;
+
   // ── Provider configuration ────────────────────────────────
   providers: {
     configure: (id: string, opts: { reasoningParams?: (level: string) => Record<string, unknown> }) => void;
@@ -193,7 +220,7 @@ export interface ExtensionContext {
    * optionally accepts queries. Handles all compositor routing, shell
    * lifecycle advisors, and chrome suppression.
    *
-   *   const session = ctx.createRemoteSession({ surface, interactive: true });
+   *   const session = ctx.createRemoteSession({ surface });
    *   session.submit("what's on screen?");
    *   session.close();  // restores everything
    */
