@@ -1,5 +1,4 @@
 import type { EventBus, ContentBlock } from "./event-bus.js";
-import type { ContextManager } from "./context-manager.js";
 import type { ColorPalette } from "./utils/palette.js";
 import type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
 import type { ToolDefinition } from "./agent/types.js";
@@ -102,7 +101,6 @@ export interface AgentShellConfig {
  */
 export interface ExtensionContext {
   bus: EventBus;
-  contextManager: ContextManager;
   /** Stable per-instance identifier (4-char hex). */
   readonly instanceId: string;
   quit: () => void;
@@ -249,33 +247,3 @@ export interface TerminalSession {
   done: boolean;
   resolve?: (value: void) => void;
 }
-
-// ── Exchange types (used by ContextManager) ──────────────────────
-//
-// Shell context tracks only user-initiated activity (shell commands and
-// agent queries). Agent tool outputs and responses live exclusively in
-// the ConversationState messages array to avoid duplication.
-
-export type Exchange =
-  | {
-      type: "shell_command";
-      id: number;
-      timestamp: number;
-      cwd: string;
-      command: string;
-      /** In-context representation: full text if short, head+tail+path stub if spilled. */
-      output: string;
-      exitCode: number | null;
-      outputLines: number;
-      outputBytes: number;
-      /** Who initiated this command: "user" (typed) or "agent" (via user_shell). */
-      source: "user" | "agent";
-      /** Path to the tempfile holding the full captured output, if spilled. */
-      spillPath?: string;
-    }
-  | {
-      type: "agent_query";
-      id: number;
-      timestamp: number;
-      query: string;
-    };

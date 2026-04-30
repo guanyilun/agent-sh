@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ContextManager } from "../context-manager.js";
 import { discoverProjectSkills, type Skill } from "./skills.js";
 
 /**

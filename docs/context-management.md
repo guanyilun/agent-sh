@@ -24,12 +24,11 @@ agent-sh adopts this mental model. The consequences shape everything below:
 
 ### Shell context — "what has the user been doing?"
 
-Captured and owned by `ContextManager`. Tracks only user-initiated activity:
-
-- Shell commands the user ran + their outputs
-- Markers for user queries to the agent (so agent queries interleave chronologically with shell commands)
+Captured and owned by the `shell-context` built-in extension (`src/extensions/shell-context.ts`). Tracks user-initiated PTY activity: shell commands the user ran + their outputs.
 
 Agent tool outputs are **not** here — those live in the conversation stream. The boundary is strict: if the user typed it at the PTY, it goes into shell context; if the agent called a tool, it goes into the conversation.
+
+Frontends without a PTY (e.g. agent-sh-hub) simply don't load this extension — the agent runs cwd-aware via the default `cwd` handler (`process.cwd()`) and no `<shell_events>` envelope is emitted.
 
 ### Conversation — "what has the agent been working on?"
 
@@ -43,13 +42,13 @@ The two streams merge at one point: when the user submits a new query, new shell
 
 ## How shell activity reaches the LLM
 
-Each exchange (a shell command + output, or an agent-query marker) gets a sequential `id` as it's captured. The agent keeps a `lastShellSeq` cursor — the highest id it has already sent to the model.
+Each exchange (a shell command + output) gets a sequential `id` as it's captured. The shell-context extension keeps an internal `lastSeq` cursor — the highest id it has already sent to the model.
 
-Shell events are emitted as a per-query producer (advising `query-context:build` in `agent-loop.ts`):
+Shell events are registered as a per-query context producer (`ctx.registerContextProducer("shell-events", …, { mode: "per-query" })`):
 
-1. `getEventsSince(lastShellSeq)` returns every exchange with a higher id.
-2. The body is wrapped as `<shell_events>...</shell_events>`, joined alongside any other per-query producer output, and the whole bundle is wrapped in `<query_context>...</query_context>` and prepended to the user's query inside a single user message.
-3. `lastShellSeq` advances to the new high-water mark.
+1. The producer returns every exchange with id > `lastSeq`, wrapped as `<shell_events>...</shell_events>`.
+2. The dispatcher composes the result with any other per-query producer output and wraps the whole bundle in `<query_context>...</query_context>`, prepended to the user's query inside a single user message.
+3. The cursor advances to the new high-water mark.
 
 The delta is sent **once per user query**, not per tool-use step inside the agent loop. Inside the loop (where the LLM calls tools, sees results, calls more tools), no new shell events are injected — injecting mid-loop would break the `tool_call → tool_result` chain some providers require, and per-tool-call shell visibility isn't the right semantic anyway.
 
@@ -185,7 +184,7 @@ All settings live in `~/.agent-sh/settings.json`:
 
 | File | Role |
 |---|---|
-| `src/context-manager.ts` | Shell exchange capture, spill-to-tempfile on long outputs, delta emission via `getEventsSince` |
+| `src/extensions/shell-context.ts` | Built-in: shell exchange capture, spill-to-tempfile on long outputs, `<shell_events>` per-query producer, `cwd` handler advisor |
 | `src/utils/shell-output-spill.ts` | Per-pid session dir, cleanup on exit + signals, stale-dir sweep for crashed sessions |
 | `src/agent/conversation-state.ts` | Messages array, eager nucleation, priority-based compaction, in-memory recall archive |
 | `src/agent/nuclear-form.ts` | One-line-summary primitives (nucleate, serialize, priority classification) |

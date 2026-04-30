@@ -12,7 +12,7 @@ import type { ExtensionContext } from "agent-sh/types";
 import { runSubagent } from "agent-sh/agent/subagent";
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, llmClient, contextManager } = ctx;
+  const { bus, llmClient } = ctx;
   if (!llmClient) return;
 
   const allToolNames = () => ctx.getTools().map(t => t.name);
@@ -73,7 +73,7 @@ export default function activate(ctx: ExtensionContext): void {
 
       const systemPrompt =
         `You are a focused subagent. Complete the task and return a clear, concise result.\n` +
-        `Working directory: ${contextManager.getCwd()}` +
+        `Working directory: ${ctx.call("cwd")}` +
         (nuclearSummary ? `\n\n[Parent session history]\n${nuclearSummary}` : "");
 
       try {

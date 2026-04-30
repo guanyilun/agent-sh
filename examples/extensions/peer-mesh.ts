@@ -190,10 +190,11 @@ class PeerServer {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, contextManager, registerCommand, registerTool, registerInstruction, define } = ctx;
+  const { bus, registerCommand, registerTool, registerInstruction, define } = ctx;
+  const getCwd = () => ctx.call("cwd") as string;
   const startTime = Date.now();
 
-  const server = new PeerServer(ctx.instanceId, contextManager.getCwd(), (...args) => ctx.call(...args));
+  const server = new PeerServer(ctx.instanceId, getCwd(), (...args) => ctx.call(...args));
   server.start();
 
   // Track PTY idle window so peer:terminal-send doesn't stomp on a busy shell.
@@ -203,7 +204,7 @@ export default function activate(ctx: ExtensionContext): void {
   define("peer:info", () => ({
     id: ctx.instanceId,
     pid: process.pid,
-    cwd: contextManager.getCwd(),
+    cwd: getCwd(),
     uptime: Math.round((Date.now() - startTime) / 1000),
   }));
   server.expose("peer:info");
@@ -234,10 +235,13 @@ export default function activate(ctx: ExtensionContext): void {
   });
   server.expose("peer:terminal-send");
 
-  define("peer:context-recent", (n: number = 15) => contextManager.getRecentSummary(n));
+  // Forwards to the shell-context built-in. If shell-context isn't loaded
+  // (e.g. headless frontend), the underlying handler is undefined and these
+  // calls degrade to a clear error to the requesting peer.
+  define("peer:context-recent", (n: number = 15) => ctx.call("shell:context-recent", n));
   server.expose("peer:context-recent");
 
-  define("peer:context-search", (query: string) => contextManager.search(query));
+  define("peer:context-search", (query: string) => ctx.call("shell:context-search", query));
   server.expose("peer:context-search");
 
   // ── Inbox + drained turn ──────────────────────────────────────

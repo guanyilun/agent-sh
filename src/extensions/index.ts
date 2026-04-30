@@ -16,6 +16,7 @@ export const BUILTIN_EXTENSIONS: Array<{
   when?: () => boolean;
   load: () => Promise<ActivateFn>;
 }> = [
+  { name: "shell-context",   load: () => import("./shell-context.js").then(m => m.default) },
   { name: "agent-backend",    load: () => import("./agent-backend.js").then(m => m.default) },
   { name: "openrouter",
     when: () => !!process.env.OPENROUTER_API_KEY,

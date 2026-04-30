@@ -1,9 +1,10 @@
 /**
  * Core kernel — the minimum viable agent-sh.
  *
- * Wires up EventBus + ContextManager without any frontend or agent backend.
+ * Wires up EventBus + HandlerRegistry without any frontend or agent backend.
  * Consumers attach their own I/O (Shell, WebSocket, REST, tests) by
- * subscribing to bus events.
+ * subscribing to bus events. Shell-specific tracking lives in the
+ * shell-context built-in extension.
  *
  * Agent backends are loaded as extensions and register themselves via
  * the agent:register-backend bus event. The built-in "ash" backend is
@@ -17,7 +18,6 @@
  *   const response = await core.query("hello");
  */
 import { EventBus, type ContentBlock } from "./event-bus.js";
-import { ContextManager } from "./context-manager.js";
 import type { AgentShellConfig, ExtensionContext, RemoteSessionOptions, RemoteSession } from "./types.js";
 import { createLlmFacade } from "./utils/llm-facade.js";
 import { setPalette } from "./utils/palette.js";
@@ -45,7 +45,6 @@ export type { NuclearEntry } from "./agent/nuclear-form.js";
 
 export interface AgentShellCore {
   bus: EventBus;
-  contextManager: ContextManager;
   /** Handler registry for define/advise/call. */
   handlers: HandlerRegistry;
   /** Unique id for this agent process; used for shell-marker tagging and lineage tracking. */
@@ -65,7 +64,6 @@ export interface AgentShellCore {
 export function createCore(config: AgentShellConfig): AgentShellCore {
   const bus = new EventBus();
   const handlers = new HandlerRegistry();
-  const contextManager = new ContextManager(bus, handlers);
   // 3 bytes = 6 hex chars, ~16M values — ample for per-lineage uniqueness and
   // short enough to read/remember. Legacy content may have 16-char iids; any
   // parsers should accept ≥6 hex chars.
@@ -76,6 +74,11 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   // Expose raw CLI config so the agent backend extension can resolve
   // providers and create the LLM client.
   handlers.define("config:get-shell-config", () => config);
+
+  // Default cwd is the host process cwd. The shell-context built-in
+  // advises this with the PTY-tracked cwd when it's loaded; consumers
+  // (tools, file-autocomplete) call ctx.call("cwd") regardless.
+  handlers.define("cwd", () => process.cwd());
 
   // ── Multi-backend registry ───────────────────────────────────
   type Backend = { name: string; kill: () => void; start?: () => Promise<void> };
@@ -147,7 +150,6 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
 
   return {
     bus,
-    contextManager,
     handlers,
     instanceId,
 
@@ -204,7 +206,6 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     extensionContext(opts) {
       const ctx: ExtensionContext = {
         bus,
-        contextManager,
         instanceId,
         llm: createLlmFacade(handlers),
         providers: {

@@ -22,7 +22,7 @@ interface SlashCommand {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, contextManager } = ctx;
+  const { bus } = ctx;
   const commands = new Map<string, SlashCommand>();
 
   const register = (cmd: SlashCommand) => {
@@ -149,7 +149,7 @@ export default function activate(ctx: ExtensionContext): void {
   // ── Skill commands (/skill:<name>) ────────────────────────────
 
   const getSkills = (): Skill[] => {
-    const cwd = contextManager?.getCwd() ?? process.cwd();
+    const cwd = (ctx.call("cwd") as string) ?? process.cwd();
     return discoverSkills(cwd);
   };
 
