@@ -29,7 +29,7 @@ The key insight: **the agent is a loop, not a single call**. The LLM calls tools
 
 Every query draws on two distinct streams of context:
 
-- **Shell context** — the user's terminal activity (commands + outputs). This is what lets ash understand "fix this" after you ran a failing command. New shell activity since the last turn is injected as a `<shell-events>` delta prepended to your query.
+- **Shell context** — the user's terminal activity (commands + outputs). This is what lets ash understand "fix this" after you ran a failing command. New shell activity since the last turn is wrapped as `<shell_events>` inside the per-query `<query_context>` envelope and prepended to your user message.
 - **Conversation state** — the OpenAI chat messages array (`user`/`assistant`/`tool` messages). This is the LLM's memory of what it already said and did within this session.
 
 The two streams don't overlap: agent tool outputs live only in the conversation, and shell context tracks only user-initiated activity. When either stream grows large, ash has escape hatches rather than silent truncation:
@@ -52,7 +52,12 @@ The system prompt is assembled once per `cwd` and cached (invalidated when the w
 7. **Available tools** — name + description of every registered tool
 8. **Extension-appended content** — extensions can advise `system-prompt:build` to append additional context (instance IDs, memory files, etc.)
 
-**Shell context**, **environment metadata** (date, cwd, token usage), and any other per-iteration signals live in the *dynamic context* — a user-role message injected fresh before every LLM call via the `dynamic-context:build` handler. Each section is wrapped in a named XML tag (`<shell>`, `<environment>`, etc.) so extensions can add their own tagged sections without colliding.
+Per-turn signals live in two symmetric handlers, both empty by default:
+
+- **`query-context:build`** — fires once at user-query start. Output is wrapped in `<query_context>` and frozen into the user message, so it persists in conversation history. Shell events are the canonical example (`<shell_events>` sub-tag); other "what happened between turns" signals (notifications, calendar/inbox deltas) go here too.
+- **`dynamic-context:build`** — fires on every LLM call (each tool-loop iteration). Output is wrapped in `<dynamic_context>` and ephemerally prepended to the trailing message at request time, so the cacheable prefix stays byte-stable. Use for "current state" signals: in-flight subagents, threshold warnings, active mode markers.
+
+Extensions populate either via `ctx.registerContextProducer(name, fn, { mode: "per-query" | "per-request" })`. When no producer contributes, no envelope tag is emitted at all — vanilla sessions send exactly `[system, ...history]`.
 
 ## Project Conventions
 

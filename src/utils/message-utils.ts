@@ -58,6 +58,35 @@ export function stubToolResults(
 }
 
 /**
+ * Prepend a `<dynamic_context>` block onto the trailing message.
+ *
+ * Wrapping the *trailing* message (rather than inserting at the head) keeps
+ * the [system] + [prior history] prefix byte-stable across turns, so the
+ * provider's prefix cache holds. Caller passes a copy; conversation state
+ * is never mutated.
+ *
+ * No-op when both `dynamicContext` and `toolPrompt` are empty — i.e. no
+ * extension registered any per-turn signal — so a vanilla session sends
+ * exactly `[system, ...history]` with no synthetic envelope.
+ */
+export function wrapTrailingWithDynamicContext(
+  history: any[],
+  dynamicContext: string,
+  toolPrompt?: string,
+): any[] {
+  const ctx = dynamicContext.trim();
+  const tp = (toolPrompt ?? "").trim();
+  if (!ctx && !tp) return history;
+  if (history.length === 0) return history;
+  const last = history[history.length - 1];
+  if (typeof last.content !== "string") return history;
+
+  const blockBody = ctx && tp ? `${ctx}\n${tp}` : ctx || tp;
+  const wrappedContent = `<dynamic_context>\n${blockBody}\n</dynamic_context>\n\n${last.content}`;
+  return [...history.slice(0, -1), { ...last, content: wrappedContent }];
+}
+
+/**
  * Deduplicate tool results: keep only the latest result for a given
  * tool name + argument filter, replace all older results with a stub.
  *

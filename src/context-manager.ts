@@ -125,15 +125,14 @@ export class ContextManager {
   }
 
   /**
-   * Return shell events with id > afterId, formatted as an incremental
-   * delta suitable for injection into conversation history. Skips
+   * Return shell events with id > afterId as raw delta body. Skips
    * agent-source commands (already visible in tool results). Returns
-   * null when nothing new exists.
+   * null when nothing new exists. Caller is responsible for wrapping
+   * (typically inside <shell_events> within the per-query envelope).
    *
-   * The motivation: resending the full <shell_context> every turn wastes
-   * tokens — N turns × full history = O(N²) cost for O(N) information.
-   * Instead we inject only new events as regular conversation messages,
-   * so the provider's prefix cache amortizes them to O(N).
+   * Resending the full history every turn would be O(N²); injecting
+   * only the delta into a new user message that then freezes into
+   * conversation history amortizes to O(N) under prefix caching.
    */
   getEventsSince(afterId: number): { text: string; lastSeq: number } | null {
     const fresh = this.exchanges.filter((e) => e.id > afterId && !(e.type === "shell_command" && e.source === "agent"));
@@ -144,9 +143,8 @@ export class ContextManager {
     // Outputs already carry head+tail+spillPath stubs from capture time.
     const parts = fresh.map((ex) => this.formatExchangeTruncated(ex)).filter((s) => s.length > 0);
     if (parts.length === 0) return null;
-    const body = parts.join("\n");
     return {
-      text: `<shell-events>\n${body}</shell-events>`,
+      text: parts.join("\n"),
       lastSeq,
     };
   }

@@ -27,11 +27,12 @@ import { ToolRegistry } from "./tool-registry.js";
 import { ConversationState, type CompactResult } from "./conversation-state.js";
 import { HistoryFile, type HistoryAdapter } from "./history-file.js";
 import { nucleate, formatNuclearLine, isReadOnly, type NuclearEntry } from "./nuclear-form.js";
-import { STATIC_SYSTEM_PROMPT, buildDynamicContext, buildStaticByCwd, formatSkillsBlock, loadGlobalAgentsMd } from "./system-prompt.js";
+import { STATIC_SYSTEM_PROMPT, buildStaticByCwd, formatSkillsBlock, loadGlobalAgentsMd } from "./system-prompt.js";
 import type { Compositor } from "../utils/compositor.js";
 import { createToolUI } from "../utils/tool-interactive.js";
 import { RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW } from "./token-budget.js";
 import { PACKAGE_VERSION } from "../utils/package-version.js";
+import { wrapTrailingWithDynamicContext } from "../utils/message-utils.js";
 import { getSettings, updateSettings } from "../settings.js";
 import { createToolProtocol, type ToolProtocol, type PendingToolCall as ProtocolPendingToolCall, type ToolResult as ProtocolToolResult } from "./tool-protocol.js";
 
@@ -143,8 +144,8 @@ export class AgentLoop implements AgentBackend {
   private toolProtocol: ToolProtocol;
   private instanceId: string;
   // Cursor into ContextManager's exchange stream. Events with id > this
-  // have not yet been shown to the LLM. We inject the delta as a user
-  // message before each stream so the prefix stays cacheable.
+  // have not yet been shown to the LLM. The query-context:build advisor
+  // emits the delta into each new user message, then advances the cursor.
   private lastShellSeq = 0;
 
   constructor(config: AgentLoopConfig) {
@@ -919,14 +920,30 @@ export class AgentLoop implements AgentBackend {
 
     h.define("agent:get-self", () => this);
 
-    // Extensions compose additional context (git info, project rules, etc.)
-    h.define("dynamic-context:build", () => {
-      const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-      const promptTokens = this.conversation.estimatePromptTokens();
-      return buildDynamicContext(
-        this.contextManager,
-        { promptTokens, contextWindow },
-      );
+    // Two symmetric context handlers, both empty by default. Extensions
+    // (and the kernel) advise them to contribute — directly, or via
+    // ctx.registerContextProducer which dispatches by mode.
+    //
+    //   dynamic-context:build  — per-request, fires on every LLM call,
+    //                            output ephemerally wrapped in
+    //                            <dynamic_context> onto trailing message.
+    //   query-context:build    — per-query, fires once in handleQuery,
+    //                            output frozen into the user message
+    //                            inside <query_context>.
+    h.define("dynamic-context:build", () => "");
+    h.define("query-context:build", () => "");
+
+    // Shell events are a per-query signal: what the user did in their
+    // shell between agent turns. Migrated from an inline prepend in
+    // handleQuery to an advisor here so it composes uniformly with any
+    // other per-query producer (notifications, inbox deltas, etc.).
+    h.advise("query-context:build", (next) => {
+      const base = next() as string;
+      const delta = this.contextManager.getEventsSince(this.lastShellSeq);
+      if (!delta) return base;
+      this.lastShellSeq = delta.lastSeq;
+      const part = `<shell_events>\n${delta.text}\n</shell_events>`;
+      return base ? `${base}\n\n${part}` : part;
     });
 
     // Full control over what the LLM sees: takes messages[], returns messages[].
@@ -1198,13 +1215,14 @@ export class AgentLoop implements AgentBackend {
     let responseText = "";
 
     try {
-      // Prepend any shell events that preceded this query into the same
-      // user message, so the conversation reads chronologically and we
-      // don't emit two consecutive user-role messages (some providers
-      // reject that).
-      const preDelta = this.contextManager.getEventsSince(this.lastShellSeq);
-      const userContent = preDelta ? `${preDelta.text}\n\n${query}` : query;
-      if (preDelta) this.lastShellSeq = preDelta.lastSeq;
+      // Per-query producers (shell events + any extension-registered
+      // per-query signals) produce content that gets frozen into this
+      // user message inside <query_context>, distinguishing it from the
+      // per-request <dynamic_context> wrapped on the trailing message.
+      const queryContext = ((this.handlers.call("query-context:build") as string) ?? "").trim();
+      const userContent = queryContext
+        ? `<query_context>\n${queryContext}\n</query_context>\n\n${query}`
+        : query;
 
       this.conversation.addUserMessage(userContent);
       this.bus.emit("conversation:message-appended", { role: "user", content: query });
@@ -1719,27 +1737,19 @@ export class AgentLoop implements AgentBackend {
     const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();
     const pendingToolCalls: PendingToolCall[] = [];
 
-    const rawMessages = [
-      { role: "system" as const, content: systemPrompt },
-      { role: "user" as const, content: `<context>\n${dynamicContext}\n</context>` },
-      { role: "assistant" as const, content: "Understood." },
-      ...this.conversation.getMessages(),
-    ];
-
-    // Let extensions transform the message array (compact, summarize, filter, etc.)
-    const messages = this.handlers.call("conversation:prepare", rawMessages);
-
     // Tool protocol controls what goes in the API tools param vs dynamic context
     const apiTools = this.toolProtocol.getApiTools(this.toolRegistry.all());
     const toolPrompt = this.toolProtocol.getToolPrompt(this.toolRegistry.all());
 
-    // Append tool catalog to dynamic context (closer to user query = better followed)
-    if (toolPrompt) {
-      const ctxMsg = messages[1]; // dynamic context user message
-      if (ctxMsg && typeof ctxMsg.content === "string") {
-        ctxMsg.content += "\n" + toolPrompt;
-      }
-    }
+    // Dynamic context rides on the trailing message — see
+    // wrapTrailingWithDynamicContext for the cache-stability rationale.
+    const rawMessages = [
+      { role: "system" as const, content: systemPrompt },
+      ...wrapTrailingWithDynamicContext(this.conversation.getMessages(), dynamicContext, toolPrompt),
+    ];
+
+    // Let extensions transform the message array (compact, summarize, filter, etc.)
+    const messages = this.handlers.call("conversation:prepare", rawMessages);
 
     // Stream filter strips tool tags from display (inline mode only)
     const streamFilter = this.toolProtocol.createStreamFilter(

@@ -68,6 +68,7 @@ TypeScript and JavaScript are both supported (`.ts`, `.tsx`, `.mts`, `.js`, `.mj
 | `removeInstruction` | `(name) => void` | Remove a named instruction block |
 | `registerSkill` | `(name, description, filePath) => void` | Register a skill — on-demand reference material the agent can invoke |
 | `removeSkill` | `(name) => void` | Remove a registered skill |
+| `registerContextProducer` | `(name, () => string \| null, opts?: { mode? }) => () => void` | Contribute a per-turn signal. `mode: "per-request"` (default) — fires every LLM call, ephemerally wrapped on the trailing message in `<dynamic_context>`. `mode: "per-query"` — fires once per user query, frozen into the user message in `<query_context>`. Return `null` to skip. Returns a dispose fn. |
 | `define` | `(name, fn) => void` | Register a named handler |
 | `advise` | `(name, wrapper) => () => void` | Wrap a named handler (receives `next` + args). Returns an `unadvise()` function. |
 | `call` | `(name, ...args) => any` | Call a named handler |
@@ -396,7 +397,8 @@ These are registered by the `agent-backend` built-in extension (AgentLoop) and l
 | Handler | Signature | Description |
 |---|---|---|
 | `system-prompt:build` | `() → string` | Assemble the cached system prompt. Advise to append identity blocks, memory files, learned lessons, etc. Rebuilt on cwd change, not every query. |
-| `dynamic-context:build` | `() → string` | Build the per-iteration user-role injection. Rebuilt before every LLM call. Default: `<shell>` + `<environment>` XML-tagged sections. Advisors add more tagged sections. |
+| `dynamic-context:build` | `() → string` | Per-request signal block. Fires on every LLM call (including each tool-loop iteration). Output is wrapped in `<dynamic_context>` and ephemerally prepended to the trailing message at request time. Default: `""`. Advisors append; extensions usually go through `ctx.registerContextProducer(name, fn)` instead of advising directly. |
+| `query-context:build` | `() → string` | Per-query signal block. Fires once at user-query start in `handleQuery`. Output is wrapped in `<query_context>` and frozen into the user message. Built-in: an advisor that emits `<shell_events>` from the shell-event cursor. Default: `""`. Reach via `ctx.registerContextProducer(name, fn, { mode: "per-query" })`. |
 | `conversation:prepare` | `(messages[]) → messages[]` | Transform the full message array before it's sent to the LLM. Default: pass through. |
 | `conversation:compact` | `({target, keepRecent, force}) → { before, after, evictedCount } \| null` | Compaction strategy (returns null when nothing is compacted). Default: pins the first turn + the last `keepRecent` turns and evicts the middle by priority × recency. Advise for richer strategies (topic pinning, LLM summarization). |
 | `conversation:get-messages` | `() → messages[]` | Read the current in-memory messages array. Used by compaction advisors to compute a replacement. |
@@ -659,7 +661,6 @@ A remote session bundles all the wiring needed to route agent output away from s
 const session = ctx.createRemoteSession({
   surface: mySurface,          // where output goes (RenderSurface)
   suppressQueryBox: true,      // hide query box (session has own input)
-  interactive: true,           // set interactive-session context
 });
 
 session.submit("what's on screen?");  // submit a query
@@ -674,7 +675,8 @@ session.close();                       // restore everything
 | `suppressBorders` | `boolean` | `true` | Suppress response top/bottom borders |
 | `suppressQueryBox` | `boolean` | `false` | Suppress the user query box (use when the session has its own input) |
 | `suppressUsage` | `boolean` | `true` | Suppress token usage stats line |
-| `interactive` | `boolean` | `false` | Add `interactive-session: true` to dynamic context. Signals to the agent that it is operating inside an interactive surface (e.g. an overlay or side pane) rather than the main shell. Extensions that provide PTY-inspection tools (like the `terminal-buffer` example) watch this flag. |
+
+If your extension wants to signal "this session is interactive — read the screen, prefer terminal_keys" to the LLM, register a context producer while the session is open. See `examples/extensions/overlay-agent.ts` for the pattern.
 
 ### What createRemoteSession handles
 
@@ -683,7 +685,6 @@ Internally, a remote session:
 1. **Redirects render streams** — `"agent"`, `"query"`, `"status"` all route to the provided surface
 2. **Keeps the shell interactive** — advises `shell:on-processing-start` and `shell:on-processing-done` to skip pause/unpause
 3. **Suppresses chrome** — advises `tui:response-border`, `tui:render-user-query`, `tui:render-usage` based on options
-4. **Sets dynamic context** — advises `dynamic-context:build` to inject `interactive-session: true` when `interactive` is set
 
 Calling `session.close()` removes all advisors and restores all compositor routing in one call.
 
@@ -698,7 +699,6 @@ const session = ctx.createRemoteSession({ surface });
 const session = ctx.createRemoteSession({
   surface,
   suppressQueryBox: true,
-  interactive: true,
 });
 conn.on("data", (d) => session.submit(d.toString().trim()));
 ```
@@ -709,7 +709,6 @@ conn.on("data", (d) => session.submit(d.toString().trim()));
 const session = ctx.createRemoteSession({
   surface: panelSurface,
   suppressQueryBox: true,
-  interactive: true,
 });
 session.submit(query);
 // ... later, on dismiss ...

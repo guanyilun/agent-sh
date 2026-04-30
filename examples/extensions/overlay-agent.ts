@@ -59,6 +59,13 @@ export default function activate(ctx: ExtensionContext): void {
   const panelSurface = createPanelSurface(panel);
   let session: RemoteSession | null = null;
 
+  // Tell the LLM it's running inside an overlay session. The matching
+  // system-prompt block (registered via registerInstruction below) describes
+  // how to behave in this mode.
+  ctx.registerContextProducer("interactive-session", () =>
+    session?.active ? "interactive-session: true" : null,
+  );
+
   registerInstruction("Interactive Overlay Sessions", [
     "When the dynamic context includes `interactive-session: true`, the user has summoned you",
     "via a hotkey overlay from inside their live terminal. They may be in the middle of using",
@@ -77,7 +84,6 @@ export default function activate(ctx: ExtensionContext): void {
       session = createRemoteSession({
         surface: panelSurface,
         suppressQueryBox: true,
-        interactive: true,
       });
     }
     panel.setActive();
@@ -90,7 +96,6 @@ export default function activate(ctx: ExtensionContext): void {
       session = createRemoteSession({
         surface: panelSurface,
         suppressQueryBox: true,
-        interactive: true,
       });
     }
   });

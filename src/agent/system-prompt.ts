@@ -123,24 +123,16 @@ Extensions may register additional tools — follow their instructions.
 - Keep bash commands focused; avoid long-running blocking commands
 - Always check command exit codes for errors
 
+# Context Envelopes
+- \`<query_context>\` (e.g. \`<shell_events>\`): the user's situation when they sent this turn — ground "fix this" / "what just happened" requests with it.
+- \`<dynamic_context>\`: current system state — in-flight work, mode markers, warnings.
+Either may be absent on any turn.
+
 # Preference Learning
 
 Treat the user's past commands as standing preferences. Before acting, check shell history
 and conversation context for recurring patterns — apply them proactively and do not wait to
 be reminded.`;
-
-/**
- * Build the dynamic context — injected as a user message before each query.
- * Contains everything that changes: shell context, conventions, cwd.
- *
- * Runs through the "dynamic-context:build" handler so extensions can advise.
- */
-export interface TokenStatus {
-  /** Estimated prompt tokens (API-grounded when available, else chars/4). */
-  promptTokens: number;
-  /** Model's context window in tokens. */
-  contextWindow: number;
-}
 
 /**
  * CWD-scoped static context: project conventions (CLAUDE.md / AGENT.md)
@@ -162,32 +154,4 @@ export function buildStaticByCwd(cwd: string): string {
   }
 
   return sections.join("\n\n");
-}
-
-/**
- * Per-iteration dynamic context: date, working directory, token usage.
- * Rebuilt every LLM call. Extension advisors add more sections (budget,
- * subagents, metacognitive signals, etc.) on top.
- *
- * Skills, AGENTS.md, and project conventions live in the system prompt
- * (see `system-prompt:build` in agent-loop) so they enter the provider's
- * prefix cache instead of being rebuilt and re-sent every turn.
- *
- * Shell context is likewise not injected here — it flows into the
- * conversation as incremental <shell-events> messages (see
- * AgentLoop.injectShellDelta) for the same reason.
- */
-export function buildDynamicContext(
-  contextManager: ContextManager,
-  tokenStatus: TokenStatus,
-): string {
-  const envLines = [
-    `Current date: ${new Date().toISOString().split("T")[0]}`,
-    `Working directory: ${contextManager.getCwd()}`,
-  ];
-  const usedK = (tokenStatus.promptTokens / 1000).toFixed(1);
-  const maxK = (tokenStatus.contextWindow / 1000).toFixed(0);
-  const pct = Math.min(100, Math.round((tokenStatus.promptTokens / tokenStatus.contextWindow) * 100));
-  envLines.push(`Token usage: ${usedK}k/${maxK}k (${pct}%)`);
-  return `<environment>\n${envLines.join("\n")}\n</environment>`;
 }

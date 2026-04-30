@@ -237,7 +237,7 @@ Set `startupBanner: false` in settings to disable.
 The agent automatically receives structured context about your shell session with each query:
 
 - **Current working directory** — tracked via OSC 7 escape sequences
-- **Recent commands and output** — new shell activity since the last turn is injected as a `<shell-events>` delta prepended to your query
+- **Recent commands and output** — new shell activity since the last turn is wrapped as `<shell_events>` inside `<query_context>` and prepended to your query
 - **Long outputs are spilled to tempfiles** — outputs over `shellTruncateThreshold` lines are written to `<tmpdir>/agent-sh-<pid>/<id>.out` at capture; the agent sees head+tail plus the path and recovers the full text via the built-in `read_file` tool
 
 This means you can run a failing command, then type `> fix this` and the agent knows exactly what happened — including a pointer to the full output if it got truncated. See [Context Management](context-management.md) for the full design.

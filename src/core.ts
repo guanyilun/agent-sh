@@ -230,6 +230,19 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         removeInstruction: (name) => bus.emit("agent:remove-instruction", { name }),
         registerSkill: (name, description, filePath) => bus.emit("agent:register-skill", { name, description, filePath, extensionName: "" }),
         removeSkill: (name) => bus.emit("agent:remove-skill", { name }),
+        registerContextProducer: (_name, producer, opts) => {
+          const handlerName = opts?.mode === "per-query"
+            ? "query-context:build"
+            : "dynamic-context:build";
+          return handlers.advise(handlerName, (next) => {
+            const base = next() as string;
+            const part = producer();
+            if (!part) return base;
+            const trimmed = part.trim();
+            if (!trimmed) return base;
+            return base ? `${base}\n\n${trimmed}` : trimmed;
+          });
+        },
         define: (name, fn) => handlers.define(name, fn),
         advise: (name, wrapper) => handlers.advise(name, wrapper),
         call: (name, ...args) => handlers.call(name, ...args),
@@ -261,13 +274,6 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
           if (opts.suppressUsage !== false) {
             cleanups.push(handlers.advise("tui:render-usage", (next, ...a) => active ? "" : next(...a)));
           }
-          if (opts.interactive) {
-            cleanups.push(handlers.advise("dynamic-context:build", (next) => {
-              const base = next() as string;
-              return active ? base + "\ninteractive-session: true\n" : base;
-            }));
-          }
-
           return {
             submit(query: string) { bus.emit("agent:submit", { query }); },
             get surface() { return surface; },
