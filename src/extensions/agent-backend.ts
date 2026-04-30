@@ -106,10 +106,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       ?? (providerRegistry.size > 0 ? providerRegistry.keys().next().value : undefined);
     let activeProvider = providerName ? providerRegistry.get(providerName) ?? null : null;
 
-    // If the chosen provider has no usable apiKey (e.g. settings names
-    // ollama-cloud but OLLAMA_API_KEY isn't set in this process's env),
-    // fall through to the first registered provider that does. Without
-    // this, a stale defaultProvider strands every other working provider.
+    // Fall through to a provider with an apiKey if the chosen one lacks one.
     if (!config.apiKey && !activeProvider?.apiKey) {
       for (const [id, p] of providerRegistry) {
         if (p.apiKey) { providerName = id; activeProvider = p; break; }
