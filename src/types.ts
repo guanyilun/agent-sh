@@ -2,7 +2,6 @@ import type { EventBus, ContentBlock } from "./event-bus.js";
 import type { ColorPalette } from "./utils/palette.js";
 import type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
 import type { ToolDefinition } from "./agent/types.js";
-import type { TerminalBuffer } from "./utils/terminal-buffer.js";
 import type { Compositor } from "./utils/compositor.js";
 import type { HistoryAdapter } from "./agent/history-file.js";
 
@@ -193,12 +192,11 @@ export interface ExtensionContext {
   /** Names of all registered handlers — for diagnostic / introspection use. */
   list: () => string[];
 
-  // ── Terminal utilities ────────────────────────────────────────
-  /**
-   * Shared headless terminal buffer mirroring PTY output.
-   * Lazily created on first access. Returns null if @xterm/headless is not installed.
-   */
-  terminalBuffer: TerminalBuffer | null;
+  // Note: a `terminal-buffer` handler is registered by the shell frontend
+  // (src/shell/), returning a lazy xterm.js mirror of PTY output. Extensions
+  // can read it via `ctx.call("terminal-buffer")`. Returns null if the
+  // optional `@xterm/headless` package isn't installed, or if no shell
+  // frontend is loaded.
 
   // ── Compositor ─────────────────────────────────────────────────
   /**

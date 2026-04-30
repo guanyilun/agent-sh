@@ -12,6 +12,8 @@
  */
 import type { ExtensionContext } from "../types.js";
 import { Shell } from "./shell.js";
+import { StdoutSurface } from "../utils/compositor.js";
+import { TerminalBuffer } from "../utils/terminal-buffer.js";
 
 export interface ShellActivateOptions {
   cols: number;
@@ -41,6 +43,27 @@ export function activateShell(
   ctx: ExtensionContext,
   opts: ShellActivateOptions,
 ): ShellHandle {
+  // ── Compositor defaults ──────────────────────────────────────
+  // The kernel's Compositor is generic; the choice of stdout as the
+  // default surface is shell-frontend-specific (a hub or web frontend
+  // would set its own surfaces). We assert it here, not in core.
+  const stdoutSurface = new StdoutSurface();
+  ctx.compositor.setDefault("agent", stdoutSurface);
+  ctx.compositor.setDefault("query", stdoutSurface);
+  ctx.compositor.setDefault("status", stdoutSurface);
+
+  // ── Terminal buffer handler ──────────────────────────────────
+  // The xterm.js headless mirror is a PTY-derived artifact, so it lives
+  // with the shell extension. Lazy because @xterm/headless is optional
+  // and creating the buffer is non-trivial; null when the package isn't
+  // installed. Consumers call ctx.call("terminal-buffer").
+  let terminalBufferSingleton: TerminalBuffer | null | undefined;
+  ctx.define("terminal-buffer", (): TerminalBuffer | null => {
+    if (terminalBufferSingleton !== undefined) return terminalBufferSingleton;
+    terminalBufferSingleton = TerminalBuffer.createWired(ctx.bus);
+    return terminalBufferSingleton;
+  });
+
   const shell = new Shell({
     bus: ctx.bus,
     handlers: { define: ctx.define, call: ctx.call },

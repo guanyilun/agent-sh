@@ -24,11 +24,10 @@ import { setPalette } from "./utils/palette.js";
 import * as streamTransform from "./utils/stream-transform.js";
 import * as settingsMod from "./settings.js";
 import { HandlerRegistry } from "./utils/handler-registry.js";
-import { TerminalBuffer } from "./utils/terminal-buffer.js";
 import crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DefaultCompositor, StdoutSurface } from "./utils/compositor.js";
+import { DefaultCompositor } from "./utils/compositor.js";
 import { CONFIG_DIR } from "./settings.js";
 
 // Re-export types that library consumers need
@@ -148,19 +147,10 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   });
 
   // ── Compositor ──────────────────────────────────────────────
+  // Generic surface-routing primitive. No defaults here — the active
+  // frontend (src/shell/, a web bridge, headless test harness, etc.)
+  // sets its own surfaces during activation.
   const compositor = new DefaultCompositor(bus);
-  const stdoutSurface = new StdoutSurface();
-  compositor.setDefault("agent", stdoutSurface);
-  compositor.setDefault("query", stdoutSurface);
-  compositor.setDefault("status", stdoutSurface);
-
-  // ── Lazy singleton terminal buffer ──────────────────────────
-  let terminalBufferSingleton: TerminalBuffer | null | undefined; // undefined = not yet created
-  const getTerminalBuffer = (): TerminalBuffer | null => {
-    if (terminalBufferSingleton !== undefined) return terminalBufferSingleton;
-    terminalBufferSingleton = TerminalBuffer.createWired(bus);
-    return terminalBufferSingleton;
-  };
 
   return {
     bus,
@@ -262,7 +252,6 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         advise: (name, wrapper) => handlers.advise(name, wrapper),
         call: (name, ...args) => handlers.call(name, ...args),
         list: () => handlers.list(),
-        get terminalBuffer() { return getTerminalBuffer(); },
         compositor,
         onDispose: () => {},
         createRemoteSession: (opts: RemoteSessionOptions): RemoteSession => {

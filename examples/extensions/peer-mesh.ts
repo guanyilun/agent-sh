@@ -210,7 +210,7 @@ export default function activate(ctx: ExtensionContext): void {
   server.expose("peer:info");
 
   define("peer:terminal-read", () => {
-    const tb = ctx.terminalBuffer;
+    const tb = ctx.call("terminal-buffer");
     if (!tb) return { text: "(terminal buffer not available)", altScreen: false };
     return tb.readScreen({ includeScrollback: true });
   });
@@ -230,7 +230,7 @@ export default function activate(ctx: ExtensionContext): void {
     }
     bus.emit("shell:pty-write", { data: interpretEscapes(keys) });
     await new Promise((r) => setTimeout(r, typeof settleMs === "number" ? settleMs : SETTLE_MS));
-    const tb = ctx.terminalBuffer;
+    const tb = ctx.call("terminal-buffer");
     return { sent: true, screen: tb ? tb.readScreen({ includeScrollback: false }) : null };
   });
   server.expose("peer:terminal-send");
