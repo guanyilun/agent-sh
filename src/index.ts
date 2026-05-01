@@ -9,6 +9,7 @@ import { loadExtensions } from "./extension-loader.js";
 import { getSettings } from "./settings.js";
 import { discoverSkills } from "./agent/skills.js";
 import { runInit } from "./init.js";
+import { PACKAGE_VERSION } from "./utils/package-version.js";
 import type { AgentShellConfig } from "./types.js";
 
 /**
@@ -105,6 +106,9 @@ function parseArgs(argv: string[]): AgentShellConfig {
     } else if ((arg === "--extensions" || arg === "-e") && argv[i + 1]) {
       const exts = argv[++i]!.split(",").map(s => s.trim());
       extensions = extensions ? [...extensions, ...exts] : exts;
+    } else if (arg === "--version" || arg === "-V") {
+      console.log(PACKAGE_VERSION);
+      process.exit(0);
     } else if (arg === "--help" || arg === "-h") {
       console.log(`agent-sh — a shell-first terminal where AI is one keystroke away
 
@@ -123,6 +127,7 @@ General Options:
   --shell <path>      Shell to use (default: $SHELL or /bin/bash)
   -e, --extensions    Extensions to load (comma-separated, repeatable)
   -h, --help          Show this help
+  -V, --version       Print version and exit
 
 Environment Variables:
   OPENAI_API_KEY     API key for LLM provider
