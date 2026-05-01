@@ -57,16 +57,18 @@ export function createWriteFileTool(getCwd: () => string): ToolDefinition {
         await fs.mkdir(path.dirname(absPath), { recursive: true });
         await fs.writeFile(absPath, content);
 
-        // Compute and stream diff for display
+        // Compute and stream diff for display. Batch into one onChunk —
+        // per-line emits trigger N TUI renders for large files.
         const diff = computeDiff(oldContent, content);
         if (onChunk && diff.hunks.length > 0) {
+          const parts: string[] = [];
           for (const hunk of diff.hunks) {
             for (const line of hunk.lines) {
-              if (line.type === "added") onChunk(`+${line.text}\n`);
-              else if (line.type === "removed") onChunk(`-${line.text}\n`);
-              else onChunk(` ${line.text}\n`);
+              const prefix = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
+              parts.push(`${prefix}${line.text}\n`);
             }
           }
+          onChunk(parts.join(""));
         }
 
         const stats = diff.isNewFile
