@@ -1,10 +1,35 @@
+import { spawnSync } from "node:child_process";
 import { executeArgv, killSession } from "../../executor.js";
 import type { EventBus } from "../../event-bus.js";
 import type { ToolDefinition } from "../types.js";
 
-// Targets PowerShell 7+ (`pwsh`). Legacy `powershell.exe` is intentionally
-// not auto-fallback — its tool surface diverges enough that compatibility
-// shims aren't worth the maintenance.
+let cachedPwshPath: string | null | undefined;
+
+/** Resolve a usable PowerShell binary, or null if none is on PATH.
+ *  Prefers PowerShell 7+ (`pwsh`), falls back to Windows PowerShell (`powershell`). */
+function findPwsh(): string | null {
+  if (cachedPwshPath !== undefined) return cachedPwshPath;
+
+  // Prefer PowerShell 7 (pwsh)
+  const pwsh = spawnSync("where", ["pwsh"], { encoding: "utf-8" });
+  if (pwsh.status === 0) {
+    cachedPwshPath = pwsh.stdout.split(/\r?\n/)[0]!.trim() || null;
+    if (cachedPwshPath) return cachedPwshPath;
+  }
+
+  // Fallback to Windows PowerShell (powershell.exe)
+  const ps = spawnSync("where", ["powershell"], { encoding: "utf-8" });
+  cachedPwshPath = ps.status === 0 ? ps.stdout.split(/\r?\n/)[0]!.trim() || null : null;
+  return cachedPwshPath;
+}
+
+/** Return the PowerShell executable name for display purposes. */
+function getPwshDisplayName(): string {
+  const path = findPwsh();
+  if (!path) return "PowerShell";
+  return path.toLowerCase().includes("pwsh") ? "pwsh" : "powershell";
+}
+
 export function createPwshTool(opts: {
   getCwd: () => string;
   getEnv: () => Record<string, string>;
@@ -68,8 +93,17 @@ export function createPwshTool(opts: {
         };
       }
 
+      const pwshPath = findPwsh();
+      if (!pwshPath) {
+        return {
+          content: "PowerShell not found on PATH. Neither pwsh (PowerShell 7+) nor powershell (Windows PowerShell) is available.",
+          exitCode: 1,
+          isError: true,
+        };
+      }
+
       const { session, done } = executeArgv({
-        file: "pwsh",
+        file: pwshPath,
         args: ["-NoProfile", "-NonInteractive", "-Command", command],
         cwd: opts.getCwd(),
         env: opts.getEnv(),
@@ -87,7 +121,7 @@ export function createPwshTool(opts: {
 
       if (session.spawnFailed) {
         return {
-          content: "PowerShell (pwsh) not found on PATH. Install PowerShell 7: winget install Microsoft.PowerShell.",
+          content: `${getPwshDisplayName()} not found on PATH. Install PowerShell 7: winget install Microsoft.PowerShell.`,
           exitCode: 1,
           isError: true,
         };
