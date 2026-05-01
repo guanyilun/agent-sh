@@ -22,6 +22,8 @@ export interface ToolResult {
   content: string;
   exitCode: number | null;
   isError: boolean;
+  /** When set, takes precedence over `tool.formatResult()`. */
+  display?: ToolResultDisplay;
 }
 
 /** Structured result display — returned by formatResult or computed by defaults. */

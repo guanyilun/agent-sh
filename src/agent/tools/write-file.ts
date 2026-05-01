@@ -35,13 +35,7 @@ export function createWriteFileTool(getCwd: () => string): ToolDefinition {
       locations: [{ path: args.path as string }],
     }),
 
-    formatResult: (_args, result) => {
-      if (result.isError) return {};
-      const m = result.content.match(/\((\+\d+(?:\s-\d+)?)\)/);
-      return m ? { summary: m[1] } : {};
-    },
-
-    async execute(args, onChunk) {
+    async execute(args) {
       const filePath = expandHome(args.path as string);
       const content = args.content as string;
       const absPath = path.resolve(getCwd(), filePath);
@@ -57,33 +51,21 @@ export function createWriteFileTool(getCwd: () => string): ToolDefinition {
         await fs.mkdir(path.dirname(absPath), { recursive: true });
         await fs.writeFile(absPath, content);
 
-        // Compute and stream diff for display. Batch into one onChunk —
-        // per-line emits trigger N TUI renders for large files.
         const diff = computeDiff(oldContent, content);
-        if (onChunk && diff.hunks.length > 0) {
-          const parts: string[] = [];
-          for (const hunk of diff.hunks) {
-            for (const line of hunk.lines) {
-              const prefix = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
-              parts.push(`${prefix}${line.text}\n`);
-            }
-          }
-          onChunk(parts.join(""));
-        }
-
-        const stats = diff.isNewFile
-          ? `+${diff.added}`
-          : `+${diff.added} -${diff.removed}`;
+        const stats = diff.isNewFile ? `+${diff.added}` : `+${diff.added} -${diff.removed}`;
         return {
           content: oldContent === null
             ? `Created ${absPath} (${stats})`
             : `Wrote ${absPath} (${stats})`,
           exitCode: 0,
           isError: false,
+          display: {
+            summary: stats,
+            body: { kind: "diff", diff, filePath: absPath },
+          },
         };
       } catch (err) {
-        const msg =
-          err instanceof Error ? err.message : String(err);
+        const msg = err instanceof Error ? err.message : String(err);
         return { content: `Error: ${msg}`, exitCode: 1, isError: true };
       }
     },

@@ -739,25 +739,34 @@ export default function activate(ctx: ExtensionContext): void {
   /** Render a diff as framed box lines (pure — no TUI state side effects). */
   function renderDiffBody(diff: DiffResult, filePath: string, width: number): string[] {
     if (diff.isIdentical) return [];
-    const boxW = Math.min(120, width - 2);  // -2 for writeLine indent
+    const boxW = Math.min(120, width - 2);
     const contentW = boxW - 4;
 
-    const diffLines = renderDiff(diff, {
-      width: contentW,
-      filePath,
-      maxLines: getSettings().diffMaxLines,
-      trueColor: true,
-    });
-
-    const body = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
-    const footer = undefined;
+    let body: string[];
+    if (diff.isNewFile) {
+      const lines = diff.hunks.flatMap(h => h.lines.map(l => l.text));
+      const preview = getSettings().newFilePreviewLines;
+      const head = lines.slice(0, preview);
+      const truncated = head.map(l => l.length > contentW ? l.slice(0, contentW - 1) + "…" : l);
+      const more = lines.length > preview
+        ? [`${p.dim}… ${lines.length - preview} more lines${p.reset}`]
+        : [];
+      body = ["", ...truncated, ...more, ""];
+    } else {
+      const diffLines = renderDiff(diff, {
+        width: contentW,
+        filePath,
+        maxLines: getSettings().diffMaxLines,
+        trueColor: true,
+      });
+      body = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
+    }
 
     return renderBoxFrame(body, {
       width: boxW,
       style: "rounded",
       borderColor: p.dim,
       title: diffTitle(filePath, diff),
-      footer,
     });
   }
 
