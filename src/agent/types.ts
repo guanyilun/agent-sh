@@ -22,6 +22,9 @@ export interface ToolResult {
   content: string;
   exitCode: number | null;
   isError: boolean;
+  /** Structured display data. When present, overrides any formatResult() output —
+   *  lets execute() surface data (e.g. a diff) it computed but doesn't fit in `content`. */
+  display?: ToolResultDisplay;
 }
 
 /** Structured result display — returned by formatResult or computed by defaults. */

@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ToolDefinition } from "../types.js";
-import { computeDiff, computeEditDiff } from "../../utils/diff.js";
+import { computeEditDiff } from "../../utils/diff.js";
 import { expandHome } from "./expand-home.js";
 
 /**
@@ -81,13 +81,7 @@ export function createEditFileTool(getCwd: () => string): ToolDefinition {
       locations: [{ path: args.path as string }],
     }),
 
-    formatResult: (_args, result) => {
-      if (result.isError) return {};
-      const m = result.content.match(/\((\+\d+(?:\s-\d+)?)\)/);
-      return m ? { summary: m[1] } : {};
-    },
-
-    async execute(args, onChunk) {
+    async execute(args) {
       const filePath = expandHome(args.path as string);
       const oldText = args.old_text as string;
       const newText = args.new_text as string;
@@ -140,27 +134,16 @@ export function createEditFileTool(getCwd: () => string): ToolDefinition {
 
         await fs.writeFile(absPath, finalContent);
 
-        // Compute and stream diff for display. Batch into one onChunk —
-        // per-line emits trigger N TUI renders for large hunks.
         const diff = computeEditDiff(normalized, normalizedOld, normalizedNew, replaceAll);
-        if (onChunk && diff.hunks.length > 0) {
-          const parts: string[] = [];
-          for (const hunk of diff.hunks) {
-            for (const line of hunk.lines) {
-              const prefix = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
-              parts.push(`${prefix}${line.text}\n`);
-            }
-          }
-          onChunk(parts.join(""));
-        }
-
-        const stats = diff.isNewFile
-          ? `+${diff.added}`
-          : `+${diff.added} -${diff.removed}`;
+        const stats = diff.isNewFile ? `+${diff.added}` : `+${diff.added} -${diff.removed}`;
         return {
           content: `Edited ${absPath} (${stats})`,
           exitCode: 0,
           isError: false,
+          display: {
+            summary: stats,
+            body: { kind: "diff", diff, filePath: absPath },
+          },
         };
       } catch (err) {
         const msg =

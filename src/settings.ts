@@ -91,6 +91,9 @@ export interface Settings {
   readOutputMaxLines?: number;
   /** Max diff lines rendered in the TUI (Infinity = no limit). */
   diffMaxLines?: number;
+  /** New-file preview lines rendered in the TUI (a full +-prefixed dump
+   *  of a brand-new file is noisy; show a head + "more" marker instead). */
+  newFilePreviewLines?: number;
 
   // ── Agent integration ─────────────────────────────────────
   /** Tool protocol:
@@ -149,6 +152,7 @@ const DEFAULTS: Required<Settings> = {
   maxCommandOutputLines: 3,
   readOutputMaxLines: 10,
   diffMaxLines: Infinity,
+  newFilePreviewLines: 5,
   skillPaths: [],
   diagnose: false,
   startupBanner: true,

@@ -1151,8 +1151,9 @@ export class AgentLoop implements AgentBackend {
         this.fileReadCache.delete(absPath);
       }
 
-      // Compute result display: tool-provided → default (none)
-      const resultDisplay = tool.formatResult?.(args, result);
+      // execute() may surface display directly (preferred — lets the tool
+      // pass structured data like a diff). Fall back to formatResult.
+      const resultDisplay = result.display ?? tool.formatResult?.(args, result);
 
       // Emit completion events (via transform pipe so extensions can override)
       this.bus.emitTransform("agent:tool-completed", {
