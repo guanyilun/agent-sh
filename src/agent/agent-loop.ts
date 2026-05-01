@@ -1151,8 +1151,6 @@ export class AgentLoop implements AgentBackend {
         this.fileReadCache.delete(absPath);
       }
 
-      // execute() may surface display directly (preferred — lets the tool
-      // pass structured data like a diff). Fall back to formatResult.
       const resultDisplay = result.display ?? tool.formatResult?.(args, result);
 
       // Emit completion events (via transform pipe so extensions can override)

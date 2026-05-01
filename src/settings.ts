@@ -91,8 +91,7 @@ export interface Settings {
   readOutputMaxLines?: number;
   /** Max diff lines rendered in the TUI (Infinity = no limit). */
   diffMaxLines?: number;
-  /** New-file preview lines rendered in the TUI (a full +-prefixed dump
-   *  of a brand-new file is noisy; show a head + "more" marker instead). */
+  /** Lines of head content shown when a brand-new file is created. */
   newFilePreviewLines?: number;
 
   // ── Agent integration ─────────────────────────────────────

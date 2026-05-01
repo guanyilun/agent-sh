@@ -736,9 +736,7 @@ export default function activate(ctx: ExtensionContext): void {
     return renderDiffBody(diff, filePath, width);
   });
 
-  /** Render a diff as framed box lines (pure — no TUI state side effects).
-   *  New files are shown as a head-of-content preview rather than a full
-   *  +-prefixed dump, since every line being "added" carries no signal. */
+  /** Render a diff as framed box lines (pure — no TUI state side effects). */
   function renderDiffBody(diff: DiffResult, filePath: string, width: number): string[] {
     if (diff.isIdentical) return [];
     const boxW = Math.min(120, width - 2);
