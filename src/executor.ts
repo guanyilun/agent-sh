@@ -80,7 +80,8 @@ export function executeCommand(opts: {
       stdio: ["ignore", "pipe", "pipe"],
       cwd: opts.cwd,
       env,
-      detached: true,
+      detached: process.platform !== "win32",
+      windowsHide: true,
     });
   } catch (err) {
     session.exitCode = -1;
@@ -261,15 +262,19 @@ export function killSession(session: ExecutorSession): () => void {
   if (!proc || !proc.pid) return () => {};
 
   // Try process-group kill first (works for executeCommand's detached bash
-  // children); fall back to direct kill (executeArgv's non-detached spawn,
-  // and Windows where negative pids aren't supported).
-  try { process.kill(-proc.pid, "SIGTERM"); } catch {}
+  // children on Unix); fall back to direct kill (executeArgv's non-detached
+  // spawn, and Windows where negative pids aren't supported).
+  if (process.platform !== "win32") {
+    try { process.kill(-proc.pid, "SIGTERM"); } catch {}
+  }
   try { proc.kill("SIGTERM"); } catch {}
 
   let settled = false;
   const fallback = setTimeout(() => {
     if (!settled && !session.done && proc.pid) {
-      try { process.kill(-proc.pid, "SIGKILL"); } catch {}
+      if (process.platform !== "win32") {
+        try { process.kill(-proc.pid, "SIGKILL"); } catch {}
+      }
       try { proc.kill("SIGKILL"); } catch {}
     }
   }, 5000);
