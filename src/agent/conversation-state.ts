@@ -140,12 +140,22 @@ export class ConversationState {
     toolCalls?: { id: string; function: { name: string; arguments: string } }[],
     extras?: Record<string, unknown>,
   ): void {
-    // extras is opaque provider payload to echo back (reasoning_content,
-    // reasoning_details, etc.). Spread verbatim; shape is the stream
-    // parser's concern.
-    const base: Record<string, unknown> = { role: "assistant", content: content ?? (toolCalls?.length ? null : "") };
-    if (toolCalls?.length) {
-      base.tool_calls = toolCalls.map((tc) => ({
+    const hasToolCalls = !!toolCalls?.length;
+
+    // Promote reasoning into content on reasoning-only turns; strict
+    // providers (DeepSeek native) reject content="" with no tool_calls.
+    if (!content && !hasToolCalls) {
+      const r = (extras?.reasoning_content ?? extras?.reasoning) as unknown;
+      if (typeof r === "string" && r) content = r;
+    }
+    if (!content && !hasToolCalls) return;
+
+    const base: Record<string, unknown> = {
+      role: "assistant",
+      content: hasToolCalls ? (content ?? null) : content,
+    };
+    if (hasToolCalls) {
+      base.tool_calls = toolCalls!.map((tc) => ({
         id: tc.id,
         type: "function" as const,
         function: tc.function,
