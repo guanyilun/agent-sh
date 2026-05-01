@@ -25,6 +25,8 @@ const KITTY_KEY_NAMES: Record<number, string> = {
 /** First Unicode Private Use Area codepoint, used as paste placeholder. */
 const PUA_BASE = 0xE000;
 
+const PASTE_END = "\x1b[201~";
+
 function isPUA(ch: string): boolean {
   const code = ch.charCodeAt(0);
   return code >= PUA_BASE && code <= 0xF8FF;
@@ -145,7 +147,25 @@ export class LineEditor {
     const actions: LineEditAction[] = [];
     let i = 0;
 
+    // Heuristic for terminals that don't advertise bracketed paste (or where
+    // it's stripped by tmux/ssh): a multi-byte chunk with line breaks is a
+    // paste, since typed input arrives one keystroke per chunk in raw mode.
+    if (!this.inPaste && data.length > 1 && /[\r\n]/.test(data)
+        && data.indexOf("\x1b[200~") === -1) {
+      this.pasteAccum = data.replace(/\r\n?/g, "\n");
+      actions.push(...this.commitPaste());
+      return actions;
+    }
+
     while (i < data.length) {
+      if (this.inPaste) {
+        const endIdx = this.consumePasteChunk(data.slice(i));
+        if (endIdx === -1) return actions;
+        i += endIdx + PASTE_END.length;
+        actions.push(...this.commitPaste());
+        continue;
+      }
+
       const ch = data[i]!;
 
       // ── Escape sequences ────────────────────────────────
@@ -219,14 +239,6 @@ export class LineEditor {
         continue;
       }
 
-      // ── Bracket paste: accumulate into side buffer ─────
-      if (this.inPaste) {
-        if (ch === "\r") { i++; continue; } // skip CR (CR+LF → just LF)
-        this.pasteAccum += ch;
-        i++;
-        continue;
-      }
-
       // ── Control characters ──────────────────────────────
       if (ch.charCodeAt(0) < 0x20 || ch === "\x7f") {
         const action = this.handleControl(ch);
@@ -243,6 +255,43 @@ export class LineEditor {
     }
 
     return actions;
+  }
+
+  /** Accumulate `data` into pasteAccum until PASTE_END appears.
+   *  Returns the marker index, or -1 if not yet seen (a partial-suffix
+   *  match is stashed in pendingSeq so the next feed() can complete it). */
+  private consumePasteChunk(data: string): number {
+    const endIdx = data.indexOf(PASTE_END);
+    if (endIdx !== -1) {
+      this.pasteAccum += data.slice(0, endIdx).replace(/\r/g, "");
+      return endIdx;
+    }
+    let suffixLen = 0;
+    for (let p = Math.min(PASTE_END.length - 1, data.length); p > 0; p--) {
+      if (data.endsWith(PASTE_END.slice(0, p))) { suffixLen = p; break; }
+    }
+    const safeEnd = data.length - suffixLen;
+    this.pasteAccum += data.slice(0, safeEnd).replace(/\r/g, "");
+    if (suffixLen > 0) this.pendingSeq = data.slice(safeEnd);
+    return -1;
+  }
+
+  private commitPaste(): LineEditAction[] {
+    this.inPaste = false;
+    const accum = this.pasteAccum;
+    this.pasteAccum = "";
+    if (!accum) return [];
+    if (accum.indexOf("\n") === -1) {
+      this._buf = this._buf.slice(0, this.cursor) + accum + this._buf.slice(this.cursor);
+      this.cursor += accum.length;
+    } else {
+      const id = this.pasteCounter++;
+      this.pastes.set(id, accum);
+      const placeholder = String.fromCharCode(PUA_BASE + id);
+      this._buf = this._buf.slice(0, this.cursor) + placeholder + this._buf.slice(this.cursor);
+      this.cursor++;
+    }
+    return [{ action: "changed" }];
   }
 
   /** Check if there's a pending incomplete escape sequence. */
@@ -526,25 +575,6 @@ export class LineEditor {
         } else if (params === "200") {
           this.inPaste = true;
           this.pasteAccum = "";
-        } else if (params === "201") {
-          this.inPaste = false;
-          if (this.pasteAccum) {
-            const lines = this.pasteAccum.split("\n");
-            if (lines.length <= 1) {
-              // Single-line paste — inline directly
-              this._buf = this._buf.slice(0, this.cursor) + this.pasteAccum + this._buf.slice(this.cursor);
-              this.cursor += this.pasteAccum.length;
-            } else {
-              // Multi-line paste — store and insert placeholder
-              const id = this.pasteCounter++;
-              this.pastes.set(id, this.pasteAccum);
-              const placeholder = String.fromCharCode(PUA_BASE + id);
-              this._buf = this._buf.slice(0, this.cursor) + placeholder + this._buf.slice(this.cursor);
-              this.cursor++;
-            }
-            this.pasteAccum = "";
-            actions.push({ action: "changed" });
-          }
         }
         break;
       // All other CSI sequences — silently ignored
