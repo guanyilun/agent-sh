@@ -223,11 +223,8 @@ export class ConversationState {
     );
   }
 
-  /**
-   * Strip role:"tool" messages whose tool_call_id doesn't match any
-   * preceding assistant tool_call. Compaction or external mutation can
-   * leave such orphans, and strict providers (DeepSeek) 400 on them.
-   */
+  /** Drop tool messages with no matching preceding tool_call — strict
+   *  providers (DeepSeek) 400, and compaction can leave such orphans. */
   private dropOrphanToolMessages(
     messages: ChatCompletionMessageParam[],
   ): ChatCompletionMessageParam[] {
@@ -706,10 +703,7 @@ export class ConversationState {
           return true;
         });
         if (kept.length === 0) {
-          // Drop the husk if the assistant had no user-facing content; an
-          // {assistant, content:null, no tool_calls} message is malformed
-          // (DeepSeek 400) and would orphan any following tool result whose
-          // call we just stripped.
+          // No content + no tool_calls is malformed (DeepSeek 400); drop the husk.
           const text = typeof msg.content === "string" ? msg.content.trim() : "";
           if (!text) continue;
           const { tool_calls: _, ...rest } = msg;
