@@ -218,7 +218,28 @@ export class ConversationState {
   }
 
   getMessages(): ChatCompletionMessageParam[] {
-    return this.normalizeReasoningConsistency(this.stubDanglingToolCalls(this.messages));
+    return this.normalizeReasoningConsistency(
+      this.stubDanglingToolCalls(this.dropOrphanToolMessages(this.messages)),
+    );
+  }
+
+  /** Drop tool messages with no matching preceding tool_call — strict
+   *  providers (DeepSeek) 400, and compaction can leave such orphans. */
+  private dropOrphanToolMessages(
+    messages: ChatCompletionMessageParam[],
+  ): ChatCompletionMessageParam[] {
+    const knownIds = new Set<string>();
+    const result: ChatCompletionMessageParam[] = [];
+    for (const msg of messages) {
+      if (msg.role === "assistant" && "tool_calls" in msg && msg.tool_calls) {
+        for (const tc of msg.tool_calls) knownIds.add(tc.id);
+      }
+      if (msg.role === "tool" && !knownIds.has((msg as { tool_call_id: string }).tool_call_id)) {
+        continue;
+      }
+      result.push(msg);
+    }
+    return result;
   }
 
   /**
@@ -669,19 +690,22 @@ export class ConversationState {
   private slimTurn(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
     const MAX_RESULT_LEN = 1500;
     const result: ChatCompletionMessageParam[] = [];
-    const readOnlyToolIds = new Set<string>();
+    const droppedToolIds = new Set<string>();
 
     for (const msg of messages) {
       if (msg.role === "assistant" && "tool_calls" in msg && msg.tool_calls) {
         const kept = msg.tool_calls.filter((tc) => {
           if (!("function" in tc)) return true;
           if (READ_ONLY_TOOLS.has(tc.function.name)) {
-            readOnlyToolIds.add(tc.id);
+            droppedToolIds.add(tc.id);
             return false;
           }
           return true;
         });
         if (kept.length === 0) {
+          // No content + no tool_calls is malformed (DeepSeek 400); drop the husk.
+          const text = typeof msg.content === "string" ? msg.content.trim() : "";
+          if (!text) continue;
           const { tool_calls: _, ...rest } = msg;
           result.push(rest);
         } else {
@@ -690,7 +714,7 @@ export class ConversationState {
         continue;
       }
       if (msg.role === "tool") {
-        if (readOnlyToolIds.has(msg.tool_call_id)) continue;
+        if (droppedToolIds.has(msg.tool_call_id)) continue;
         const content = typeof msg.content === "string" ? msg.content : "";
         if (content.length > MAX_RESULT_LEN) {
           result.push({ ...msg, content: content.slice(0, MAX_RESULT_LEN) + "\n... [truncated by compact]" });
