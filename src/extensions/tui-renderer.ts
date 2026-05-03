@@ -272,7 +272,9 @@ export default function activate(ctx: ExtensionContext): void {
       if (!s.renderer) startAgentResponse();
       if (e.text) {
         s.thinkingPending = false;
-        s.renderer!.push(`${p.dim}${e.text}${p.reset}`);
+        // Wrap each sub-line so dim survives \n boundaries in the renderer.
+        const wrapped = `${p.dim}${e.text.replace(/\n/g, `${p.reset}\n${p.dim}`)}${p.reset}`;
+        s.renderer!.push(wrapped);
         drain();
       }
     }
