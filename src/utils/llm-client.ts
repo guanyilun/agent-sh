@@ -60,10 +60,12 @@ export class LlmClient {
     tools?: ChatCompletionTool[];
     model?: string;
     max_tokens?: number;
-    /** Reasoning effort level (e.g. "low", "medium", "high"). Provider-dependent. */
+    /** Reasoning effort: "off" | "low" | "medium" | "high". Provider-dependent;
+     *  "off" matches agent-loop's thinkingLevel and omits the field. */
     reasoning_effort?: string;
     signal?: AbortSignal;
   }) {
+    const sendEffort = opts.reasoning_effort && opts.reasoning_effort !== "off";
     const body = {
       model: opts.model ?? this.model,
       messages: opts.messages,
@@ -71,7 +73,7 @@ export class LlmClient {
       max_tokens: opts.max_tokens ?? 65536,
       stream: true as const,
       stream_options: { include_usage: true },
-      ...(opts.reasoning_effort
+      ...(sendEffort
         ? { reasoning_effort: opts.reasoning_effort as "low" | "medium" | "high" }
         : {}),
     };
@@ -89,16 +91,16 @@ export class LlmClient {
     messages: ChatCompletionMessageParam[];
     model?: string;
     max_tokens?: number;
-    /** Reasoning effort level (e.g. "low", "medium", "high"). Provider-
-     *  dependent — DeepSeek-R1, OpenAI o-series, OpenRouter normalize.
-     *  For non-reasoning models the field is dropped silently. */
+    /** Reasoning effort: "off" | "low" | "medium" | "high". Provider-dependent;
+     *  "off" matches agent-loop's thinkingLevel and omits the field. */
     reasoning_effort?: string;
   }): Promise<string> {
+    const sendEffort = opts.reasoning_effort && opts.reasoning_effort !== "off";
     const response = await this.client.chat.completions.create({
       model: opts.model ?? this.model,
       messages: opts.messages,
       max_tokens: opts.max_tokens ?? 1024,
-      ...(opts.reasoning_effort
+      ...(sendEffort
         ? { reasoning_effort: opts.reasoning_effort as "low" | "medium" | "high" }
         : {}),
     });
