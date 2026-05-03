@@ -265,18 +265,16 @@ export default function activate(ctx: ExtensionContext): void {
     s.thinkingPending = true;
     if (!s.isThinking) {
       s.isThinking = true;
-      if (s.showThinkingText) {
-        stopCurrentSpinner();
-        if (!s.renderer) startAgentResponse();
-      } else {
-        startThinkingSpinner();
-      }
+      if (!s.showThinkingText) startThinkingSpinner();
     }
-    if (s.showThinkingText && e.text) {
-      s.thinkingPending = false;
+    if (s.showThinkingText) {
+      stopCurrentSpinner();
       if (!s.renderer) startAgentResponse();
-      s.renderer!.push(`${p.dim}${e.text}${p.reset}`);
-      drain();
+      if (e.text) {
+        s.thinkingPending = false;
+        s.renderer!.push(`${p.dim}${e.text}${p.reset}`);
+        drain();
+      }
     }
   });
 
