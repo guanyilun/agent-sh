@@ -5,7 +5,7 @@
  * never writes to stdout. Supports multiple border styles and
  * optional title/footer sections with dividers.
  */
-import { visibleLen, truncateToWidth } from "./ansi.js";
+import { visibleLen, truncateToWidth, truncateAnsiToWidth } from "./ansi.js";
 import { palette as p } from "./palette.js";
 
 // ── Types ────────────────────────────────────────────────────────
@@ -67,15 +67,20 @@ export function renderBoxFrame(content: string[], opts: BoxFrameOptions): string
 
   // Top border (with optional left/right titles)
   if (opts.title || opts.titleRight) {
-    const leftPart = opts.title
-      ? `${p.reset} ${opts.title} ${bc}`
-      : "";
-    const leftVis = opts.title ? visibleLen(opts.title) + 2 : 0; // +2 for spaces
-
-    const rightPart = opts.titleRight
-      ? `${p.reset} ${opts.titleRight} ${bc}`
-      : "";
+    // Budget: 2 corners + 1 minimum dash + space-padding around each title.
+    // Truncate the left title first if combined widths overflow — titleRight
+    // is typically short metadata (model name, stats) worth preserving.
+    let title = opts.title;
     const rightVis = opts.titleRight ? visibleLen(opts.titleRight) + 2 : 0;
+    const leftBudget = width - 2 - 1 - rightVis; // total - corners - min dash - right
+    let leftVis = title ? visibleLen(title) + 2 : 0;
+    if (title && leftVis > leftBudget) {
+      const maxTitleVis = Math.max(1, leftBudget - 2);
+      title = truncateAnsiToWidth(title, maxTitleVis);
+      leftVis = visibleLen(title) + 2;
+    }
+    const leftPart = title ? `${p.reset} ${title} ${bc}` : "";
+    const rightPart = opts.titleRight ? `${p.reset} ${opts.titleRight} ${bc}` : "";
 
     const dashCount = Math.max(1, width - 2 - leftVis - rightVis);
     output.push(
