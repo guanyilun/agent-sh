@@ -105,6 +105,10 @@ interface RenderState {
   showThinkingText: boolean;
   thinkingPending: boolean;
 
+  /** Tool calls whose diff was already shown via permission preview —
+   *  suppress the duplicate diff body on tool-completed. */
+  previewedDiffPending: boolean;
+  previewedDiffToolIds: Set<string>;
 }
 
 function createRenderState(): RenderState {
@@ -136,6 +140,8 @@ function createRenderState(): RenderState {
     isThinking: false,
     showThinkingText: false,
     thinkingPending: false,
+    previewedDiffPending: false,
+    previewedDiffToolIds: new Set(),
   };
 }
 
@@ -360,6 +366,10 @@ export default function activate(ctx: ExtensionContext): void {
     s.currentToolKind = e.kind;
     s.toolStartTime = Date.now();
     s.orphanContHeaderKind = undefined;
+    if (s.previewedDiffPending && e.toolCallId) {
+      s.previewedDiffToolIds.add(e.toolCallId);
+    }
+    s.previewedDiffPending = false;
 
     if (e.title === "user_shell") {
       finalizeToolGroup();
@@ -427,10 +437,18 @@ export default function activate(ctx: ExtensionContext): void {
     s.toolExitCode = e.exitCode;
     if (e.exitCode !== 0) s.toolGroupAllOk = false;
 
+    let resultDisplay = e.resultDisplay;
+    if (e.toolCallId && s.previewedDiffToolIds.has(e.toolCallId)) {
+      s.previewedDiffToolIds.delete(e.toolCallId);
+      if (resultDisplay?.body?.kind === "diff") {
+        resultDisplay = { ...resultDisplay, body: undefined };
+      }
+    }
+
     if (s.toolGroupKind) {
       // Grouped tool — track success/failure and summaries, show aggregate on ⎿ line.
       // Don't restart spinner between grouped tools — it's already running from group start.
-      if (e.resultDisplay?.summary) s.toolGroupSummaries.push(e.resultDisplay.summary);
+      if (resultDisplay?.summary) s.toolGroupSummaries.push(resultDisplay.summary);
       if (e.toolCallId) s.pendingToolCompletes.delete(e.toolCallId);
       s.toolGroupCompletedCount++;
       s.currentToolKind = undefined;
@@ -446,9 +464,9 @@ export default function activate(ctx: ExtensionContext): void {
       const pending = e.toolCallId ? s.pendingToolCompletes.get(e.toolCallId) : undefined;
       if (pending) s.pendingToolCompletes.delete(e.toolCallId!);
       if (pending?.orphaned) {
-        showOrphanedComplete(e.exitCode, e.resultDisplay, pending.title, pending.kind, pending.displayDetail);
+        showOrphanedComplete(e.exitCode, resultDisplay, pending.title, pending.kind, pending.displayDetail);
       } else {
-        showToolComplete(e.exitCode, e.resultDisplay, pending?.displayDetail ?? pending?.title);
+        showToolComplete(e.exitCode, resultDisplay, pending?.displayDetail ?? pending?.title);
       }
       s.currentToolKind = undefined;
       s.spinnerStartTime = 0;
@@ -515,6 +533,7 @@ export default function activate(ctx: ExtensionContext): void {
       // Mark lastContentKind as "tool" so the tool call line that follows
       // doesn't inject an extra gap between the diff box and the checkmark.
       s.lastContentKind = "tool";
+      s.previewedDiffPending = true;
     }
     // Don't endAgentResponse() here — permission requests that aren't
     // file-write diffs are handled inline (auto-approved or by extensions).
