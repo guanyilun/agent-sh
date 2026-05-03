@@ -73,8 +73,11 @@ export interface LlmSession {
 
 export interface LlmInterface {
   readonly available: boolean;
-  ask(opts: { query: string; system?: string; maxTokens?: number }): Promise<string>;
-  session(opts?: { system?: string; maxTokens?: number }): LlmSession;
+  /** `model` overrides the globally-configured model for this call only.
+   *  Provider-specific identifier (e.g. "claude-haiku-4-5"). When omitted,
+   *  the active provider's configured default is used. */
+  ask(opts: { query: string; system?: string; maxTokens?: number; model?: string }): Promise<string>;
+  session(opts?: { system?: string; maxTokens?: number; model?: string }): LlmSession;
 }
 
 export interface AgentShellConfig {
