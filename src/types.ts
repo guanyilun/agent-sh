@@ -75,9 +75,26 @@ export interface LlmInterface {
   readonly available: boolean;
   /** `model` overrides the globally-configured model for this call only.
    *  Provider-specific identifier (e.g. "claude-haiku-4-5"). When omitted,
-   *  the active provider's configured default is used. */
-  ask(opts: { query: string; system?: string; maxTokens?: number; model?: string }): Promise<string>;
-  session(opts?: { system?: string; maxTokens?: number; model?: string }): LlmSession;
+   *  the active provider's configured default is used.
+   *
+   *  `reasoningEffort` controls thinking-model token allocation between
+   *  reasoning and final content (e.g. "low", "medium", "high", or
+   *  provider-specific). For non-reasoning models it is ignored. Set to
+   *  "low" for cheap structured-output calls so reasoning doesn't exhaust
+   *  the max-tokens budget and leave content empty. */
+  ask(opts: {
+    query: string;
+    system?: string;
+    maxTokens?: number;
+    model?: string;
+    reasoningEffort?: string;
+  }): Promise<string>;
+  session(opts?: {
+    system?: string;
+    maxTokens?: number;
+    model?: string;
+    reasoningEffort?: string;
+  }): LlmSession;
 }
 
 export interface AgentShellConfig {

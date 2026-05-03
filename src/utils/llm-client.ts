@@ -89,11 +89,18 @@ export class LlmClient {
     messages: ChatCompletionMessageParam[];
     model?: string;
     max_tokens?: number;
+    /** Reasoning effort level (e.g. "low", "medium", "high"). Provider-
+     *  dependent — DeepSeek-R1, OpenAI o-series, OpenRouter normalize.
+     *  For non-reasoning models the field is dropped silently. */
+    reasoning_effort?: string;
   }): Promise<string> {
     const response = await this.client.chat.completions.create({
       model: opts.model ?? this.model,
       messages: opts.messages,
       max_tokens: opts.max_tokens ?? 1024,
+      ...(opts.reasoning_effort
+        ? { reasoning_effort: opts.reasoning_effort as "low" | "medium" | "high" }
+        : {}),
     });
     return response.choices[0]?.message?.content ?? "";
   }

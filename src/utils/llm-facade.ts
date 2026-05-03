@@ -6,18 +6,18 @@ import type { HandlerRegistry } from "./handler-registry.js";
 import type { LlmInterface, LlmMessage, LlmSession } from "../types.js";
 
 export function createLlmFacade(handlers: HandlerRegistry): LlmInterface {
-  const invoke = (messages: LlmMessage[], maxTokens?: number, model?: string): Promise<string> => {
-    const result = handlers.call("llm:invoke", messages, { maxTokens, model });
+  const invoke = (messages: LlmMessage[], maxTokens?: number, model?: string, reasoningEffort?: string): Promise<string> => {
+    const result = handlers.call("llm:invoke", messages, { maxTokens, model, reasoningEffort });
     if (result === undefined) return Promise.reject(new Error("ctx.llm: no LLM backend available"));
     return result as Promise<string>;
   };
   return {
     get available() { return handlers.list().includes("llm:invoke"); },
-    ask: ({ query, system, maxTokens, model }) => {
+    ask: ({ query, system, maxTokens, model, reasoningEffort }) => {
       const messages: LlmMessage[] = [];
       if (system) messages.push({ role: "system", content: system });
       messages.push({ role: "user", content: query });
-      return invoke(messages, maxTokens, model);
+      return invoke(messages, maxTokens, model, reasoningEffort);
     },
     session: (opts = {}) => {
       const messages: LlmMessage[] = [];
@@ -25,7 +25,7 @@ export function createLlmFacade(handlers: HandlerRegistry): LlmInterface {
       const session: LlmSession = {
         async send(message) {
           messages.push({ role: "user", content: message });
-          const reply = await invoke(messages, opts.maxTokens, opts.model);
+          const reply = await invoke(messages, opts.maxTokens, opts.model, opts.reasoningEffort);
           messages.push({ role: "assistant", content: reply });
           return reply;
         },
