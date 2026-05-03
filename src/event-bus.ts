@@ -60,6 +60,7 @@ export interface ShellEvents {
     messages: unknown[];
     tools?: unknown;
     model?: string;
+    max_tokens?: number;
     reasoning_effort?: string;
   };
   "llm:chunk": { chunk: unknown };
@@ -314,7 +315,7 @@ export interface ShellEvents {
     /** Optional — providers for custom endpoints may not know the catalog
      *  at registration time. Falls back to models[0] when absent. */
     defaultModel?: string;
-    models?: (string | { id: string; reasoning?: boolean; contextWindow?: number; echoReasoning?: boolean })[];
+    models?: (string | { id: string; reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean })[];
     /** Provider supports the reasoning_effort parameter. Default: true. */
     supportsReasoningEffort?: boolean;
   };

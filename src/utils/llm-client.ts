@@ -68,7 +68,7 @@ export class LlmClient {
       model: opts.model ?? this.model,
       messages: opts.messages,
       tools: opts.tools?.length ? opts.tools : undefined,
-      max_tokens: opts.max_tokens ?? 8192,
+      max_tokens: opts.max_tokens ?? 65536,
       stream: true as const,
       stream_options: { include_usage: true },
       ...(opts.reasoning_effort

@@ -1729,6 +1729,7 @@ export class AgentLoop implements AgentBackend {
       messages,
       tools: apiTools,
       model: this.currentModel,
+      max_tokens: this.currentMode.maxTokens ?? 65536,
       ...this.reasoningParams(),
     };
     this.bus.emit("llm:request", requestParams);

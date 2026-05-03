@@ -44,6 +44,8 @@ export interface AgentMode {
   providerConfig?: { apiKey: string; baseURL?: string };
   /** Context window size in tokens (for usage display). */
   contextWindow?: number;
+  /** Max output tokens for this mode. */
+  maxTokens?: number;
   /** Model supports reasoning/thinking tokens. */
   reasoning?: boolean;
   /** Provider supports the reasoning_effort parameter. */

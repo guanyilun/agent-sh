@@ -53,6 +53,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
           provider: id,
           providerConfig: { apiKey: p.apiKey, baseURL: p.baseURL },
           contextWindow: mc?.contextWindow ?? p.contextWindow,
+          maxTokens: mc?.maxTokens ?? (mc?.contextWindow ? Math.min(Math.floor(mc.contextWindow * 0.4), 65536) : undefined),
           reasoning: mc?.reasoning,
           supportsReasoningEffort: p.supportsReasoningEffort,
           echoReasoning: mc?.echoReasoning,
@@ -170,13 +171,13 @@ export default function agentBackend(ctx: ExtensionContext): void {
   bus.on("provider:register", (p) => {
     const rawModels = p.models ?? (p.defaultModel ? [p.defaultModel] : []);
     const modelIds: string[] = [];
-    const caps = new Map<string, { reasoning?: boolean; contextWindow?: number; echoReasoning?: boolean }>();
+    const caps = new Map<string, { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean }>();
     for (const m of rawModels) {
       if (typeof m === "string") {
         modelIds.push(m);
       } else {
         modelIds.push(m.id);
-        caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, echoReasoning: m.echoReasoning });
+        caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning });
       }
     }
     providerRegistry.set(p.id, {
@@ -197,6 +198,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
         provider: p.id,
         providerConfig: { apiKey: p.apiKey ?? "", baseURL: p.baseURL },
         contextWindow: mc?.contextWindow,
+        maxTokens: mc?.maxTokens,
         reasoning: mc?.reasoning,
         supportsReasoningEffort: p.supportsReasoningEffort,
         echoReasoning: mc?.echoReasoning,
@@ -241,6 +243,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
         provider: name,
         providerConfig: { apiKey: p.apiKey!, baseURL: p.baseURL },
         contextWindow: mc?.contextWindow ?? p.contextWindow,
+        maxTokens: mc?.maxTokens ?? (mc?.contextWindow ? Math.min(Math.floor(mc.contextWindow * 0.4), 65536) : undefined),
         reasoning: mc?.reasoning,
         supportsReasoningEffort: p.supportsReasoningEffort,
         echoReasoning: mc?.echoReasoning,
