@@ -28,6 +28,8 @@ export const BUILTIN_EXTENSIONS: Array<{
   { name: "openai",
     when: () => !!process.env.OPENAI_API_KEY,
     load: () => import("./providers/openai.js").then(m => m.default) },
+  { name: "deepseek",
+    load: () => import("./providers/deepseek.js").then(m => m.default) },
   { name: "tui-renderer",     load: () => import("./tui-renderer.js").then(m => m.default) },
   { name: "slash-commands",    load: () => import("./slash-commands.js").then(m => m.default) },
   { name: "file-autocomplete", load: () => import("./file-autocomplete.js").then(m => m.default) },
