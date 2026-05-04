@@ -52,6 +52,13 @@ agent-sh --model gpt-4o
 # or: agent-sh --model gpt-4o-mini
 ```
 
+### DeepSeek
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+agent-sh
+```
+
 ### Ollama (Local)
 
 ```bash

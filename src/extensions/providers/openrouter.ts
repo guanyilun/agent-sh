@@ -3,8 +3,8 @@
  * Registers curated defaults synchronously so the first query works, then
  * fetches the full catalog to populate /model autocomplete.
  */
-import type { ExtensionContext } from "../types.js";
-import { getSettings } from "../settings.js";
+import type { ExtensionContext } from "../../types.js";
+import { getSettings } from "../../settings.js";
 
 const BASE_URL = "https://openrouter.ai/api/v1";
 
@@ -16,9 +16,11 @@ const DEFAULT_MODELS = ["deepseek/deepseek-v4-flash"];
 //   providers.openrouter.models[*].echoReasoning = true | false
 const BUILTIN_ECHO_REASONING_PATTERNS: RegExp[] = [/deepseek/i];
 
-function buildReasoningParams(level: string): Record<string, unknown> {
+// `effort: "none"` is the documented disable; honored by OpenAI/Grok, ignored
+// by Anthropic/Gemini/DeepSeek-via-OpenRouter (use native deepseek for a hard off).
+function buildReasoningParams(level: string, _model?: string): Record<string, unknown> {
   return level === "off"
-    ? { reasoning: { enabled: false } }
+    ? { reasoning: { effort: "none" } }
     : { reasoning: { effort: level } };
 }
 
