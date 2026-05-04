@@ -5,7 +5,7 @@
  *                                  vLLM, llama.cpp); the catalog is fetched
  *                                  from the server's /models endpoint.
  */
-import type { ExtensionContext } from "../types.js";
+import type { ExtensionContext } from "../../types.js";
 
 const OPENAI_CLOUD_MODELS = [
   { id: "gpt-5", reasoning: true },
