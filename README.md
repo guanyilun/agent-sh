@@ -67,10 +67,11 @@ agent-sh
 **Local models** (Ollama, llama.cpp server, LM Studio, vLLM — anything OpenAI-compatible):
 
 ```bash
-export OPENAI_API_KEY=ollama                        # any value; dummy is fine
 export OPENAI_BASE_URL=http://localhost:11434/v1    # point at your server
 agent-sh
 ```
+
+Set `OPENAI_API_KEY` too if your server requires auth.
 
 Once running, switch models at any time with `/model <name>` (tab-completes; selection persists across sessions).
 
