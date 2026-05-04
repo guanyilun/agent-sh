@@ -8,7 +8,7 @@
  */
 import type { ExtensionContext } from "../../types.js";
 
-function buildReasoningParams(level: string): Record<string, unknown> {
+function buildReasoningParams(level: string, _model?: string): Record<string, unknown> {
   return level === "off"
     ? { thinking: { type: "disabled" } }
     : { thinking: { type: "enabled" }, reasoning_effort: level };

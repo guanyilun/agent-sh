@@ -38,14 +38,20 @@ export default function agentBackend(ctx: ExtensionContext): void {
     if (p) providerRegistry.set(name, p);
   }
 
-  const providerHooks = new Map<string, { reasoningParams?: (level: string) => Record<string, unknown> }>();
+  const providerHooks = new Map<string, { reasoningParams?: (level: string, model?: string) => Record<string, unknown> }>();
+
+  // Per-mode closure: bakes model id into the hook so AgentMode.buildReasoningParams
+  // keeps its (level) signature while the hook itself can branch on model.
+  const bindReasoning = (shapeId: string, model: string) => {
+    const hook = providerHooks.get(shapeId)?.reasoningParams;
+    return hook ? (level: string) => hook(level, model) : defaultReasoningBuilder;
+  };
 
   const buildModes = (): AgentMode[] => {
     const allModes: AgentMode[] = [];
     for (const [id, p] of providerRegistry) {
       if (!p.apiKey) continue;
       const shapeId = p.reasoningShape ?? id;
-      const buildReasoningParams = providerHooks.get(shapeId)?.reasoningParams ?? defaultReasoningBuilder;
       for (const model of p.models) {
         const mc = p.modelCapabilities?.get(model);
         allModes.push({
@@ -57,7 +63,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
           reasoning: mc?.reasoning,
           supportsReasoningEffort: p.supportsReasoningEffort,
           echoReasoning: mc?.echoReasoning,
-          buildReasoningParams,
+          buildReasoningParams: bindReasoning(shapeId, model),
         });
       }
     }
@@ -192,7 +198,6 @@ export default function agentBackend(ctx: ExtensionContext): void {
       modelCapabilities: caps.size > 0 ? caps : undefined,
     });
 
-    const buildReasoningParams = providerHooks.get(p.id)?.reasoningParams ?? defaultReasoningBuilder;
     const addModes: AgentMode[] = modelIds.map((m) => {
       const mc = caps.get(m);
       return {
@@ -204,7 +209,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
         reasoning: mc?.reasoning,
         supportsReasoningEffort: p.supportsReasoningEffort,
         echoReasoning: mc?.echoReasoning,
-        buildReasoningParams,
+        buildReasoningParams: bindReasoning(p.id, m),
       };
     });
     bus.emit("config:add-modes", { modes: addModes });

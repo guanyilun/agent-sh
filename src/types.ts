@@ -198,7 +198,7 @@ export interface ExtensionContext {
 
   // ── Provider configuration ────────────────────────────────
   providers: {
-    configure: (id: string, opts: { reasoningParams?: (level: string) => Record<string, unknown> }) => void;
+    configure: (id: string, opts: { reasoningParams?: (level: string, model?: string) => Record<string, unknown> }) => void;
   };
 
   // ── LLM access (backend-agnostic) ─────────────────────────

@@ -322,7 +322,7 @@ export interface ShellEvents {
 
   "provider:configure": {
     id: string;
-    reasoningParams?: (level: string) => Record<string, unknown>;
+    reasoningParams?: (level: string, model?: string) => Record<string, unknown>;
   };
 
   // Tool/instruction registration (extension → active agent backend)
