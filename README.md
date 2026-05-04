@@ -57,6 +57,13 @@ export OPENAI_API_KEY=sk-...
 agent-sh
 ```
 
+**DeepSeek:**
+
+```bash
+export DEEPSEEK_API_KEY=sk-...
+agent-sh
+```
+
 **Local models** (Ollama, llama.cpp server, LM Studio, vLLM — anything OpenAI-compatible):
 
 ```bash
