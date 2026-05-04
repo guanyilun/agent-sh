@@ -57,8 +57,6 @@ agent-sh --model gpt-4o
 ```bash
 export DEEPSEEK_API_KEY="sk-..."
 agent-sh
-# /thinking off emits the native `thinking: { type: "disabled" }` field;
-# `low|medium|high` set reasoning_effort while keeping thinking enabled.
 ```
 
 ### Ollama (Local)
