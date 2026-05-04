@@ -271,6 +271,10 @@ export interface ResolvedProvider {
   baseURL?: string;
   defaultModel?: string;
   models: string[];
+  /** True when the user explicitly listed `models` in settings (locks the
+   *  catalog to that list); false when `models` was synthesized from
+   *  defaultModel or empty (extension-provided catalog is welcome). */
+  modelsExplicit: boolean;
   contextWindow?: number;
   /** Provider supports the reasoning_effort parameter. Default: true. */
   supportsReasoningEffort?: boolean;
@@ -311,6 +315,7 @@ export function resolveProvider(name: string): ResolvedProvider | null {
     baseURL: provider.baseURL,
     defaultModel,
     models: modelIds.length ? modelIds : (defaultModel ? [defaultModel] : []),
+    modelsExplicit: Array.isArray(provider.models),
     contextWindow: provider.contextWindow,
     modelCapabilities: caps.size > 0 ? caps : undefined,
     reasoningShape: provider.reasoningShape,

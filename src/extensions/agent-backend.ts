@@ -23,19 +23,47 @@ function persistedModelFor(providerName: string | undefined): string | undefined
   return getSettings().providers?.[providerName]?.defaultModel;
 }
 
+type ModelCap = { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean };
+
 function defaultReasoningBuilder(level: string): Record<string, unknown> {
   return level === "off" ? {} : { reasoning_effort: level };
+}
+
+function mergeCaps(
+  settingsCaps: Map<string, ModelCap> | undefined,
+  payloadCaps: Map<string, ModelCap>,
+  modelIds: string[],
+): Map<string, ModelCap> | undefined {
+  const out = new Map<string, ModelCap>();
+  for (const id of modelIds) {
+    const s = settingsCaps?.get(id);
+    const p = payloadCaps.get(id);
+    if (!s && !p) continue;
+    out.set(id, {
+      reasoning: s?.reasoning ?? p?.reasoning,
+      contextWindow: s?.contextWindow ?? p?.contextWindow,
+      maxTokens: s?.maxTokens ?? p?.maxTokens,
+      echoReasoning: s?.echoReasoning ?? p?.echoReasoning,
+    });
+  }
+  return out.size > 0 ? out : undefined;
 }
 
 export default function agentBackend(ctx: ExtensionContext): void {
   const { bus } = ctx;
   const config: AgentShellConfig = ctx.call("config:get-shell-config") ?? {};
 
-  // Seed from settings.json; runtime provider:register events add more.
+  // settings.json wins per-field over runtime provider:register payloads.
+  // settingsProviders is the immutable source-of-truth for the merge —
+  // multiple sequential registers each merge against the same snapshot.
   const providerRegistry = new Map<string, ResolvedProvider>();
+  const settingsProviders = new Map<string, ResolvedProvider>();
   for (const name of getProviderNames()) {
     const p = resolveProvider(name);
-    if (p) providerRegistry.set(name, p);
+    if (p) {
+      providerRegistry.set(name, p);
+      settingsProviders.set(name, p);
+    }
   }
 
   const providerHooks = new Map<string, { reasoningParams?: (level: string, model?: string) => Record<string, unknown> }>();
@@ -178,36 +206,46 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   bus.on("provider:register", (p) => {
     const rawModels = p.models ?? (p.defaultModel ? [p.defaultModel] : []);
-    const modelIds: string[] = [];
-    const caps = new Map<string, { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean }>();
+    const payloadModelIds: string[] = [];
+    const payloadCaps = new Map<string, { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean }>();
     for (const m of rawModels) {
       if (typeof m === "string") {
-        modelIds.push(m);
+        payloadModelIds.push(m);
       } else {
-        modelIds.push(m.id);
-        caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning });
+        payloadModelIds.push(m.id);
+        payloadCaps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning });
       }
     }
-    providerRegistry.set(p.id, {
+
+    const settings = settingsProviders.get(p.id);
+    const userLocksModels = !!settings?.modelsExplicit && settings.models.length > 0;
+    const modelIds = userLocksModels ? settings!.models : payloadModelIds;
+    const mergedCaps = mergeCaps(settings?.modelCapabilities, payloadCaps, modelIds);
+
+    const merged: ResolvedProvider = {
       id: p.id,
-      apiKey: p.apiKey,
-      baseURL: p.baseURL,
-      defaultModel: p.defaultModel,
+      apiKey: settings?.apiKey ?? p.apiKey,
+      baseURL: settings?.baseURL ?? p.baseURL,
+      defaultModel: settings?.defaultModel ?? p.defaultModel,
       models: modelIds,
-      supportsReasoningEffort: p.supportsReasoningEffort,
-      modelCapabilities: caps.size > 0 ? caps : undefined,
-    });
+      modelsExplicit: settings?.modelsExplicit ?? false,
+      contextWindow: settings?.contextWindow,
+      supportsReasoningEffort: settings?.supportsReasoningEffort ?? p.supportsReasoningEffort,
+      modelCapabilities: mergedCaps,
+      reasoningShape: settings?.reasoningShape,
+    };
+    providerRegistry.set(p.id, merged);
 
     const addModes: AgentMode[] = modelIds.map((m) => {
-      const mc = caps.get(m);
+      const mc = mergedCaps?.get(m);
       return {
         model: m,
         provider: p.id,
-        providerConfig: { apiKey: p.apiKey ?? "", baseURL: p.baseURL },
+        providerConfig: { apiKey: merged.apiKey ?? "", baseURL: merged.baseURL },
         contextWindow: mc?.contextWindow,
         maxTokens: mc?.maxTokens,
         reasoning: mc?.reasoning,
-        supportsReasoningEffort: p.supportsReasoningEffort,
+        supportsReasoningEffort: merged.supportsReasoningEffort,
         echoReasoning: mc?.echoReasoning,
         buildReasoningParams: bindReasoning(p.id, m),
       };
