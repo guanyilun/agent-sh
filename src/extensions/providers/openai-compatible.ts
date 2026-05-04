@@ -1,10 +1,7 @@
 /**
- * OpenAI-compatible provider for any local/3rd-party server speaking the
- * OpenAI Chat Completions API (Ollama, LM Studio, vLLM, llama.cpp, …).
- * Activates on OPENAI_BASE_URL; the catalog is fetched from /models.
- *
- * Reasoning shape is intentionally not configured — what works depends on
- * which model the user is serving. Add a hook in user extensions if needed.
+ * OpenAI Chat Completions-compatible local/3rd-party server (Ollama, LM
+ * Studio, vLLM, llama.cpp, …). No reasoning hook — the right shape depends
+ * on which model the server is serving; user extensions can add one.
  */
 import type { ExtensionContext } from "../../types.js";
 

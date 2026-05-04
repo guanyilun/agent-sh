@@ -1,10 +1,7 @@
 /**
- * Native DeepSeek reasoning shape. The provider is registered via
- * settings.json; this extension only attaches the right reasoning-param
- * builder so `/thinking off` actually disables thinking on V4 models.
- *
- * V4 ignores `reasoning_effort` for on/off — it uses a separate `thinking`
- * field that defaults to enabled.
+ * Native DeepSeek reasoning shape. V4 ignores reasoning_effort for on/off
+ * — disable lives in a separate `thinking` field that defaults to enabled.
+ * Provider registration stays driven by settings.json.
  */
 import type { ExtensionContext } from "../../types.js";
 

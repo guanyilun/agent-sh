@@ -40,8 +40,8 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   const providerHooks = new Map<string, { reasoningParams?: (level: string, model?: string) => Record<string, unknown> }>();
 
-  // Per-mode closure: bakes model id into the hook so AgentMode.buildReasoningParams
-  // keeps its (level) signature while the hook itself can branch on model.
+  // Bakes model id into the hook so AgentMode.buildReasoningParams keeps
+  // its (level) signature while the hook can branch on model.
   const bindReasoning = (shapeId: string, model: string) => {
     const hook = providerHooks.get(shapeId)?.reasoningParams;
     return hook ? (level: string) => hook(level, model) : defaultReasoningBuilder;
