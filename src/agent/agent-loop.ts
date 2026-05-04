@@ -23,6 +23,7 @@ import * as os from "node:os";
 import { computeDiff, computeEditDiff, computeInputDiff } from "../utils/diff.js";
 import type { AgentBackend, ToolDefinition, ToolExecutionContext } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
+import { normalizeToolArgs } from "./normalize-args.js";
 import { ConversationState, type CompactResult } from "./conversation-state.js";
 import { HistoryFile, type HistoryAdapter } from "./history-file.js";
 import { nucleate, formatNuclearLine, isReadOnly, type NuclearEntry } from "./nuclear-form.js";
@@ -1358,6 +1359,10 @@ export class AgentLoop implements AgentBackend {
           });
           return;
         }
+        // Normalize against the tool's input_schema: some LLMs stringify
+        // nested object/array args despite the schema. See
+        // normalize-args.ts for the diagnostic that uncovered this.
+        args = normalizeToolArgs(args, tool.input_schema);
 
         // ── Round-scoped cache for cacheable read-only tools ──
         const cacheable = !tool.modifiesFiles && !tool.requiresPermission && tool.showOutput !== true;

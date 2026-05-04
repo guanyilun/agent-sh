@@ -13,6 +13,7 @@ import type { EventBus } from "../event-bus.js";
 import type { LlmClient } from "../utils/llm-client.js";
 import type { ToolDefinition } from "./types.js";
 import { ConversationState } from "./conversation-state.js";
+import { normalizeToolArgs } from "./normalize-args.js";
 import { wrapTrailingWithDynamicContext } from "../utils/message-utils.js";
 
 interface PendingToolCall {
@@ -140,6 +141,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
         conversation.addToolResult(tc.id, `Error: Invalid JSON arguments for ${tc.name}`, true);
         continue;
       }
+      args = normalizeToolArgs(args, tool.input_schema);
 
       // Emit tool events for TUI (if bus provided)
       if (bus) {
