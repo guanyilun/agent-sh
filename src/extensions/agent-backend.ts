@@ -34,9 +34,10 @@ function mergeCaps(
   payloadCaps: Map<string, ModelCap>,
   modelIds: string[],
 ): Map<string, ModelCap> | undefined {
+  if (!settingsCaps) return payloadCaps.size > 0 ? payloadCaps : undefined;
   const out = new Map<string, ModelCap>();
   for (const id of modelIds) {
-    const s = settingsCaps?.get(id);
+    const s = settingsCaps.get(id);
     const p = payloadCaps.get(id);
     if (!s && !p) continue;
     out.set(id, {
@@ -53,9 +54,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
   const { bus } = ctx;
   const config: AgentShellConfig = ctx.call("config:get-shell-config") ?? {};
 
-  // settings.json wins per-field over runtime provider:register payloads.
-  // settingsProviders is the immutable source-of-truth for the merge —
-  // multiple sequential registers each merge against the same snapshot.
+  // Immutable settings snapshot; provider:register payloads merge against it.
   const providerRegistry = new Map<string, ResolvedProvider>();
   const settingsProviders = new Map<string, ResolvedProvider>();
   for (const name of getProviderNames()) {
@@ -207,7 +206,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
   bus.on("provider:register", (p) => {
     const rawModels = p.models ?? (p.defaultModel ? [p.defaultModel] : []);
     const payloadModelIds: string[] = [];
-    const payloadCaps = new Map<string, { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean }>();
+    const payloadCaps = new Map<string, ModelCap>();
     for (const m of rawModels) {
       if (typeof m === "string") {
         payloadModelIds.push(m);
@@ -218,8 +217,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     }
 
     const settings = settingsProviders.get(p.id);
-    const userLocksModels = !!settings?.modelsExplicit && settings.models.length > 0;
-    const modelIds = userLocksModels ? settings!.models : payloadModelIds;
+    const modelIds = settings?.modelsExplicit && settings.models.length > 0 ? settings.models : payloadModelIds;
     const mergedCaps = mergeCaps(settings?.modelCapabilities, payloadCaps, modelIds);
 
     const merged: ResolvedProvider = {

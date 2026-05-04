@@ -271,9 +271,7 @@ export interface ResolvedProvider {
   baseURL?: string;
   defaultModel?: string;
   models: string[];
-  /** True when the user explicitly listed `models` in settings (locks the
-   *  catalog to that list); false when `models` was synthesized from
-   *  defaultModel or empty (extension-provided catalog is welcome). */
+  /** User explicitly listed `models` (locks the catalog to that list). */
   modelsExplicit: boolean;
   contextWindow?: number;
   /** Provider supports the reasoning_effort parameter. Default: true. */
