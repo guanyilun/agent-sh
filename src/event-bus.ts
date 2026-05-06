@@ -41,6 +41,7 @@ export interface ShellEvents {
   // Agent input (frontend → core: user submitted a query or wants to cancel)
   "agent:submit": { query: string };
   "agent:cancel-request": { silent?: boolean };
+  "agent:append-user-message": { text: string };
 
   // Input mode registration (extensions → InputHandler)
   "input-mode:register": import("./types.js").InputModeConfig;

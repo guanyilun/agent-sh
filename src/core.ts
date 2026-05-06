@@ -54,6 +54,8 @@ export interface AgentShellCore {
   query(text: string): Promise<string>;
   /** Convenience: emit agent:cancel-request. */
   cancel(): void;
+  /** Convenience: emit agent:append-user-message. */
+  appendUserMessage(text: string): void;
   /** Build an ExtensionContext for loading extensions against this core. */
   extensionContext(opts: { quit: () => void }): ExtensionContext;
   /** Tear down the agent and clean up. */
@@ -196,6 +198,10 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
 
     cancel() {
       bus.emit("agent:cancel-request", {});
+    },
+
+    appendUserMessage(text) {
+      bus.emit("agent:append-user-message", { text });
     },
 
     extensionContext(opts) {
