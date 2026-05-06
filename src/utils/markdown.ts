@@ -391,6 +391,11 @@ export class MarkdownRenderer {
   }
 
   private renderInline(text: string): string {
+    // Links first — later subs inject `\x1b[…m` whose `[` would be eaten here.
+    text = text.replace(
+      /\[([^\]]+)\]\(([^)]+)\)/g,
+      `$1 ${p.muted}${p.underline}($2)${p.reset}`
+    );
     // Inline code
     text = text.replace(/`([^`]+)`/g, `${p.accent}$1${p.reset}`);
     // Bold + italic
@@ -403,11 +408,6 @@ export class MarkdownRenderer {
     text = text.replace(/(?<!\w)_(.+?)_(?!\w)/g, `${p.italic}$1${p.reset}`);
     // Strikethrough
     text = text.replace(/~~(.+?)~~/g, `${p.dim}$1${p.reset}`);
-    // Links
-    text = text.replace(
-      /\[([^\]]+)\]\(([^)]+)\)/g,
-      `$1 ${p.muted}${p.underline}($2)${p.reset}`
-    );
     return text;
   }
 
