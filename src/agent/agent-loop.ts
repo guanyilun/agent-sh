@@ -99,6 +99,7 @@ export class AgentLoop implements AgentBackend {
   private modes: AgentMode[];
   private currentModeIndex = 0;
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
+  private boundPipeListeners: Array<{ event: string; fn: (...args: any[]) => any; async: boolean }> = [];
   private ctorListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
   private ctorPipeListeners: Array<{ event: string; fn: (...args: any[]) => any }> = [];
   private lastProjectSkillNames = new Set<string>();
@@ -269,6 +270,20 @@ export class AgentLoop implements AgentBackend {
       this.bus.on(event, fn);
       this.boundListeners.push({ event, fn });
     };
+    const onPipe = <K extends keyof ShellEvents>(
+      event: K,
+      fn: (payload: ShellEvents[K]) => ShellEvents[K] | void,
+    ) => {
+      this.bus.onPipe(event, fn as any);
+      this.boundPipeListeners.push({ event, fn, async: false });
+    };
+    const onPipeAsync = <K extends keyof ShellEvents>(
+      event: K,
+      fn: (payload: ShellEvents[K]) => Promise<ShellEvents[K] | void>,
+    ) => {
+      this.bus.onPipeAsync(event, fn as any);
+      this.boundPipeListeners.push({ event, fn, async: true });
+    };
 
     on("agent:submit", ({ query }) => {
       this.handleQuery(query).catch(() => {});
@@ -316,7 +331,7 @@ export class AgentLoop implements AgentBackend {
       }
       this.bus.emit("config:changed", {});
     });
-    this.bus.onPipe("config:get-models", (payload) => {
+    onPipe("config:get-models", () => {
       const models = this.modes.map((m) => ({ model: m.model, provider: m.provider ?? "" }));
       const cur = this.modes[this.currentModeIndex];
       const active = cur ? { model: cur.model, provider: cur.provider ?? "" } : null;
@@ -340,7 +355,7 @@ export class AgentLoop implements AgentBackend {
       this.bus.emit("ui:info", { message: `Thinking: ${level}` });
       this.bus.emit("config:changed", {});
     });
-    this.bus.onPipe("config:get-thinking", () => {
+    onPipe("config:get-thinking", () => {
       const mode = this.currentMode;
       const supported = mode.reasoning !== false && mode.supportsReasoningEffort !== false;
       return { level: this.thinkingLevel, levels: AgentLoop.THINKING_LEVELS, supported };
@@ -361,7 +376,7 @@ export class AgentLoop implements AgentBackend {
         this.bus.emit("ui:info", { message: "(nothing to compact)" });
       }
     });
-    this.bus.onPipe("context:get-stats", () => ({
+    onPipe("context:get-stats", () => ({
       activeTokens: this.conversation.estimateTokens(),
       totalTokens: this.conversation.estimatePromptTokens(),
       nuclearEntries: this.conversation.getNuclearEntryCount(),
@@ -369,14 +384,14 @@ export class AgentLoop implements AgentBackend {
       budgetTokens: this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     }));
 
-    this.bus.onPipe("context:snapshot", (payload) => {
+    onPipe("context:snapshot", (payload) => {
       payload.messages = this.conversation.getMessages();
       payload.contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
       payload.activeTokens = this.conversation.estimateTokens();
       return payload;
     });
 
-    this.bus.onPipeAsync("context:compact", async (payload) => {
+    onPipeAsync("context:compact", async (payload) => {
       const stats = await this.compactWithHooks(0, undefined, false, payload.strategy);
       if (stats) payload.stats = { before: stats.before, after: stats.after, evictedCount: stats.evictedCount };
       return payload;
@@ -430,6 +445,11 @@ export class AgentLoop implements AgentBackend {
       this.bus.off(event as any, fn);
     }
     this.boundListeners = [];
+    for (const { event, fn, async } of this.boundPipeListeners) {
+      if (async) this.bus.offPipeAsync(event as any, fn);
+      else this.bus.offPipe(event as any, fn);
+    }
+    this.boundPipeListeners = [];
   }
 
   /** Register a tool (used by extensions via ctx.registerTool). */

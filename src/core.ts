@@ -49,7 +49,7 @@ export interface AgentShellCore {
   /** Unique id for this agent process; used for shell-marker tagging and lineage tracking. */
   instanceId: string;
   /** Activate the agent backend (call after extensions load). */
-  activateBackend(): void;
+  activateBackend(): Promise<void>;
   /** Convenience: emit agent:submit and await the response. */
   query(text: string): Promise<string>;
   /** Convenience: emit agent:cancel-request. */
@@ -91,26 +91,20 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   const backends = new Map<string, Backend>();
   let activeBackendName: string | null = null;
 
-  const activateByName = async (name: string, silent = false) => {
+  const activateByName = async (name: string): Promise<boolean> => {
     const backend = backends.get(name);
     if (!backend) {
       bus.emit("ui:error", { message: `Unknown backend: ${name}` });
-      return;
+      return false;
     }
 
-    // Deactivate current backend
     if (activeBackendName) {
       backends.get(activeBackendName)?.kill();
     }
 
-    // Activate new backend
     await backend.start?.();
     activeBackendName = name;
-
-    if (!silent) {
-      bus.emit("ui:info", { message: `Backend: ${name}` });
-    }
-    bus.emit("config:changed", {});
+    return true;
   };
 
   bus.on("agent:register-backend", (backend) => {
@@ -118,11 +112,12 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   });
 
   bus.on("config:switch-backend", ({ name }) => {
-    activateByName(name).then(() => {
-      if (activeBackendName === name) {
-        settingsMod.updateSettings({ defaultBackend: name });
-        bus.emit("ui:info", { message: `Saved '${name}' as default backend.` });
-      }
+    activateByName(name).then((ok) => {
+      if (!ok) return;
+      settingsMod.updateSettings({ defaultBackend: name });
+      // Single ui:info; config:changed (which triggers prompt redraw) follows it.
+      bus.emit("ui:info", { message: `Backend: ${name} (saved as default)` });
+      bus.emit("config:changed", {});
     });
   });
 
@@ -150,16 +145,11 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     handlers,
     instanceId,
 
-    activateBackend() {
-      // Silent — backend info is shown in the startup banner.
-      // Runtime switches (config:switch-backend) still emit ui:info.
+    async activateBackend() {
       if (backends.size === 0) return;
       const preferred = settings.defaultBackend;
-      if (preferred && backends.has(preferred)) {
-        activateByName(preferred, true);
-      } else {
-        activateByName(backends.keys().next().value!, true);
-      }
+      const name = preferred && backends.has(preferred) ? preferred : backends.keys().next().value!;
+      await activateByName(name);
     },
 
     async query(text) {

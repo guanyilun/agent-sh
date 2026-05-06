@@ -7,7 +7,6 @@ import { palette as p } from "./utils/palette.js";
 import { loadBuiltinExtensions } from "./extensions/index.js";
 import { loadExtensions } from "./extension-loader.js";
 import { getSettings } from "./settings.js";
-import { discoverSkills } from "./agent/skills.js";
 import { runInit } from "./init.js";
 import { PACKAGE_VERSION } from "./utils/package-version.js";
 import type { AgentShellConfig } from "./types.js";
@@ -292,12 +291,8 @@ async function main(): Promise<void> {
     console.error('[agent-sh] Extensions loaded');
   }
 
-  // Tell deferred-init listeners (agent-backend) that the provider
-  // registry is now complete.
-  core.bus.emit("core:extensions-loaded", {});
-
-  // ── Discover skills ───────────────────────────────────────────
-  const skills = discoverSkills(process.cwd());
+  // Names ride along so backend extensions can build banner sections.
+  core.bus.emit("core:extensions-loaded", { names: loadedExtensions });
 
   // ── Activate agent backend ────────────────────────────────────
   // Extensions had their chance to register via agent:register-backend.
@@ -312,6 +307,7 @@ async function main(): Promise<void> {
       "  Alternatively, install a bridge extension (claude-code-bridge, pi-bridge).\n");
     process.exit(1);
   }
+  // No await: banner must out-race the shell's PS1 arriving via PTY.
   core.activateBackend();
 
   // ── Startup banner ───────────────────────────────────────────
@@ -322,32 +318,12 @@ async function main(): Promise<void> {
 
     const productName = `${p.accent}${p.bold}agent-sh${p.reset}`;
 
-    const info = agentInfo as { name: string; version: string; model?: string; provider?: string } | null;
-    const backendReady = !!info?.model;
-    const backendName = info?.name ?? "ash";
-    const model = info?.model;
-    const provider = info?.provider;
-    const modelValue = model
-      ? provider ? `${model} [${provider}]` : model
-      : null;
+    const backendName = settings.defaultBackend && backendNames.includes(settings.defaultBackend)
+      ? settings.defaultBackend
+      : backendNames[0]!;
 
     let sections = "";
-    sections += `\n\n  ${p.muted}Backend:${p.reset} ${p.dim}${backendName}${backendReady ? "" : " (not configured)"}${p.reset}`;
-    if (modelValue) {
-      sections += `\n  ${p.muted}Model:${p.reset} ${p.dim}${modelValue}${p.reset}`;
-    }
-    if (loadedExtensions.length > 0) {
-      sections += `\n\n  ${p.muted}Extensions:${p.reset}`;
-      for (const name of loadedExtensions) {
-        sections += `\n    ${p.dim}${name}${p.reset}`;
-      }
-    }
-    if (skills.length > 0) {
-      sections += `\n\n  ${p.muted}Skills:${p.reset}`;
-      for (const s of skills) {
-        sections += `\n    ${p.dim}${s.name}${p.reset}`;
-      }
-    }
+    sections += `\n\n  ${p.muted}Backend:${p.reset} ${p.dim}${backendName}${p.reset}`;
 
     const extSections = bus.emitPipe("banner:collect", { sections: [] }).sections;
     for (const sec of extSections) {
@@ -357,9 +333,7 @@ async function main(): Promise<void> {
       }
     }
 
-    const hint = backendReady
-      ? `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}>/help${p.muted} for commands${p.reset}`
-      : `${p.muted}Set ${p.warning}OPENROUTER_API_KEY${p.muted} or ${p.warning}OPENAI_API_KEY${p.muted} and restart to enable AI${p.reset}`;
+    const hint = `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}>/help${p.muted} for commands${p.reset}`;
     const borderLine = `${p.muted}${"─".repeat(bannerW)}${p.reset}`;
 
     process.stdout.write(

@@ -91,32 +91,6 @@ export default function activate(ctx: ExtensionContext): void {
   });
 
   register({
-    name: "/compact",
-    description: "Compact conversation via the active compaction strategy",
-    handler: () => {
-      bus.emit("agent:compact-request", {});
-    },
-  });
-
-  register({
-    name: "/context",
-    description: "Show context budget usage",
-    handler: () => {
-      const stats = bus.emitPipe("context:get-stats", {
-        activeTokens: 0,
-        totalTokens: 0,
-        budgetTokens: 0,
-      });
-      const pct = stats.budgetTokens > 0
-        ? Math.round((stats.activeTokens / stats.budgetTokens) * 100)
-        : 0;
-      bus.emit("ui:info", {
-        message: `Active context: ~${stats.activeTokens.toLocaleString()} tokens / ${stats.budgetTokens.toLocaleString()} budget (${pct}%)`,
-      });
-    },
-  });
-
-  register({
     name: "/reload",
     description: "Reload user extensions from ~/.agent-sh/extensions/",
     handler: async () => {

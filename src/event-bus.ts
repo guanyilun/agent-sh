@@ -306,7 +306,7 @@ export interface ShellEvents {
   // Fires after all extensions (built-in + user) have activated.
   // agent-backend waits on this to resolve settings.defaultProvider
   // against the full provider registry, including dynamic providers.
-  "core:extensions-loaded": Record<string, never>;
+  "core:extensions-loaded": { names: string[] };
 
   // Register a provider at runtime (extensions → core)
   "provider:register": {
@@ -524,6 +524,17 @@ export class EventBus {
       }
     }
     return result;
+  }
+
+  /** Remove an async transform listener from a pipeline event. */
+  offPipeAsync<K extends keyof ShellEvents>(
+    event: K,
+    fn: AsyncPipeListener<ShellEvents[K]>,
+  ): void {
+    const listeners = this.asyncPipeListeners.get(event);
+    if (!listeners) return;
+    const idx = listeners.indexOf(fn);
+    if (idx !== -1) listeners.splice(idx, 1);
   }
 
   /** Register an async transform listener for a pipeline event. */

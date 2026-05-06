@@ -16,6 +16,7 @@ import { AgentLoop } from "../agent/agent-loop.js";
 import { LlmClient } from "../utils/llm-client.js";
 import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../settings.js";
 import { PACKAGE_VERSION } from "../utils/package-version.js";
+import { discoverSkills } from "../agent/skills.js";
 
 /** Read the user's persisted defaultModel for a provider, if any. */
 function persistedModelFor(providerName: string | undefined): string | undefined {
@@ -114,6 +115,8 @@ export default function agentBackend(ctx: ExtensionContext): void {
   let modes: AgentMode[] = [];
   let initialModeIndex = 0;
   let resolved = false;
+  // Gates late-registration reconcile so its config:switch-model emit doesn't misroute under a non-ash backend.
+  let ashActive = false;
 
   bus.onPipe("config:get-initial-modes", () => ({ modes, initialModeIndex }));
 
@@ -133,7 +136,10 @@ export default function agentBackend(ctx: ExtensionContext): void {
     history: config.history,
   });
 
-  bus.on("core:extensions-loaded", () => {
+  let loadedExtensionNames: string[] = [];
+
+  bus.on("core:extensions-loaded", ({ names }) => {
+    loadedExtensionNames = names;
     const settings = getSettings();
     // If the user didn't pick a default, fall back to the first registered
     // provider (built-in load order biases to openrouter → openai).
@@ -183,9 +189,37 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
     bus.emit("agent:register-backend", {
       name: "ash",
-      kill: () => agentLoop.kill(),
+      kill: () => {
+        ashActive = false;
+        bus.emit("command:unregister", { name: "/compact" });
+        bus.emit("command:unregister", { name: "/context" });
+        agentLoop.kill();
+      },
       start: async () => {
         agentLoop.wire();
+        ashActive = true;
+        bus.emit("command:register", {
+          name: "/compact",
+          description: "Compact conversation via the active compaction strategy",
+          handler: () => bus.emit("agent:compact-request", {}),
+        });
+        bus.emit("command:register", {
+          name: "/context",
+          description: "Show context budget usage",
+          handler: () => {
+            const stats = bus.emitPipe("context:get-stats", {
+              activeTokens: 0,
+              totalTokens: 0,
+              budgetTokens: 0,
+            });
+            const pct = stats.budgetTokens > 0
+              ? Math.round((stats.activeTokens / stats.budgetTokens) * 100)
+              : 0;
+            bus.emit("ui:info", {
+              message: `Active context: ~${stats.activeTokens.toLocaleString()} tokens / ${stats.budgetTokens.toLocaleString()} budget (${pct}%)`,
+            });
+          },
+        });
         bus.emit("agent:info", {
           name: "ash",
           version: PACKAGE_VERSION,
@@ -253,7 +287,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     // Late-registration reconcile: if this completes the user's persisted
     // default (openrouter's async fetch delivers the full catalog after
     // we've already fallen back to mode 0), quietly switch to it.
-    if (!resolved) return;
+    if (!resolved || !ashActive) return;
     const pendingProvider = getSettings().defaultProvider;
     if (pendingProvider !== p.id) return;
     const pendingModel = persistedModelFor(pendingProvider);
@@ -297,5 +331,18 @@ export default function agentBackend(ctx: ExtensionContext): void {
     bus.emit("agent:info", { name: "ash", version: PACKAGE_VERSION, model: switchModel, provider: name, contextWindow: p.contextWindow });
     bus.emit("ui:info", { message: `Switched to ${name} (${switchModel})` });
     bus.emit("config:changed", {});
+  });
+
+  bus.onPipe("banner:collect", (e) => {
+    const settings = getSettings();
+    if (settings.defaultBackend && settings.defaultBackend !== "ash") return e;
+    if (loadedExtensionNames.length > 0) {
+      e.sections.push({ label: "Extensions", items: [...loadedExtensionNames] });
+    }
+    const skills = discoverSkills(ctx.call("cwd") ?? process.cwd());
+    if (skills.length > 0) {
+      e.sections.push({ label: "Skills", items: skills.map((s) => s.name) });
+    }
+    return e;
   });
 }
