@@ -49,7 +49,7 @@ export interface AgentShellCore {
   /** Unique id for this agent process; used for shell-marker tagging and lineage tracking. */
   instanceId: string;
   /** Activate the agent backend (call after extensions load). */
-  activateBackend(): void;
+  activateBackend(): Promise<void>;
   /** Convenience: emit agent:submit and await the response. */
   query(text: string): Promise<string>;
   /** Convenience: emit agent:cancel-request. */
@@ -150,16 +150,12 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     handlers,
     instanceId,
 
-    activateBackend() {
-      // Silent — backend info is shown in the startup banner.
-      // Runtime switches (config:switch-backend) still emit ui:info.
+    async activateBackend() {
       if (backends.size === 0) return;
       const preferred = settings.defaultBackend;
-      if (preferred && backends.has(preferred)) {
-        activateByName(preferred, true);
-      } else {
-        activateByName(backends.keys().next().value!, true);
-      }
+      const name = preferred && backends.has(preferred) ? preferred : backends.keys().next().value!;
+      // silent=true: startup banner shows the backend; ui:info would race against it
+      await activateByName(name, true);
     },
 
     async query(text) {

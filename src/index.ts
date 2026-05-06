@@ -312,7 +312,7 @@ async function main(): Promise<void> {
       "  Alternatively, install a bridge extension (claude-code-bridge, pi-bridge).\n");
     process.exit(1);
   }
-  core.activateBackend();
+  await core.activateBackend();
 
   // ── Startup banner ───────────────────────────────────────────
   const settings = getSettings();
