@@ -191,11 +191,35 @@ export default function agentBackend(ctx: ExtensionContext): void {
       name: "ash",
       kill: () => {
         ashActive = false;
+        bus.emit("command:unregister", { name: "/compact" });
+        bus.emit("command:unregister", { name: "/context" });
         agentLoop.kill();
       },
       start: async () => {
         agentLoop.wire();
         ashActive = true;
+        bus.emit("command:register", {
+          name: "/compact",
+          description: "Compact conversation via the active compaction strategy",
+          handler: () => bus.emit("agent:compact-request", {}),
+        });
+        bus.emit("command:register", {
+          name: "/context",
+          description: "Show context budget usage",
+          handler: () => {
+            const stats = bus.emitPipe("context:get-stats", {
+              activeTokens: 0,
+              totalTokens: 0,
+              budgetTokens: 0,
+            });
+            const pct = stats.budgetTokens > 0
+              ? Math.round((stats.activeTokens / stats.budgetTokens) * 100)
+              : 0;
+            bus.emit("ui:info", {
+              message: `Active context: ~${stats.activeTokens.toLocaleString()} tokens / ${stats.budgetTokens.toLocaleString()} budget (${pct}%)`,
+            });
+          },
+        });
         bus.emit("agent:info", {
           name: "ash",
           version: PACKAGE_VERSION,
