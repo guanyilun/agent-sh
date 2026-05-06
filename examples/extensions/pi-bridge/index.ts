@@ -124,12 +124,14 @@ export default function activate(ctx: ExtensionContext): void {
         }
       });
 
-      // Report model info
       const model = session.model;
       bus.emit("agent:info", {
         name: "pi",
         version: "0.66",
         model: model ? `${model.provider}/${model.id}` : undefined,
+        notReadyHint: model
+          ? undefined
+          : "Pi has no model configured. Set ANTHROPIC_API_KEY (or another provider key) and restart, or run pi's `/login` flow.",
       });
 
       booting = false;

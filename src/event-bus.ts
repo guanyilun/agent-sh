@@ -232,7 +232,7 @@ export interface ShellEvents {
   };
 
   // Agent info (backend → frontend: connection established, info available)
-  "agent:info": { name: string; version: string; model?: string; provider?: string; contextWindow?: number };
+  "agent:info": { name: string; version: string; model?: string; provider?: string; contextWindow?: number; notReadyHint?: string };
 
   // Session reset (slash command → backend: clear conversation state)
   "agent:reset-session": Record<string, never>;

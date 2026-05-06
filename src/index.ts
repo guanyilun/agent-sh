@@ -205,7 +205,7 @@ async function main(): Promise<void> {
   const { bus } = core;
 
   // Track agent info from bus events (populated by extension backends)
-  let agentInfo: { name: string; version: string; model?: string; provider?: string } | null = null;
+  let agentInfo: { name: string; version: string; model?: string; provider?: string; notReadyHint?: string } | null = null;
   bus.on("agent:info", (info) => { agentInfo = info; });
 
   // ── Interactive frontend ──────────────────────────────────────
@@ -322,11 +322,12 @@ async function main(): Promise<void> {
 
     const productName = `${p.accent}${p.bold}agent-sh${p.reset}`;
 
-    const info = agentInfo as { name: string; version: string; model?: string; provider?: string } | null;
+    const info = agentInfo as { name: string; version: string; model?: string; provider?: string; notReadyHint?: string } | null;
     const backendReady = !!info?.model;
     const backendName = info?.name ?? "ash";
     const model = info?.model;
     const provider = info?.provider;
+    const notReadyHint = info?.notReadyHint;
     const modelValue = model
       ? provider ? `${model} [${provider}]` : model
       : null;
@@ -359,7 +360,7 @@ async function main(): Promise<void> {
 
     const hint = backendReady
       ? `${p.muted}Type ${p.warning}>${p.muted} to ask AI · ${p.warning}>/help${p.muted} for commands${p.reset}`
-      : `${p.muted}Set ${p.warning}OPENROUTER_API_KEY${p.muted} or ${p.warning}OPENAI_API_KEY${p.muted} and restart to enable AI${p.reset}`;
+      : `${p.muted}${notReadyHint ?? `Backend "${backendName}" is not configured.`}${p.reset}`;
     const borderLine = `${p.muted}${"─".repeat(bannerW)}${p.reset}`;
 
     process.stdout.write(
