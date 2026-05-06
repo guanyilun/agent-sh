@@ -19,23 +19,27 @@
 import type { ExtensionContext, RemoteSession } from "agent-sh/types";
 import type { RenderSurface } from "agent-sh/utils/compositor";
 import { FloatingPanel } from "agent-sh/utils/floating-panel";
+import { formatScreenContext, type TerminalBuffer } from "agent-sh/utils/terminal-buffer";
 
 /** Adapt a FloatingPanel to the RenderSurface interface. */
 function createPanelSurface(panel: FloatingPanel): RenderSurface {
+  // Track the spinner row so a stop-clear ("\r\x1b[2K") removes it
+  // instead of leaving an orphan blank line in the panel.
+  let spinnerLine = false;
   return {
     write(text: string): void {
-      // Handle \r (carriage return) — overwrite the current line.
-      // The spinner uses "\r  <content>\x1b[K" to update in-place.
       if (text.startsWith("\r")) {
-        // Strip \r and any erase-line sequences
         const cleaned = text.replace(/^\r/, "").replace(/\x1b\[\d*K/g, "");
         if (cleaned.trim()) {
-          panel.updateLastLine(() => cleaned);
+          if (spinnerLine) panel.updateLastLine(() => cleaned);
+          else { panel.appendLine(cleaned); spinnerLine = true; }
+        } else if (spinnerLine) {
+          panel.popLastLine();
+          spinnerLine = false;
         }
         return;
       }
-
-      // Regular text — may contain newlines
+      if (spinnerLine) { panel.popLastLine(); spinnerLine = false; }
       panel.appendText(text);
     },
     writeLine(line: string): void {
@@ -44,12 +48,23 @@ function createPanelSurface(panel: FloatingPanel): RenderSurface {
     get columns(): number {
       return panel.computeGeometry().contentW;
     },
+    get rows(): number {
+      return panel.computeGeometry().contentH;
+    },
+    onResize(cb: (cols: number, rows: number) => void): () => void {
+      const handler = () => {
+        const g = panel.computeGeometry();
+        cb(g.contentW, g.contentH);
+      };
+      process.stdout.on("resize", handler);
+      return () => { process.stdout.off("resize", handler); };
+    },
   };
 }
 
 export default function activate(ctx: ExtensionContext): void {
   const { bus, registerInstruction, createRemoteSession } = ctx;
-  const terminalBuffer = ctx.call("terminal-buffer");
+  const terminalBuffer: TerminalBuffer | null = ctx.call("terminal-buffer");
 
   const panel = new FloatingPanel(bus, {
     trigger: "\x1c", // Ctrl+\
@@ -60,22 +75,21 @@ export default function activate(ctx: ExtensionContext): void {
   const panelSurface = createPanelSurface(panel);
   let session: RemoteSession | null = null;
 
-  // Tell the LLM it's running inside an overlay session. The matching
-  // system-prompt block (registered via registerInstruction below) describes
-  // how to behave in this mode.
   ctx.registerContextProducer("interactive-session", () =>
     session?.active ? "interactive-session: true" : null,
   );
 
+  // Inject the live screen for TUI / REPL programs. At a plain shell prompt
+  // `<shell_events>` already covers the visible scrollback — skip to dedupe.
+  ctx.registerContextProducer("terminal-screen", () => {
+    if (!session?.active || !terminalBuffer?.altScreen) return null;
+    return formatScreenContext(terminalBuffer.readScreen(), 80);
+  });
+
   registerInstruction("Interactive Overlay Sessions", [
-    "When the dynamic context includes `interactive-session: true`, the user has summoned you",
-    "via a hotkey overlay from inside their live terminal. They may be in the middle of using",
-    "a program (vim, ssh, a REPL, etc.) or at a shell prompt. In this mode:",
-    "- Start with terminal_read if you need to understand what's on screen.",
-    "- Prefer terminal_keys to interact with whatever is currently running.",
-    "- Use user_shell only for running new, standalone commands — not for interacting with",
-    "  what's already on screen.",
-    "- Keep responses concise — the user is in the middle of a workflow.",
+    "When dynamic context includes `interactive-session: true`, the user summoned you via a",
+    "hotkey overlay from their live terminal. They're mid-workflow (shell prompt, vim, ssh, a",
+    "REPL, etc.) — keep responses concise and prefer reading what's on screen over asking.",
   ].join("\n"));
 
   // ── Panel lifecycle ────────────────────────────────────────────
@@ -84,7 +98,6 @@ export default function activate(ctx: ExtensionContext): void {
     if (!session) {
       session = createRemoteSession({
         surface: panelSurface,
-        suppressQueryBox: true,
       });
     }
     panel.setActive();
@@ -92,18 +105,13 @@ export default function activate(ctx: ExtensionContext): void {
   });
 
   panel.handlers.advise("panel:show", (_next) => {
-    // Re-establish session if panel is shown while agent is still working
     if (panel.active && !session) {
-      session = createRemoteSession({
-        surface: panelSurface,
-        suppressQueryBox: true,
-      });
+      session = createRemoteSession({ surface: panelSurface });
     }
   });
 
-  // On dismiss: close session only if agent is not actively processing.
-  // If agent is still working (phase="active"), keep session alive so
-  // output buffers in the panel and agent can keep executing tools.
+  // Keep the session alive while the agent is still working, even after
+  // dismiss — so output keeps buffering and tools keep executing.
   panel.handlers.advise("panel:dismiss", (next) => {
     next();
     if (session && !panel.processing) {
@@ -113,10 +121,6 @@ export default function activate(ctx: ExtensionContext): void {
   });
 
   bus.on("agent:processing-done", () => {
-    if (!panel.active) return;
-    panel.setDone();
-    // If panel was hidden while processing (passthrough), setDone()
-    // triggers dismiss() which closes the session above.
-    // If panel is still visible, session stays for the follow-up prompt.
+    if (panel.active) panel.setDone();
   });
 }
