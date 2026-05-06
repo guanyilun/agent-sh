@@ -129,9 +129,6 @@ export default function activate(ctx: ExtensionContext): void {
         name: "pi",
         version: "0.66",
         model: model ? `${model.provider}/${model.id}` : undefined,
-        notReadyHint: model
-          ? undefined
-          : "Pi has no model configured. Run `pi` directly to set up auth, then restart agent-sh.",
       });
 
       booting = false;

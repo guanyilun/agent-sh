@@ -16,6 +16,7 @@ import { AgentLoop } from "../agent/agent-loop.js";
 import { LlmClient } from "../utils/llm-client.js";
 import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../settings.js";
 import { PACKAGE_VERSION } from "../utils/package-version.js";
+import { discoverSkills } from "../agent/skills.js";
 
 /** Read the user's persisted defaultModel for a provider, if any. */
 function persistedModelFor(providerName: string | undefined): string | undefined {
@@ -135,7 +136,10 @@ export default function agentBackend(ctx: ExtensionContext): void {
     history: config.history,
   });
 
-  bus.on("core:extensions-loaded", () => {
+  let loadedExtensionNames: string[] = [];
+
+  bus.on("core:extensions-loaded", ({ names }) => {
+    loadedExtensionNames = names;
     const settings = getSettings();
     // If the user didn't pick a default, fall back to the first registered
     // provider (built-in load order biases to openrouter → openai).
@@ -303,5 +307,18 @@ export default function agentBackend(ctx: ExtensionContext): void {
     bus.emit("agent:info", { name: "ash", version: PACKAGE_VERSION, model: switchModel, provider: name, contextWindow: p.contextWindow });
     bus.emit("ui:info", { message: `Switched to ${name} (${switchModel})` });
     bus.emit("config:changed", {});
+  });
+
+  bus.onPipe("banner:collect", (e) => {
+    const settings = getSettings();
+    if (settings.defaultBackend && settings.defaultBackend !== "ash") return e;
+    if (loadedExtensionNames.length > 0) {
+      e.sections.push({ label: "Extensions", items: [...loadedExtensionNames] });
+    }
+    const skills = discoverSkills(ctx.call("cwd") ?? process.cwd());
+    if (skills.length > 0) {
+      e.sections.push({ label: "Skills", items: skills.map((s) => s.name) });
+    }
+    return e;
   });
 }

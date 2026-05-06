@@ -232,7 +232,7 @@ export interface ShellEvents {
   };
 
   // Agent info (backend → frontend: connection established, info available)
-  "agent:info": { name: string; version: string; model?: string; provider?: string; contextWindow?: number; notReadyHint?: string };
+  "agent:info": { name: string; version: string; model?: string; provider?: string; contextWindow?: number };
 
   // Session reset (slash command → backend: clear conversation state)
   "agent:reset-session": Record<string, never>;
@@ -306,7 +306,7 @@ export interface ShellEvents {
   // Fires after all extensions (built-in + user) have activated.
   // agent-backend waits on this to resolve settings.defaultProvider
   // against the full provider registry, including dynamic providers.
-  "core:extensions-loaded": Record<string, never>;
+  "core:extensions-loaded": { names: string[] };
 
   // Register a provider at runtime (extensions → core)
   "provider:register": {
