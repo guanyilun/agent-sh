@@ -1,20 +1,24 @@
 /**
  * Overlay agent extension.
  *
- * Provides a hotkey (Ctrl+\) to summon the agent from anywhere — even
- * inside vim, htop, or ssh. Composites a floating response box on top
- * of the current terminal content.
+ * Press Ctrl+\ from anywhere — a shell prompt, vim, ssh, htop, a REPL — to
+ * summon the agent in a floating panel composited over the current terminal.
+ * The agent sees the live screen as `<terminal_buffer>` context (when a TUI
+ * is active) or `<shell_events>` (at a shell prompt), so screen-aware
+ * questions answer without a tool round-trip.
  *
- * Uses createRemoteSession() to route the full tui-renderer pipeline
- * (markdown, tool grouping, spinner, diffs) into the floating panel.
+ * Install (from an npm install of agent-sh):
+ *   mkdir -p ~/.agent-sh/extensions
+ *   cp "$(npm root -g)/agent-sh/examples/extensions/overlay-agent.ts" \
+ *      ~/.agent-sh/extensions/
  *
- * Install:
- *   cp examples/extensions/overlay-agent.ts ~/.agent-sh/extensions/
+ * Or load ad-hoc without copying:
+ *   agent-sh -e "$(npm root -g)/agent-sh/examples/extensions/overlay-agent.ts"
  *
- * Or load directly:
- *   agent-sh -e ./examples/extensions/overlay-agent.ts
- *
- * Requires: npm install @xterm/headless@5.5.0 @xterm/addon-serialize@0.13.0
+ * Optional companion extensions (copy the same way) — without them the
+ * overlay can read the screen but cannot interact with it:
+ *   - terminal-buffer.ts → terminal_read / terminal_keys tools
+ *   - user-shell.ts      → user_shell tool (run new shell commands)
  */
 import type { ExtensionContext, RemoteSession } from "agent-sh/types";
 import type { RenderSurface } from "agent-sh/utils/compositor";
