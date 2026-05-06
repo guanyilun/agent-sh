@@ -29,7 +29,7 @@ import type { ExtensionContext } from "agent-sh/types";
 
 // ── Extension entry point ─────────────────────────────────────────
 export default function activate(ctx: ExtensionContext): void {
-  const { bus } = ctx;
+  const { bus, call } = ctx;
   const cwd = process.cwd();
 
   // ── Boot pi session (async — register backend synchronously first) ──
@@ -162,8 +162,12 @@ export default function activate(ctx: ExtensionContext): void {
       bus.emit("agent:query", { query });
       bus.emit("agent:processing-start", {});
 
+      // Inline producers raw — outputs already self-tag (<shell_events>...).
+      const ctxText = String(call("query-context:build") ?? "").trim();
+      const final = ctxText ? `${ctxText}\n\n${query}` : query;
+
       try {
-        await session.prompt(query);
+        await session.prompt(final);
       } catch (err) {
         bus.emit("agent:error", {
           message: err instanceof Error ? err.message : String(err),
