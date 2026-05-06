@@ -131,7 +131,7 @@ export default function activate(ctx: ExtensionContext): void {
         model: model ? `${model.provider}/${model.id}` : undefined,
         notReadyHint: model
           ? undefined
-          : "Pi has no model configured. Set ANTHROPIC_API_KEY (or another provider key) and restart, or run pi's `/login` flow.",
+          : "Pi has no model configured. Run `pi` directly to set up auth, then restart agent-sh.",
       });
 
       booting = false;
