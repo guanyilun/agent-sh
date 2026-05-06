@@ -17,6 +17,17 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import type { ExtensionContext } from "agent-sh/types";
 
+const TOOL_KINDS: Record<string, string> = {
+  bash: "execute",
+  read: "read",
+  ls: "read",
+  find: "read",
+  grep: "search",
+  edit: "execute",
+  write: "execute",
+};
+const kindForTool = (name: string): string => TOOL_KINDS[name] ?? "execute";
+
 // ── Extension entry point ─────────────────────────────────────────
 export default function activate(ctx: ExtensionContext): void {
   const { bus, call } = ctx;
@@ -75,13 +86,16 @@ export default function activate(ctx: ExtensionContext): void {
             break;
           }
 
-          case "tool_execution_start":
+          case "tool_execution_start": {
+            const ev = event as any;
             bus.emit("agent:tool-started", {
-              title: (event as any).toolName,
-              toolCallId: (event as any).toolCallId,
-              kind: (event as any).toolName === "bash" ? "execute" : "read",
+              title: ev.toolName,
+              toolCallId: ev.toolCallId,
+              kind: kindForTool(ev.toolName),
+              rawInput: ev.args,
             });
             break;
+          }
 
           case "tool_execution_update": {
             const pr = (event as any).partialResult as
@@ -97,13 +111,16 @@ export default function activate(ctx: ExtensionContext): void {
             break;
           }
 
-          case "tool_execution_end":
+          case "tool_execution_end": {
+            const ev = event as any;
             bus.emit("agent:tool-completed", {
-              toolCallId: (event as any).toolCallId,
-              exitCode: (event as any).isError ? 1 : 0,
-              kind: (event as any).toolName === "bash" ? "execute" : "read",
+              toolCallId: ev.toolCallId,
+              exitCode: ev.isError ? 1 : 0,
+              kind: kindForTool(ev.toolName),
+              rawOutput: ev.result,
             });
             break;
+          }
 
           case "agent_end":
             bus.emitTransform("agent:response-done", {
