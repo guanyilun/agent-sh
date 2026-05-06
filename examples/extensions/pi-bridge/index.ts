@@ -28,6 +28,60 @@ const TOOL_KINDS: Record<string, string> = {
 };
 const kindForTool = (name: string): string => TOOL_KINDS[name] ?? "execute";
 
+// Pi's edit diff format (from generateDiffString):
+//   "+10 added line"   — added (newLineNum)
+//   "-10 removed line" — removed (oldLineNum)
+//   " 10 context line" — context (oldLineNum; newLineNum derived from running delta)
+//   " <pad>      ..."  — hunk separator (skipped context)
+// No @@ headers. Convert to agent-sh's DiffResult shape so tui-renderer
+// can render it as a proper diff box.
+type DiffLineRecord = { type: "context" | "added" | "removed"; oldNo: number | null; newNo: number | null; text: string };
+type DiffHunkRecord = { lines: DiffLineRecord[] };
+type DiffResultRecord = { hunks: DiffHunkRecord[]; added: number; removed: number; isIdentical: boolean; isNewFile: boolean };
+
+function parsePiDiff(raw: unknown): DiffResultRecord | null {
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  const hunks: DiffHunkRecord[] = [];
+  let current: DiffLineRecord[] = [];
+  let added = 0;
+  let removed = 0;
+  let hasOriginal = false;
+  let delta = 0;
+
+  const flush = () => {
+    if (current.length > 0) hunks.push({ lines: current });
+    current = [];
+  };
+
+  for (const line of raw.split("\n")) {
+    if (line.length === 0) continue;
+    const prefix = line[0];
+    const rest = line.slice(1);
+    if (prefix === " " && rest.trim() === "...") { flush(); continue; }
+    const m = rest.match(/^\s*(\d+)\s(.*)$/);
+    if (!m) continue;
+    const num = parseInt(m[1]!, 10);
+    const text = m[2]!;
+    if (prefix === "+") {
+      current.push({ type: "added", oldNo: null, newNo: num, text });
+      added++;
+      delta++;
+    } else if (prefix === "-") {
+      current.push({ type: "removed", oldNo: num, newNo: null, text });
+      removed++;
+      delta--;
+      hasOriginal = true;
+    } else if (prefix === " ") {
+      current.push({ type: "context", oldNo: num, newNo: num + delta, text });
+      hasOriginal = true;
+    }
+  }
+  flush();
+
+  if (hunks.length === 0) return null;
+  return { hunks, added, removed, isIdentical: added + removed === 0, isNewFile: !hasOriginal };
+}
+
 // ── Extension entry point ─────────────────────────────────────────
 export default function activate(ctx: ExtensionContext): void {
   const { bus, call } = ctx;
@@ -113,11 +167,21 @@ export default function activate(ctx: ExtensionContext): void {
 
           case "tool_execution_end": {
             const ev = event as any;
+            let resultDisplay: { body?: { kind: "diff"; diff: unknown; filePath: string } } | undefined;
+            if (ev.toolName === "edit" && typeof ev.args?.path === "string") {
+              const parsed = parsePiDiff(ev.result?.details?.diff);
+              if (parsed) {
+                resultDisplay = {
+                  body: { kind: "diff", diff: parsed, filePath: ev.args.path },
+                };
+              }
+            }
             bus.emit("agent:tool-completed", {
               toolCallId: ev.toolCallId,
               exitCode: ev.isError ? 1 : 0,
               kind: kindForTool(ev.toolName),
               rawOutput: ev.result,
+              resultDisplay,
             });
             break;
           }
