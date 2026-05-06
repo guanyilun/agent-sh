@@ -16,6 +16,9 @@ import {
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
 import type { ExtensionContext } from "agent-sh/types";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import { diffLines } from "diff";
 
 const TOOL_KINDS: Record<string, string> = {
   bash: "execute",
@@ -28,17 +31,47 @@ const TOOL_KINDS: Record<string, string> = {
 };
 const kindForTool = (name: string): string => TOOL_KINDS[name] ?? "execute";
 
-// Pi's edit diff format (from generateDiffString):
-//   "+10 added line"   — added (newLineNum)
-//   "-10 removed line" — removed (oldLineNum)
-//   " 10 context line" — context (oldLineNum; newLineNum derived from running delta)
-//   " <pad>      ..."  — hunk separator (skipped context)
-// No @@ headers. Convert to agent-sh's DiffResult shape so tui-renderer
-// can render it as a proper diff box.
 type DiffLineRecord = { type: "context" | "added" | "removed"; oldNo: number | null; newNo: number | null; text: string };
 type DiffHunkRecord = { lines: DiffLineRecord[] };
 type DiffResultRecord = { hunks: DiffHunkRecord[]; added: number; removed: number; isIdentical: boolean; isNewFile: boolean };
 
+function buildDiffFromTexts(oldText: string, newText: string, isNewFile: boolean): DiffResultRecord | null {
+  if (oldText === newText) return null;
+  const changes = diffLines(oldText, newText);
+  const allLines: DiffLineRecord[] = [];
+  let oldNo = 0;
+  let newNo = 0;
+  let added = 0;
+  let removed = 0;
+  for (const change of changes) {
+    const lines = change.value.replace(/\n$/, "").split("\n");
+    for (const text of lines) {
+      if (change.added) {
+        newNo++;
+        allLines.push({ type: "added", oldNo: null, newNo, text });
+        added++;
+      } else if (change.removed) {
+        oldNo++;
+        allLines.push({ type: "removed", oldNo, newNo: null, text });
+        removed++;
+      } else {
+        oldNo++;
+        newNo++;
+        allLines.push({ type: "context", oldNo, newNo, text });
+      }
+    }
+  }
+  if (allLines.length === 0) return null;
+  return {
+    hunks: [{ lines: allLines }],
+    added,
+    removed,
+    isIdentical: false,
+    isNewFile,
+  };
+}
+
+// Pi's edit returns a custom diff string: prefix(+/-/space) + lineNum + " " + text, "..." between hunks.
 function parsePiDiff(raw: unknown): DiffResultRecord | null {
   if (typeof raw !== "string" || raw.length === 0) return null;
   const hunks: DiffHunkRecord[] = [];
@@ -82,12 +115,10 @@ function parsePiDiff(raw: unknown): DiffResultRecord | null {
   return { hunks, added, removed, isIdentical: added + removed === 0, isNewFile: !hasOriginal };
 }
 
-// ── Extension entry point ─────────────────────────────────────────
 export default function activate(ctx: ExtensionContext): void {
   const { bus, call } = ctx;
   const cwd = process.cwd();
 
-  // ── Boot pi session (async — register backend synchronously first) ──
   let session: any = null;
   let runtime: any = null;
   let modelRegistry: any = null;
@@ -95,15 +126,17 @@ export default function activate(ctx: ExtensionContext): void {
 
   const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
+  // Pi's tool_execution_end omits `args` — cache from start so the end handler can use the path.
+  const pendingArgs = new Map<string, any>();
+  // Snapshot disk content before pi writes; diffed against args.content at end.
+  const pendingWriteSnapshot = new Map<string, { oldContent: string; isNewFile: boolean }>();
+
   const boot = async () => {
     try {
-      // Pi loads its own config: ~/.pi/agent/settings.json, models, extensions
       const services = await createAgentSessionServices({ cwd });
       modelRegistry = services.modelRegistry;
       const sessionManager = SessionManager.inMemory(cwd);
 
-      // createRuntime factory — returns { session, services, ... } as expected
-      // by createAgentSessionRuntime
       const createRuntime = async (opts: any) => {
         const result = await createAgentSessionFromServices({
           services,
@@ -118,7 +151,6 @@ export default function activate(ctx: ExtensionContext): void {
       });
       session = runtime.session;
 
-      // Subscribe to pi events → agent-sh bus
       let fullResponseText = "";
 
       session.subscribe((event: AgentEvent) => {
@@ -140,8 +172,38 @@ export default function activate(ctx: ExtensionContext): void {
             break;
           }
 
+          case "message_end": {
+            // Synthesize agent:tool-batch so tui-renderer groups parallel tool calls under one header.
+            const msg = (event as any).message;
+            if (msg?.role === "assistant" && Array.isArray(msg.content)) {
+              const groupMap = new Map<string, Array<{ name: string }>>();
+              for (const block of msg.content) {
+                if (block?.type === "toolCall" && typeof block.name === "string") {
+                  const kind = kindForTool(block.name);
+                  if (!groupMap.has(kind)) groupMap.set(kind, []);
+                  groupMap.get(kind)!.push({ name: block.name });
+                }
+              }
+              if (groupMap.size > 0) {
+                const groups = Array.from(groupMap.entries()).map(([kind, tools]) => ({ kind, tools }));
+                bus.emit("agent:tool-batch", { groups });
+              }
+            }
+            break;
+          }
+
           case "tool_execution_start": {
             const ev = event as any;
+            if (ev.toolCallId) pendingArgs.set(ev.toolCallId, ev.args);
+            if (ev.toolName === "write" && ev.toolCallId && typeof ev.args?.path === "string") {
+              const abs = resolvePath(cwd, ev.args.path);
+              let oldContent = "";
+              let isNewFile = true;
+              if (existsSync(abs)) {
+                try { oldContent = readFileSync(abs, "utf8"); isNewFile = false; } catch {}
+              }
+              pendingWriteSnapshot.set(ev.toolCallId, { oldContent, isNewFile });
+            }
             bus.emit("agent:tool-started", {
               title: ev.toolName,
               toolCallId: ev.toolCallId,
@@ -167,13 +229,28 @@ export default function activate(ctx: ExtensionContext): void {
 
           case "tool_execution_end": {
             const ev = event as any;
+            const args = ev.toolCallId ? pendingArgs.get(ev.toolCallId) : undefined;
+            if (ev.toolCallId) pendingArgs.delete(ev.toolCallId);
             let resultDisplay: { body?: { kind: "diff"; diff: unknown; filePath: string } } | undefined;
-            if (ev.toolName === "edit" && typeof ev.args?.path === "string") {
-              const parsed = parsePiDiff(ev.result?.details?.diff);
+            if (ev.toolName === "edit" && typeof args?.path === "string") {
+              const rawDiff = ev.result?.details?.diff;
+              const parsed = parsePiDiff(rawDiff);
               if (parsed) {
                 resultDisplay = {
-                  body: { kind: "diff", diff: parsed, filePath: ev.args.path },
+                  body: { kind: "diff", diff: parsed, filePath: args.path },
                 };
+              }
+            } else if (ev.toolName === "write" && typeof args?.path === "string" && !ev.isError) {
+              const snap = ev.toolCallId ? pendingWriteSnapshot.get(ev.toolCallId) : undefined;
+              if (ev.toolCallId) pendingWriteSnapshot.delete(ev.toolCallId);
+              if (snap) {
+                const newContent = typeof args.content === "string" ? args.content : "";
+                const built = buildDiffFromTexts(snap.oldContent, newContent, snap.isNewFile);
+                if (built) {
+                  resultDisplay = {
+                    body: { kind: "diff", diff: built, filePath: args.path },
+                  };
+                }
               }
             }
             bus.emit("agent:tool-completed", {
@@ -211,7 +288,6 @@ export default function activate(ctx: ExtensionContext): void {
     }
   };
 
-  // ── Bus listeners (wired on start, unwired on kill) ────────────
   type ListenerEntry =
     | { kind: "on"; event: string; fn: Function }
     | { kind: "pipe"; event: string; fn: Function };
@@ -345,7 +421,6 @@ export default function activate(ctx: ExtensionContext): void {
     listeners.length = 0;
   };
 
-  // ── Register as backend ───────────────────────────────────────
   bus.emit("agent:register-backend", {
     name: "pi",
     start: async () => {
