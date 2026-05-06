@@ -280,8 +280,43 @@ export default function activate(ctx: ExtensionContext): void {
     start: async () => {
       await boot();
       wireListeners();
+      bus.emit("command:register", {
+        name: "/compact",
+        description: "Compact pi's session context",
+        handler: async () => {
+          if (!session) return;
+          try {
+            await session.compact();
+            bus.emit("ui:info", { message: "(compacted)" });
+          } catch (err) {
+            bus.emit("ui:info", {
+              message: `(${err instanceof Error ? err.message : String(err)})`,
+            });
+          }
+        },
+      });
+      bus.emit("command:register", {
+        name: "/context",
+        description: "Show pi's context budget usage",
+        handler: () => {
+          if (!session) return;
+          const usage = session.getContextUsage() as { tokens: number; contextWindow: number } | undefined;
+          if (!usage) {
+            bus.emit("ui:info", { message: "Context: not available yet" });
+            return;
+          }
+          const pct = usage.contextWindow > 0
+            ? Math.round((usage.tokens / usage.contextWindow) * 100)
+            : 0;
+          bus.emit("ui:info", {
+            message: `Active context: ~${usage.tokens.toLocaleString()} tokens / ${usage.contextWindow.toLocaleString()} budget (${pct}%)`,
+          });
+        },
+      });
     },
     kill: () => {
+      bus.emit("command:unregister", { name: "/compact" });
+      bus.emit("command:unregister", { name: "/context" });
       unwireListeners();
       runtime?.dispose();
       session = null;
