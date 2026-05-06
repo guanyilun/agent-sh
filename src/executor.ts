@@ -1,5 +1,14 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import { stripAnsi } from "./utils/ansi.js";
+
+// Node reports a missing cwd as `spawn <binary> ENOENT` — disambiguate.
+function explainSpawnError(err: NodeJS.ErrnoException, cwd: string): string {
+  if (err.code === "ENOENT" && !existsSync(cwd)) {
+    return `cwd no longer exists: ${cwd} (${err.message})`;
+  }
+  return err.message;
+}
 
 let cachedBashPath: string | null | undefined;
 
@@ -86,7 +95,10 @@ export function executeCommand(opts: {
   } catch (err) {
     session.exitCode = -1;
     session.spawnFailed = true;
-    session.output = `Failed to spawn: ${err instanceof Error ? err.message : String(err)}`;
+    const msg = err instanceof Error
+      ? explainSpawnError(err as NodeJS.ErrnoException, opts.cwd)
+      : String(err);
+    session.output = `Failed to spawn: ${msg}`;
     session.done = true;
     session.resolve?.();
     return { session, done };
@@ -137,7 +149,7 @@ export function executeCommand(opts: {
       session.exitCode = -1;
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "EACCES") session.spawnFailed = true;
-      session.output += `\nProcess error: ${err.message}`;
+      session.output += `\nProcess error: ${explainSpawnError(err as NodeJS.ErrnoException, opts.cwd)}`;
       session.done = true;
       session.process = null;
       session.resolve?.();
@@ -195,7 +207,10 @@ export function executeArgv(opts: {
   } catch (err) {
     session.exitCode = -1;
     session.spawnFailed = true;
-    session.output = `Failed to spawn ${opts.file}: ${err instanceof Error ? err.message : String(err)}`;
+    const msg = err instanceof Error
+      ? explainSpawnError(err as NodeJS.ErrnoException, opts.cwd)
+      : String(err);
+    session.output = `Failed to spawn ${opts.file}: ${msg}`;
     session.done = true;
     session.resolve?.();
     return { session, done };
@@ -242,7 +257,7 @@ export function executeArgv(opts: {
       session.exitCode = -1;
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "EACCES") session.spawnFailed = true;
-      session.output += `\nProcess error: ${err.message}`;
+      session.output += `\nProcess error: ${explainSpawnError(err as NodeJS.ErrnoException, opts.cwd)}`;
       session.done = true;
       session.process = null;
       session.resolve?.();
