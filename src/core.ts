@@ -91,26 +91,20 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   const backends = new Map<string, Backend>();
   let activeBackendName: string | null = null;
 
-  const activateByName = async (name: string, silent = false) => {
+  const activateByName = async (name: string): Promise<boolean> => {
     const backend = backends.get(name);
     if (!backend) {
       bus.emit("ui:error", { message: `Unknown backend: ${name}` });
-      return;
+      return false;
     }
 
-    // Deactivate current backend
     if (activeBackendName) {
       backends.get(activeBackendName)?.kill();
     }
 
-    // Activate new backend
     await backend.start?.();
     activeBackendName = name;
-
-    if (!silent) {
-      bus.emit("ui:info", { message: `Backend: ${name}` });
-    }
-    bus.emit("config:changed", {});
+    return true;
   };
 
   bus.on("agent:register-backend", (backend) => {
@@ -118,11 +112,12 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   });
 
   bus.on("config:switch-backend", ({ name }) => {
-    activateByName(name).then(() => {
-      if (activeBackendName === name) {
-        settingsMod.updateSettings({ defaultBackend: name });
-        bus.emit("ui:info", { message: `Saved '${name}' as default backend.` });
-      }
+    activateByName(name).then((ok) => {
+      if (!ok) return;
+      settingsMod.updateSettings({ defaultBackend: name });
+      // Single ui:info; config:changed (which triggers prompt redraw) follows it.
+      bus.emit("ui:info", { message: `Backend: ${name} (saved as default)` });
+      bus.emit("config:changed", {});
     });
   });
 
@@ -154,8 +149,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
       if (backends.size === 0) return;
       const preferred = settings.defaultBackend;
       const name = preferred && backends.has(preferred) ? preferred : backends.keys().next().value!;
-      // silent=true: startup banner shows the backend; ui:info would race against it
-      await activateByName(name, true);
+      await activateByName(name);
     },
 
     async query(text) {
