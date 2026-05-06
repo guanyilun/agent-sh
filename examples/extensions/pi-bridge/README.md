@@ -1,14 +1,11 @@
 # pi-bridge
 
-Runs [pi](https://github.com/nickarora/pi)'s full coding agent as an agent-sh backend. Uses pi's own configuration, models, tools, and extensions — agent-sh just provides the terminal.
+Runs [pi](https://github.com/badlogic/pi-mono) (`@mariozechner/pi-coding-agent`) as an agent-sh backend. Pi brings its own configuration, models, tools, and extensions — agent-sh just provides the terminal.
 
 ## Install
 
 ```bash
-# Copy or symlink into your extensions directory
 cp -r examples/extensions/pi-bridge ~/.agent-sh/extensions/pi-bridge
-
-# Install dependencies
 cd ~/.agent-sh/extensions/pi-bridge
 npm install
 ```
@@ -26,13 +23,21 @@ Set as default backend in `~/.agent-sh/settings.json`:
 Or switch at runtime:
 
 ```
-? /backend pi
+> /backend pi
 ```
 
-## Requirements
+Pi reads its own settings from `~/.pi/agent/settings.json`. Configure API keys and model preferences there (or run `pi` directly to set up auth) — agent-sh does not override pi's configuration.
 
-- pi must be configured separately (`~/.pi/settings.json`) with API keys and model preferences
-- agent-sh does not override pi's configuration — it uses whatever pi is set up with
+## What works under pi
+
+These slash commands are routed to pi's SDK when pi is the active backend:
+
+- `/model` — lists/switches pi's available models (`session.setModel`)
+- `/thinking` — sets pi's thinking level (`off/minimal/low/medium/high/xhigh`)
+- `/compact` — runs `session.compact()` on pi's session
+- `/context` — reports pi's token usage (`session.getContextUsage()`)
+
+agent-sh's per-query context producers (e.g. `<shell_events>` from `shell-context`) are inlined into pi's prompt before each query, so pi sees the user's recent shell activity even though it doesn't subscribe to agent-sh's shell bus directly.
 
 ## What this bridge is
 
