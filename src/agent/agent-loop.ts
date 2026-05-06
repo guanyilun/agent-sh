@@ -276,6 +276,10 @@ export class AgentLoop implements AgentBackend {
     on("agent:cancel-request", (e) => {
       this.abortController?.abort(e.silent ? "silent" : undefined);
     });
+    on("agent:append-user-message", ({ text }) => {
+      this.conversation.appendUserMessage(text);
+      this.bus.emit("conversation:message-appended", { role: "user", content: text });
+    });
     on("config:switch-model", ({ model: target }) => {
       const atIdx = target.lastIndexOf("@");
       const modelId = atIdx > 0 ? target.slice(0, atIdx) : target;
