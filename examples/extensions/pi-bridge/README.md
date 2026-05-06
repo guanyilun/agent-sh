@@ -42,15 +42,3 @@ agent-sh's per-query context producers (e.g. `<shell_events>` from `shell-contex
 ## What this bridge is
 
 A pure protocol translator between pi's event stream and agent-sh's bus events. Pi's built-in tools (command execution, file ops, etc.) are used exactly as pi ships them. The bridge adds no tools of its own.
-
-## What this bridge intentionally does NOT bundle
-
-Three PTY-access tools are left out on purpose:
-
-- `terminal_read` — observe the user's live terminal screen
-- `terminal_keys` — send keystrokes to the user's PTY
-- `user_shell` — run commands in the user's live shell with lasting `cd`/`export`/`source` effects
-
-These are opt-in capabilities that belong in their own extensions. If you want any of them with pi, write a small companion extension that registers the tool as a pi `ToolDefinition` (TypeBox schema, wired to the relevant bus event: `shell:pty-write`, `shell:exec-request`, or `ctx.terminalBuffer.readScreen()`) and load it alongside pi-bridge.
-
-Keeping this split means the bridge stays narrow — only translating events — and the capability surface is composable per-backend.

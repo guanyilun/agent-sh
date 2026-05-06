@@ -1,16 +1,6 @@
 /**
  * Pi bridge — runs pi's full coding agent in-process as agent-sh's backend.
- *
- * Uses pi's own AgentSession with its full configuration: model registry,
- * provider settings, extensions, session management, and tool system.
- * Agent-sh provides the shell frontend and TUI rendering.
- *
- * The bridge is a pure protocol translator between pi's event stream and
- * agent-sh's bus events. Pi brings its own tools for command execution,
- * file ops, etc. PTY-access tools (`terminal_read`, `terminal_keys`,
- * `user_shell`) are intentionally NOT bundled here — if you want pi to
- * observe or mutate the user's live terminal, load a companion extension
- * that registers those tools in pi's ToolDefinition format.
+ * Pure protocol translator between pi's event stream and agent-sh's bus.
  *
  * Setup:
  *   npm install @mariozechner/pi-agent-core @mariozechner/pi-ai @mariozechner/pi-coding-agent
