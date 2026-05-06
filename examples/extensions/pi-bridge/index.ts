@@ -35,12 +35,16 @@ export default function activate(ctx: ExtensionContext): void {
   // ── Boot pi session (async — register backend synchronously first) ──
   let session: any = null;
   let runtime: any = null;
+  let modelRegistry: any = null;
   let booting = true;
+
+  const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
   const boot = async () => {
     try {
       // Pi loads its own config: ~/.pi/agent/settings.json, models, extensions
       const services = await createAgentSessionServices({ cwd });
+      modelRegistry = services.modelRegistry;
       const sessionManager = SessionManager.inMemory(cwd);
 
       // createRuntime factory — returns { session, services, ... } as expected
@@ -138,7 +142,10 @@ export default function activate(ctx: ExtensionContext): void {
   };
 
   // ── Bus listeners (wired on start, unwired on kill) ────────────
-  const listeners: Array<{ event: string; fn: Function }> = [];
+  type ListenerEntry =
+    | { kind: "on"; event: string; fn: Function }
+    | { kind: "pipe"; event: string; fn: Function };
+  const listeners: ListenerEntry[] = [];
 
   const wireListeners = () => {
     const onSubmit = async ({ query }: any) => {
@@ -169,18 +176,98 @@ export default function activate(ctx: ExtensionContext): void {
       session = runtime?.session;
     };
 
+    const onListModels = () => {
+      if (!session || !modelRegistry) return { models: [], active: null };
+      const all = modelRegistry.getAvailable() as Array<{ id: string; provider: string }>;
+      const cur = session.model;
+      return {
+        models: all.map((m) => ({ model: m.id, provider: m.provider })),
+        active: cur ? { model: cur.id, provider: cur.provider } : null,
+      };
+    };
+
+    // Slash command emits `model@provider` for disambiguation; pi looks up by (provider, id).
+    const onSwitchModel = async ({ model: target }: { model: string }) => {
+      if (!session || !modelRegistry) return;
+      const atIdx = target.lastIndexOf("@");
+      const modelId = atIdx > 0 ? target.slice(0, atIdx) : target;
+      const providerHint = atIdx > 0 ? target.slice(atIdx + 1) : undefined;
+
+      const candidates = (modelRegistry.getAvailable() as Array<{ id: string; provider: string }>)
+        .filter((m) => m.id === modelId && (!providerHint || m.provider === providerHint));
+
+      if (candidates.length === 0) {
+        bus.emit("ui:error", { message: `Unknown model: ${target}` });
+        return;
+      }
+      if (candidates.length > 1) {
+        const opts = candidates.map((m) => `${m.id}@${m.provider}`).join(", ");
+        bus.emit("ui:error", { message: `Ambiguous model "${modelId}". Use one of: ${opts}` });
+        return;
+      }
+      const picked = candidates[0]!;
+      const full = modelRegistry.find(picked.provider, picked.id);
+      if (!full) {
+        bus.emit("ui:error", { message: `Model not found: ${target}` });
+        return;
+      }
+      try {
+        await session.setModel(full);
+        bus.emit("agent:info", {
+          name: "pi",
+          version: "0.66",
+          model: `${picked.provider}/${picked.id}`,
+        });
+        bus.emit("ui:info", { message: `Model: ${picked.provider}: ${picked.id}` });
+        bus.emit("config:changed", {});
+      } catch (err) {
+        bus.emit("ui:error", {
+          message: `Failed to switch model: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    };
+
+    const onGetThinking = () => {
+      const level = session?.thinkingLevel ?? "off";
+      return { level, levels: [...PI_THINKING_LEVELS], supported: true };
+    };
+
+    const onSetThinking = ({ level }: { level: string }) => {
+      if (!session) return;
+      if (!PI_THINKING_LEVELS.includes(level as any)) {
+        bus.emit("ui:error", {
+          message: `Unknown thinking level: ${level}. Use: ${PI_THINKING_LEVELS.join(", ")}`,
+        });
+        return;
+      }
+      session.setThinkingLevel(level);
+      bus.emit("ui:info", { message: `Thinking: ${level}` });
+      bus.emit("config:changed", {});
+    };
+
     bus.on("agent:submit", onSubmit);
     bus.on("agent:cancel-request", onCancel);
     bus.on("agent:reset-session", onReset);
+    bus.on("config:switch-model", onSwitchModel as any);
+    bus.on("config:set-thinking", onSetThinking as any);
+    bus.onPipe("config:get-models", onListModels as any);
+    bus.onPipe("config:get-thinking", onGetThinking as any);
     listeners.push(
-      { event: "agent:submit", fn: onSubmit },
-      { event: "agent:cancel-request", fn: onCancel },
-      { event: "agent:reset-session", fn: onReset },
+      { kind: "on", event: "agent:submit", fn: onSubmit },
+      { kind: "on", event: "agent:cancel-request", fn: onCancel },
+      { kind: "on", event: "agent:reset-session", fn: onReset },
+      { kind: "on", event: "config:switch-model", fn: onSwitchModel },
+      { kind: "on", event: "config:set-thinking", fn: onSetThinking },
+      { kind: "pipe", event: "config:get-models", fn: onListModels },
+      { kind: "pipe", event: "config:get-thinking", fn: onGetThinking },
     );
   };
 
   const unwireListeners = () => {
-    for (const { event, fn } of listeners) bus.off(event as any, fn as any);
+    for (const { kind, event, fn } of listeners) {
+      if (kind === "pipe") bus.offPipe(event as any, fn as any);
+      else bus.off(event as any, fn as any);
+    }
     listeners.length = 0;
   };
 
@@ -196,6 +283,7 @@ export default function activate(ctx: ExtensionContext): void {
       runtime?.dispose();
       session = null;
       runtime = null;
+      modelRegistry = null;
       booting = true;
     },
   });

@@ -114,6 +114,8 @@ export default function agentBackend(ctx: ExtensionContext): void {
   let modes: AgentMode[] = [];
   let initialModeIndex = 0;
   let resolved = false;
+  // Gates late-registration reconcile so its config:switch-model emit doesn't misroute under a non-ash backend.
+  let ashActive = false;
 
   bus.onPipe("config:get-initial-modes", () => ({ modes, initialModeIndex }));
 
@@ -183,9 +185,13 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
     bus.emit("agent:register-backend", {
       name: "ash",
-      kill: () => agentLoop.kill(),
+      kill: () => {
+        ashActive = false;
+        agentLoop.kill();
+      },
       start: async () => {
         agentLoop.wire();
+        ashActive = true;
         bus.emit("agent:info", {
           name: "ash",
           version: PACKAGE_VERSION,
@@ -253,7 +259,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     // Late-registration reconcile: if this completes the user's persisted
     // default (openrouter's async fetch delivers the full catalog after
     // we've already fallen back to mode 0), quietly switch to it.
-    if (!resolved) return;
+    if (!resolved || !ashActive) return;
     const pendingProvider = getSettings().defaultProvider;
     if (pendingProvider !== p.id) return;
     const pendingModel = persistedModelFor(pendingProvider);

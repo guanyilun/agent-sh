@@ -526,6 +526,17 @@ export class EventBus {
     return result;
   }
 
+  /** Remove an async transform listener from a pipeline event. */
+  offPipeAsync<K extends keyof ShellEvents>(
+    event: K,
+    fn: AsyncPipeListener<ShellEvents[K]>,
+  ): void {
+    const listeners = this.asyncPipeListeners.get(event);
+    if (!listeners) return;
+    const idx = listeners.indexOf(fn);
+    if (idx !== -1) listeners.splice(idx, 1);
+  }
+
   /** Register an async transform listener for a pipeline event. */
   onPipeAsync<K extends keyof ShellEvents>(
     event: K,
