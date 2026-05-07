@@ -257,7 +257,6 @@ export class FloatingPanel {
   private prevFrame: string[] = [];
   private suppressNextRedraw = false;
   private autoDismissTimer: ReturnType<typeof setTimeout> | null = null;
-  private ptyBuffer = "";  // PTY output accumulated while overlay is open
   private usedAltScreen = false;  // whether we entered our own alt screen
   private wrapCache = new Map<string, string[]>();  // line → wrapped lines (invalidated on width change)
   private wrapCacheWidth = 0;
@@ -452,12 +451,6 @@ export class FloatingPanel {
   // ── Bus event wiring ───────────────────────────────────────
 
   private wireEvents(): void {
-    // Buffer PTY output while overlay is visible (alt screen discards it).
-    // Don't buffer when hidden — PTY flows to terminal directly via stdout-show.
-    this.bus.on("shell:pty-data", ({ raw }) => {
-      if (this._visible) this.ptyBuffer += raw;
-    });
-
     this.bus.onPipe("input:intercept", (payload) => this.handleIntercept(payload));
     this.bus.onPipe("shell:redraw-prompt", (payload) => {
       if (this._visible || this._passthrough) {
@@ -547,7 +540,6 @@ export class FloatingPanel {
       // so the background program's screen stays correct without
       // handing rendering control back to ncurses.
       this._passthrough = true;
-      this.ptyBuffer = "";
       this.startPassthrough();
     } else {
       // Agent idle or done — full teardown, hand back control.
@@ -604,7 +596,6 @@ export class FloatingPanel {
   /** Common screen enter logic shared by open() and show(). */
   private enterScreen(): void {
     this._visible = true;
-    this.ptyBuffer = "";
     this.bus.emit("shell:stdout-hold", {});
 
     this.usedAltScreen = !(this.buffer?.altScreen);
@@ -643,6 +634,15 @@ export class FloatingPanel {
   updateLastLine(fn: (line: string) => string): void {
     if (this.contentLines.length > 0) {
       this.contentLines[this.contentLines.length - 1] = fn(this.contentLines[this.contentLines.length - 1]!);
+    }
+    this.scheduleRender();
+  }
+
+  popLastLine(): void {
+    if (this.currentPartialLine) {
+      this.currentPartialLine = "";
+    } else if (this.contentLines.length > 0) {
+      this.contentLines.pop();
     }
     this.scheduleRender();
   }
@@ -923,43 +923,21 @@ export class FloatingPanel {
 
   // ── Screen helpers ────────────────────────────────────────
 
-  /** Full screen teardown: exit alt screen, release stdout, force redraw. */
+  /** Repaint from the mirror — the terminal's own alt-screen save/restore
+   *  freezes a pre-overlay snapshot and diverges from the program's cursor
+   *  model (e.g. gdb-REPL, scripted PTYs). */
   private teardownScreen(): void {
     this.resizeUnsub?.();
     this.resizeUnsub = null;
     this.suppressNextRedraw = true;
 
-    // Re-check alt screen state: the program we overlaid may have exited
-    // (e.g. agent quit vim via terminal_keys) while the panel was active.
-    const stillInAltScreen = !this.usedAltScreen && !!this.buffer?.altScreen;
-    const programExited = !this.usedAltScreen && !stillInAltScreen;
-
-    if (this.usedAltScreen) {
-      this.surface.write("\x1b[?1049l");
-    }
-
-    // Replay PTY output that arrived while the overlay was active.
-    // Without this, commands run by the agent (e.g. user_shell ls)
-    // would vanish — the alt screen exit restores the saved screen
-    // from before the overlay opened, losing any shell output produced
-    // during the session.
-    if (this.ptyBuffer) {
-      this.surface.write(this.ptyBuffer);
-    }
-    this.ptyBuffer = "";
+    this.buffer?.flush();
+    if (this.usedAltScreen) this.surface.write("\x1b[?1049l");
     this.bus.emit("shell:stdout-release", {});
 
-    if (stillInAltScreen || programExited) {
-      // Either a TUI app is still running and needs SIGWINCH to repaint,
-      // or the overlaid program exited (e.g. agent quit vim) and we
-      // discarded its stale buffer — SIGWINCH makes the shell redraw
-      // its prompt cleanly.
-      const cols = this.surface.columns;
-      const rows = this.surface.rows;
-      this.bus.emit("shell:pty-resize", { cols, rows: rows - 1 });
-      setTimeout(() => {
-        this.bus.emit("shell:pty-resize", { cols, rows });
-      }, 50);
+    const serialized = this.buffer?.serialize();
+    if (serialized) {
+      this.surface.write(`${SYNC_START}\x1b[2J\x1b[H${serialized}${SYNC_END}`);
     }
   }
 
@@ -987,7 +965,7 @@ export class FloatingPanel {
     const serialized = this.buffer.serialize();
     if (serialized && serialized !== this.prevSerialized) {
       this.prevSerialized = serialized;
-      this.surface.write(`${SYNC_START}\x1b[H${serialized}${SYNC_END}`);
+      this.surface.write(`${SYNC_START}\x1b[2J\x1b[H${serialized}${SYNC_END}`);
     }
   }
 
