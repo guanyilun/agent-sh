@@ -263,6 +263,13 @@ export class FloatingPanel {
   private passthroughTimer: ReturnType<typeof setInterval> | null = null;
   private prevSerialized = "";
 
+  // DEC private modes to mirror to the real terminal on dismiss — toggles
+  // for these get swallowed by stdoutHold while the overlay is up, so e.g.
+  // vim's focus-reporting disable on exit never reaches the real terminal.
+  // Alt-screen (?1049/?1047/?47) excluded — enter/teardownScreen own it.
+  private static readonly TRACKED_MODES = [25, 1000, 1002, 1003, 1004, 1006, 2004];
+  private modeState = new Map<number, boolean>();
+
   constructor(bus: EventBus, config: FloatingPanelConfig, handlers?: HandlerRegistry) {
     this.bus = bus;
     this.surface = config.surface ?? new StdoutSurface();
@@ -451,6 +458,15 @@ export class FloatingPanel {
   // ── Bus event wiring ───────────────────────────────────────
 
   private wireEvents(): void {
+    this.bus.on("shell:pty-data", ({ raw }) => {
+      for (const m of raw.matchAll(/\x1b\[\?(\d+)([hl])/g)) {
+        const n = parseInt(m[1]!, 10);
+        if (FloatingPanel.TRACKED_MODES.includes(n)) {
+          this.modeState.set(n, m[2] === "h");
+        }
+      }
+    });
+
     this.bus.onPipe("input:intercept", (payload) => this.handleIntercept(payload));
     this.bus.onPipe("shell:redraw-prompt", (payload) => {
       if (this._visible || this._passthrough) {
@@ -936,8 +952,11 @@ export class FloatingPanel {
     this.bus.emit("shell:stdout-release", {});
 
     const serialized = this.buffer?.serialize();
-    if (serialized) {
-      this.surface.write(`${SYNC_START}\x1b[2J\x1b[H${serialized}${SYNC_END}`);
+    const modeReplay = [...this.modeState]
+      .map(([n, on]) => `\x1b[?${n}${on ? "h" : "l"}`)
+      .join("");
+    if (serialized || modeReplay) {
+      this.surface.write(`${SYNC_START}\x1b[2J\x1b[H${serialized ?? ""}${modeReplay}${SYNC_END}`);
     }
   }
 
