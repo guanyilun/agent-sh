@@ -378,6 +378,7 @@ export class Shell implements InputContext {
     this.pendingEchoSkips = 0;
     const result = this.bus.emitPipe("shell:redraw-prompt", {
       cwd: this.outputParser.getCwd(),
+      kind: "redraw",
       handled: false,
     });
     if (!result.handled) {
@@ -396,6 +397,7 @@ export class Shell implements InputContext {
   freshPrompt(): boolean {
     const result = this.bus.emitPipe("shell:redraw-prompt", {
       cwd: this.outputParser.getCwd(),
+      kind: "fresh",
       handled: false,
     });
     if (!result.handled) {
