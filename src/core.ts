@@ -274,6 +274,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
               active = false;
               for (const fn of cleanups.reverse()) fn();
               cleanups.length = 0;
+              bus.emit("shell:remote-session-end", {});
             },
           };
         },
