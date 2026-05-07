@@ -95,9 +95,7 @@ export default function activate(ctx: ExtensionContext): void {
       "  - Ctrl+D: \\x04\n" +
       "  - Ctrl+Z: \\x1a\n" +
       "  - Arrow keys: \\x1b[A (up), \\x1b[B (down), \\x1b[C (right), \\x1b[D (left)\n" +
-      "  - Backspace: \\x7f\n\n" +
-      "Example: to quit vim without saving, send keys=\"\\x1b:q!\\r\" (Escape, :q!, Enter).\n" +
-      "Always call terminal_read after sending keys to verify the result.",
+      "  - Backspace: \\x7f",
     input_schema: {
       type: "object",
       properties: {
@@ -125,7 +123,7 @@ export default function activate(ctx: ExtensionContext): void {
     }),
 
     formatCall: (args) => {
-      const keys = args.keys as string;
+      const keys = (args.keys as string | undefined) ?? "";
       return keys
         .replace(/\\x1b|\x1b/g, "ESC")
         .replace(/\\r|\r/g, "⏎")
