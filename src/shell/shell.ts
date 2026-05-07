@@ -248,6 +248,15 @@ export class Shell implements InputContext {
     // Ref-counted stdout show — tools temporarily force output visible during agent processing
     this.bus.on("shell:stdout-show", () => { this.stdoutShow.increment(); });
     this.bus.on("shell:stdout-hide", () => { this.stdoutShow.decrement(); });
+
+    // RemoteSession (overlay) advisors suppress on-processing-done; clear
+    // the state it would have cleared. No freshPrompt — shell is already
+    // at its prompt, a \n nudge would just be noise.
+    this.bus.on("shell:remote-session-end", () => {
+      this.paused = false;
+      this.echoSkip = false;
+      this.agentActive = false;
+    });
   }
 
   // ── InputContext implementation (delegates to OutputParser) ──
