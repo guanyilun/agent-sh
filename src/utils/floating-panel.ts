@@ -257,7 +257,6 @@ export class FloatingPanel {
   private prevFrame: string[] = [];
   private suppressNextRedraw = false;
   private autoDismissTimer: ReturnType<typeof setTimeout> | null = null;
-  private usedAltScreen = false;  // whether we entered our own alt screen
   private wrapCache = new Map<string, string[]>();  // line → wrapped lines (invalidated on width change)
   private wrapCacheWidth = 0;
   private passthroughTimer: ReturnType<typeof setInterval> | null = null;
@@ -451,6 +450,15 @@ export class FloatingPanel {
   // ── Bus event wiring ───────────────────────────────────────
 
   private wireEvents(): void {
+    // Re-overlay the panel after each PTY chunk. The shell emits
+    // `shell:pty-data` synchronously *before* writing to stdout, so a
+    // microtask defers our render until after the program's bytes have
+    // landed — we paint on top of them, not under.
+    this.bus.on("shell:pty-data", () => {
+      if (!this._visible) return;
+      queueMicrotask(() => { if (this._visible) this.render(); });
+    });
+
     this.bus.onPipe("input:intercept", (payload) => this.handleIntercept(payload));
     this.bus.onPipe("shell:redraw-prompt", (payload) => {
       if (this._visible || this._passthrough) {
@@ -593,18 +601,13 @@ export class FloatingPanel {
     this.footer = "";
   }
 
-  /** Common screen enter logic shared by open() and show(). */
+  /** Common screen enter logic shared by open() and show().
+   *  No curtain — bytes flow through to the real terminal so its mode
+   *  state stays in sync with what the program is doing. We re-overlay
+   *  the panel after each PTY chunk via wireEvents. */
   private enterScreen(): void {
     this._visible = true;
-    this.bus.emit("shell:stdout-hold", {});
-
-    this.usedAltScreen = !(this.buffer?.altScreen);
-    if (this.usedAltScreen) {
-      this.surface.write("\x1b[?1049h");
-    }
-
     this.resizeUnsub = this.surface.onResize(() => { this.prevFrame = []; this.render(); });
-
     this.render();
   }
 
@@ -923,22 +926,27 @@ export class FloatingPanel {
 
   // ── Screen helpers ────────────────────────────────────────
 
-  /** Repaint from the mirror — the terminal's own alt-screen save/restore
-   *  freezes a pre-overlay snapshot and diverges from the program's cursor
-   *  model (e.g. gdb-REPL, scripted PTYs). */
+  /** Clear the panel from the screen by repainting the mirror over it.
+   *  Bytes flowed through during the overlay, so the real terminal's
+   *  underlying state already matches the mirror — this just removes
+   *  the box. The trailing reset zeroes out keyboard modes that some
+   *  terminals don't round-trip cleanly through DECSTR; programs still
+   *  alive reassert their modes on next paint. */
   private teardownScreen(): void {
     this.resizeUnsub?.();
     this.resizeUnsub = null;
     this.suppressNextRedraw = true;
 
     this.buffer?.flush();
-    if (this.usedAltScreen) this.surface.write("\x1b[?1049l");
-    this.bus.emit("shell:stdout-release", {});
-
-    const serialized = this.buffer?.serialize();
-    if (serialized) {
-      this.surface.write(`${SYNC_START}\x1b[2J\x1b[H${serialized}${SYNC_END}`);
-    }
+    const serialized = this.buffer?.serialize() ?? "";
+    const reset =
+      "\x1b[>4;0m" +   // modifyOtherKeys off
+      "\x1b[<u" +      // kitty keyboard pop
+      "\x1b[?1004l" +  // focus reporting off
+      "\x1b[?2004l" +  // bracketed paste off
+      "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l" +  // mouse off
+      "\x1b[?25h";     // cursor visible
+    this.surface.write(`${SYNC_START}\x1b[2J\x1b[H${serialized}${reset}${SYNC_END}`);
   }
 
   // ── Passthrough rendering ─────────────────────────────────
