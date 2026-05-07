@@ -207,11 +207,6 @@ export interface ShellEvents {
   "shell:stdout-show": Record<string, never>;
   "shell:stdout-hide": Record<string, never>;
 
-  // RemoteSession.close() emits this so the shell can clear paused/echoSkip
-  // state that on-processing-done would have cleared, but couldn't because
-  // RemoteSession's advisors suppressed it.
-  "shell:remote-session-end": Record<string, never>;
-
   // Terminal interception (sync pipe: extensions can intercept before execution)
   "agent:terminal-intercept": {
     command: string;

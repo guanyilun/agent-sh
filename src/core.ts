@@ -251,9 +251,12 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
           cleanups.push(compositor.redirect("query", surface));
           cleanups.push(compositor.redirect("status", surface));
 
-          // Keep shell interactive
+          // Keep shell interactive: suppress the host shell's mute lifecycle
+          // and the post-turn freshPrompt nudge. on-processing-done's state
+          // cleanup is intentionally NOT advised — releasing scopes must
+          // always run, even when the redraw is suppressed.
           cleanups.push(handlers.advise("shell:on-processing-start", (next) => active ? undefined : next()));
-          cleanups.push(handlers.advise("shell:on-processing-done", (next) => active ? undefined : next()));
+          cleanups.push(handlers.advise("shell:on-processing-redraw", (next) => active ? undefined : next()));
 
           // Suppress chrome
           if (opts.suppressBorders !== false) {
@@ -274,7 +277,6 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
               active = false;
               for (const fn of cleanups.reverse()) fn();
               cleanups.length = 0;
-              bus.emit("shell:remote-session-end", {});
             },
           };
         },
