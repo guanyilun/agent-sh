@@ -923,16 +923,42 @@ export class FloatingPanel {
 
   // ── Screen helpers ────────────────────────────────────────
 
-  /** Repaint from the mirror — the terminal's own alt-screen save/restore
-   *  freezes a pre-overlay snapshot and diverges from the program's cursor
-   *  model (e.g. gdb-REPL, scripted PTYs). */
   private teardownScreen(): void {
     this.resizeUnsub?.();
     this.resizeUnsub = null;
     this.suppressNextRedraw = true;
 
     this.buffer?.flush();
-    if (this.usedAltScreen) this.surface.write("\x1b[?1049l");
+
+    const programInAlt = !!this.buffer?.altScreen;
+
+    if (!this.usedAltScreen && programInAlt) {
+      // Program still in its own alt-screen — SIGWINCH so it redraws
+      // and re-asserts its modes; replaying from the mirror would
+      // freeze modes serialize() doesn't track (modifyOtherKeys, kitty
+      // kbd) and leave ctrl-c arriving as \x1b[27;5;99~.
+      this.bus.emit("shell:stdout-release", {});
+      const cols = this.surface.columns;
+      const rows = this.surface.rows;
+      this.bus.emit("shell:pty-resize", { cols, rows: rows - 1 });
+      setTimeout(() => {
+        this.bus.emit("shell:pty-resize", { cols, rows });
+      }, 50);
+      return;
+    }
+
+    this.surface.write("\x1b[?1049l");
+
+    if (!this.usedAltScreen) {
+      // Program exited mid-overlay; its reset bytes were eaten by
+      // stdout-hold. Reset modes serialize() doesn't track or the
+      // host stays in vim's modifyOtherKeys mode.
+      this.surface.write(
+        "\x1b[>4;0m\x1b[<u\x1b[?2004l\x1b[?1004l" +
+        "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l",
+      );
+    }
+
     this.bus.emit("shell:stdout-release", {});
 
     const serialized = this.buffer?.serialize();
