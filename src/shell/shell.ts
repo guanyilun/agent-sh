@@ -33,7 +33,13 @@ export class Shell implements InputContext {
   private handlers: ShellHandlers;
   private inputHandler: InputHandler;
   private outputParser: OutputParser;
-  private muteScopes = new Set<ShellScope>();
+  // Two mute tiers:
+  //   - hardMuteScopes: unconditional. The overlay holds this while drawing
+  //     its compositing layer — no other code path can override it.
+  //   - softMuteScopes: agent-turn / exec-style mutes. An unmuteScope
+  //     (permission UI, terminal_keys' stdout-show) can override these.
+  private hardMuteScopes = new Set<ShellScope>();
+  private softMuteScopes = new Set<ShellScope>();
   private unmuteScopes = new Set<ShellScope>();
   private pendingEchoSkips = 0;
   private agentActive = false;
@@ -255,10 +261,14 @@ export class Shell implements InputContext {
 
     // Compat shims: existing extensions emit the old ref-counted bus events.
     // Each pair of hold/release (or show/hide) is bridged to a single scope.
+    // shell:stdout-hold maps to a HARD mute — the old stdoutHold gate was
+    // unconditional (couldn't be overridden by stdoutShow), so the overlay
+    // compositing layer stays opaque even when terminal_keys is forcing
+    // stdout visible during agent processing.
     let holdRefcount = 0;
     let holdScope: ShellScope | null = null;
     this.bus.on("shell:stdout-hold", () => {
-      if (holdRefcount === 0) holdScope = this.acquireMute("bus:stdout-hold");
+      if (holdRefcount === 0) holdScope = this.acquireHardMute("bus:stdout-hold");
       holdRefcount++;
     });
     this.bus.on("shell:stdout-release", () => {
@@ -283,22 +293,36 @@ export class Shell implements InputContext {
   // ── Scope-based gating ─────────────────────────────────────
 
   /**
-   * Mute host stdout for as long as the returned scope is held.
-   * Reason is for diagnostics; release is idempotent.
+   * Hard mute: the overlay's "I own the screen" claim. No unmuteScope
+   * can override this. Use for compositing layers that must not be
+   * painted over by raw PTY output.
    */
-  acquireMute(reason: string): ShellScope {
+  acquireHardMute(reason: string): ShellScope {
     const scope: ShellScope = {
       reason,
-      release: () => { this.muteScopes.delete(scope); },
+      release: () => { this.hardMuteScopes.delete(scope); },
     };
-    this.muteScopes.add(scope);
+    this.hardMuteScopes.add(scope);
     return scope;
   }
 
   /**
-   * Force host stdout visible while held, even if mute scopes are active.
-   * Use for permission UIs, tool outputs, or anything that briefly needs
-   * the user to see PTY output during a paused agent turn.
+   * Soft mute: the agent-turn / exec-request "shell paused while I work"
+   * claim. An unmuteScope (permission UI, terminal_keys stdout-show)
+   * overrides this for as long as the unmute is held.
+   */
+  acquireMute(reason: string): ShellScope {
+    const scope: ShellScope = {
+      reason,
+      release: () => { this.softMuteScopes.delete(scope); },
+    };
+    this.softMuteScopes.add(scope);
+    return scope;
+  }
+
+  /**
+   * Force host stdout visible while held, overriding soft mutes only.
+   * Hard mutes (overlay) still win.
    */
   acquireUnmute(reason: string): ShellScope {
     const scope: ShellScope = {
@@ -318,7 +342,8 @@ export class Shell implements InputContext {
   skipNextLine(): void { this.pendingEchoSkips++; }
 
   private isHostMuted(): boolean {
-    return this.muteScopes.size > 0 && this.unmuteScopes.size === 0;
+    if (this.hardMuteScopes.size > 0) return true;
+    return this.softMuteScopes.size > 0 && this.unmuteScopes.size === 0;
   }
 
   // ── InputContext implementation (delegates to OutputParser) ──
@@ -342,9 +367,15 @@ export class Shell implements InputContext {
   /**
    * Ask the shell to redraw its own prompt in place via \e[9999~, which both
    * zsh (ZLE widget) and bash (readline redraw-current-line) bind to repaint.
+   *
+   * Defensive: clear pendingEchoSkips. The redraw response is a fresh
+   * prompt write (no \n), so a stuck skip counter would silently swallow
+   * it and leave the prompt invisible until something with \n flushed
+   * the skip — which is exactly the symptom of "prompt missing after
+   * exiting a mode, until ctrl-c forces a real redraw".
    */
   redrawPrompt(): void {
-    // No more flag-cleanup needed — scopes own their own lifecycle now.
+    this.pendingEchoSkips = 0;
     const result = this.bus.emitPipe("shell:redraw-prompt", {
       cwd: this.outputParser.getCwd(),
       handled: false,
