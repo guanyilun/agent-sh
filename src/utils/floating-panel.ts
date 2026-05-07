@@ -456,9 +456,9 @@ export class FloatingPanel {
       if (this._visible || this._passthrough) {
         return { ...payload, handled: true };
       }
-      // After dismiss, suppress one redraw — restoreScreen already
-      // restored the terminal content, so freshPrompt's \n is unwanted.
-      if (this.suppressNextRedraw) {
+      // Suppress only freshPrompt's \n — an in-place redraw must not
+      // consume the slot, or unrelated mode-exit redraws go missing.
+      if (this.suppressNextRedraw && payload.kind === "fresh") {
         this.suppressNextRedraw = false;
         return { ...payload, handled: true };
       }

@@ -6,12 +6,21 @@ import type { EventBus } from "../event-bus.js";
 import { InputHandler, type InputContext } from "./input-handler.js";
 import { OutputParser } from "./output-parser.js";
 import { getSettings } from "../settings.js";
-import { RefCounter } from "../utils/ref-counter.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface ShellHandlers {
   define: (name: string, fn: (...args: any[]) => any) => void;
   call: (name: string, ...args: any[]) => any;
+}
+
+/**
+ * A claim on the shell's stdout-mute state. Acquire from shell.acquire*,
+ * pair with release() in a try/finally. Token-shape forces symmetry —
+ * the only way to influence the gate is to hold and release a scope.
+ */
+export interface ShellScope {
+  readonly reason: string;
+  release(): void;
 }
 
 export class Shell implements InputContext {
@@ -20,10 +29,13 @@ export class Shell implements InputContext {
   private handlers: ShellHandlers;
   private inputHandler: InputHandler;
   private outputParser: OutputParser;
-  private paused = false;
-  private stdoutHold = new RefCounter();
-  private stdoutShow = new RefCounter();
-  private echoSkip = false;
+  // hardMute is unconditional (overlay compositing); softMute is overridable
+  // by unmute (terminal_keys, permission UI). Gate: hard wins; otherwise
+  // muted iff softMute held without an unmute.
+  private hardMuteScopes = new Set<ShellScope>();
+  private softMuteScopes = new Set<ShellScope>();
+  private unmuteScopes = new Set<ShellScope>();
+  private pendingEchoSkips = 0;
   private agentActive = false;
   private isZsh = false;
   private tmpDir?: string;
@@ -241,22 +253,71 @@ export class Shell implements InputContext {
       this.ptyProcess.resize(cols, rows);
     });
 
-    // Ref-counted stdout hold — overlay extensions suppress PTY output
-    this.bus.on("shell:stdout-hold", () => { this.stdoutHold.increment(); });
-    this.bus.on("shell:stdout-release", () => { this.stdoutHold.decrement(); });
-
-    // Ref-counted stdout show — tools temporarily force output visible during agent processing
-    this.bus.on("shell:stdout-show", () => { this.stdoutShow.increment(); });
-    this.bus.on("shell:stdout-hide", () => { this.stdoutShow.decrement(); });
-
-    // RemoteSession (overlay) advisors suppress on-processing-done; clear
-    // the state it would have cleared. No freshPrompt — shell is already
-    // at its prompt, a \n nudge would just be noise.
-    this.bus.on("shell:remote-session-end", () => {
-      this.paused = false;
-      this.echoSkip = false;
-      this.agentActive = false;
+    // Compat shims for the bus-event API. shell:stdout-hold maps to hard
+    // mute so terminal_keys' stdout-show can't paint through the overlay.
+    let holdRefcount = 0;
+    let holdScope: ShellScope | null = null;
+    this.bus.on("shell:stdout-hold", () => {
+      if (holdRefcount === 0) holdScope = this.acquireHardMute("bus:stdout-hold");
+      holdRefcount++;
     });
+    this.bus.on("shell:stdout-release", () => {
+      if (holdRefcount === 0) return;
+      holdRefcount--;
+      if (holdRefcount === 0) { holdScope?.release(); holdScope = null; }
+    });
+
+    let showRefcount = 0;
+    let showScope: ShellScope | null = null;
+    this.bus.on("shell:stdout-show", () => {
+      if (showRefcount === 0) showScope = this.acquireUnmute("bus:stdout-show");
+      showRefcount++;
+    });
+    this.bus.on("shell:stdout-hide", () => {
+      if (showRefcount === 0) return;
+      showRefcount--;
+      if (showRefcount === 0) { showScope?.release(); showScope = null; }
+    });
+  }
+
+  // ── Scope-based gating ─────────────────────────────────────
+
+  /** Compositing-layer claim — overrides any unmute. */
+  acquireHardMute(reason: string): ShellScope {
+    const scope: ShellScope = {
+      reason,
+      release: () => { this.hardMuteScopes.delete(scope); },
+    };
+    this.hardMuteScopes.add(scope);
+    return scope;
+  }
+
+  /** Agent-turn / exec-style mute — overridable by unmute. */
+  acquireMute(reason: string): ShellScope {
+    const scope: ShellScope = {
+      reason,
+      release: () => { this.softMuteScopes.delete(scope); },
+    };
+    this.softMuteScopes.add(scope);
+    return scope;
+  }
+
+  /** Force visible while held; overrides soft mutes only. */
+  acquireUnmute(reason: string): ShellScope {
+    const scope: ShellScope = {
+      reason,
+      release: () => { this.unmuteScopes.delete(scope); },
+    };
+    this.unmuteScopes.add(scope);
+    return scope;
+  }
+
+  /** Swallow the next \n-terminated chunk from PTY (one per call). */
+  skipNextLine(): void { this.pendingEchoSkips++; }
+
+  private isHostMuted(): boolean {
+    if (this.hardMuteScopes.size > 0) return true;
+    return this.softMuteScopes.size > 0 && this.unmuteScopes.size === 0;
   }
 
   // ── InputContext implementation (delegates to OutputParser) ──
@@ -282,12 +343,9 @@ export class Shell implements InputContext {
    * zsh (ZLE widget) and bash (readline redraw-current-line) bind to repaint.
    */
   redrawPrompt(): void {
-    // Stale echoSkip/paused from handleProcessingDone re-entering a mode
-    // would swallow the redraw and freeze the terminal visually.
-    this.echoSkip = false;
-    this.paused = false;
     const result = this.bus.emitPipe("shell:redraw-prompt", {
       cwd: this.outputParser.getCwd(),
+      kind: "redraw",
       handled: false,
     });
     if (!result.handled) {
@@ -306,6 +364,7 @@ export class Shell implements InputContext {
   freshPrompt(): boolean {
     const result = this.bus.emitPipe("shell:redraw-prompt", {
       cwd: this.outputParser.getCwd(),
+      kind: "fresh",
       handled: false,
     });
     if (!result.handled) {
@@ -326,14 +385,12 @@ export class Shell implements InputContext {
       this.bus.emit("shell:pty-data", { raw: data });
       this.outputParser.processData(data);
 
-      if (this.stdoutHold.active) return;
-      if (this.paused && !this.stdoutShow.active) return;
+      if (this.isHostMuted()) return;
 
-      // During user_shell exec, skip the command echo (first line)
-      if (this.echoSkip) {
+      if (this.pendingEchoSkips > 0) {
         const nlIdx = data.indexOf("\n");
         if (nlIdx === -1) return;
-        this.echoSkip = false;
+        this.pendingEchoSkips--;
         const rest = data.slice(nlIdx + 1);
         if (rest) process.stdout.write(rest);
         return;
@@ -351,31 +408,30 @@ export class Shell implements InputContext {
   }
 
   /**
-   * React to agent lifecycle events — Shell manages its own state
-   * rather than being driven by AcpClient. This means AcpClient has
-   * zero frontend knowledge; any frontend can subscribe to the same events.
+   * shell:on-processing-done splits into unconditional state cleanup
+   * (release agent-turn scope) and an advisable redraw (freshPrompt).
+   * RemoteSession suppresses the redraw, never the cleanup, so soft-mute
+   * can't leak past the end of a turn even when overlays are involved.
    */
   private setupAgentLifecycle(): void {
-    // Default agent lifecycle: pause the shell while the agent works,
-    // then redraw the prompt when done. Extensions advise these handlers
-    // to change behavior (e.g. tmux split keeps the shell interactive).
+    let agentTurnScope: ShellScope | null = null;
+
     this.handlers.define("shell:on-processing-start", () => {
       this.agentActive = true;
-      this.paused = true;
+      agentTurnScope = this.acquireMute("agent-turn");
+    });
+
+    this.handlers.define("shell:on-processing-redraw", () => {
+      if (!this.inputHandler.handleProcessingDone()) {
+        if (this.freshPrompt()) this.skipNextLine();
+      }
     });
 
     this.handlers.define("shell:on-processing-done", () => {
       this.agentActive = false;
-      // If handleProcessingDone re-entered a mode, leave stdout paused so
-      // stale PTY output doesn't overwrite the mode prompt (exitMode →
-      // redrawPrompt will unpause). Setting echoSkip here would swallow
-      // that PTY output since no \n was sent.
-      if (!this.inputHandler.handleProcessingDone()) {
-        this.paused = false;
-        if (this.freshPrompt()) {
-          this.echoSkip = true;
-        }
-      }
+      agentTurnScope?.release();
+      agentTurnScope = null;
+      this.handlers.call("shell:on-processing-redraw");
     });
 
     this.bus.on("agent:processing-start", () => {
@@ -386,56 +442,55 @@ export class Shell implements InputContext {
       this.handlers.call("shell:on-processing-done");
     });
 
-    // Permission prompts need stdout unpaused so the interactive UI renders,
-    // then re-paused after the decision.
+    // Permission UI is briefly visible during the prompt; an unmute scope
+    // overrides whatever mute is currently held, then releases cleanly.
+    // Doesn't touch agent-turn state, so suppressed handlers can't leak.
+    let permissionVisible: ShellScope | null = null;
     this.bus.on("permission:request", () => {
-      this.paused = false;
+      permissionVisible?.release();
+      permissionVisible = this.acquireUnmute("permission-ui");
     });
     this.bus.onPipeAsync("permission:request", async (payload) => {
-      this.paused = true;
+      permissionVisible?.release();
+      permissionVisible = null;
       return payload;
     });
 
-    // Shell exec: write a command to the live PTY and capture its output.
-    // stdout is paused during agent processing, so PTY output flows through
-    // OutputParser (for OSC detection) but never reaches the terminal.
     this.bus.onPipeAsync("shell:exec-request", async (payload) => {
-      this.echoSkip = true;
-      this.paused = false;
+      const visible = this.acquireUnmute("exec-request");
+      this.skipNextLine();
       process.stdout.write("\n");
       this.bus.emit("shell:agent-exec-start", {});
 
-      const output = await new Promise<{ output: string; cwd: string; exitCode: number | null }>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          this.bus.off("shell:command-done", handler);
-          this.ptyProcess.write("\x03");
-          reject(new Error("Shell exec timed out after 30s"));
-        }, 30_000);
+      try {
+        const output = await new Promise<{ output: string; cwd: string; exitCode: number | null }>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            this.bus.off("shell:command-done", handler);
+            this.ptyProcess.write("\x03");
+            reject(new Error("Shell exec timed out after 30s"));
+          }, 30_000);
 
-        const handler = (e: { command: string; output: string; cwd: string; exitCode: number | null }) => {
-          clearTimeout(timeout);
-          this.bus.off("shell:command-done", handler);
-          // Re-pause stdout so the prompt text following the marker doesn't
-          // leak to the terminal while the agent is still processing.
-          this.paused = true;
-          resolve({ output: e.output, cwd: e.cwd, exitCode: e.exitCode });
-        };
-        this.bus.on("shell:command-done", handler);
+          const handler = (e: { command: string; output: string; cwd: string; exitCode: number | null }) => {
+            clearTimeout(timeout);
+            this.bus.off("shell:command-done", handler);
+            resolve({ output: e.output, cwd: e.cwd, exitCode: e.exitCode });
+          };
+          this.bus.on("shell:command-done", handler);
 
-        this.outputParser.onCommandEntered(payload.command, this.outputParser.getCwd());
-        // Collapse literal newlines to spaces so the PTY receives a single-line
-        // command. Multi-line commands (e.g. git commit -m "...\n...") would
-        // cause the shell to execute prematurely, producing garbled output from
-        // syntax highlighting plugins (zsh syntax highlighting, etc).
-        const oneLine = payload.command.replace(/\n/g, " ");
-        this.ptyProcess.write(oneLine + "\r");
-      });
+          this.outputParser.onCommandEntered(payload.command, this.outputParser.getCwd());
+          // Collapse literal newlines to spaces so the PTY receives a single-line
+          // command. Multi-line commands (e.g. git commit -m "...\n...") would
+          // cause the shell to execute prematurely, producing garbled output from
+          // syntax highlighting plugins (zsh syntax highlighting, etc).
+          const oneLine = payload.command.replace(/\n/g, " ");
+          this.ptyProcess.write(oneLine + "\r");
+        });
 
-      this.paused = true;
-      this.echoSkip = false;
-      this.bus.emit("shell:agent-exec-done", {});
-
-      return { ...payload, output: output.output, cwd: output.cwd, exitCode: output.exitCode, done: true };
+        return { ...payload, output: output.output, cwd: output.cwd, exitCode: output.exitCode, done: true };
+      } finally {
+        visible.release();
+        this.bus.emit("shell:agent-exec-done", {});
+      }
     });
   }
 

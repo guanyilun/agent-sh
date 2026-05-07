@@ -207,11 +207,6 @@ export interface ShellEvents {
   "shell:stdout-show": Record<string, never>;
   "shell:stdout-hide": Record<string, never>;
 
-  // RemoteSession.close() emits this so the shell can clear paused/echoSkip
-  // state that on-processing-done would have cleared, but couldn't because
-  // RemoteSession's advisors suppressed it.
-  "shell:remote-session-end": Record<string, never>;
-
   // Terminal interception (sync pipe: extensions can intercept before execution)
   "agent:terminal-intercept": {
     command: string;
@@ -220,10 +215,12 @@ export interface ShellEvents {
     output: string;
   };
 
-  // Prompt redraw (sync pipe: core sends \n to PTY as default fallback;
-  // extensions can set `handled: true` and write their own prompt to stdout)
+  // Prompt redraw (sync pipe: extensions set handled=true to suppress).
+  // kind="fresh" — \n to PTY, full precmd cycle, leaves a blank line.
+  // kind="redraw" — in-place \e[9999~, no visual noise.
   "shell:redraw-prompt": {
     cwd: string;
+    kind: "fresh" | "redraw";
     handled: boolean;
   };
 
