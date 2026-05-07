@@ -456,9 +456,8 @@ export class FloatingPanel {
       if (this._visible || this._passthrough) {
         return { ...payload, handled: true };
       }
-      // After dismiss, suppress only the noisy fresh-prompt \n — an
-      // in-place redraw (e.g. from agent-mode exit) is harmless and must
-      // not consume the suppression slot.
+      // Suppress only freshPrompt's \n — an in-place redraw must not
+      // consume the slot, or unrelated mode-exit redraws go missing.
       if (this.suppressNextRedraw && payload.kind === "fresh") {
         this.suppressNextRedraw = false;
         return { ...payload, handled: true };

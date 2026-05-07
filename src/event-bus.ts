@@ -215,12 +215,9 @@ export interface ShellEvents {
     output: string;
   };
 
-  // Prompt redraw (sync pipe: core sends \n to PTY as default fallback;
-  // extensions can set `handled: true` and write their own prompt to stdout).
-  // kind="fresh" = freshPrompt — sends a \n to PTY, triggers full precmd
-  // cycle, leaves a blank line. Suppressible after overlay teardown.
-  // kind="redraw" = redrawPrompt — in-place \e[9999~ redraw, no \n, no
-  // visual noise; should not be suppressed by post-teardown state.
+  // Prompt redraw (sync pipe: extensions set handled=true to suppress).
+  // kind="fresh" — \n to PTY, full precmd cycle, leaves a blank line.
+  // kind="redraw" — in-place \e[9999~, no visual noise.
   "shell:redraw-prompt": {
     cwd: string;
     kind: "fresh" | "redraw";

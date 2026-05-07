@@ -14,13 +14,9 @@ export interface ShellHandlers {
 }
 
 /**
- * A scope that holds a "mute the host stdout" or "force visible" claim.
- * The shell's gate logic is: stdout is muted iff at least one MuteScope
- * is held AND no UnmuteScope is held. release() is idempotent.
- *
- * Acquire one with shell.acquireMute() / shell.acquireUnmute(). Always
- * pair acquire with release in a try/finally — the API is shaped to make
- * leaks visible (you hold a token and must release it).
+ * A claim on the shell's stdout-mute state. Acquire from shell.acquire*,
+ * pair with release() in a try/finally. Token-shape forces symmetry —
+ * the only way to influence the gate is to hold and release a scope.
  */
 export interface ShellScope {
   readonly reason: string;
@@ -33,11 +29,9 @@ export class Shell implements InputContext {
   private handlers: ShellHandlers;
   private inputHandler: InputHandler;
   private outputParser: OutputParser;
-  // Two mute tiers:
-  //   - hardMuteScopes: unconditional. The overlay holds this while drawing
-  //     its compositing layer — no other code path can override it.
-  //   - softMuteScopes: agent-turn / exec-style mutes. An unmuteScope
-  //     (permission UI, terminal_keys' stdout-show) can override these.
+  // hardMute is unconditional (overlay compositing); softMute is overridable
+  // by unmute (terminal_keys, permission UI). Gate: hard wins; otherwise
+  // muted iff softMute held without an unmute.
   private hardMuteScopes = new Set<ShellScope>();
   private softMuteScopes = new Set<ShellScope>();
   private unmuteScopes = new Set<ShellScope>();
@@ -259,12 +253,8 @@ export class Shell implements InputContext {
       this.ptyProcess.resize(cols, rows);
     });
 
-    // Compat shims: existing extensions emit the old ref-counted bus events.
-    // Each pair of hold/release (or show/hide) is bridged to a single scope.
-    // shell:stdout-hold maps to a HARD mute — the old stdoutHold gate was
-    // unconditional (couldn't be overridden by stdoutShow), so the overlay
-    // compositing layer stays opaque even when terminal_keys is forcing
-    // stdout visible during agent processing.
+    // Compat shims for the bus-event API. shell:stdout-hold maps to hard
+    // mute so terminal_keys' stdout-show can't paint through the overlay.
     let holdRefcount = 0;
     let holdScope: ShellScope | null = null;
     this.bus.on("shell:stdout-hold", () => {
@@ -292,11 +282,7 @@ export class Shell implements InputContext {
 
   // ── Scope-based gating ─────────────────────────────────────
 
-  /**
-   * Hard mute: the overlay's "I own the screen" claim. No unmuteScope
-   * can override this. Use for compositing layers that must not be
-   * painted over by raw PTY output.
-   */
+  /** Compositing-layer claim — overrides any unmute. */
   acquireHardMute(reason: string): ShellScope {
     const scope: ShellScope = {
       reason,
@@ -306,11 +292,7 @@ export class Shell implements InputContext {
     return scope;
   }
 
-  /**
-   * Soft mute: the agent-turn / exec-request "shell paused while I work"
-   * claim. An unmuteScope (permission UI, terminal_keys stdout-show)
-   * overrides this for as long as the unmute is held.
-   */
+  /** Agent-turn / exec-style mute — overridable by unmute. */
   acquireMute(reason: string): ShellScope {
     const scope: ShellScope = {
       reason,
@@ -320,10 +302,7 @@ export class Shell implements InputContext {
     return scope;
   }
 
-  /**
-   * Force host stdout visible while held, overriding soft mutes only.
-   * Hard mutes (overlay) still win.
-   */
+  /** Force visible while held; overrides soft mutes only. */
   acquireUnmute(reason: string): ShellScope {
     const scope: ShellScope = {
       reason,
@@ -333,12 +312,7 @@ export class Shell implements InputContext {
     return scope;
   }
 
-  /**
-   * Tell setupOutput to swallow the first \n of upcoming PTY chunks.
-   * One increment swallows one \n. Used by exec-request to skip command
-   * echo and by freshPrompt to skip the \n it sent. Auto-decrements when
-   * a \n is consumed by a chunk that would otherwise have been written.
-   */
+  /** Swallow the next \n-terminated chunk from PTY (one per call). */
   skipNextLine(): void { this.pendingEchoSkips++; }
 
   private isHostMuted(): boolean {
@@ -367,15 +341,8 @@ export class Shell implements InputContext {
   /**
    * Ask the shell to redraw its own prompt in place via \e[9999~, which both
    * zsh (ZLE widget) and bash (readline redraw-current-line) bind to repaint.
-   *
-   * Defensive: clear pendingEchoSkips. The redraw response is a fresh
-   * prompt write (no \n), so a stuck skip counter would silently swallow
-   * it and leave the prompt invisible until something with \n flushed
-   * the skip — which is exactly the symptom of "prompt missing after
-   * exiting a mode, until ctrl-c forces a real redraw".
    */
   redrawPrompt(): void {
-    this.pendingEchoSkips = 0;
     const result = this.bus.emitPipe("shell:redraw-prompt", {
       cwd: this.outputParser.getCwd(),
       kind: "redraw",
@@ -420,9 +387,6 @@ export class Shell implements InputContext {
 
       if (this.isHostMuted()) return;
 
-      // Swallow up to pendingEchoSkips leading \n-terminated lines (one per
-      // skip). These are command echos / redraw nudges we explicitly sent
-      // and don't want to render twice.
       if (this.pendingEchoSkips > 0) {
         const nlIdx = data.indexOf("\n");
         if (nlIdx === -1) return;
@@ -444,14 +408,10 @@ export class Shell implements InputContext {
   }
 
   /**
-   * React to agent lifecycle events. Shell ownership of mute state is
-   * expressed through scopes — every "I'm muting" claim is paired with
-   * a release in the same closure, so leaks are visible at compile time.
-   *
-   * Handler split: shell:on-processing-done always runs state cleanup,
-   * then calls shell:on-processing-redraw which is the only advisable
-   * piece. Overlay sessions (RemoteSession) suppress the redraw, never
-   * the cleanup — so paused-equivalent state can't get stuck.
+   * shell:on-processing-done splits into unconditional state cleanup
+   * (release agent-turn scope) and an advisable redraw (freshPrompt).
+   * RemoteSession suppresses the redraw, never the cleanup, so soft-mute
+   * can't leak past the end of a turn even when overlays are involved.
    */
   private setupAgentLifecycle(): void {
     let agentTurnScope: ShellScope | null = null;
