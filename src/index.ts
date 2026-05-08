@@ -8,6 +8,7 @@ import { loadBuiltinExtensions } from "./extensions/index.js";
 import { loadExtensions } from "./extension-loader.js";
 import { getSettings } from "./settings.js";
 import { runInit } from "./init.js";
+import { runInstall, runUninstall, runList } from "./install.js";
 import { PACKAGE_VERSION } from "./utils/package-version.js";
 import type { AgentShellConfig } from "./types.js";
 
@@ -115,7 +116,10 @@ function parseArgs(argv: string[]): AgentShellConfig {
       console.log(`agent-sh — a shell-first terminal where AI is one keystroke away
 
 Usage: agent-sh [options]
-       agent-sh init [--force]    Scaffold ~/.agent-sh/ (settings, examples, AGENTS.md)
+       agent-sh init [--force]            Scaffold ~/.agent-sh/ (settings, examples, AGENTS.md)
+       agent-sh install <spec> [--force]  Install an extension (bundled name, file:, npm:, github:)
+       agent-sh uninstall <name>          Remove an installed extension
+       agent-sh list                      List installed extensions
 
 Provider Profiles:
   --provider <name>   Use a provider from ~/.agent-sh/settings.json
@@ -164,6 +168,18 @@ async function main(): Promise<void> {
   const rawArgs = process.argv.slice(2);
   if (rawArgs[0] === "init") {
     runInit({ force: rawArgs.includes("--force") });
+    return;
+  }
+  if (rawArgs[0] === "install") {
+    await runInstall(rawArgs[1] ?? "", { force: rawArgs.includes("--force") });
+    return;
+  }
+  if (rawArgs[0] === "uninstall") {
+    await runUninstall(rawArgs[1] ?? "");
+    return;
+  }
+  if (rawArgs[0] === "list") {
+    runList();
     return;
   }
 
