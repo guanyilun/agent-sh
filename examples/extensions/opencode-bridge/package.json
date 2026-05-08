@@ -1,0 +1,11 @@
+{
+  "name": "agent-sh-opencode-bridge",
+  "version": "0.1.0",
+  "description": "opencode agent backend for agent-sh",
+  "type": "module",
+  "main": "index.ts",
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.14.41",
+    "agent-sh": "^0.12.0"
+  }
+}
