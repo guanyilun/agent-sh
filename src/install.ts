@@ -181,34 +181,55 @@ export async function runUninstall(name: string): Promise<void> {
   console.log(`Uninstalled: ${name}`);
 }
 
-export function runList(): void {
-  if (!fs.existsSync(EXT_DIR)) {
-    console.log("No extensions installed.");
-    return;
-  }
-  const disabled = new Set(getSettings().disabledExtensions ?? []);
+interface ListedExtension {
+  name: string;
+  source: "extensions dir" | "settings.json";
+  detail?: string;
+}
+
+function listFromExtDir(disabled: Set<string>): ListedExtension[] {
+  if (!fs.existsSync(EXT_DIR)) return [];
   const dirents = fs.readdirSync(EXT_DIR, { withFileTypes: true });
-  const loadable = dirents.filter((d) => {
-    if (d.name.startsWith(".")) return false;
+  const out: ListedExtension[] = [];
+  for (const d of dirents) {
+    if (d.name.startsWith(".")) continue;
     const nameForDisable = d.name.replace(/\.[^.]+$/, "");
-    if (disabled.has(nameForDisable)) return false;
+    if (disabled.has(nameForDisable)) continue;
     const full = path.join(EXT_DIR, d.name);
-    // Symlinks may point at directories; resolve before checking for an index.
     let isDir = d.isDirectory();
     if (d.isSymbolicLink()) {
-      try { isDir = fs.statSync(full).isDirectory(); } catch { return false; }
+      try { isDir = fs.statSync(full).isDirectory(); } catch { continue; }
     }
-    if (isDir) return hasIndexFile(full);
-    return SCRIPT_EXTS.some((ext) => d.name.endsWith(ext));
-  });
-  if (loadable.length === 0) {
+    if (isDir) {
+      if (!hasIndexFile(full)) continue;
+    } else if (!SCRIPT_EXTS.some((ext) => d.name.endsWith(ext))) {
+      continue;
+    }
+    const detail = d.isSymbolicLink() ? `-> ${fs.readlinkSync(full)}` : undefined;
+    out.push({ name: d.name, source: "extensions dir", detail });
+  }
+  return out;
+}
+
+function listFromSettings(disabled: Set<string>): ListedExtension[] {
+  const specs = getSettings().extensions ?? [];
+  return specs
+    .filter((s) => !disabled.has(s.replace(/\.[^.]+$/, "")))
+    .map((s) => ({ name: s, source: "settings.json" as const }));
+}
+
+export function runList(): void {
+  const disabled = new Set(getSettings().disabledExtensions ?? []);
+  const items = [...listFromExtDir(disabled), ...listFromSettings(disabled)];
+  if (items.length === 0) {
     console.log("No extensions installed.");
     return;
   }
+  const nameWidth = Math.max(...items.map((i) => i.name.length));
   console.log("Installed extensions:");
-  for (const d of loadable) {
-    const full = path.join(EXT_DIR, d.name);
-    const suffix = d.isSymbolicLink() ? ` -> ${fs.readlinkSync(full)}` : "";
-    console.log(`  ${d.name}${suffix}`);
+  for (const item of items) {
+    const padded = item.name.padEnd(nameWidth);
+    const detail = item.detail ? `  ${item.detail}` : "";
+    console.log(`  ${padded}  (${item.source})${detail}`);
   }
 }
