@@ -7,6 +7,10 @@ import { CONFIG_DIR, getSettings } from "./settings.js";
 // Kept in sync with extension-loader.ts SCRIPT_EXTS.
 const SCRIPT_EXTS = [".js", ".mjs", ".ts", ".tsx", ".mts"];
 
+function hasIndexFile(dir: string): boolean {
+  return SCRIPT_EXTS.some((ext) => fs.existsSync(path.join(dir, `index${ext}`)));
+}
+
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../");
 const BUNDLED_DIR = path.join(PACKAGE_ROOT, "examples/extensions");
 const EXT_DIR = path.join(CONFIG_DIR, "extensions");
@@ -188,7 +192,13 @@ export function runList(): void {
     if (d.name.startsWith(".")) return false;
     const nameForDisable = d.name.replace(/\.[^.]+$/, "");
     if (disabled.has(nameForDisable)) return false;
-    if (d.isDirectory() || d.isSymbolicLink()) return true;
+    const full = path.join(EXT_DIR, d.name);
+    // Symlinks may point at directories; resolve before checking for an index.
+    let isDir = d.isDirectory();
+    if (d.isSymbolicLink()) {
+      try { isDir = fs.statSync(full).isDirectory(); } catch { return false; }
+    }
+    if (isDir) return hasIndexFile(full);
     return SCRIPT_EXTS.some((ext) => d.name.endsWith(ext));
   });
   if (loadable.length === 0) {
