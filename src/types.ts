@@ -110,6 +110,9 @@ export interface AgentShellConfig {
   /** Named provider to use from settings.json. */
   provider?: string;
 
+  /** Override settings.defaultBackend for this session only (does not persist). */
+  backend?: string;
+
   /** Conversation history backend. Defaults to the on-disk HistoryFile. */
   history?: HistoryAdapter;
 }

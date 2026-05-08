@@ -49,7 +49,7 @@ export interface AgentShellCore {
   /** Unique id for this agent process; used for shell-marker tagging and lineage tracking. */
   instanceId: string;
   /** Activate the agent backend (call after extensions load). */
-  activateBackend(): Promise<void>;
+  activateBackend(override?: string): Promise<void>;
   /** Convenience: emit agent:submit and await the response. */
   query(text: string): Promise<string>;
   /** Convenience: emit agent:cancel-request. */
@@ -145,9 +145,9 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     handlers,
     instanceId,
 
-    async activateBackend() {
+    async activateBackend(override?: string) {
       if (backends.size === 0) return;
-      const preferred = settings.defaultBackend;
+      const preferred = override ?? settings.defaultBackend;
       const name = preferred && backends.has(preferred) ? preferred : backends.keys().next().value!;
       await activateByName(name);
     },

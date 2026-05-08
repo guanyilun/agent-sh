@@ -85,6 +85,7 @@ function parseArgs(argv: string[]): AgentShellConfig {
   let model: string | undefined;
   let extensions: string[] | undefined;
   let provider: string | undefined;
+  let backend: string | undefined;
   let shell = process.env.SHELL || "/bin/bash";
 
   let apiKey: string | undefined = process.env.OPENAI_API_KEY;
@@ -100,6 +101,8 @@ function parseArgs(argv: string[]): AgentShellConfig {
       baseURL = argv[++i]!;
     } else if (arg === "--provider" && argv[i + 1]) {
       provider = argv[++i]!;
+    } else if (arg === "--backend" && argv[i + 1]) {
+      backend = argv[++i]!;
     } else if (arg === "--shell" && argv[i + 1]) {
       shell = argv[++i]!;
     } else if ((arg === "--extensions" || arg === "-e") && argv[i + 1]) {
@@ -123,6 +126,7 @@ Direct LLM API:
   --base-url <url>    Base URL for API (or set OPENAI_BASE_URL)
 
 General Options:
+  --backend <name>    Agent backend to launch (e.g. ash, pi); overrides settings.defaultBackend for this session
   --shell <path>      Shell to use (default: $SHELL or /bin/bash)
   -e, --extensions    Extensions to load (comma-separated, repeatable)
   -h, --help          Show this help
@@ -152,7 +156,7 @@ Inside the shell:
     }
   }
 
-  return { shell, model, extensions, apiKey, baseURL, provider };
+  return { shell, model, extensions, apiKey, baseURL, provider, backend };
 }
 
 async function main(): Promise<void> {
@@ -307,8 +311,15 @@ async function main(): Promise<void> {
       "  Alternatively, install a bridge extension (claude-code-bridge, pi-bridge).\n");
     process.exit(1);
   }
+  if (config.backend && !backendNames.includes(config.backend)) {
+    shell?.kill();
+    console.error(`\nagent-sh: backend "${config.backend}" is not available.\n\n` +
+      `  Available backends: ${backendNames.join(", ")}\n` +
+      `  Bridge extensions (e.g. pi-bridge, claude-code-bridge) register additional backends.\n`);
+    process.exit(1);
+  }
   // No await: banner must out-race the shell's PS1 arriving via PTY.
-  core.activateBackend();
+  core.activateBackend(config.backend);
 
   // ── Startup banner ───────────────────────────────────────────
   const settings = getSettings();
@@ -318,7 +329,9 @@ async function main(): Promise<void> {
 
     const productName = `${p.accent}${p.bold}agent-sh${p.reset}`;
 
-    const backendName = settings.defaultBackend && backendNames.includes(settings.defaultBackend)
+    const backendName = config.backend && backendNames.includes(config.backend)
+      ? config.backend
+      : settings.defaultBackend && backendNames.includes(settings.defaultBackend)
       ? settings.defaultBackend
       : backendNames[0]!;
 
