@@ -28,7 +28,7 @@ Captured and owned by the `shell-context` built-in extension (`src/extensions/sh
 
 Agent tool outputs are **not** here — those live in the conversation stream. The boundary is strict: if the user typed it at the PTY, it goes into shell context; if the agent called a tool, it goes into the conversation.
 
-Frontends without a PTY (e.g. agent-sh-hub) simply don't load this extension — the agent runs cwd-aware via the default `cwd` handler (`process.cwd()`) and no `<shell_events>` envelope is emitted.
+Frontends without a PTY (e.g. agent-sh-hub) simply don't load this extension — the agent runs cwd-aware via the default `cwd` handler (`process.cwd()`) and no `<cwd>` / `<shell_events>` envelope is emitted.
 
 ### Conversation — "what has the agent been working on?"
 
@@ -38,17 +38,17 @@ Owned by `ConversationState`. This is the OpenAI-shaped messages array (`user` /
 - Assistant messages (the LLM's replies)
 - Tool calls and tool results
 
-The two streams merge at one point: when the user submits a new query, new shell events are wrapped inside `<shell_events>` (itself nested in the per-query `<query_context>` envelope) and prepended to that user message. They then live inside the conversation array as regular bytes, but they are never stored separately in both places.
+The two streams merge at one point: when the user submits a new query, the current cwd is wrapped inside `<cwd>` and any new shell events inside `<shell_events>` (both nested in the per-query `<query_context>` envelope) and prepended to that user message. They then live inside the conversation array as regular bytes, but they are never stored separately in both places.
 
 ## How shell activity reaches the LLM
 
 Each exchange (a shell command + output) gets a sequential `id` as it's captured. The shell-context extension keeps an internal `lastSeq` cursor — the highest id it has already sent to the model.
 
-Shell events are registered as a per-query context producer (`ctx.registerContextProducer("shell-events", …, { mode: "per-query" })`):
+Shell context is registered as a per-query context producer (`ctx.registerContextProducer("shell-context", …, { mode: "per-query" })`):
 
-1. The producer returns every exchange with id > `lastSeq`, wrapped as `<shell_events>...</shell_events>`.
-2. The dispatcher composes the result with any other per-query producer output and wraps the whole bundle in `<query_context>...</query_context>`, prepended to the user's query inside a single user message.
-3. The cursor advances to the new high-water mark.
+1. The producer always emits `<cwd>...</cwd>` with the live PTY-tracked cwd, so every user message anchors where the agent is right now (immune to compaction confusion over historical cwds).
+2. If there are exchanges with id > `lastSeq`, it appends `<shell_events>...</shell_events>` with the deltas; the cursor then advances to the new high-water mark.
+3. The dispatcher composes the result with any other per-query producer output and wraps the whole bundle in `<query_context>...</query_context>`, prepended to the user's query inside a single user message.
 
 The delta is sent **once per user query**, not per tool-use step inside the agent loop. Inside the loop (where the LLM calls tools, sees results, calls more tools), no new shell events are injected — injecting mid-loop would break the `tool_call → tool_result` chain some providers require, and per-tool-call shell visibility isn't the right semantic anyway.
 

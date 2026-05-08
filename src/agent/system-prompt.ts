@@ -123,9 +123,9 @@ Extensions may register additional tools — follow their instructions.
 - Always check command exit codes for errors
 
 # Context Envelopes
-- \`<query_context>\` (e.g. \`<shell_events>\`): the user's situation when they sent this turn — ground "fix this" / "what just happened" requests with it.
+- \`<query_context>\` (contains \`<cwd>\` always, and \`<shell_events>\` when there were user shell commands since the last turn): the user's situation when they sent this turn — \`<cwd>\` anchors where they are right now, \`<shell_events>\` grounds "fix this" / "what just happened" requests. Trust the most recent \`<cwd>\` over any cwd referenced in earlier history.
 - \`<dynamic_context>\`: current system state — in-flight work, mode markers, warnings.
-Either may be absent on any turn.
+\`<dynamic_context>\` may be absent on any turn.
 
 # Preference Learning
 

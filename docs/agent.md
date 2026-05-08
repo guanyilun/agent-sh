@@ -29,7 +29,7 @@ The key insight: **the agent is a loop, not a single call**. The LLM calls tools
 
 Every query draws on two distinct streams of context:
 
-- **Shell context** — the user's terminal activity (commands + outputs). This is what lets ash understand "fix this" after you ran a failing command. New shell activity since the last turn is wrapped as `<shell_events>` inside the per-query `<query_context>` envelope and prepended to your user message.
+- **Shell context** — the user's terminal activity (commands + outputs) plus the live cwd. This is what lets ash understand "fix this" after you ran a failing command, and what keeps it anchored in the right working directory across compactions. The current cwd is wrapped as `<cwd>` (always) and new shell activity since the last turn as `<shell_events>` (when there is any), both nested inside the per-query `<query_context>` envelope and prepended to your user message.
 - **Conversation state** — the OpenAI chat messages array (`user`/`assistant`/`tool` messages). This is the LLM's memory of what it already said and did within this session.
 
 The two streams don't overlap: agent tool outputs live only in the conversation, and shell context tracks only user-initiated activity. When either stream grows large, ash has escape hatches rather than silent truncation:
@@ -54,7 +54,7 @@ The system prompt is assembled once per `cwd` and cached (invalidated when the w
 
 Per-turn signals live in two symmetric handlers, both empty by default:
 
-- **`query-context:build`** — fires once at user-query start. Output is wrapped in `<query_context>` and frozen into the user message, so it persists in conversation history. Shell events are the canonical example (`<shell_events>` sub-tag); other "what happened between turns" signals (notifications, calendar/inbox deltas) go here too.
+- **`query-context:build`** — fires once at user-query start. Output is wrapped in `<query_context>` and frozen into the user message, so it persists in conversation history. Shell context is the canonical example (`<cwd>` always, `<shell_events>` when there is fresh activity); other "what happened between turns" signals (notifications, calendar/inbox deltas) go here too.
 - **`dynamic-context:build`** — fires on every LLM call (each tool-loop iteration). Output is wrapped in `<dynamic_context>` and ephemerally prepended to the trailing message at request time, so the cacheable prefix stays byte-stable. Use for "current state" signals: in-flight subagents, threshold warnings, active mode markers.
 
 Extensions populate either via `ctx.registerContextProducer(name, fn, { mode: "per-query" | "per-request" })`. When no producer contributes, no envelope tag is emitted at all — vanilla sessions send exactly `[system, ...history]`.

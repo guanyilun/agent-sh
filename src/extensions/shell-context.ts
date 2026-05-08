@@ -1,6 +1,7 @@
 /**
  * Tracks PTY commands and cwd, spills long outputs, contributes the
- * `<shell_events>` per-query envelope. Frontends without a PTY skip this
+ * per-query `<cwd>` (always) and `<shell_events>` (when there are fresh
+ * user-shell exchanges) signals. Frontends without a PTY skip this
  * built-in and the agent runs cwd-aware via core's process.cwd() default.
  */
 import type { ExtensionContext } from "../types.js";
@@ -70,16 +71,18 @@ export default function activate(ctx: ExtensionContext): void {
   // Override core's process.cwd() default with the PTY-tracked value.
   ctx.advise("cwd", () => currentCwd);
 
-  ctx.registerContextProducer("shell-events", () => {
+  ctx.registerContextProducer("shell-context", () => {
+    const cwdTag = `<cwd>${currentCwd}</cwd>`;
+
     const fresh = exchanges.filter(
       (ex) => ex.id > lastSeq && ex.source !== "agent",
     );
-    if (fresh.length === 0) return null;
+    if (fresh.length === 0) return cwdTag;
     lastSeq = exchanges[exchanges.length - 1]!.id;
 
     const text = fresh.map(formatExchangeTruncated).filter(Boolean).join("\n");
-    if (!text) return null;
-    return `<shell_events>\n${text}\n</shell_events>`;
+    if (!text) return cwdTag;
+    return `${cwdTag}\n<shell_events>\n${text}\n</shell_events>`;
   }, { mode: "per-query" });
 
   ctx.define("shell:context-recent", (n: number = 25) => {
