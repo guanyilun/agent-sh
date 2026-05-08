@@ -340,6 +340,8 @@ export interface ShellEvents {
   // Banner section collection (sync pipe: extensions contribute labeled items to startup banner)
   "banner:collect": {
     sections: Array<{ label: string; items: string[] }>;
+    /** Name of the backend being launched. Extensions should gate per-backend sections on this rather than settings.defaultBackend. */
+    activeBackend?: string;
   };
 
   // Autocomplete (sync pipe: extensions inspect buffer and append items)

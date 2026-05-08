@@ -334,8 +334,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
   });
 
   bus.onPipe("banner:collect", (e) => {
-    const settings = getSettings();
-    if (settings.defaultBackend && settings.defaultBackend !== "ash") return e;
+    if (e.activeBackend && e.activeBackend !== "ash") return e;
     if (loadedExtensionNames.length > 0) {
       e.sections.push({ label: "Extensions", items: [...loadedExtensionNames] });
     }

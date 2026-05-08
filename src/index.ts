@@ -338,7 +338,7 @@ async function main(): Promise<void> {
     let sections = "";
     sections += `\n\n  ${p.muted}Backend:${p.reset} ${p.dim}${backendName}${p.reset}`;
 
-    const extSections = bus.emitPipe("banner:collect", { sections: [] }).sections;
+    const extSections = bus.emitPipe("banner:collect", { sections: [], activeBackend: backendName }).sections;
     for (const sec of extSections) {
       sections += `\n\n  ${p.muted}${sec.label}:${p.reset}`;
       for (const item of sec.items) {
