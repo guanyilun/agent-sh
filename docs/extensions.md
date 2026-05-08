@@ -40,11 +40,23 @@ npm start -- -e my-ext-package -e ./local-ext.ts
 ~/.agent-sh/extensions/
 ├── my-extension.ts          # loaded directly
 ├── another.js               # JS works too
-└── complex-extension/       # directory with index file
+└── complex-extension/       # directory with index.{js,mjs,ts,tsx,mts}
     └── index.ts
 ```
 
 TypeScript and JavaScript are both supported (`.ts`, `.tsx`, `.mts`, `.js`, `.mjs`). TS is transpiled at runtime via tsx. Bare names resolve as npm packages via Node's standard module resolution. Errors in extension loading are non-fatal.
+
+The `agent-sh install` subcommand populates this directory from bundled examples or local paths:
+
+```bash
+agent-sh install pi-bridge          # copy bundled examples/extensions/pi-bridge/
+agent-sh install ./my-local-ext     # copy from a local path
+agent-sh install --force <name>     # overwrite an existing target
+agent-sh uninstall <name>           # remove
+agent-sh list                       # show all loadable extensions (extensions dir + settings.json)
+```
+
+For directory-style extensions with declared dependencies, `install` runs `npm install` in the target automatically.
 
 ## ExtensionContext API
 
@@ -279,6 +291,14 @@ By default, the built-in `"ash"` backend activates (registered by the `agent-bac
 ```
 
 On startup, `activateBackend()` checks this setting and activates the named backend if it was registered. If the named backend isn't found, it falls back to the first registered backend.
+
+For a one-off override that doesn't persist, pass `--backend <name>` on the command line:
+
+```bash
+agent-sh --backend pi    # launches pi this session, settings unchanged
+```
+
+Unlike `defaultBackend`, the CLI flag is strict: if the named backend isn't registered, agent-sh errors out with a hint pointing at `agent-sh install <bridge>` rather than silently falling back.
 
 To disable the built-in agent entirely (e.g., for bridge-only setups):
 ```json

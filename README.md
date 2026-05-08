@@ -19,7 +19,7 @@ So I built agent-sh. Under the hood it's a normal shell on top of node-pty — y
 ~ $ > draft a commit message     # agent reads your diff and shell history
 ```
 
-I still use a proper coding harness for serious work — this doesn't replace that. But for the quick stuff in the terminal, I reach for agent-sh almost every day now. The built-in agent is lightweight and good enough for most of what I throw at it, and when it isn't, you can swap in [pi](examples/extensions/pi-bridge/) as the backend via a bridge extension.
+I still use a proper coding harness for serious work — this doesn't replace that. But for the quick stuff in the terminal, I reach for agent-sh almost every day now. The built-in agent is lightweight and good enough for most of what I throw at it, and when it isn't, you can swap in [pi](examples/extensions/pi-bridge/) as the backend — `agent-sh install pi-bridge` followed by `agent-sh --backend pi`.
 
 ## Quick Start
 
@@ -95,7 +95,7 @@ Requires Node.js 18+. Currently supports **bash** and **zsh**; other shells (fis
 
 **Context that just works.** Every query includes your cwd, recent commands, and their output. Run a failing test, type `> fix this`, and agent-sh knows exactly what happened. Context management works like shell history — continuous, persistent across restarts, no sessions to manage. See [Context Management](docs/context-management.md).
 
-**Any LLM, any backend.** agent-sh works with any OpenAI-compatible API out of the box. Define multiple providers in settings and switch models at runtime with `/model <name>`. Or swap in a completely different agent — [pi](examples/extensions/pi-bridge/) runs as a drop-in backend extension.
+**Any LLM, any backend.** agent-sh works with any OpenAI-compatible API out of the box. Define multiple providers in settings and switch models at runtime with `/model <name>`. Or swap in a completely different agent — `agent-sh install pi-bridge && agent-sh --backend pi` runs [pi](examples/extensions/pi-bridge/) as a drop-in backend.
 
 **Extensible by design.** The entire system is built on a typed event bus. Extensions can add custom input modes, content transforms (render LaTeX as images, Mermaid as diagrams), themes, slash commands, or replace the agent backend entirely. The built-in TUI renderer is itself just an extension.
 

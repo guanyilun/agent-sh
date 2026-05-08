@@ -23,12 +23,27 @@ Environment variables `OPENAI_API_KEY` and `OPENAI_BASE_URL` are supported as al
 # Use a different shell
 agent-sh --shell /bin/zsh
 
+# Launch a non-default agent backend (per-session override; doesn't touch settings)
+agent-sh --backend pi
+
 # Development mode (no build step)
 npm run dev
 
 # Debug mode
 DEBUG=1 agent-sh --api-key "$KEY" --model gpt-4o
 ```
+
+### Subcommands
+
+```bash
+agent-sh init                   # scaffold ~/.agent-sh/ (settings, examples, AGENTS.md)
+agent-sh install <name>         # install a bundled extension (e.g. agent-sh install pi-bridge)
+agent-sh install ./path/to/ext  # install from a local path
+agent-sh uninstall <name>       # remove an installed extension
+agent-sh list                   # show extensions discovered from ~/.agent-sh/extensions/ and settings.json
+```
+
+`install` accepts a bundled-extension name (see `agent-sh install` with no argument for the list), a `file:`/`./`/absolute path, or — once implemented — `npm:<pkg>` and `github:<user>/<repo>` specs.
 
 ## Updating
 
@@ -200,6 +215,7 @@ Switching mid-conversation preserves your conversation state — only the LLM en
 | `--api-key <key>` | `OPENAI_API_KEY` | API key for OpenAI-compatible API |
 | `--base-url <url>` | `OPENAI_BASE_URL` | Base URL for API endpoint |
 | `--shell <path>` | `SHELL` | Shell to use (default: `/bin/bash`) |
+| `--backend <name>` | — | Agent backend to launch (e.g. `ash`, `pi`); per-session override of `settings.defaultBackend`, does not persist. Errors out if the named backend isn't registered. |
 | `-e, --extensions` | — | Extensions to load (comma-separated, repeatable) |
 
 **Precedence** (highest to lowest): CLI flags → environment variables → provider profile in settings.json → defaults.
