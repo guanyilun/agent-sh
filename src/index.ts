@@ -249,54 +249,10 @@ async function main(): Promise<void> {
     process.exit(0);
   };
 
-  // ── Extension context (must precede shell activation) ────────
-  if (process.env.DEBUG) {
-    console.error('[agent-sh] Setting up extensions...');
-  }
   const extCtx = core.extensionContext({ quit: cleanup });
 
-  // ── Shell frontend bootstrap (special-cased; see src/shell/index.ts) ──
-  if (process.env.DEBUG) {
-    console.error('[agent-sh] Creating Shell...');
-  }
-  await new Promise(resolve => setTimeout(resolve, 100));
-
-  shell = activateShell(extCtx, {
-    cols,
-    rows,
-    shellPath: config.shell || process.env.SHELL || "/bin/bash",
-    cwd: process.cwd(),
-    onShowAgentInfo: () => {
-      if (agentInfo) {
-        return { info: `${p.dim}${agentInfo.name}${agentInfo.model ? ` (${agentInfo.model})` : ""}${p.reset}` };
-      }
-      return { info: "" };
-    },
-  });
-  if (process.env.DEBUG) {
-    console.error('[agent-sh] Shell created');
-  }
-
-  // ── Input mode ───────────────────────────────────────────────
-  bus.emit("input-mode:register", {
-    id: "agent",
-    trigger: ">",
-    label: "agent",
-    promptIcon: "❯",
-    indicator: "●",
-    onSubmit(query, b) {
-      b.emit("agent:submit", { query });
-    },
-    returnToSelf: true,
-  });
-
-  // Load built-in extensions (individually disableable via settings.disabledBuiltins)
+  // Load before spawning the shell so PS1 lands below the banner.
   await loadBuiltinExtensions(extCtx, getSettings().disabledBuiltins);
-
-  // Load user extensions (may register alternative agent backends)
-  if (process.env.DEBUG) {
-    console.error('[agent-sh] Loading extensions...');
-  }
   const loadExtensionsTimeoutMs = 10000;
   let loadedExtensions: string[] = [];
   await Promise.race([
@@ -307,19 +263,10 @@ async function main(): Promise<void> {
   ]).catch((err) => {
     console.error(`Warning: ${err.message}`);
   });
-  if (process.env.DEBUG) {
-    console.error('[agent-sh] Extensions loaded');
-  }
-
-  // Names ride along so backend extensions can build banner sections.
   core.bus.emit("core:extensions-loaded", { names: loadedExtensions });
 
-  // ── Activate agent backend ────────────────────────────────────
-  // Extensions had their chance to register via agent:register-backend.
-  // If none did, the built-in AgentLoop gets wired to bus events.
   const { names: backendNames } = core.bus.emitPipe("config:get-backends", { names: [] as string[], active: null as string | null });
   if (backendNames.length === 0) {
-    shell?.kill();
     console.error("\nagent-sh: no agent backend available.\n\n" +
       "  Export OPENROUTER_API_KEY or OPENAI_API_KEY for zero-config launch, or\n" +
       "  pass --api-key on the command line, or\n" +
@@ -328,7 +275,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   if (config.backend && !backendNames.includes(config.backend)) {
-    shell?.kill();
     const bridge = suggestBridgeFor(config.backend);
     const hint = bridge
       ? `  Try: agent-sh install ${bridge}\n`
@@ -338,10 +284,7 @@ async function main(): Promise<void> {
       hint);
     process.exit(1);
   }
-  // No await: banner must out-race the shell's PS1 arriving via PTY.
-  core.activateBackend(config.backend);
 
-  // ── Startup banner ───────────────────────────────────────────
   const settings = getSettings();
   if (settings.startupBanner !== false) {
     const termW = process.stdout.columns || 80;
@@ -377,6 +320,35 @@ async function main(): Promise<void> {
       borderLine + "\n\n",
     );
   }
+
+  // 100ms sidesteps macOS SIGTTOU during fg-pgrp handoff.
+  await new Promise(resolve => setTimeout(resolve, 100));
+  shell = activateShell(extCtx, {
+    cols,
+    rows,
+    shellPath: config.shell || process.env.SHELL || "/bin/bash",
+    cwd: process.cwd(),
+    onShowAgentInfo: () => {
+      if (agentInfo) {
+        return { info: `${p.dim}${agentInfo.name}${agentInfo.model ? ` (${agentInfo.model})` : ""}${p.reset}` };
+      }
+      return { info: "" };
+    },
+  });
+
+  bus.emit("input-mode:register", {
+    id: "agent",
+    trigger: ">",
+    label: "agent",
+    promptIcon: "❯",
+    indicator: "●",
+    onSubmit(query, b) {
+      b.emit("agent:submit", { query });
+    },
+    returnToSelf: true,
+  });
+
+  core.activateBackend(config.backend);
 
   // ── Terminal lifecycle ────────────────────────────────────────
   process.on("SIGTERM", cleanup);
