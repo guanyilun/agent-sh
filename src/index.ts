@@ -85,7 +85,7 @@ function parseArgs(argv: string[]): AgentShellConfig {
   let model: string | undefined;
   let extensions: string[] | undefined;
   let provider: string | undefined;
-  const shell = process.env.SHELL || "/bin/bash";
+  let shell = process.env.SHELL || "/bin/bash";
 
   let apiKey: string | undefined = process.env.OPENAI_API_KEY;
   let baseURL: string | undefined = process.env.OPENAI_BASE_URL;
@@ -101,7 +101,7 @@ function parseArgs(argv: string[]): AgentShellConfig {
     } else if (arg === "--provider" && argv[i + 1]) {
       provider = argv[++i]!;
     } else if (arg === "--shell" && argv[i + 1]) {
-      return { shell: argv[++i]!, model, extensions, apiKey, baseURL, provider };
+      shell = argv[++i]!;
     } else if ((arg === "--extensions" || arg === "-e") && argv[i + 1]) {
       const exts = argv[++i]!.split(",").map(s => s.trim());
       extensions = extensions ? [...extensions, ...exts] : exts;
