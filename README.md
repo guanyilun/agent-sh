@@ -105,7 +105,9 @@ The built-in agent (`ash`) is the default, but agent-sh can host a different cod
   agent-sh --backend claude-code
   ```
 
-Both bridges receive agent-sh's per-query shell context (`<shell_events>`) and follow the PTY-tracked cwd, so the hosted agent sees what you ran and where you are. Set `defaultBackend` in `~/.agent-sh/settings.json` to make a backend sticky across sessions.
+Both bridges receive agent-sh's per-query shell context (`<shell_events>`) and follow the PTY-tracked cwd, so the hosted agent sees what you ran and where you are. Switching at runtime with `/backend <name>` persists the choice across sessions automatically; the `--backend` flag above is per-session only.
+
+**Caveat:** pi and claude-code each manage their own tool surfaces, so agent-sh extensions that register tools (or skills, instructions, etc.) for the built-in `ash` agent generally won't be visible to a hosted backend. Frontend extensions (themes, content transforms, slash commands, the TUI renderer) keep working — only the agent-side capabilities differ. Use the bridges when you want that agent's toolset; stay on `ash` when you want agent-sh's extension ecosystem.
 
 ## Key Features
 
