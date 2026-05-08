@@ -89,7 +89,7 @@ Requires Node.js 18+. Currently supports **bash** and **zsh**; other shells (fis
 
 ## Bring your own agent
 
-The built-in agent (`ash`) is the default, but agent-sh can host a different coding agent as its backend — same terminal, same `>` entry point, same shell-context wiring. Two bridges ship in the box:
+The built-in agent (`ash`) is the default, but agent-sh can host a different coding agent as its backend — same terminal, same `>` entry point, same shell-context wiring. Three bridges ship in the box:
 
 - **[pi-bridge](examples/extensions/pi-bridge/)** — runs [pi](https://github.com/badlogic/pi-mono) (`@mariozechner/pi-coding-agent`) in-process. Pi brings its own models, tools, and `~/.pi/agent/settings.json`.
 
@@ -105,9 +105,16 @@ The built-in agent (`ash`) is the default, but agent-sh can host a different cod
   agent-sh --backend claude-code
   ```
 
-Both bridges receive agent-sh's per-query shell context (`<shell_events>`) and follow the PTY-tracked cwd, so the hosted agent sees what you ran and where you are. Switching at runtime with `/backend <name>` persists the choice across sessions automatically; the `--backend` flag above is per-session only.
+- **[opencode-bridge](examples/extensions/opencode-bridge/)** — runs [opencode](https://opencode.ai/) in-process via `@opencode-ai/sdk`. Uses opencode's tools, models, and `opencode auth login` credentials.
 
-**Caveat:** pi and claude-code each manage their own tool surfaces, so agent-sh extensions that register tools (or skills, instructions, etc.) for the built-in `ash` agent generally won't be visible to a hosted backend. Frontend extensions (themes, content transforms, slash commands, the TUI renderer) keep working — only the agent-side capabilities differ. Use the bridges when you want that agent's toolset; stay on `ash` when you want agent-sh's extension ecosystem.
+  ```bash
+  agent-sh install opencode-bridge
+  agent-sh --backend opencode
+  ```
+
+All three bridges receive agent-sh's per-query shell context (`<shell_events>`) and follow the PTY-tracked cwd, so the hosted agent sees what you ran and where you are. Switching at runtime with `/backend <name>` persists the choice across sessions automatically; the `--backend` flag above is per-session only.
+
+**Caveat:** pi, claude-code, and opencode each manage their own tool surfaces, so agent-sh extensions that register tools (or skills, instructions, etc.) for the built-in `ash` agent generally won't be visible to a hosted backend. Frontend extensions (themes, content transforms, slash commands, the TUI renderer) keep working — only the agent-side capabilities differ. Use the bridges when you want that agent's toolset; stay on `ash` when you want agent-sh's extension ecosystem.
 
 ## Key Features
 
