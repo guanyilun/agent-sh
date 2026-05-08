@@ -18,7 +18,7 @@ index.ts — interactive terminal frontend:
   │     Shell             — PTY lifecycle (delegates to InputHandler + OutputParser)
   │
   ├── Built-in extensions (loaded via declarative manifest, individually disableable):
-  │     shell-context     — PTY exchange tracking, cwd advisor, <shell_events> producer
+  │     shell-context     — PTY exchange tracking, cwd advisor, <cwd>/<shell_events> producer
   │     agent-backend     — LLM provider resolution, LlmClient, AgentLoop ("ash" backend)
   │     tui-renderer      — markdown rendering, inline diffs, thinking display, spinner
   │     slash-commands    — /help, /model, /backend, /thinking, /compact, /context, /reload
