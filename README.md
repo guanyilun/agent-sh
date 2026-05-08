@@ -19,9 +19,11 @@ So I built agent-sh. Under the hood it's a normal shell on top of node-pty — y
 ~ $ > draft a commit message     # agent reads your diff and shell history
 ```
 
-I still use a proper coding harness for serious work — this doesn't replace that. But for the quick stuff in the terminal, I reach for agent-sh almost every day now. The built-in agent is lightweight and good enough for most of what I throw at it, and when it isn't, you can swap in a heavier coding agent as the backend (see [Bring your own agent](#bring-your-own-agent) below).
+agent-sh is built to be agent-agnostic. You can [bring your own coding agent](#bring-your-own-agent) or use the built-in agent `ash` — a lightweight, extensible agent if you'd like to build extensions on top of it.
 
 ## Quick Start
+
+### Installation
 
 Install from npm:
 
@@ -41,7 +43,36 @@ npm run build      # produces dist/
 npm link           # exposes `agent-sh` globally
 ```
 
-Pick one of the zero-config paths below — no settings file needed. agent-sh auto-activates a built-in provider when it sees a known key.
+Requires Node.js 18+. Currently supports **bash** and **zsh**; other shells (fish, nushell, etc.) are not yet wired up.
+
+**Windows:** the interactive shell layer is bash/zsh-only. Run agent-sh inside **WSL** for the full experience. Native Windows (cmd.exe / PowerShell) is not supported as the host shell, though headless / library / ACP-bridge usage may work — file an issue if you hit a gap.
+
+Tip — add a shell alias:
+
+```bash
+alias ash="agent-sh"
+```
+
+Once installed, pick a backend below.
+
+### Option A: Bring your own coding agent
+
+If you already use a coding agent, host it inside agent-sh — same terminal, same `>` entry point, same shell-context wiring. Three bridges ship in the box:
+
+- **pi** — [pi-mono](https://github.com/badlogic/pi-mono) coding agent
+- **claude-code** — official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)
+- **opencode** — [opencode](https://opencode.ai/) via `@opencode-ai/sdk`
+
+```bash
+agent-sh install pi-bridge
+agent-sh --backend pi
+```
+
+See [Bring your own agent](#bring-your-own-agent) below for full details and the other backends.
+
+### Option B: Use the built-in agent (ash)
+
+`ash` is agent-sh's own lightweight agent. It works with any OpenAI-compatible API — pick one of the zero-config paths below, no settings file needed. agent-sh auto-activates a built-in provider when it sees a known key.
 
 **Hosted models via OpenRouter** (300+ models, one key):
 
@@ -77,15 +108,7 @@ Once running, switch models at any time with `/model <name>` (tab-completes; sel
 
 For richer configuration (multiple providers, extensions), run `agent-sh init` to scaffold `~/.agent-sh/settings.json` with copy-pasteable examples. See the [Usage Guide](docs/usage.md) for the full list of supported providers.
 
-Tip — add a shell alias:
-
-```bash
-alias ash="agent-sh"
-```
-
-Requires Node.js 18+. Currently supports **bash** and **zsh**; other shells (fish, nushell, etc.) are not yet wired up.
-
-**Windows:** the interactive shell layer is bash/zsh-only. Run agent-sh inside **WSL** for the full experience. Native Windows (cmd.exe / PowerShell) is not supported as the host shell, though headless / library / ACP-bridge usage may work — file an issue if you hit a gap.
+`ash` is designed to be extended. Extensions can add tools, content transforms (e.g. render LaTeX or Mermaid), themes, slash commands, or new input modes — see [Extensions](docs/extensions.md) for the full surface.
 
 ## Bring your own agent
 
@@ -98,7 +121,7 @@ The built-in agent (`ash`) is the default, but agent-sh can host a different cod
   agent-sh --backend pi
   ```
 
-- **[claude-code-bridge](examples/extensions/claude-code-bridge/)** — runs the official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) in-process. Uses Claude Code's own `Read`/`Edit`/`Write`/`Bash`/`Glob`/`Grep` tools.
+- **[claude-code-bridge](examples/extensions/claude-code-bridge/)** — runs claude-code (the official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)) in-process. Uses claude-code's own `Read`/`Edit`/`Write`/`Bash`/`Glob`/`Grep` tools.
 
   ```bash
   agent-sh install claude-code-bridge
@@ -124,7 +147,7 @@ All three bridges receive agent-sh's per-query shell context (`<shell_events>`) 
 
 **Context that just works.** Every query includes your cwd, recent commands, and their output. Run a failing test, type `> fix this`, and agent-sh knows exactly what happened. Context management works like shell history — continuous, persistent across restarts, no sessions to manage. See [Context Management](docs/context-management.md).
 
-**Any LLM, any backend.** agent-sh works with any OpenAI-compatible API out of the box. Define multiple providers in settings and switch models at runtime with `/model <name>`. Or swap in a completely different agent — bundled bridges run [pi](examples/extensions/pi-bridge/) or the [Claude Agent SDK](examples/extensions/claude-code-bridge/) as a drop-in backend (see [Bring your own agent](#bring-your-own-agent)).
+**Any LLM, any backend.** agent-sh works with any OpenAI-compatible API out of the box. Define multiple providers in settings and switch models at runtime with `/model <name>`. Or swap in a completely different agent — bundled bridges run [pi](examples/extensions/pi-bridge/), [claude-code](examples/extensions/claude-code-bridge/), or [opencode](examples/extensions/opencode-bridge/) as a drop-in backend (see [Bring your own agent](#bring-your-own-agent)).
 
 **Extensible by design.** The entire system is built on a typed event bus. Extensions can add custom input modes, content transforms (render LaTeX as images, Mermaid as diagrams), themes, slash commands, or replace the agent backend entirely. The built-in TUI renderer is itself just an extension.
 
