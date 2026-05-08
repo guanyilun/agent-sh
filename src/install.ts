@@ -25,9 +25,15 @@ interface Resolver {
   resolve(spec: string): Promise<ResolvedSource>;
 }
 
-function listBundled(): string[] {
+export function listBundled(): string[] {
   if (!fs.existsSync(BUNDLED_DIR)) return [];
   return fs.readdirSync(BUNDLED_DIR).map((n) => n.replace(/\.(ts|js|mjs)$/, ""));
+}
+
+/** Heuristic: a backend named "pi" is typically provided by an extension called "pi-bridge". */
+export function suggestBridgeFor(backend: string): string | null {
+  const candidate = `${backend}-bridge`;
+  return listBundled().includes(candidate) ? candidate : null;
 }
 
 const bundledResolver: Resolver = {

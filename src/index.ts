@@ -8,7 +8,7 @@ import { loadBuiltinExtensions } from "./extensions/index.js";
 import { loadExtensions } from "./extension-loader.js";
 import { getSettings } from "./settings.js";
 import { runInit } from "./init.js";
-import { runInstall, runUninstall, runList } from "./install.js";
+import { runInstall, runUninstall, runList, suggestBridgeFor } from "./install.js";
 import { PACKAGE_VERSION } from "./utils/package-version.js";
 import type { AgentShellConfig } from "./types.js";
 
@@ -323,15 +323,19 @@ async function main(): Promise<void> {
     console.error("\nagent-sh: no agent backend available.\n\n" +
       "  Export OPENROUTER_API_KEY or OPENAI_API_KEY for zero-config launch, or\n" +
       "  pass --api-key on the command line, or\n" +
-      "  run `agent-sh init` for a settings.json template.\n" +
-      "  Alternatively, install a bridge extension (claude-code-bridge, pi-bridge).\n");
+      "  run `agent-sh init` for a settings.json template, or\n" +
+      "  run `agent-sh install <bridge>` (e.g. pi-bridge, claude-code-bridge) to use a non-ash backend.\n");
     process.exit(1);
   }
   if (config.backend && !backendNames.includes(config.backend)) {
     shell?.kill();
+    const bridge = suggestBridgeFor(config.backend);
+    const hint = bridge
+      ? `  Try: agent-sh install ${bridge}\n`
+      : `  Run \`agent-sh install\` to see bundled bridge extensions.\n`;
     console.error(`\nagent-sh: backend "${config.backend}" is not available.\n\n` +
       `  Available backends: ${backendNames.join(", ")}\n` +
-      `  Bridge extensions (e.g. pi-bridge, claude-code-bridge) register additional backends.\n`);
+      hint);
     process.exit(1);
   }
   // No await: banner must out-race the shell's PS1 arriving via PTY.
