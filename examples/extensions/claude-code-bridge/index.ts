@@ -1,25 +1,8 @@
 /**
  * Claude Code bridge — runs Claude Code Agent SDK in-process as agent-sh's backend.
  *
- * Uses the official @anthropic-ai/claude-agent-sdk to spawn a Claude Code
- * session. Claude Code handles its own model selection, tool execution, and
- * permissions — the bridge is a pure protocol translator between the SDK's
- * event stream and agent-sh's bus events.
- *
- * PTY-access tools (`terminal_read`, `terminal_keys`, `user_shell`) are
- * intentionally NOT bundled here. If you want Claude Code to observe or
- * drive the user's live terminal, load a companion extension that
- * registers those tools as MCP tools the SDK can consume.
- *
- * Setup (from repo root):
- *   npm run build && npm link                    # register local agent-sh globally
- *   cd examples/extensions/claude-code-bridge
- *   npm install && npm link agent-sh             # link local dev copy
- *
- * Usage:
- *   agent-sh -e examples/extensions/claude-code-bridge
- *
- * Requires: Claude Code CLI installed and authenticated (claude login).
+ * Pure protocol translator between the SDK's event stream and agent-sh's bus.
+ * Requires Claude Code CLI installed and authenticated (claude login).
  */
 import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { readFile } from "node:fs/promises";
@@ -29,7 +12,13 @@ import { computeDiff, type DiffResult } from "agent-sh/utils/diff";
 
 // ── Extension entry point ─────────────────────────────────────────
 export default function activate(ctx: ExtensionContext): void {
-  const { bus } = ctx;
+  const { bus, call } = ctx;
+
+  // PTY-tracked cwd from shell-context; falls back when no PTY frontend.
+  const cwd = (): string => {
+    const v = call("cwd");
+    return typeof v === "string" && v ? v : process.cwd();
+  };
 
   let activeQuery: Query | null = null;
   const listeners: Array<{ event: string; fn: Function }> = [];
@@ -88,11 +77,16 @@ export default function activate(ctx: ExtensionContext): void {
       /** Pre-edit file snapshots for diff display (Edit/Write tools). */
       const fileSnapshots = new Map<string, string | null>();
 
+      // Splice per-query context (e.g. <shell_events>) into the prompt — the
+      // SDK has no other channel for it. Mirrors pi-bridge.
+      const ctxText = String(call("query-context:build") ?? "").trim();
+      const finalPrompt = ctxText ? `${ctxText}\n\n${userQuery}` : userQuery;
+
       try {
         activeQuery = query({
-          prompt: userQuery,
+          prompt: finalPrompt,
           options: {
-            cwd: process.cwd(),
+            cwd: cwd(),
             systemPrompt: {
               type: "preset",
               preset: "claude_code",
@@ -155,7 +149,7 @@ export default function activate(ctx: ExtensionContext): void {
 
                   // Snapshot file content before Edit/Write modifies it
                   if ((meta.name === "Edit" || meta.name === "Write") && typeof (input as any).file_path === "string") {
-                    const absPath = resolve(process.cwd(), (input as any).file_path);
+                    const absPath = resolve(cwd(), (input as any).file_path);
                     readFile(absPath, "utf-8")
                       .then(content => fileSnapshots.set(meta.id, content))
                       .catch(() => fileSnapshots.set(meta.id, null)); // file doesn't exist yet
@@ -191,7 +185,7 @@ export default function activate(ctx: ExtensionContext): void {
 
                   // Snapshot file content before Edit/Write modifies it
                   if ((b.name === "Edit" || b.name === "Write") && typeof (input as any).file_path === "string") {
-                    const absPath = resolve(process.cwd(), (input as any).file_path);
+                    const absPath = resolve(cwd(), (input as any).file_path);
                     readFile(absPath, "utf-8")
                       .then(content => fileSnapshots.set(b.id, content))
                       .catch(() => fileSnapshots.set(b.id, null));
@@ -226,7 +220,7 @@ export default function activate(ctx: ExtensionContext): void {
                       fileSnapshots.delete(toolUseId);
                       const filePath = (pending.input as any)?.file_path as string | undefined;
                       if (filePath) {
-                        const absPath = resolve(process.cwd(), filePath);
+                        const absPath = resolve(cwd(), filePath);
                         try {
                           const newContent = await readFile(absPath, "utf-8");
                           const diff = computeDiff(oldContent, newContent);

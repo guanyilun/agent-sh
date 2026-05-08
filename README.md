@@ -19,7 +19,7 @@ So I built agent-sh. Under the hood it's a normal shell on top of node-pty — y
 ~ $ > draft a commit message     # agent reads your diff and shell history
 ```
 
-I still use a proper coding harness for serious work — this doesn't replace that. But for the quick stuff in the terminal, I reach for agent-sh almost every day now. The built-in agent is lightweight and good enough for most of what I throw at it, and when it isn't, you can swap in [pi](examples/extensions/pi-bridge/) as the backend — `agent-sh install pi-bridge` followed by `agent-sh --backend pi`.
+I still use a proper coding harness for serious work — this doesn't replace that. But for the quick stuff in the terminal, I reach for agent-sh almost every day now. The built-in agent is lightweight and good enough for most of what I throw at it, and when it isn't, you can swap in a heavier coding agent as the backend (see [Bring your own agent](#bring-your-own-agent) below).
 
 ## Quick Start
 
@@ -87,6 +87,28 @@ Requires Node.js 18+. Currently supports **bash** and **zsh**; other shells (fis
 
 **Windows:** the interactive shell layer is bash/zsh-only. Run agent-sh inside **WSL** for the full experience. Native Windows (cmd.exe / PowerShell) is not supported as the host shell, though headless / library / ACP-bridge usage may work — file an issue if you hit a gap.
 
+## Bring your own agent
+
+The built-in agent (`ash`) is the default, but agent-sh can host a different coding agent as its backend — same terminal, same `>` entry point, same shell-context wiring. Two bridges ship in the box:
+
+- **[pi-bridge](examples/extensions/pi-bridge/)** — runs [pi](https://github.com/badlogic/pi-mono) (`@mariozechner/pi-coding-agent`) in-process. Pi brings its own models, tools, and `~/.pi/agent/settings.json`.
+
+  ```bash
+  agent-sh install pi-bridge
+  agent-sh --backend pi
+  ```
+
+- **[claude-code-bridge](examples/extensions/claude-code-bridge/)** — runs the official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) in-process. Uses Claude Code's own `Read`/`Edit`/`Write`/`Bash`/`Glob`/`Grep` tools.
+
+  ```bash
+  agent-sh install claude-code-bridge
+  agent-sh --backend claude-code
+  ```
+
+Both bridges receive agent-sh's per-query shell context (`<shell_events>`) and follow the PTY-tracked cwd, so the hosted agent sees what you ran and where you are. Switching at runtime with `/backend <name>` persists the choice across sessions automatically; the `--backend` flag above is per-session only.
+
+**Caveat:** pi and claude-code each manage their own tool surfaces, so agent-sh extensions that register tools (or skills, instructions, etc.) for the built-in `ash` agent generally won't be visible to a hosted backend. Frontend extensions (themes, content transforms, slash commands, the TUI renderer) keep working — only the agent-side capabilities differ. Use the bridges when you want that agent's toolset; stay on `ash` when you want agent-sh's extension ecosystem.
+
 ## Key Features
 
 **Real terminal, zero compromise.** Full PTY with your shell config, aliases, and environment. Shell starts instantly — the agent connects asynchronously in the background.
@@ -95,7 +117,7 @@ Requires Node.js 18+. Currently supports **bash** and **zsh**; other shells (fis
 
 **Context that just works.** Every query includes your cwd, recent commands, and their output. Run a failing test, type `> fix this`, and agent-sh knows exactly what happened. Context management works like shell history — continuous, persistent across restarts, no sessions to manage. See [Context Management](docs/context-management.md).
 
-**Any LLM, any backend.** agent-sh works with any OpenAI-compatible API out of the box. Define multiple providers in settings and switch models at runtime with `/model <name>`. Or swap in a completely different agent — `agent-sh install pi-bridge && agent-sh --backend pi` runs [pi](examples/extensions/pi-bridge/) as a drop-in backend.
+**Any LLM, any backend.** agent-sh works with any OpenAI-compatible API out of the box. Define multiple providers in settings and switch models at runtime with `/model <name>`. Or swap in a completely different agent — bundled bridges run [pi](examples/extensions/pi-bridge/) or the [Claude Agent SDK](examples/extensions/claude-code-bridge/) as a drop-in backend (see [Bring your own agent](#bring-your-own-agent)).
 
 **Extensible by design.** The entire system is built on a typed event bus. Extensions can add custom input modes, content transforms (render LaTeX as images, Mermaid as diagrams), themes, slash commands, or replace the agent backend entirely. The built-in TUI renderer is itself just an extension.
 
