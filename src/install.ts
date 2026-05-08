@@ -2,7 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { CONFIG_DIR } from "./settings.js";
+import { CONFIG_DIR, getSettings } from "./settings.js";
+
+// Kept in sync with extension-loader.ts SCRIPT_EXTS.
+const SCRIPT_EXTS = [".js", ".mjs", ".ts", ".tsx", ".mts"];
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../");
 const BUNDLED_DIR = path.join(PACKAGE_ROOT, "examples/extensions");
@@ -179,16 +182,23 @@ export function runList(): void {
     console.log("No extensions installed.");
     return;
   }
-  const entries = fs.readdirSync(EXT_DIR).filter((n) => !n.startsWith("."));
-  if (entries.length === 0) {
+  const disabled = new Set(getSettings().disabledExtensions ?? []);
+  const dirents = fs.readdirSync(EXT_DIR, { withFileTypes: true });
+  const loadable = dirents.filter((d) => {
+    if (d.name.startsWith(".")) return false;
+    const nameForDisable = d.name.replace(/\.[^.]+$/, "");
+    if (disabled.has(nameForDisable)) return false;
+    if (d.isDirectory() || d.isSymbolicLink()) return true;
+    return SCRIPT_EXTS.some((ext) => d.name.endsWith(ext));
+  });
+  if (loadable.length === 0) {
     console.log("No extensions installed.");
     return;
   }
   console.log("Installed extensions:");
-  for (const name of entries) {
-    const full = path.join(EXT_DIR, name);
-    const link = fs.lstatSync(full);
-    const suffix = link.isSymbolicLink() ? ` -> ${fs.readlinkSync(full)}` : "";
-    console.log(`  ${name}${suffix}`);
+  for (const d of loadable) {
+    const full = path.join(EXT_DIR, d.name);
+    const suffix = d.isSymbolicLink() ? ` -> ${fs.readlinkSync(full)}` : "";
+    console.log(`  ${d.name}${suffix}`);
   }
 }
