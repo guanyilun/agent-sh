@@ -5,9 +5,16 @@ Runs [pi](https://github.com/badlogic/pi-mono) (`@mariozechner/pi-coding-agent`)
 ## Install
 
 ```bash
+agent-sh install pi-bridge
+```
+
+This copies the bundled extension into `~/.agent-sh/extensions/pi-bridge` and runs `npm install` for you. To overwrite an existing install, pass `--force`. To uninstall, run `agent-sh uninstall pi-bridge`.
+
+Manual alternative (e.g. for a development checkout you want to symlink):
+
+```bash
 cp -r examples/extensions/pi-bridge ~/.agent-sh/extensions/pi-bridge
-cd ~/.agent-sh/extensions/pi-bridge
-npm install
+cd ~/.agent-sh/extensions/pi-bridge && npm install
 ```
 
 ## Configure
