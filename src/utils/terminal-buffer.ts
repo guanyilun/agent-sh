@@ -20,16 +20,13 @@ import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { EventBus } from "../event-bus.js";
 
 const require = createRequire(import.meta.url);
-let TerminalCtor: typeof Terminal | null = null;
-let SerializeAddonCtor: typeof SerializeAddon | null = null;
 
-function loadXterm(): { Terminal: typeof Terminal; SerializeAddon: typeof SerializeAddon } {
-  if (!TerminalCtor) {
-    TerminalCtor = require("@xterm/headless").Terminal as typeof Terminal;
-    SerializeAddonCtor = require("@xterm/addon-serialize").SerializeAddon as typeof SerializeAddon;
-  }
-  return { Terminal: TerminalCtor, SerializeAddon: SerializeAddonCtor! };
-}
+// Node's require cache memoizes the first hit; subsequent calls are
+// just a hashmap lookup, so this stays lazy without our own caching.
+const loadXterm = (): { Terminal: typeof Terminal; SerializeAddon: typeof SerializeAddon } => ({
+  Terminal: require("@xterm/headless").Terminal,
+  SerializeAddon: require("@xterm/addon-serialize").SerializeAddon,
+});
 
 // ── Types ───────────────────────────────────────────────────────
 
