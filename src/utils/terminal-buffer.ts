@@ -9,43 +9,24 @@
  *   - floating-panel.ts: composited overlay rendering + screen restore
  *   - terminal-buffer extension: agent tools (terminal_read, terminal_keys)
  *   - Any extension needing a virtual terminal snapshot
- *
- * The xterm dependency is loaded lazily on first use. If @xterm/headless
- * is not installed, create() returns null.
- *
- * Install (optional):
- *   npm install @xterm/headless@5.5.0 @xterm/addon-serialize@0.13.0
  */
+// xterm is loaded lazily on first TerminalBuffer.create(). Subcommands
+// (init/install/list) and non-shell frontends (web bridges) import this
+// file transitively but never instantiate a buffer; they shouldn't pay
+// the xterm parse cost at startup.
 import { createRequire } from "module";
-import { stripAnsi } from "./ansi.js";
+import type { Terminal, IBuffer } from "@xterm/headless";
+import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { EventBus } from "../event-bus.js";
-
-// ── Lazy xterm loader ───────────────────────────────────────────
 
 const require = createRequire(import.meta.url);
 
-let loadAttempted = false;
-let available = false;
-let TerminalCtor: any;
-let SerializeAddonCtor: any;
-
-function ensureXterm(): boolean {
-  if (loadAttempted) return available;
-  loadAttempted = true;
-  try {
-    TerminalCtor = require("@xterm/headless").Terminal;
-    SerializeAddonCtor = require("@xterm/addon-serialize").SerializeAddon;
-    available = true;
-  } catch {
-    available = false;
-  }
-  return available;
-}
-
-/** Check if @xterm/headless is installed without loading it. */
-export function isXtermAvailable(): boolean {
-  return ensureXterm();
-}
+// Node's require cache memoizes the first hit; subsequent calls are
+// just a hashmap lookup, so this stays lazy without our own caching.
+const loadXterm = (): { Terminal: typeof Terminal; SerializeAddon: typeof SerializeAddon } => ({
+  Terminal: require("@xterm/headless").Terminal,
+  SerializeAddon: require("@xterm/addon-serialize").SerializeAddon,
+});
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -97,50 +78,44 @@ export function formatScreenContext(
 // ── TerminalBuffer ──────────────────────────────────────────────
 
 export class TerminalBuffer {
-  private readonly term: any;
-  private readonly serializeAddon: any;
+  private readonly term: Terminal;
+  private readonly serializeAddon: SerializeAddon;
 
   /** Flush pending drip-feed data (set by createWired). */
   _flushPending: (() => void) | null = null;
 
-  private constructor(term: any, serialize: any) {
+  private constructor(term: Terminal, serialize: SerializeAddon) {
     this.term = term;
     this.serializeAddon = serialize;
   }
 
-  /**
-   * Create a new TerminalBuffer. Returns null if xterm is not installed.
-   */
-  static create(config?: TerminalBufferConfig): TerminalBuffer | null {
-    if (!ensureXterm()) return null;
+  static create(config?: TerminalBufferConfig): TerminalBuffer {
+    const { Terminal, SerializeAddon } = loadXterm();
     const cols = config?.cols ?? (process.stdout.columns || 80);
     const rows = config?.rows ?? (process.stdout.rows || 24);
     const scrollback = config?.scrollback ?? 200;
 
-    const term = new TerminalCtor({ cols, rows, allowProposedApi: true, scrollback });
-    const serialize = new SerializeAddonCtor();
+    const term = new Terminal({ cols, rows, allowProposedApi: true, scrollback });
+    const serialize = new SerializeAddon();
     term.loadAddon(serialize);
     return new TerminalBuffer(term, serialize);
   }
 
   /**
-   * Create a TerminalBuffer and wire it to a bus's shell:pty-data event.
-   * Returns null if xterm is not installed.
+   * Create a TerminalBuffer wired to a bus's `shell:pty-data` event.
+   * Drip-feeds writes asynchronously: synchronous `term.write()` in the
+   * pty-data handler changes PTY read coalescing enough to introduce
+   * visual artifacts.
    */
-  static createWired(bus: EventBus, config?: TerminalBufferConfig): TerminalBuffer | null {
+  static createWired(bus: EventBus, config?: TerminalBufferConfig): TerminalBuffer {
     const tb = TerminalBuffer.create(config);
-    if (!tb) return null;
-    // Buffer PTY data and drip-feed to xterm in the background.
-    // Synchronous term.write() in the pty-data handler introduces enough
-    // latency to change PTY read coalescing, causing visual artifacts.
     let pending = "";
-    bus.on("shell:pty-data", ({ raw }) => { pending += raw; });
-    setInterval(() => {
-      if (pending) { const d = pending; pending = ""; tb.write(d); }
-    }, 50);
-    tb._flushPending = () => {
+    const drain = (): void => {
       if (pending) { const d = pending; pending = ""; tb.write(d); }
     };
+    bus.on("shell:pty-data", ({ raw }) => { pending += raw; });
+    setInterval(drain, 50);
+    tb._flushPending = drain;
     process.stdout.on("resize", () => {
       tb.resize(process.stdout.columns || 80, process.stdout.rows || 24);
     });
@@ -188,7 +163,7 @@ export class TerminalBuffer {
   }
 
   /** Read visible viewport lines from a buffer. */
-  private readViewportLines(buf: any, rows?: number): string[] {
+  private readViewportLines(buf: IBuffer, rows?: number): string[] {
     const targetRows = rows ?? buf.length;
     const base = buf.baseY ?? 0;
     const lines: string[] = [];
@@ -200,14 +175,13 @@ export class TerminalBuffer {
   }
 
   /** Read all lines including scrollback from a buffer. */
-  private readAllLines(buf: any): string[] {
+  private readAllLines(buf: IBuffer): string[] {
     const total = (buf.baseY ?? 0) + buf.length;
     const lines: string[] = [];
     for (let y = 0; y < total; y++) {
       const line = buf.getLine(y);
       lines.push(line ? line.translateToString(true) : "");
     }
-    // Trim trailing empty lines
     while (lines.length > 0 && lines[lines.length - 1] === "") {
       lines.pop();
     }
