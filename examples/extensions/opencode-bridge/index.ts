@@ -15,7 +15,10 @@ import {
   type QuestionInfo,
 } from "@opencode-ai/sdk/v2";
 import type { ExtensionContext } from "agent-sh/types";
+import type { InteractiveSession } from "agent-sh/agent/types";
 import { computeDiff, type DiffResult } from "agent-sh/utils/diff";
+import { createToolUI } from "agent-sh/utils/tool-interactive";
+import { palette as p } from "agent-sh/utils/palette";
 
 function parseUnifiedDiff(patch: string): DiffResult | null {
   if (!patch) return null;
@@ -57,7 +60,7 @@ function parseUnifiedDiff(patch: string): DiffResult | null {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, call } = ctx;
+  const { bus, call, compositor } = ctx;
 
   const cwd = (): string => {
     const v = call("cwd");
@@ -91,9 +94,6 @@ export default function activate(ctx: ExtensionContext): void {
   let turnIdleSeen = false;
   let turnError: string | null = null;
 
-  // Set while opencode is awaiting a reply; next submit becomes the answer.
-  let pendingQuestion: { requestID: string; info: QuestionInfo } | null = null;
-
   const listeners: Array<{ event: string; fn: Function }> = [];
 
   function toolKind(name: string): string {
@@ -124,6 +124,9 @@ export default function activate(ctx: ExtensionContext): void {
 
   function handleToolPart(part: ToolPart): void {
     const { callID, tool: toolName, state } = part;
+    // Question tool is presented via an interactive picker (see question.asked) —
+    // skip the timeline entry to avoid a duplicate "running" bar.
+    if (toolName === "question") return;
     const kind = toolKind(toolName);
 
     if (state.status !== "pending" && !announcedTools.has(callID)) {
@@ -189,42 +192,6 @@ export default function activate(ctx: ExtensionContext): void {
     turnText += text;
   }
 
-  function renderQuestion(info: QuestionInfo): string {
-    const lines = ["", `❓ ${info.question}`];
-    if (info.options.length > 0) {
-      info.options.forEach((opt, i) => {
-        const desc = opt.description ? ` — ${opt.description}` : "";
-        lines.push(`  ${i + 1}. ${opt.label}${desc}`);
-      });
-      const hints: string[] = [];
-      if (info.multiple) hints.push("comma-separated for multiple");
-      if (info.custom) hints.push("or type your own answer");
-      if (hints.length > 0) lines.push(`  (${hints.join("; ")})`);
-    } else if (info.custom) {
-      lines.push("  (type your answer)");
-    }
-    lines.push("");
-    return lines.join("\n");
-  }
-
-  function mapAnswerToken(token: string, info: QuestionInfo): string {
-    const idx = parseInt(token, 10);
-    if (!Number.isNaN(idx) && idx >= 1 && idx <= info.options.length) {
-      return info.options[idx - 1]!.label;
-    }
-    const match = info.options.find((o) => o.label.toLowerCase() === token.toLowerCase());
-    if (match) return match.label;
-    return token; // free-text — opencode will validate against `custom`
-  }
-
-  function parseQuestionAnswer(input: string, info: QuestionInfo): string[] {
-    const trimmed = input.trim();
-    if (info.options.length === 0) return [trimmed];
-    if (info.multiple) {
-      return trimmed.split(",").map((s) => s.trim()).filter(Boolean).map((t) => mapAnswerToken(t, info));
-    }
-    return [mapAnswerToken(trimmed, info)];
-  }
 
   function handleEvent(event: Event): void {
     if (!sessionId) return;
@@ -275,25 +242,27 @@ export default function activate(ctx: ExtensionContext): void {
       case "question.asked": {
         const req = props as QuestionRequest;
         if (!runtime) break;
-        if (req.questions.length !== 1) {
-          // Multi-question needs richer input than one line; reject so the agent can adapt.
-          runtime.client.question
-            .reject({ requestID: req.id, directory: sessionDirectory ?? undefined })
-            .catch(() => { /* best-effort */ });
-          break;
-        }
-        pendingQuestion = { requestID: req.id, info: req.questions[0]! };
-        bus.emitTransform("agent:response-chunk", {
-          blocks: [{ type: "text" as const, text: renderQuestion(req.questions[0]!) }],
+        const ui = createToolUI(bus, compositor.surface("agent"));
+        ui.custom(createQuestionSession(req.questions)).then(async (result: QuestionResult) => {
+          if (!runtime) return;
+          if (result.cancelled) {
+            runtime.client.question
+              .reject({ requestID: req.id, directory: sessionDirectory ?? undefined })
+              .catch(() => { /* best-effort */ });
+            return;
+          }
+          try {
+            await runtime.client.question.reply({
+              requestID: req.id,
+              answers: result.answers,
+              directory: sessionDirectory ?? undefined,
+            });
+          } catch (err) {
+            bus.emit("agent:error", {
+              message: err instanceof Error ? err.message : String(err),
+            });
+          }
         });
-        // Release the spinner while waiting on the user; the active
-        // prompt() is still in flight and will continue once we reply.
-        bus.emit("agent:processing-done", {});
-        break;
-      }
-      case "question.replied":
-      case "question.rejected": {
-        pendingQuestion = null;
         break;
       }
       // Without a reply the gated tool hangs forever. The bridge has no
@@ -333,27 +302,6 @@ export default function activate(ctx: ExtensionContext): void {
           message: booting ? "opencode is still starting up..." : "opencode session not initialized",
         });
         bus.emit("agent:processing-done", {});
-        return;
-      }
-
-      if (pendingQuestion) {
-        // The original prompt() is still in flight; reply continues that turn.
-        const pq = pendingQuestion;
-        pendingQuestion = null;
-        bus.emit("agent:query", { query: userQuery });
-        bus.emit("agent:processing-start", {});
-        try {
-          await runtime.client.question.reply({
-            requestID: pq.requestID,
-            answers: [parseQuestionAnswer(userQuery, pq.info)],
-            directory: sessionDirectory ?? undefined,
-          });
-        } catch (err) {
-          bus.emit("agent:error", {
-            message: err instanceof Error ? err.message : String(err),
-          });
-          bus.emit("agent:processing-done", {});
-        }
         return;
       }
 
@@ -414,17 +362,6 @@ export default function activate(ctx: ExtensionContext): void {
 
     const onCancel = async () => {
       if (!runtime || !sessionId) return;
-      if (pendingQuestion) {
-        const pq = pendingQuestion;
-        pendingQuestion = null;
-        try {
-          await runtime.client.question.reject({
-            requestID: pq.requestID,
-            directory: sessionDirectory ?? undefined,
-          });
-        } catch { /* best-effort */ }
-        return;
-      }
       try {
         await runtime.client.session.abort({ sessionID: sessionId, directory: sessionDirectory ?? undefined });
       } catch { /* abort is best-effort */ }
@@ -435,7 +372,6 @@ export default function activate(ctx: ExtensionContext): void {
       announcedTools.clear();
       completedTools.clear();
       partKinds.clear();
-      pendingQuestion = null;
       // /reset is the one moment we deliberately let the project switch.
       sessionDirectory = cwd();
       const res = await runtime.client.session.create({ directory: sessionDirectory });
@@ -494,8 +430,141 @@ export default function activate(ctx: ExtensionContext): void {
       announcedTools.clear();
       completedTools.clear();
       partKinds.clear();
-      pendingQuestion = null;
       booting = true;
     },
   });
+}
+
+// ── Interactive question picker ──────────────────────────────────
+
+type QuestionResult = { answers: string[][]; cancelled: boolean };
+
+function isKey(data: string, key: string): boolean {
+  switch (key) {
+    case "up":     return data === "\x1b[A" || data === "\x1bOA";
+    case "down":   return data === "\x1b[B" || data === "\x1bOB";
+    case "left":   return data === "\x1b[D" || data === "\x1bOD";
+    case "right":  return data === "\x1b[C" || data === "\x1bOC";
+    case "enter":  return data === "\r" || data === "\n";
+    case "escape": return data === "\x1b";
+    case "tab":    return data === "\t";
+    default:       return data === key;
+  }
+}
+
+function createQuestionSession(questions: QuestionInfo[]): InteractiveSession<QuestionResult> {
+  const isMulti = questions.length > 1;
+  let tab = 0;
+  let optionIdx = 0;
+  // Per-question selected option indices (set, to support `multiple`).
+  const selections: Set<number>[] = questions.map(() => new Set());
+
+  return {
+    render(width) {
+      const w = Math.min(80, width);
+      const lines: string[] = [];
+      const q = questions[tab]!;
+      const sel = selections[tab]!;
+
+      lines.push(`${p.muted}${"─".repeat(w)}${p.reset}`);
+
+      if (isMulti) {
+        const tabs = questions.map((qq, i) => {
+          const answered = selections[i]!.size > 0;
+          const active = i === tab;
+          const box = answered ? "■" : "□";
+          const label = ` ${box} ${qq.header || `Q${i + 1}`} `;
+          return active
+            ? `${p.accent}${p.bold}${label}${p.reset}`
+            : `${p.muted}${label}${p.reset}`;
+        });
+        lines.push(` ${tabs.join(" ")}`);
+        lines.push("");
+      }
+
+      lines.push(` ${q.question}`);
+      lines.push("");
+      for (let i = 0; i < q.options.length; i++) {
+        const opt = q.options[i]!;
+        const cursor = i === optionIdx ? p.accent : "";
+        const reset = i === optionIdx ? p.reset : "";
+        const arrow = i === optionIdx ? `${p.accent}>${p.reset} ` : "  ";
+        const mark = q.multiple
+          ? (sel.has(i) ? "[x]" : "[ ]")
+          : (sel.has(i) ? "(o)" : "( )");
+        lines.push(`${arrow}${cursor}${mark} ${i + 1}. ${opt.label}${reset}`);
+        if (opt.description) {
+          lines.push(`     ${p.muted}${opt.description}${p.reset}`);
+        }
+      }
+
+      lines.push("");
+      const navKeys = isMulti ? "Tab/←→ switch • " : "";
+      const actionKeys = q.multiple
+        ? "↑↓ navigate • Space toggle • Enter confirm • Esc cancel"
+        : "↑↓ navigate • Enter select • Esc cancel";
+      lines.push(` ${p.dim}${navKeys}${actionKeys}${p.reset}`);
+      lines.push(`${p.muted}${"─".repeat(w)}${p.reset}`);
+      return lines;
+    },
+
+    handleInput(data, done) {
+      const q = questions[tab]!;
+      const sel = selections[tab]!;
+
+      if (isKey(data, "escape")) {
+        done({ answers: [], cancelled: true });
+        return;
+      }
+
+      if (isMulti) {
+        if (isKey(data, "tab") || isKey(data, "right")) {
+          tab = (tab + 1) % questions.length;
+          optionIdx = 0;
+          return;
+        }
+        if (isKey(data, "left")) {
+          tab = (tab - 1 + questions.length) % questions.length;
+          optionIdx = 0;
+          return;
+        }
+      }
+
+      if (isKey(data, "up")) {
+        optionIdx = Math.max(0, optionIdx - 1);
+        return;
+      }
+      if (isKey(data, "down")) {
+        optionIdx = Math.min(q.options.length - 1, optionIdx + 1);
+        return;
+      }
+
+      if (q.multiple && data === " ") {
+        if (sel.has(optionIdx)) sel.delete(optionIdx); else sel.add(optionIdx);
+        return;
+      }
+
+      if (isKey(data, "enter")) {
+        if (!q.multiple) {
+          sel.clear();
+          sel.add(optionIdx);
+        }
+        if (sel.size === 0) return;
+
+        const allAnswered = selections.every((s) => s.size > 0);
+        if (!isMulti || allAnswered) {
+          const answers = questions.map((qq, i) =>
+            Array.from(selections[i]!).map((idx) => qq.options[idx]!.label),
+          );
+          done({ answers, cancelled: false });
+          return;
+        }
+        const next = selections.findIndex((s) => s.size === 0);
+        if (next !== -1) {
+          tab = next;
+          optionIdx = 0;
+        }
+      }
+    },
+  };
 }
