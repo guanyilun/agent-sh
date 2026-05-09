@@ -10,15 +10,26 @@
  *   - terminal-buffer extension: agent tools (terminal_read, terminal_keys)
  *   - Any extension needing a virtual terminal snapshot
  */
-// `@xterm/headless` is a CJS module; Node ESM only supports its default
-// import at runtime. Types are imported separately so the named imports
-// are fully erased.
-import xtermPkg from "@xterm/headless";
-import type { Terminal, IBuffer, IBufferLine } from "@xterm/headless";
-import { SerializeAddon } from "@xterm/addon-serialize";
+// xterm is loaded lazily on first TerminalBuffer.create(). Subcommands
+// (init/install/list) and non-shell frontends (web bridges) import this
+// file transitively but never instantiate a buffer; they shouldn't pay
+// the xterm parse cost at startup.
+import { createRequire } from "module";
+import type { Terminal, IBuffer } from "@xterm/headless";
+import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { EventBus } from "../event-bus.js";
 
-const TerminalCtor = xtermPkg.Terminal;
+const require = createRequire(import.meta.url);
+let TerminalCtor: typeof Terminal | null = null;
+let SerializeAddonCtor: typeof SerializeAddon | null = null;
+
+function loadXterm(): { Terminal: typeof Terminal; SerializeAddon: typeof SerializeAddon } {
+  if (!TerminalCtor) {
+    TerminalCtor = require("@xterm/headless").Terminal as typeof Terminal;
+    SerializeAddonCtor = require("@xterm/addon-serialize").SerializeAddon as typeof SerializeAddon;
+  }
+  return { Terminal: TerminalCtor, SerializeAddon: SerializeAddonCtor! };
+}
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -82,11 +93,12 @@ export class TerminalBuffer {
   }
 
   static create(config?: TerminalBufferConfig): TerminalBuffer {
+    const { Terminal, SerializeAddon } = loadXterm();
     const cols = config?.cols ?? (process.stdout.columns || 80);
     const rows = config?.rows ?? (process.stdout.rows || 24);
     const scrollback = config?.scrollback ?? 200;
 
-    const term = new TerminalCtor({ cols, rows, allowProposedApi: true, scrollback });
+    const term = new Terminal({ cols, rows, allowProposedApi: true, scrollback });
     const serialize = new SerializeAddon();
     term.loadAddon(serialize);
     return new TerminalBuffer(term, serialize);
@@ -101,13 +113,12 @@ export class TerminalBuffer {
   static createWired(bus: EventBus, config?: TerminalBufferConfig): TerminalBuffer {
     const tb = TerminalBuffer.create(config);
     let pending = "";
-    bus.on("shell:pty-data", ({ raw }) => { pending += raw; });
-    setInterval(() => {
-      if (pending) { const d = pending; pending = ""; tb.write(d); }
-    }, 50);
-    tb._flushPending = () => {
+    const drain = (): void => {
       if (pending) { const d = pending; pending = ""; tb.write(d); }
     };
+    bus.on("shell:pty-data", ({ raw }) => { pending += raw; });
+    setInterval(drain, 50);
+    tb._flushPending = drain;
     process.stdout.on("resize", () => {
       tb.resize(process.stdout.columns || 80, process.stdout.rows || 24);
     });
@@ -160,7 +171,7 @@ export class TerminalBuffer {
     const base = buf.baseY ?? 0;
     const lines: string[] = [];
     for (let y = 0; y < targetRows; y++) {
-      const line: IBufferLine | undefined = buf.getLine(base + y);
+      const line = buf.getLine(base + y);
       lines.push(line ? line.translateToString(true) : "");
     }
     return lines;
@@ -171,7 +182,7 @@ export class TerminalBuffer {
     const total = (buf.baseY ?? 0) + buf.length;
     const lines: string[] = [];
     for (let y = 0; y < total; y++) {
-      const line: IBufferLine | undefined = buf.getLine(y);
+      const line = buf.getLine(y);
       lines.push(line ? line.translateToString(true) : "");
     }
     while (lines.length > 0 && lines[lines.length - 1] === "") {
