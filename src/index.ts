@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import * as path from "node:path";
-import { activateShell, type ShellHandle } from "./shell/index.js";
+import { activateShell, registerShellHandlers, type ShellHandle } from "./shell/index.js";
 import { createCore } from "./core.js";
 import { palette as p } from "./utils/palette.js";
 import { loadBuiltinExtensions } from "./extensions/index.js";
@@ -250,6 +250,9 @@ async function main(): Promise<void> {
   };
 
   const extCtx = core.extensionContext({ quit: cleanup });
+
+  // Before loadExtensions: extensions look up shell handlers at activation.
+  registerShellHandlers(extCtx);
 
   // Load before spawning the shell so PS1 lands below the banner.
   await loadBuiltinExtensions(extCtx, getSettings().disabledBuiltins);
