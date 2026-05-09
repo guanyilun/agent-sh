@@ -236,9 +236,14 @@ export class InputHandler {
   }
 
   private renderModeInput(): void {
-    this.view.clearAutocomplete();
-    this.drawPrompt();
-    this.updateAutocomplete();
+    this.view.beginFrame();
+    try {
+      this.view.clearAutocomplete();
+      this.drawPrompt();
+      this.updateAutocomplete();
+    } finally {
+      this.view.endFrame();
+    }
   }
 
   private updateAutocomplete(): void {
@@ -287,13 +292,18 @@ export class InputHandler {
       this.editor.setText(selected.name);
     }
 
-    this.view.clearAutocomplete();
-    this.autocompleteActive = false;
-    this.autocompleteItems = [];
-    this.autocompleteIndex = 0;
+    this.view.beginFrame();
+    try {
+      this.view.clearAutocomplete();
+      this.autocompleteActive = false;
+      this.autocompleteItems = [];
+      this.autocompleteIndex = 0;
 
-    this.drawPrompt();
-    if (isFileAc) this.updateAutocomplete();
+      this.drawPrompt();
+      if (isFileAc) this.updateAutocomplete();
+    } finally {
+      this.view.endFrame();
+    }
   }
 
   private dismissAutocomplete(): void {
@@ -328,11 +338,16 @@ export class InputHandler {
         case "changed": {
           const switchMode = this.modes.get(this.editor.text);
           if (this.editor.text.length === 1 && switchMode && switchMode !== this.activeMode) {
-            this.dismissAutocomplete();
-            this.view.clearPromptArea();
-            this.activeMode = switchMode;
-            this.editor.clear();
-            this.drawPrompt(false);
+            this.view.beginFrame();
+            try {
+              this.dismissAutocomplete();
+              this.view.clearPromptArea();
+              this.activeMode = switchMode;
+              this.editor.clear();
+              this.drawPrompt(false);
+            } finally {
+              this.view.endFrame();
+            }
             break;
           }
           this.historyIndex = -1;
@@ -384,8 +399,13 @@ export class InputHandler {
 
         case "cancel":
           if (this.autocompleteActive) {
-            this.dismissAutocomplete();
-            this.drawPrompt();
+            this.view.beginFrame();
+            try {
+              this.dismissAutocomplete();
+              this.drawPrompt();
+            } finally {
+              this.view.endFrame();
+            }
           } else {
             this.exitMode();
           }
@@ -408,9 +428,14 @@ export class InputHandler {
               this.autocompleteIndex === 0
                 ? this.autocompleteItems.length - 1
                 : this.autocompleteIndex - 1;
-            this.view.clearAutocomplete();
-            this.drawPrompt();
-            this.view.drawAutocomplete({ items: this.autocompleteItems, selected: this.autocompleteIndex });
+            this.view.beginFrame();
+            try {
+              this.view.clearAutocomplete();
+              this.drawPrompt();
+              this.view.drawAutocomplete({ items: this.autocompleteItems, selected: this.autocompleteIndex });
+            } finally {
+              this.view.endFrame();
+            }
           } else if (this.history.length > 0) {
             if (this.historyIndex === -1) {
               this.savedBuffer = this.editor.text;
@@ -419,8 +444,13 @@ export class InputHandler {
               this.historyIndex--;
             }
             this.editor.setText(this.history[this.historyIndex]!);
-            this.view.clearAutocomplete();
-            this.drawPrompt();
+            this.view.beginFrame();
+            try {
+              this.view.clearAutocomplete();
+              this.drawPrompt();
+            } finally {
+              this.view.endFrame();
+            }
           }
           break;
 
@@ -430,9 +460,14 @@ export class InputHandler {
               this.autocompleteIndex === this.autocompleteItems.length - 1
                 ? 0
                 : this.autocompleteIndex + 1;
-            this.view.clearAutocomplete();
-            this.drawPrompt();
-            this.view.drawAutocomplete({ items: this.autocompleteItems, selected: this.autocompleteIndex });
+            this.view.beginFrame();
+            try {
+              this.view.clearAutocomplete();
+              this.drawPrompt();
+              this.view.drawAutocomplete({ items: this.autocompleteItems, selected: this.autocompleteIndex });
+            } finally {
+              this.view.endFrame();
+            }
           } else if (this.historyIndex !== -1) {
             if (this.historyIndex < this.history.length - 1) {
               this.historyIndex++;
@@ -441,8 +476,13 @@ export class InputHandler {
               this.historyIndex = -1;
               this.editor.setText(this.savedBuffer);
             }
-            this.view.clearAutocomplete();
-            this.drawPrompt();
+            this.view.beginFrame();
+            try {
+              this.view.clearAutocomplete();
+              this.drawPrompt();
+            } finally {
+              this.view.endFrame();
+            }
           }
           break;
       }
