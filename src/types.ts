@@ -218,10 +218,9 @@ export interface ExtensionContext {
   list: () => string[];
 
   // Note: a `terminal-buffer` handler is registered by the shell frontend
-  // (src/shell/), returning a lazy xterm.js mirror of PTY output. Extensions
-  // can read it via `ctx.call("terminal-buffer")`. Returns null if the
-  // optional `@xterm/headless` package isn't installed, or if no shell
-  // frontend is loaded.
+  // (src/shell/), returning an xterm.js mirror of PTY output. Extensions
+  // can read it via `ctx.call("terminal-buffer")`; the call returns null
+  // only when no shell frontend is loaded (e.g. under a hub or web bridge).
 
   // ── Compositor ─────────────────────────────────────────────────
   /**
