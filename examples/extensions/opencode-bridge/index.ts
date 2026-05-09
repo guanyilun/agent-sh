@@ -5,7 +5,15 @@
  *
  * Requires opencode authenticated locally (`opencode auth login`).
  */
-import { createOpencode, type OpencodeClient, type Event, type Part, type ToolPart } from "@opencode-ai/sdk";
+import {
+  createOpencode,
+  type OpencodeClient,
+  type Event,
+  type Part,
+  type ToolPart,
+  type QuestionRequest,
+  type QuestionInfo,
+} from "@opencode-ai/sdk/v2";
 import type { ExtensionContext } from "agent-sh/types";
 import { computeDiff, type DiffResult } from "agent-sh/utils/diff";
 
@@ -82,6 +90,9 @@ export default function activate(ctx: ExtensionContext): void {
   let pendingTurnEnd: (() => void) | null = null;
   let turnIdleSeen = false;
   let turnError: string | null = null;
+
+  // Set while opencode is awaiting a reply; next submit becomes the answer.
+  let pendingQuestion: { requestID: string; info: QuestionInfo } | null = null;
 
   const listeners: Array<{ event: string; fn: Function }> = [];
 
@@ -178,6 +189,43 @@ export default function activate(ctx: ExtensionContext): void {
     turnText += text;
   }
 
+  function renderQuestion(info: QuestionInfo): string {
+    const lines = ["", `❓ ${info.question}`];
+    if (info.options.length > 0) {
+      info.options.forEach((opt, i) => {
+        const desc = opt.description ? ` — ${opt.description}` : "";
+        lines.push(`  ${i + 1}. ${opt.label}${desc}`);
+      });
+      const hints: string[] = [];
+      if (info.multiple) hints.push("comma-separated for multiple");
+      if (info.custom) hints.push("or type your own answer");
+      if (hints.length > 0) lines.push(`  (${hints.join("; ")})`);
+    } else if (info.custom) {
+      lines.push("  (type your answer)");
+    }
+    lines.push("");
+    return lines.join("\n");
+  }
+
+  function mapAnswerToken(token: string, info: QuestionInfo): string {
+    const idx = parseInt(token, 10);
+    if (!Number.isNaN(idx) && idx >= 1 && idx <= info.options.length) {
+      return info.options[idx - 1]!.label;
+    }
+    const match = info.options.find((o) => o.label.toLowerCase() === token.toLowerCase());
+    if (match) return match.label;
+    return token; // free-text — opencode will validate against `custom`
+  }
+
+  function parseQuestionAnswer(input: string, info: QuestionInfo): string[] {
+    const trimmed = input.trim();
+    if (info.options.length === 0) return [trimmed];
+    if (info.multiple) {
+      return trimmed.split(",").map((s) => s.trim()).filter(Boolean).map((t) => mapAnswerToken(t, info));
+    }
+    return [mapAnswerToken(trimmed, info)];
+  }
+
   function handleEvent(event: Event): void {
     if (!sessionId) return;
     const evType = (event as any).type as string;
@@ -219,25 +267,44 @@ export default function activate(ctx: ExtensionContext): void {
         pendingTurnEnd?.();
         if (runtime && sessionId) {
           runtime.client.session
-            .abort({ path: { id: sessionId }, query: sessionDirectory ? { directory: sessionDirectory } : undefined })
+            .abort({ sessionID: sessionId, directory: sessionDirectory ?? undefined })
             .catch(() => { /* abort is best-effort */ });
         }
+        break;
+      }
+      case "question.asked": {
+        const req = props as QuestionRequest;
+        if (!runtime) break;
+        if (req.questions.length !== 1) {
+          // Multi-question needs richer input than one line; reject so the agent can adapt.
+          runtime.client.question
+            .reject({ requestID: req.id, directory: sessionDirectory ?? undefined })
+            .catch(() => { /* best-effort */ });
+          break;
+        }
+        pendingQuestion = { requestID: req.id, info: req.questions[0]! };
+        bus.emitTransform("agent:response-chunk", {
+          blocks: [{ type: "text" as const, text: renderQuestion(req.questions[0]!) }],
+        });
+        // Release the spinner while waiting on the user; the active
+        // prompt() is still in flight and will continue once we reply.
+        bus.emit("agent:processing-done", {});
+        break;
+      }
+      case "question.replied":
+      case "question.rejected": {
+        pendingQuestion = null;
         break;
       }
       // Without a reply the gated tool hangs forever. The bridge has no
       // interactive approval UI, so auto-approve — mirrors claude-code-
       // bridge's permissionMode: "acceptEdits". Set permission.edit:
       // "allow" in opencode.json to skip the round-trip entirely.
-      case "permission.asked":
-      case "permission.updated": {
-        const permissionID = props.id as string | undefined;
-        if (!permissionID || !runtime || !sessionId) break;
-        runtime.client
-          .postSessionIdPermissionsPermissionId({
-            path: { id: sessionId, permissionID },
-            query: sessionDirectory ? { directory: sessionDirectory } : undefined,
-            body: { response: "once" },
-          })
+      case "permission.asked": {
+        const requestID = props.id as string | undefined;
+        if (!requestID || !runtime) break;
+        runtime.client.permission
+          .reply({ requestID, reply: "once", directory: sessionDirectory ?? undefined })
           .catch(() => { /* approval is best-effort */ });
         break;
       }
@@ -247,7 +314,7 @@ export default function activate(ctx: ExtensionContext): void {
   async function consumeEvents(client: OpencodeClient, signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       try {
-        const result = await client.event.subscribe({ signal });
+        const result = await client.event.subscribe({}, { signal });
         for await (const ev of result.stream) {
           if (signal.aborted) return;
           handleEvent(ev as Event);
@@ -269,6 +336,27 @@ export default function activate(ctx: ExtensionContext): void {
         return;
       }
 
+      if (pendingQuestion) {
+        // The original prompt() is still in flight; reply continues that turn.
+        const pq = pendingQuestion;
+        pendingQuestion = null;
+        bus.emit("agent:query", { query: userQuery });
+        bus.emit("agent:processing-start", {});
+        try {
+          await runtime.client.question.reply({
+            requestID: pq.requestID,
+            answers: [parseQuestionAnswer(userQuery, pq.info)],
+            directory: sessionDirectory ?? undefined,
+          });
+        } catch (err) {
+          bus.emit("agent:error", {
+            message: err instanceof Error ? err.message : String(err),
+          });
+          bus.emit("agent:processing-done", {});
+        }
+        return;
+      }
+
       bus.emit("agent:query", { query: userQuery });
       bus.emit("agent:processing-start", {});
       turnText = "";
@@ -285,11 +373,9 @@ export default function activate(ctx: ExtensionContext): void {
 
       try {
         const res = await runtime.client.session.prompt({
-          path: { id: sessionId },
-          query: sessionDirectory ? { directory: sessionDirectory } : undefined,
-          body: {
-            parts: [{ type: "text", text: finalPrompt }],
-          },
+          sessionID: sessionId,
+          directory: sessionDirectory ?? undefined,
+          parts: [{ type: "text", text: finalPrompt }],
         });
         if (!turnIdleSeen) {
           await Promise.race([
@@ -328,8 +414,19 @@ export default function activate(ctx: ExtensionContext): void {
 
     const onCancel = async () => {
       if (!runtime || !sessionId) return;
+      if (pendingQuestion) {
+        const pq = pendingQuestion;
+        pendingQuestion = null;
+        try {
+          await runtime.client.question.reject({
+            requestID: pq.requestID,
+            directory: sessionDirectory ?? undefined,
+          });
+        } catch { /* best-effort */ }
+        return;
+      }
       try {
-        await runtime.client.session.abort({ path: { id: sessionId } });
+        await runtime.client.session.abort({ sessionID: sessionId, directory: sessionDirectory ?? undefined });
       } catch { /* abort is best-effort */ }
     };
 
@@ -338,9 +435,10 @@ export default function activate(ctx: ExtensionContext): void {
       announcedTools.clear();
       completedTools.clear();
       partKinds.clear();
+      pendingQuestion = null;
       // /reset is the one moment we deliberately let the project switch.
       sessionDirectory = cwd();
-      const res = await runtime.client.session.create({ query: { directory: sessionDirectory } });
+      const res = await runtime.client.session.create({ directory: sessionDirectory });
       sessionId = res.data?.id ?? null;
     };
 
@@ -371,13 +469,13 @@ export default function activate(ctx: ExtensionContext): void {
         void consumeEvents(runtime.client, streamAbort.signal);
 
         sessionDirectory = cwd();
-        const res = await runtime.client.session.create({ query: { directory: sessionDirectory } });
+        const res = await runtime.client.session.create({ directory: sessionDirectory });
         sessionId = res.data?.id ?? null;
         if (!sessionId) throw new Error("session.create returned no id");
 
         wireListeners();
         booting = false;
-        bus.emit("agent:info", { name: "opencode", version: "1.x" });
+        bus.emit("agent:info", { name: "opencode", version: "2.x" });
       } catch (err) {
         booting = false;
         bus.emit("ui:error", {
@@ -396,6 +494,7 @@ export default function activate(ctx: ExtensionContext): void {
       announcedTools.clear();
       completedTools.clear();
       partKinds.clear();
+      pendingQuestion = null;
       booting = true;
     },
   });
