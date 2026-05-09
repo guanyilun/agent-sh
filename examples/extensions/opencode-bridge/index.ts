@@ -81,6 +81,7 @@ export default function activate(ctx: ExtensionContext): void {
   // prompt() and SSE deltas race; resolve the turn on session.idle.
   let pendingTurnEnd: (() => void) | null = null;
   let turnIdleSeen = false;
+  let turnError: string | null = null;
 
   const listeners: Array<{ event: string; fn: Function }> = [];
 
@@ -209,7 +210,18 @@ export default function activate(ctx: ExtensionContext): void {
       }
       case "session.error": {
         const err = props.error as { message?: string } | undefined;
-        bus.emit("agent:error", { message: err?.message ?? "opencode session error" });
+        const message = err?.message ?? "opencode session error";
+        // session.prompt() does not always reject on session error;
+        // drive turn-end ourselves and abort to unstick a hanging prompt().
+        turnError = message;
+        bus.emit("agent:error", { message });
+        turnIdleSeen = true;
+        pendingTurnEnd?.();
+        if (runtime && sessionId) {
+          runtime.client.session
+            .abort({ path: { id: sessionId }, query: sessionDirectory ? { directory: sessionDirectory } : undefined })
+            .catch(() => { /* abort is best-effort */ });
+        }
         break;
       }
       // Without a reply the gated tool hangs forever. The bridge has no
@@ -261,6 +273,7 @@ export default function activate(ctx: ExtensionContext): void {
       bus.emit("agent:processing-start", {});
       turnText = "";
       turnIdleSeen = false;
+      turnError = null;
       // Set the idle waiter BEFORE prompt() so a fast session.idle can't
       // race in before we're listening.
       const idlePromise = new Promise<void>((resolve) => {
@@ -284,23 +297,29 @@ export default function activate(ctx: ExtensionContext): void {
             new Promise<void>((r) => setTimeout(r, 60_000)),
           ]);
         }
-        // Fallback if SSE never delivered text (network blip, missed
-        // partKinds entry); the prompt response always carries the final.
-        if (!turnText && res.data?.parts) {
-          for (const p of res.data.parts) {
-            if (p.type === "text" && p.text) turnText += p.text;
+        if (turnError) {
+          bus.emitTransform("agent:response-done", { response: "" });
+        } else {
+          // Fallback if SSE never delivered text (network blip, missed
+          // partKinds entry); the prompt response always carries the final.
+          if (!turnText && res.data?.parts) {
+            for (const p of res.data.parts) {
+              if (p.type === "text" && p.text) turnText += p.text;
+            }
+            if (turnText) {
+              bus.emitTransform("agent:response-chunk", {
+                blocks: [{ type: "text" as const, text: turnText }],
+              });
+            }
           }
-          if (turnText) {
-            bus.emitTransform("agent:response-chunk", {
-              blocks: [{ type: "text" as const, text: turnText }],
-            });
-          }
+          bus.emitTransform("agent:response-done", { response: turnText });
         }
-        bus.emitTransform("agent:response-done", { response: turnText });
       } catch (err) {
-        bus.emit("agent:error", {
-          message: err instanceof Error ? err.message : String(err),
-        });
+        if (!turnError) {
+          bus.emit("agent:error", {
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
       } finally {
         pendingTurnEnd = null;
         bus.emit("agent:processing-done", {});
