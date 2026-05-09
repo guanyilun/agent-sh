@@ -245,12 +245,43 @@ export default function activate(ctx: ExtensionContext): void {
         const ui = createToolUI(bus, compositor.surface("agent"));
         ui.custom(createQuestionSession(req.questions)).then(async (result: QuestionResult) => {
           if (!runtime) return;
+          // Record the question + answer as a synthetic tool entry so the
+          // timeline shows what was asked and what the user picked.
+          const callID = `question-${req.id}`;
+          const detail = req.questions.length === 1
+            ? req.questions[0]!.question
+            : req.questions.map((q, i) => `${q.header || `Q${i + 1}`}: ${q.question}`).join("; ");
+          bus.emit("agent:tool-started", {
+            title: "question",
+            toolCallId: callID,
+            kind: "execute",
+            displayDetail: detail,
+          });
           if (result.cancelled) {
+            bus.emitTransform("agent:tool-completed", {
+              toolCallId: callID,
+              exitCode: 1,
+              rawOutput: "cancelled",
+              kind: "execute",
+              resultDisplay: { summary: "cancelled" },
+            });
             runtime.client.question
               .reject({ requestID: req.id, directory: sessionDirectory ?? undefined })
               .catch(() => { /* best-effort */ });
             return;
           }
+          const summary = result.answers.length === 1
+            ? result.answers[0]!.join(", ")
+            : result.answers
+                .map((ans, i) => `${req.questions[i]!.header || `Q${i + 1}`}: ${ans.join(", ")}`)
+                .join("; ");
+          bus.emitTransform("agent:tool-completed", {
+            toolCallId: callID,
+            exitCode: 0,
+            rawOutput: summary,
+            kind: "execute",
+            resultDisplay: { summary },
+          });
           try {
             await runtime.client.question.reply({
               requestID: req.id,
