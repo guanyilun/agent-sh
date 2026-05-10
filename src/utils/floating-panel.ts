@@ -226,7 +226,8 @@ export class FloatingPanel {
    *   - `{prefix}:render-border-bottom(ctx: FrameContext) -> string`
    *   - `{prefix}:composite-row(content: string, bgLine: string|null, boxLeft: number, boxW: number, cols: number) -> string`
    *   - `{prefix}:submit(query: string) -> void`
-   *   - `{prefix}:dismiss() -> void`
+   *   - `{prefix}:hide() -> void`    (screen down; conversation state preserved)
+   *   - `{prefix}:reset() -> void`   (conversation state cleared)
    *   - `{prefix}:show() -> void`
    *   - `{prefix}:input(data: string) -> boolean`
    *   - `{prefix}:build-row(content: string, width: number) -> string`
@@ -262,6 +263,11 @@ export class FloatingPanel {
   private wrapCacheWidth = 0;
   private passthroughTimer: ReturnType<typeof setInterval> | null = null;
   private prevSerialized = "";
+
+  // ── Autocomplete ────────────────────────────────────────────
+  private autocompleteItems: { name: string; description: string }[] = [];
+  private autocompleteIndex = 0;
+  private autocompleteActive = false;
 
   constructor(bus: EventBus, config: FloatingPanelConfig, handlers?: HandlerRegistry) {
     this.bus = bus;
@@ -313,10 +319,56 @@ export class FloatingPanel {
         all.push(...wrapped);
       }
 
-      // In input phase, append the prompt line at the bottom of content
+      if (ctx.phase === "input" && this.autocompleteActive && this.autocompleteItems.length > 0) {
+        const ACMax = 5;
+        const items = this.autocompleteItems;
+        let acStart = 0;
+        let acEnd = items.length;
+        if (items.length > ACMax) {
+          acStart = Math.max(0, this.autocompleteIndex - Math.floor(ACMax / 2));
+          acStart = Math.min(acStart, items.length - ACMax);
+          acEnd = acStart + ACMax;
+        }
+        for (let i = acStart; i < acEnd; i++) {
+          const item = items[i]!;
+          const selected = i === this.autocompleteIndex;
+          const desc = item.description ? `  ${item.description}` : "";
+          if (selected) {
+            all.push(`${INVERSE} ${item.name}${desc} ${RESET}`);
+          } else {
+            all.push(` ${item.name}${DIM}${desc}${RESET}`);
+          }
+        }
+      }
+
+      let promptStartIdx = -1;
+      let cursorRowOffset = 0;
+      let cursorCol = 0;
       if (ctx.phase === "input") {
-        const promptLine = `\x1b[36m${this.config.promptIcon}${RESET} ${ctx.inputBuffer}`;
-        all.push(promptLine);
+        const w = ctx.width;
+        const prefixLen = this.config.promptIcon.length + 1;
+        const styledPrefix = `\x1b[36m${this.config.promptIcon}${RESET} `;
+        const input = ctx.inputBuffer;
+        const firstLineCap = Math.max(1, w - prefixLen);
+        promptStartIdx = all.length;
+
+        if (input.length === 0) {
+          all.push(styledPrefix);
+        } else {
+          all.push(styledPrefix + input.slice(0, firstLineCap));
+          for (let i = firstLineCap; i < input.length; i += w) {
+            all.push(input.slice(i, i + w));
+          }
+        }
+
+        const cursorVp = prefixLen + ctx.inputCursor;
+        cursorRowOffset = Math.floor(cursorVp / w);
+        cursorCol = cursorVp % w;
+
+        // Cursor on an exact wrap boundary lands past the last rendered row.
+        while (all.length - promptStartIdx <= cursorRowOffset) {
+          all.push("");
+        }
       }
 
       // Scroll: auto-scroll to bottom unless user manually scrolled
@@ -333,14 +385,12 @@ export class FloatingPanel {
 
       const visible = all.slice(offset, offset + ctx.height);
 
-      // Cursor position for input mode
-      if (ctx.phase === "input") {
-        const promptRow = visible.length - 1;
-        // If prompt is visible, set cursor
-        if (promptRow >= 0) {
+      if (ctx.phase === "input" && promptStartIdx >= 0) {
+        const cursorRowInVisible = promptStartIdx + cursorRowOffset - offset;
+        if (cursorRowInVisible >= 0 && cursorRowInVisible < visible.length) {
           return {
             lines: visible,
-            cursor: { row: promptRow, col: this.config.promptIcon.length + 1 + ctx.inputCursor },
+            cursor: { row: cursorRowInVisible, col: cursorCol },
           };
         }
       }
@@ -348,13 +398,9 @@ export class FloatingPanel {
       return { lines: visible };
     });
 
-    // Default submit: no-op (extension overrides)
     this.handlers.define(`${p}:submit`, (_query: string) => {});
-
-    // Default dismiss: no-op
-    this.handlers.define(`${p}:dismiss`, () => {});
-
-    // Default show: no-op (extension overrides to rebuild content on re-show)
+    this.handlers.define(`${p}:hide`, () => {});
+    this.handlers.define(`${p}:reset`, () => {});
     this.handlers.define(`${p}:show`, () => {});
 
     // Default custom input handler: don't consume
@@ -516,6 +562,7 @@ export class FloatingPanel {
 
     this.phase = "input";
     this.editor.clear();
+    this.clearAutocomplete();
     this.contentLines = [];
     this.currentPartialLine = "";
     this.scrollOffset = 0;
@@ -546,7 +593,7 @@ export class FloatingPanel {
       this.teardownScreen();
     }
 
-    this.handlers.call(`${this.prefix}:dismiss`);
+    this.handlers.call(`${this.prefix}:hide`);
   }
 
   /** Show the panel again after hide(), preserving conversation. */
@@ -568,11 +615,27 @@ export class FloatingPanel {
     this.handlers.call(`${this.prefix}:show`);
   }
 
-  /** Fully destroy the panel, resetting all state. */
-  dismiss(): void {
+  /** End the conversation: screen down and all buffered state cleared. */
+  reset(): void {
     if (this.phase === "idle") return;
     if (this.autoDismissTimer) { clearTimeout(this.autoDismissTimer); this.autoDismissTimer = null; }
 
+    this.teardownToHidden();
+
+    this.phase = "idle";
+    this.editor.clear();
+    this.clearAutocomplete();
+    this.contentLines = [];
+    this.currentPartialLine = "";
+    this.scrollOffset = 0;
+    this.title = "";
+    this.footer = "";
+
+    this.handlers.call(`${this.prefix}:reset`);
+  }
+
+  /** Screen-only teardown; conversation state is left untouched. */
+  private teardownToHidden(): void {
     if (this._passthrough) {
       this.stopPassthrough();
       this._passthrough = false;
@@ -583,14 +646,6 @@ export class FloatingPanel {
       this.prevFrame = [];
       this.teardownScreen();
     }
-
-    this.phase = "idle";
-    this.editor.clear();
-    this.contentLines = [];
-    this.currentPartialLine = "";
-    this.scrollOffset = 0;
-    this.title = "";
-    this.footer = "";
   }
 
   /** Common screen enter logic shared by open() and show(). */
@@ -669,22 +724,23 @@ export class FloatingPanel {
   }
 
   setDone(): void {
-    if (this._passthrough) {
-      // Agent finished while hidden — session over, hand back control.
-      this.dismiss();
-      return;
-    }
     if (this.config.autoDismissMs > 0) {
-      // Legacy behavior: enter done state, auto-dismiss after delay
       this.phase = "done";
-      this.render();
       this.autoDismissTimer = setTimeout(() => {
-        if (this.phase === "done") this.dismiss();
+        if (this.phase === "done") this.reset();
       }, this.config.autoDismissMs);
     } else {
-      // Auto-prompt: transition to input for follow-up conversation
       this.phase = "input";
       this.editor.clear();
+      this.clearAutocomplete();
+    }
+
+    if (this._passthrough) {
+      // Agent finished while hidden — release the screen but keep state
+      // so the next summon resumes the transcript.
+      this.teardownToHidden();
+      this.handlers.call(`${this.prefix}:hide`);
+    } else {
       this.render();
     }
   }
@@ -709,6 +765,64 @@ export class FloatingPanel {
     this.scheduleRender();
   }
 
+  // ── Autocomplete helpers ────────────────────────────────────
+
+  private updateAutocomplete(): void {
+    if (this.phase !== "input") {
+      this.clearAutocomplete();
+      return;
+    }
+    const buf = this.editor.text;
+    let command: string | null = null;
+    let commandArgs: string | null = null;
+    if (buf.startsWith("/")) {
+      const spaceIdx = buf.indexOf(" ");
+      if (spaceIdx !== -1) {
+        command = buf.slice(0, spaceIdx);
+        commandArgs = buf.slice(spaceIdx + 1);
+      }
+    }
+    const { items } = this.bus.emitPipe("autocomplete:request", {
+      buffer: buf,
+      command,
+      commandArgs,
+      items: [],
+    });
+    if (items.length > 0) {
+      this.autocompleteItems = items;
+      this.autocompleteActive = true;
+      if (this.autocompleteIndex >= items.length) this.autocompleteIndex = 0;
+    } else {
+      this.clearAutocomplete();
+    }
+  }
+
+  private applyAutocomplete(): boolean {
+    if (!this.autocompleteActive || this.autocompleteItems.length === 0) return false;
+    const sel = this.autocompleteItems[this.autocompleteIndex];
+    if (!sel) return false;
+
+    // For @file completion only the partial after the last @ is replaced.
+    const text = this.editor.text;
+    const atPos = text.lastIndexOf("@");
+    const isFileAc = atPos >= 0
+      && (atPos === 0 || text[atPos - 1] === " ")
+      && !text.slice(atPos + 1).includes(" ");
+    if (isFileAc) {
+      this.editor.setText(text.slice(0, atPos) + "@" + sel.name);
+    } else {
+      this.editor.setText(sel.name);
+    }
+    this.clearAutocomplete();
+    return true;
+  }
+
+  private clearAutocomplete(): void {
+    this.autocompleteActive = false;
+    this.autocompleteItems = [];
+    this.autocompleteIndex = 0;
+  }
+
   // ── Input handling ──────────────────────────────────────────
 
   private handleIntercept(payload: { data: string; consumed: boolean }): { data: string; consumed: boolean } {
@@ -728,7 +842,7 @@ export class FloatingPanel {
 
     switch (this.phase) {
       case "done":
-        this.dismiss();
+        this.reset();
         return consumed;
 
       case "input":
@@ -756,23 +870,22 @@ export class FloatingPanel {
     }
   }
 
-  /** Handle scroll input. Returns true if consumed. */
-  private handleScroll(data: string): boolean {
-    // Arrow up / mouse wheel up
-    if (data === "\x1b[A" || data === "\x1bOA") { this.scrollUp(1); return true; }
-    // Arrow down / mouse wheel down
-    if (data === "\x1b[B" || data === "\x1bOB") { this.scrollDown(1); return true; }
-    // Page up (CSI 5~)
+  /**
+   * Handle scroll input. Returns true if consumed.
+   * Pass `includeArrows=false` in input phase so arrows reach the editor.
+   */
+  private handleScroll(data: string, includeArrows = true): boolean {
+    if (includeArrows) {
+      if (data === "\x1b[A" || data === "\x1bOA") { this.scrollUp(1); return true; }
+      if (data === "\x1b[B" || data === "\x1bOB") { this.scrollDown(1); return true; }
+    }
     if (data === "\x1b[5~") { this.scrollUp(this.computeGeometry().contentH - 1); return true; }
-    // Page down (CSI 6~)
     if (data === "\x1b[6~") { this.scrollDown(this.computeGeometry().contentH - 1); return true; }
-    // Mouse wheel: CSI M followed by button byte (64 = wheel up, 65 = wheel down)
     if (data.length >= 6 && data.startsWith("\x1b[M")) {
       const button = data.charCodeAt(3);
-      if (button === 96) { this.scrollUp(3); return true; }   // wheel up
-      if (button === 97) { this.scrollDown(3); return true; }  // wheel down
+      if (button === 96) { this.scrollUp(3); return true; }
+      if (button === 97) { this.scrollDown(3); return true; }
     }
-    // SGR mouse: CSI < 64;x;yM (wheel up) / CSI < 65;x;yM (wheel down)
     const sgr = data.match(/^\x1b\[<(64|65);\d+;\d+M$/);
     if (sgr) {
       if (sgr[1] === "64") { this.scrollUp(3); return true; }
@@ -782,47 +895,83 @@ export class FloatingPanel {
   }
 
   private handleInputKey(data: string): void {
-    // Check full data string against trigger sequences (may be multi-byte)
     if (this.isTrigger(data)) { this.hide(); return; }
 
     for (let i = 0; i < data.length; i++) {
       const ch = data[i]!;
-      if (ch === "\x1b" && data[i + 1] == null) { this.hide(); return; }
-      if (ch.charCodeAt(0) === 0x03) { this.hide(); return; }
+      if ((ch === "\x1b" && data[i + 1] == null) || ch.charCodeAt(0) === 0x03) {
+        // First Esc/Ctrl+C closes the dropdown; second hides the panel.
+        if (this.autocompleteActive) {
+          this.clearAutocomplete();
+          this.render();
+          return;
+        }
+        this.hide();
+        return;
+      }
     }
 
-    // Page Up/Down and mouse wheel scroll even in input phase
-    if (this.handleScroll(data)) return;
+    if (this.handleScroll(data, false)) return;
 
     const actions = this.editor.feed(data);
     for (const action of actions) {
       switch (action.action) {
         case "submit": {
+          // Apply selection on Enter so it both picks and submits.
+          this.applyAutocomplete();
           const query = this.editor.text.trim();
           if (!query) { this.hide(); return; }
           this.editor.pushHistory(query);
-          this.phase = "active";
           this.editor.clear();
+          this.clearAutocomplete();
+          // Phase change is the submit handler's call — sync slash commands
+          // (e.g. /model, /help) keep the user in input mode.
           this.handlers.call(`${this.prefix}:submit`, query);
           return;
         }
         case "cancel":
+          if (this.autocompleteActive) {
+            this.clearAutocomplete();
+            this.render();
+            return;
+          }
           this.hide();
           return;
+        case "tab":
+          // Re-query after applying a command name so arg completions show.
+          if (this.applyAutocomplete()) this.updateAutocomplete();
+          this.render();
+          break;
+        case "shift+tab":
+          this.render();
+          break;
         case "arrow-up": {
-          const hist = this.editor.historyBack();
-          if (hist) this.render();
+          if (this.autocompleteActive) {
+            this.autocompleteIndex = this.autocompleteIndex === 0
+              ? this.autocompleteItems.length - 1
+              : this.autocompleteIndex - 1;
+            this.render();
+          } else {
+            const hist = this.editor.historyBack();
+            if (hist) this.render();
+          }
           break;
         }
         case "arrow-down": {
-          const hist = this.editor.historyForward();
-          if (hist) this.render();
+          if (this.autocompleteActive) {
+            this.autocompleteIndex = this.autocompleteIndex === this.autocompleteItems.length - 1
+              ? 0
+              : this.autocompleteIndex + 1;
+            this.render();
+          } else {
+            const hist = this.editor.historyForward();
+            if (hist) this.render();
+          }
           break;
         }
         case "changed":
-        case "tab":
-        case "shift+tab":
         case "delete-empty":
+          this.updateAutocomplete();
           this.render();
           break;
       }

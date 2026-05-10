@@ -104,8 +104,18 @@ export default function activate(ctx: ExtensionContext): void {
         surface: panelSurface,
       });
     }
-    panel.setActive();
-    session.submit(query);
+    if (query.startsWith("/")) {
+      // Sync commands (/model, /help) render via ui:info and leave us in
+      // input phase; ones that fan out to agent:submit flip the phase via
+      // the agent:processing-start listener below.
+      const spaceIdx = query.indexOf(" ");
+      const name = spaceIdx === -1 ? query : query.slice(0, spaceIdx);
+      const args = spaceIdx === -1 ? "" : query.slice(spaceIdx + 1).trim();
+      bus.emit("command:execute", { name, args });
+    } else {
+      panel.setActive();
+      session.submit(query);
+    }
   });
 
   panel.handlers.advise("panel:show", (_next) => {
@@ -114,14 +124,27 @@ export default function activate(ctx: ExtensionContext): void {
     }
   });
 
-  // Keep the session alive while the agent is still working, even after
-  // dismiss — so output keeps buffering and tools keep executing.
-  panel.handlers.advise("panel:dismiss", (next) => {
+  // While the agent is still working, keep the session open so output and
+  // tool calls survive a hide. Once it's idle, close to release redirects.
+  panel.handlers.advise("panel:hide", (next) => {
     next();
     if (session && !panel.processing) {
       session.close();
       session = null;
     }
+  });
+
+  panel.handlers.advise("panel:reset", (next) => {
+    next();
+    if (session) {
+      session.close();
+      session = null;
+    }
+  });
+
+  // Picks up turns triggered indirectly (e.g. /skill:foo → agent:submit).
+  bus.on("agent:processing-start", () => {
+    if (panel.active && !panel.processing) panel.setActive();
   });
 
   bus.on("agent:processing-done", () => {
