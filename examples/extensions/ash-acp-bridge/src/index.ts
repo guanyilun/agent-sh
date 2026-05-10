@@ -92,8 +92,9 @@ function sendToolCall(
   title: string,
   kind: string,
   rawInput?: unknown,
+  locations?: { path: string; line?: number | null }[],
 ): void {
-  sendSessionUpdate({
+  const update: Record<string, unknown> = {
     sessionUpdate: "tool_call",
     toolCallId,
     title,
@@ -101,7 +102,59 @@ function sendToolCall(
     kind,
     content: [],
     rawInput,
-  });
+  };
+  if (locations && locations.length > 0) update.locations = locations;
+  sendSessionUpdate(update);
+}
+
+// ── Tool title enrichment ───────────────────────────────────────────
+// ACP clients typically only render title + kind, so the bare tool name
+// ("read_file") is unhelpful. Append path/command/pattern detail.
+
+function shortenPath(p: string): string {
+  const cwd = process.cwd();
+  if (p.startsWith(cwd + "/")) return p.slice(cwd.length + 1);
+  const home = process.env.HOME;
+  if (home && p.startsWith(home + "/")) return "~/" + p.slice(home.length + 1);
+  return p;
+}
+
+function extractDetail(
+  displayDetail: string | undefined,
+  rawInput: unknown,
+  locations: { path: string; line?: number | null }[] | undefined,
+): string {
+  if (displayDetail) return displayDetail;
+  if (locations && locations.length > 0) {
+    const loc = locations.find((l) => l?.path) ?? locations[0]!;
+    const line = loc.line ? `:${loc.line}` : "";
+    return `${shortenPath(loc.path)}${line}`;
+  }
+  if (rawInput && typeof rawInput === "object") {
+    const raw = rawInput as Record<string, unknown>;
+    if (typeof raw.command === "string") return `$ ${raw.command}`;
+    if (typeof raw.pattern === "string") {
+      const target = typeof raw.path === "string" ? ` ${shortenPath(raw.path)}` : "";
+      return `${raw.pattern}${target}`;
+    }
+    if (typeof raw.path === "string") return shortenPath(raw.path);
+    if (typeof raw.file_path === "string") return shortenPath(raw.file_path);
+    if (typeof raw.url === "string") return raw.url;
+    if (typeof raw.query === "string") return `"${raw.query}"`;
+  }
+  return "";
+}
+
+function enrichTitle(
+  title: string,
+  displayDetail: string | undefined,
+  rawInput: unknown,
+  locations: { path: string; line?: number | null }[] | undefined,
+): string {
+  const detail = extractDetail(displayDetail, rawInput, locations);
+  if (!detail) return title;
+  if (title.includes(detail)) return title;
+  return `${title}: ${detail}`;
 }
 
 function sendToolCallUpdate(
@@ -300,7 +353,8 @@ function wireEvents(core: AgentShellCore): void {
   bus.on("agent:tool-started", (e) => {
     const id = e.toolCallId ?? `tool-${Date.now()}`;
     toolOutputBuffers.set(id, "");
-    sendToolCall(id, e.title, e.kind ?? "tool", e.rawInput);
+    const title = enrichTitle(e.title, e.displayDetail, e.rawInput, e.locations);
+    sendToolCall(id, title, e.kind ?? "tool", e.rawInput, e.locations);
   });
 
   bus.on("agent:tool-output-chunk", ({ chunk }) => {
@@ -365,6 +419,11 @@ function wireEvents(core: AgentShellCore): void {
   bus.onPipeAsync("permission:request", async (payload) => {
     payload.decision = { outcome: "approved" };
     return payload;
+  });
+
+  // Surface ui:error to stderr — extension load failures are otherwise silent.
+  bus.on("ui:error", ({ message }) => {
+    process.stderr.write(`[ash-acp-bridge] ${message}\n`);
   });
 }
 
@@ -444,7 +503,7 @@ async function handleSessionNew(id: number | string, params: Record<string, unkn
     const headlessDisabled = [
       "tui-renderer",
       "file-autocomplete",
-      "overlay-agent",
+      "shell-context",
       ...(settings.disabledBuiltins ?? []),
     ];
     await loadBuiltinExtensions(extCtx, headlessDisabled);
@@ -462,7 +521,7 @@ async function handleSessionNew(id: number | string, params: Record<string, unkn
 
     // Signal deferred-init listeners (agent-backend) that the provider
     // registry is complete — they resolve their LLM config on this event.
-    core.bus.emit("core:extensions-loaded", {});
+    core.bus.emit("core:extensions-loaded", { names: [] });
 
     core.activateBackend();
 
