@@ -97,10 +97,21 @@ function pickResolver(spec: string): Resolver {
   return bundledResolver;
 }
 
-function maybeNpmInstall(target: string): void {
+interface PackageJson {
+  scripts?: Record<string, string>;
+  dependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  bin?: string | Record<string, string>;
+  name?: string;
+}
+
+function readPackageJson(target: string): PackageJson | null {
   const pkgJson = path.join(target, "package.json");
-  if (!fs.existsSync(pkgJson)) return;
-  const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf-8"));
+  if (!fs.existsSync(pkgJson)) return null;
+  return JSON.parse(fs.readFileSync(pkgJson, "utf-8")) as PackageJson;
+}
+
+function maybeNpmInstall(target: string, pkg: PackageJson): void {
   const deps = { ...(pkg.dependencies ?? {}), ...(pkg.peerDependencies ?? {}) };
   if (Object.keys(deps).length === 0) return;
   if (fs.existsSync(path.join(target, "node_modules"))) return;
@@ -112,6 +123,48 @@ function maybeNpmInstall(target: string): void {
   if (result.status !== 0) {
     throw new Error(`npm install failed in ${target}; run it manually.`);
   }
+}
+
+function normalizeBin(pkg: PackageJson): Record<string, string> {
+  if (!pkg.bin) return {};
+  if (typeof pkg.bin === "string") {
+    const name = pkg.name?.startsWith("@") ? pkg.name.split("/")[1]! : pkg.name;
+    return name ? { [name]: pkg.bin } : {};
+  }
+  return pkg.bin;
+}
+
+function maybeNpmBuild(target: string, pkg: PackageJson): void {
+  if (!pkg.scripts?.build) return;
+  const binPaths = Object.values(normalizeBin(pkg)).map((p) => path.join(target, p));
+  if (binPaths.length === 0) return;
+  if (binPaths.every((p) => fs.existsSync(p))) return;
+  console.log(`Running npm run build in ${target}...`);
+  const result = spawnSync("npm", ["run", "build"], { cwd: target, stdio: "inherit" });
+  if (result.status !== 0) {
+    throw new Error(`npm run build failed in ${target}; run it manually.`);
+  }
+}
+
+function linkBins(target: string, pkg: PackageJson): string[] {
+  const bins = normalizeBin(pkg);
+  if (Object.keys(bins).length === 0) return [];
+  const binDir = path.join(CONFIG_DIR, "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  const linked: string[] = [];
+  for (const [name, relPath] of Object.entries(bins)) {
+    const src = path.resolve(target, relPath);
+    if (!fs.existsSync(src)) {
+      console.error(`agent-sh: skipping bin "${name}" — ${src} not found`);
+      continue;
+    }
+    try { fs.chmodSync(src, 0o755); } catch { /* ignore */ }
+    const linkPath = path.join(binDir, name);
+    try { fs.unlinkSync(linkPath); } catch { /* ignore */ }
+    fs.symlinkSync(src, linkPath);
+    linked.push(name);
+  }
+  return linked;
 }
 
 export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<void> {
@@ -145,10 +198,16 @@ export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<
     fs.rmSync(target, { recursive: true, force: true });
   }
 
+  let linkedBins: string[] = [];
   if (resolved.isDirectory) {
     fs.cpSync(resolved.sourcePath, target, { recursive: true });
     try {
-      maybeNpmInstall(target);
+      const pkg = readPackageJson(target);
+      if (pkg) {
+        maybeNpmInstall(target, pkg);
+        maybeNpmBuild(target, pkg);
+        linkedBins = linkBins(target, pkg);
+      }
     } catch (err) {
       console.error(`agent-sh: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
@@ -158,6 +217,11 @@ export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<
   }
 
   console.log(`Installed: ${resolved.name} -> ${target}`);
+  if (linkedBins.length > 0) {
+    const binDir = path.join(CONFIG_DIR, "bin");
+    console.log(`Linked bins: ${linkedBins.join(", ")} -> ${binDir}`);
+    console.log(`Add to PATH: export PATH="${binDir}:$PATH"`);
+  }
 }
 
 export async function runUninstall(name: string): Promise<void> {
@@ -176,6 +240,20 @@ export async function runUninstall(name: string): Promise<void> {
   if (!fs.lstatSync(target, { throwIfNoEntry: false })) {
     console.error(`agent-sh: not installed: ${name}`);
     process.exit(1);
+  }
+  const pkg = readPackageJson(target);
+  if (pkg) {
+    const binDir = path.join(CONFIG_DIR, "bin");
+    const targetPrefix = path.resolve(target) + path.sep;
+    for (const binName of Object.keys(normalizeBin(pkg))) {
+      const linkPath = path.join(binDir, binName);
+      try {
+        const stat = fs.lstatSync(linkPath, { throwIfNoEntry: false });
+        if (!stat?.isSymbolicLink()) continue;
+        const dest = path.resolve(binDir, fs.readlinkSync(linkPath));
+        if (dest.startsWith(targetPrefix)) fs.unlinkSync(linkPath);
+      } catch { /* ignore */ }
+    }
   }
   fs.rmSync(target, { recursive: true, force: true });
   console.log(`Uninstalled: ${name}`);
