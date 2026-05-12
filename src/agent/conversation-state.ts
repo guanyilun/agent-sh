@@ -406,7 +406,8 @@ export class ConversationState {
   }
 
   /** Bump and return the global sequence counter. For extensions that
-   *  synthesize their own NuclearEntries (e.g. ashi's compaction summaries). */
+   *  synthesize their own NuclearEntries (e.g. compaction summaries that
+   *  should land in the same sequence space as kernel-produced entries). */
   allocateSeq(): number {
     return this.nextSeq++;
   }

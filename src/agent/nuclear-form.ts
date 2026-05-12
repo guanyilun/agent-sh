@@ -38,8 +38,8 @@ export interface NuclearEntry {
   /**
    * Optional parent pointer for tree-shaped history. The default
    * HistoryFile adapter ignores this and treats the file as linear;
-   * tree-aware adapters (see examples/extensions/ashi) use it to
-   * branch on /fork and walk a single path on resume.
+   * tree-aware HistoryAdapter implementations use it to fork and to
+   * walk a single path on resume.
    */
   parentSeq?: number;
 }
