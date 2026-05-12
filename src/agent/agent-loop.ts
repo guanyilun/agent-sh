@@ -1274,7 +1274,7 @@ export class AgentLoop implements AgentBackend {
         // Compact deeply — shallow targets buy only 1–2 turns of runway on
         // tool-heavy workloads.
         const target = Math.floor(threshold * 0.25);
-        const result = this.compactWithHooks(target, 6);
+        const result = this.compactWithHooks(target, 1);
         if (!result) {
           // Auto-compact fired but nothing was evictable. This can happen
           // in short conversations with heavy tool output where the pin
@@ -1674,7 +1674,7 @@ export class AgentLoop implements AgentBackend {
         if (this.isContextOverflow(e)) {
           const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
           const target = Math.floor((contextWindow - RESPONSE_RESERVE) * 0.6);
-          const stats = this.compactWithHooks(target, 6);
+          const stats = this.compactWithHooks(target, 1);
           // If compaction freed nothing, retrying will hit the same error.
           // Surface the real failure instead of looping until exhaustion.
           if (!stats || stats.after >= stats.before) {

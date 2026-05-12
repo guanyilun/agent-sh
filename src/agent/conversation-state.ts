@@ -71,6 +71,20 @@ function recencyWeight(idx: number, total: number): number {
   return Math.max(0.1, 1 - idx / total);
 }
 
+// Head+tail because the start (command, opening lines) and end (final
+// result, exit code) are the informative parts of shell/file output.
+function slimToolContent(content: string, maxLen: number): string {
+  const exitMatch = content.match(/exit code:?\s*(\d+)/i);
+  const exitSuffix = exitMatch ? ` (exit ${exitMatch[1]})` : "";
+  const lines = content.split("\n");
+  if (lines.length > 6) {
+    const head = lines.slice(0, 3).join("\n");
+    const tail = lines.slice(-2).join("\n");
+    return `${head}\n... [${lines.length - 5} lines trimmed by compact]\n${tail}${exitSuffix}`;
+  }
+  return `${content.slice(0, maxLen)}\n... [${content.length - maxLen} chars trimmed by compact]${exitSuffix}`;
+}
+
 /**
  * Conversation state with eager nucleation — shell-history shaped.
  *
@@ -702,6 +716,7 @@ export class ConversationState {
 
   private slimTurn(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
     const MAX_RESULT_LEN = 1500;
+    const MAX_ASSISTANT_LEN = 1500;
     const result: ChatCompletionMessageParam[] = [];
     const droppedToolIds = new Set<string>();
 
@@ -730,10 +745,17 @@ export class ConversationState {
         if (droppedToolIds.has(msg.tool_call_id)) continue;
         const content = typeof msg.content === "string" ? msg.content : "";
         if (content.length > MAX_RESULT_LEN) {
-          result.push({ ...msg, content: content.slice(0, MAX_RESULT_LEN) + "\n... [truncated by compact]" });
+          result.push({ ...msg, content: slimToolContent(content, MAX_RESULT_LEN) });
         } else {
           result.push(msg);
         }
+        continue;
+      }
+      if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.length > MAX_ASSISTANT_LEN) {
+        const head = msg.content.slice(0, Math.floor(MAX_ASSISTANT_LEN * 0.6));
+        const tail = msg.content.slice(-Math.floor(MAX_ASSISTANT_LEN * 0.2));
+        const trimmed = msg.content.length - head.length - tail.length;
+        result.push({ ...msg, content: `${head}\n... [${trimmed} chars trimmed by compact]\n${tail}` });
         continue;
       }
       result.push(msg);
