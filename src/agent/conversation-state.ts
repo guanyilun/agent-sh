@@ -405,6 +405,12 @@ export class ConversationState {
     this.handlers.call("history:append", entries);
   }
 
+  /** Bump and return the global sequence counter. For extensions that
+   *  synthesize their own NuclearEntries (e.g. ashi's compaction summaries). */
+  allocateSeq(): number {
+    return this.nextSeq++;
+  }
+
   // ── Token estimation ──────────────────────────────────────────
 
   updateApiTokenCount(promptTokens: number): void {
