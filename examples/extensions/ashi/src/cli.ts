@@ -57,9 +57,10 @@ async function main(): Promise<void> {
     process.stderr.write("ashi requires a TTY for interactive rendering.\n");
     process.exit(1);
   }
-  // Separate dir so the tree doesn't share state with the shell's linear ~/.agent-sh/history.
-  const ashiDir = path.join(os.homedir(), ".agent-sh", "extensions", "ashi");
-  const treeHistory = new TreeHistoryAdapter(ashiDir);
+  // Per-cwd tree so different projects don't share branches.
+  const cwdSlug = process.cwd().replace(/\//g, "-").replace(/^-/, "");
+  const historyDir = path.join(os.homedir(), ".agent-sh", "extensions", "ashi", "history", cwdSlug);
+  const treeHistory = new TreeHistoryAdapter(historyDir);
   const core = createCore({ ...config, history: treeHistory });
 
   // Built by frontend.ts; declared up here so cleanup can reach it.

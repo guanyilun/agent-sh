@@ -58,9 +58,9 @@ Ctrl+D   Quit (when editor is empty)
 
 ## History tree
 
-ashi swaps the linear `~/.agent-sh/history` JSONL for a pi-style tree, persisted at
-`~/.agent-sh/extensions/ashi/tree.jsonl`. Each entry carries a `parentSeq`; sibling branches
-live on disk so you can navigate between them.
+ashi swaps the linear `~/.agent-sh/history` JSONL for a pi-style tree, persisted per-cwd
+under `~/.agent-sh/extensions/ashi/history/<cwd-slug>/tree.jsonl`. Each entry carries a
+`parentSeq`; sibling branches live on disk so you can navigate between them.
 
 ```
 /tree      Show the whole tree, marking the active branch and fork points
