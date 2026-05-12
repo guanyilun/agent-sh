@@ -1,7 +1,7 @@
 import type { EventBus, ContentBlock } from "./event-bus.js";
 import type { ColorPalette } from "./utils/palette.js";
 import type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
-import type { ToolDefinition } from "./agent/types.js";
+import type { ToolDefinition, ToolSchemaView } from "./agent/types.js";
 import type { Compositor } from "./utils/compositor.js";
 import type { HistoryAdapter } from "./agent/history-file.js";
 
@@ -151,16 +151,10 @@ export interface ExtensionContext {
   registerCommand: (name: string, description: string, handler: (args: string) => Promise<void> | void) => void;
 
   // ── Tool registration (agent-sh backend only) ─────────────
-  /** Register a tool for the built-in agent. No-op when using bridge backends.
-   *  Throws if a tool with the same name is already registered — use
-   *  `adviseTool` to wrap an existing tool instead of replacing it. */
+  /** Throws on duplicate name — use `adviseTool` to wrap, not replace.
+   *  No-op under bridge backends. */
   registerTool: (tool: ToolDefinition) => void;
-  /** Unregister a tool by name. */
   unregisterTool: (name: string) => void;
-  /** Wrap an already-registered tool's execution. The advisor receives
-   *  `next` (the underlying chain) and the original execute() arguments;
-   *  call `next` to delegate, skip it to short-circuit, transform its
-   *  result to post-process. Returns an unadvise function. */
   adviseTool: (
     name: string,
     advisor: (
@@ -170,7 +164,13 @@ export interface ExtensionContext {
       ctx?: import("./agent/types.js").ToolExecutionContext,
     ) => ReturnType<ToolDefinition["execute"]>,
   ) => () => void;
-  /** Get all registered tools (for subagent tool subsets). Returns [] when using bridge backends. */
+  /** Tool name is frozen (dispatch key). If an advisor adds a parameter,
+   *  pair with `adviseTool` so the underlying exec accepts it. */
+  adviseToolSchema: (
+    name: string,
+    advisor: (next: () => ToolSchemaView) => ToolSchemaView,
+  ) => () => void;
+  /** Returns [] under bridge backends. */
   getTools: () => ToolDefinition[];
 
   // ── System prompt instructions ────────────────────────────

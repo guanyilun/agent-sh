@@ -540,7 +540,7 @@ export class AgentLoop implements AgentBackend {
         "bash", "read_file", "write_file", "edit_file", "grep", "glob", "ls",
         "list_skills",
       ]);
-      for (const tool of this.toolRegistry.all()) {
+      for (const tool of this.toolRegistry.allView()) {
         if (builtinTools.has(tool.name)) continue;
         const extName = this.toolExtensions.get(tool.name);
         if (!extName) continue;
@@ -1737,8 +1737,9 @@ export class AgentLoop implements AgentBackend {
     const pendingToolCalls: PendingToolCall[] = [];
 
     // Tool protocol controls what goes in the API tools param vs dynamic context
-    const apiTools = this.toolProtocol.getApiTools(this.toolRegistry.all());
-    const toolPrompt = this.toolProtocol.getToolPrompt(this.toolRegistry.all());
+    const toolView = this.toolRegistry.allView();
+    const apiTools = this.toolProtocol.getApiTools(toolView);
+    const toolPrompt = this.toolProtocol.getToolPrompt(toolView);
 
     // Dynamic context rides on the trailing message — see
     // wrapTrailingWithDynamicContext for the cache-stability rationale.

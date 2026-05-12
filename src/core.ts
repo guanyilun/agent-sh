@@ -218,6 +218,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         registerTool: (tool) => bus.emit("agent:register-tool", { tool, extensionName: "" }),
         unregisterTool: (name) => bus.emit("agent:unregister-tool", { name }),
         adviseTool: (name, advisor) => handlers.advise(`tool:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
+        adviseToolSchema: (name, advisor) => handlers.advise(`tool:${name}:schema`, advisor as Parameters<typeof handlers.advise>[1]),
         getTools: () => bus.emitPipe("agent:get-tools", { tools: [] }).tools,
         registerInstruction: (name, text) => bus.emit("agent:register-instruction", { name, text, extensionName: "" }),
         removeInstruction: (name) => bus.emit("agent:remove-instruction", { name }),

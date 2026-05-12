@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolResult } from "./types.js";
+import type { ToolDefinition, ToolResult, ToolSchemaView } from "./types.js";
 import type { ChatCompletionTool } from "../utils/llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { registerReadOnlyTool, unregisterReadOnlyTool } from "./nuclear-form.js";
@@ -19,6 +19,10 @@ export class ToolRegistry {
     }
     this.tools.set(tool.name, tool);
     this.handlers.define(`tool:${tool.name}`, tool.execute.bind(tool));
+    this.handlers.define(`tool:${tool.name}:schema`, (): ToolSchemaView => ({
+      description: tool.description,
+      parameters: tool.input_schema,
+    }));
     if (tool.readOnly) registerReadOnlyTool(tool.name);
     else unregisterReadOnlyTool(tool.name);
   }
@@ -26,9 +30,8 @@ export class ToolRegistry {
   unregister(name: string): void {
     this.tools.delete(name);
     unregisterReadOnlyTool(name);
-    // The handler entry is intentionally left in place: any advisors a
-    // user extension installed against `tool:<name>` survive a reload of
-    // the tool's owner, and are picked up when the same name re-registers.
+    // Handler entry intentionally retained so external advisors survive a
+    // reload of the tool's owner and reattach when the name re-registers.
   }
 
   get(name: string): ToolDefinition | undefined {
@@ -39,13 +42,19 @@ export class ToolRegistry {
     return Array.from(this.tools.values());
   }
 
+  allView(): ToolDefinition[] {
+    return this.all().map((t) => {
+      const view = this.handlers.call(`tool:${t.name}:schema`) as ToolSchemaView;
+      return { ...t, description: view.description, input_schema: view.parameters };
+    });
+  }
+
   call(name: string, ...args: Parameters<ToolDefinition["execute"]>): Promise<ToolResult> {
     return this.handlers.call(`tool:${name}`, ...args) as Promise<ToolResult>;
   }
 
-  /** Convert to OpenAI-compatible tool schemas for API calls. */
   toAPITools(): ChatCompletionTool[] {
-    return this.all().map((t) => ({
+    return this.allView().map((t) => ({
       type: "function" as const,
       function: {
         name: t.name,
