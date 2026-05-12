@@ -1,0 +1,26 @@
+{
+  "name": "agent-sh-ashi",
+  "version": "0.1.0",
+  "description": "Ash with a pi-tui frontend — agent-sh's kernel without the shell, rendered through pi's TUI library",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "ashi": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsc",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-tui": "^0.74.0",
+    "agent-sh": "file:../../..",
+    "chalk": "^5.5.0",
+    "cli-highlight": "^2.1.11",
+    "tsx": "^4.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
