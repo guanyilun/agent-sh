@@ -4,6 +4,7 @@ import {
   Container,
   Editor,
   Loader,
+  matchesKey,
 } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
 import { editorTheme, theme } from "./theme.js";
@@ -206,17 +207,19 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
   //            editor handles itself; we only fire during processing)
   //   Ctrl+C — clear editor
   //   Ctrl+D — quit when editor is empty
-  // Registered before tui.start() so the listener sees raw input ahead of the editor.
+  // matchesKey() covers both legacy bytes (\x03, \x04, \x1b) and the Kitty
+  // keyboard protocol CSI encodings used by Ghostty/Kitty/iTerm. Direct byte
+  // comparison would miss Kitty-mode terminals.
   tui.addInputListener((data) => {
-    if (data === "\x1b" && processing) {
+    if (matchesKey(data, "escape") && processing) {
       bus.emit("agent:cancel-request", {});
       return { consume: true };
     }
-    if (data === "\x03") {
+    if (matchesKey(data, "ctrl+c")) {
       editor.setText("");
       return { consume: true };
     }
-    if (data === "\x04" && editor.getText().length === 0) {
+    if (matchesKey(data, "ctrl+d") && editor.getText().length === 0) {
       ctx.quit();
       return { consume: true };
     }
