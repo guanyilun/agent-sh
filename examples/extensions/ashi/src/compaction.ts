@@ -2,19 +2,8 @@ import type { ExtensionContext } from "agent-sh/types";
 import type { NuclearEntry } from "agent-sh/core";
 import type { TreeHistoryAdapter } from "./tree-history.js";
 
-/** Pi-style LLM-driven compaction.
- *
- *  Advises `conversation:compact` to summarize older messages into a
- *  structured block and append the summary as a `compaction` NuclearEntry
- *  in the tree — instead of agent-sh's default "replace evicted turns with
- *  pre-computed nuclear one-liners" path. On auto-trigger, the kernel
- *  still decides *when* to compact; we replace *how*.
- *
- *  v0 scope: live compaction only. Restart fidelity (reloading the
- *  [summary, kept messages] shape from disk) is deferred — current tree
- *  storage doesn't persist raw AgentMessages per entry.
- */
 const KEEP_RECENT_TOKEN_BUDGET = 20_000;
+// Matches agent-sh ConversationState.estimateTokens (chars/4).
 const APPROX_TOKENS_PER_CHAR = 0.25;
 
 const SUMMARY_PROMPT = `You are compacting a coding-agent conversation so the agent can continue with limited context.
@@ -109,10 +98,6 @@ export function registerCompaction(ctx: ExtensionContext, tree: TreeHistoryAdapt
   });
 }
 
-/** Find the index such that messages[cutIdx..] is ≤ tokenBudget tokens
- *  AND messages[cutIdx] is a safe cut point (not a tool result; not in
- *  the middle of an assistant→tool call/result group). Walks backwards
- *  from the end. */
 function findCutPoint(messages: AgentMessage[], tokenBudget: number): number {
   let acc = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -130,8 +115,7 @@ function isSafeCutPoint(messages: AgentMessage[], idx: number): boolean {
   const m = messages[idx];
   if (!m) return true;
   if (m.role === "tool") return false;
-  if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) return false;
-  return true;
+  return !(m.role === "assistant" && m.tool_calls?.length);
 }
 
 function estimateMessageTokens(m: AgentMessage): number {
@@ -145,9 +129,8 @@ function estimateTokens(s: string): number {
   return Math.ceil(s.length * APPROX_TOKENS_PER_CHAR);
 }
 
-/** Pi-style conversation serialization. Tool results truncated to 2000
- *  chars; keeps role labels so the model doesn't try to continue the
- *  conversation. */
+// Role labels prevent the model from treating the serialized text as a
+// conversation to continue. Tool results capped at 2000 chars (pi convention).
 function buildQuery(messages: AgentMessage[], prevSummary?: string): string {
   const lines: string[] = [];
   if (prevSummary) lines.push("Previous compaction summary (continue iteratively):\n", prevSummary, "\n---\n");

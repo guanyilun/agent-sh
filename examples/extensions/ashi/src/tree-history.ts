@@ -4,13 +4,10 @@ import * as path from "node:path";
 import {
   type HistoryAdapter,
   type NuclearEntry,
+  compileSearchRegex,
+  matchEntry,
 } from "agent-sh/core";
 
-/** Tree-shaped on-disk history. Each entry carries a parentSeq pointing at
- *  its parent in the tree; sibling branches from the same parent stay on
- *  disk so the user can /fork between them. readRecent returns only the
- *  currently active branch (root → activeLeaf) so the agent prompt isn't
- *  contaminated with content from sibling threads. */
 export class TreeHistoryAdapter implements HistoryAdapter {
   private entriesPath: string;
   private leafPath: string;
@@ -72,13 +69,11 @@ export class TreeHistoryAdapter implements HistoryAdapter {
 
   async search(query: string): Promise<{ entry: NuclearEntry; line: string }[]> {
     if (!query.trim()) return [];
-    const needle = query.toLowerCase();
+    const re = compileSearchRegex(query);
     const hits: { entry: NuclearEntry; line: string }[] = [];
     for (const e of [...this.entries.values()].sort((a, b) => b.seq - a.seq)) {
-      const haystack = `${e.sum}\n${e.body ?? ""}`.toLowerCase();
-      if (haystack.includes(needle)) {
-        hits.push({ entry: e, line: `#${e.seq} ${e.sum}` });
-      }
+      const m = matchEntry(e, re);
+      if (m) hits.push(m);
     }
     return hits;
   }
@@ -105,7 +100,6 @@ export class TreeHistoryAdapter implements HistoryAdapter {
 
   getActiveLeaf(): number { return this.activeLeaf; }
 
-  /** Walk parent pointers from leaf to root, returning oldest-first. */
   private walkBranch(leaf: number): NuclearEntry[] {
     const out: NuclearEntry[] = [];
     const seen = new Set<number>();
@@ -120,4 +114,3 @@ export class TreeHistoryAdapter implements HistoryAdapter {
     return out.reverse();
   }
 }
-

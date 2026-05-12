@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "agent-sh/types";
-import type { NuclearEntry } from "agent-sh/core";
+import { type NuclearEntry, formatNuclearLine } from "agent-sh/core";
 import type { TreeHistoryAdapter } from "./tree-history.js";
 
 export function registerTreeCommands(
@@ -36,10 +36,7 @@ export function registerTreeCommands(
       bus.emit("ui:error", { message: `fork: no entry at seq ${seq}` });
       return;
     }
-    try { tree.setLeaf(seq); } catch (e) {
-      bus.emit("ui:error", { message: `fork: ${(e as Error).message}` });
-      return;
-    }
+    tree.setLeaf(seq);
     bus.emit("ui:info", {
       message: `fork: next turn parents from #${seq}. (Caveat: the agent's in-context messages don't rewind — only the on-disk parent pointer changes.)`,
     });
@@ -51,7 +48,7 @@ export function registerTreeCommands(
       bus.emit("ui:info", { message: "branch: empty" });
       return;
     }
-    const lines = branch.map((e) => `#${e.seq} ${e.sum}`);
+    const lines = branch.map(formatNuclearLine);
     bus.emit("ui:info", { message: `branch (${branch.length} entries):\n${lines.join("\n")}` });
   });
 }
