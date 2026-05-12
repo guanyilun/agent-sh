@@ -215,6 +215,10 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         },
         registerCommand: (name, description, handler) =>
           bus.emit("command:register", { name, description, handler }),
+        adviseCommand: (name, advisor) => {
+          const key = name.startsWith("/") ? name : `/${name}`;
+          return handlers.advise(`command:${key}`, advisor as Parameters<typeof handlers.advise>[1]);
+        },
         registerTool: (tool) => bus.emit("agent:register-tool", { tool, extensionName: "" }),
         unregisterTool: (name) => bus.emit("agent:unregister-tool", { name }),
         adviseTool: (name, advisor) => handlers.advise(`tool:${name}`, advisor as Parameters<typeof handlers.advise>[1]),

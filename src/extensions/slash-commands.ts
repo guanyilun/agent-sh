@@ -27,7 +27,11 @@ export default function activate(ctx: ExtensionContext): void {
 
   const register = (cmd: SlashCommand) => {
     const name = cmd.name.startsWith("/") ? cmd.name : `/${cmd.name}`;
+    if (commands.has(name)) {
+      throw new Error(`Command "${name}" already registered. Use ctx.adviseCommand() to wrap it.`);
+    }
     commands.set(name, { ...cmd, name });
+    ctx.define(`command:${name}`, cmd.handler);
   };
 
   // ── Built-in commands ─────────────────────────────────────────
@@ -118,6 +122,7 @@ export default function activate(ctx: ExtensionContext): void {
   bus.on("command:unregister", ({ name }) => {
     const key = name.startsWith("/") ? name : `/${name}`;
     commands.delete(key);
+    // Handler entry retained so external advisors survive a reload of the owner.
   });
 
   // ── Skill commands (/skill:<name>) ────────────────────────────
@@ -240,7 +245,7 @@ export default function activate(ctx: ExtensionContext): void {
 
     const cmd = commands.get(e.name);
     if (cmd) {
-      const result = cmd.handler(e.args);
+      const result = ctx.call(`command:${e.name}`, e.args);
       if (result instanceof Promise) {
         result.catch((err) => {
           bus.emit("ui:error", {

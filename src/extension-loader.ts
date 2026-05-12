@@ -104,6 +104,7 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
   const scopedAdviseToolSchema: typeof ctx.adviseToolSchema = trackUnsub(ctx.adviseToolSchema);
   const scopedAdviseInstruction: typeof ctx.adviseInstruction = trackUnsub(ctx.adviseInstruction);
   const scopedAdviseSkill: typeof ctx.adviseSkill = trackUnsub(ctx.adviseSkill);
+  const scopedAdviseCommand: typeof ctx.adviseCommand = trackUnsub(ctx.adviseCommand);
 
   // Track slash command registrations — without this, reloading an
   // extension stacks its commands (old `/status` + new `/status`) in
@@ -128,6 +129,7 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
     adviseToolSchema: scopedAdviseToolSchema,
     adviseInstruction: scopedAdviseInstruction,
     adviseSkill: scopedAdviseSkill,
+    adviseCommand: scopedAdviseCommand,
     registerCommand: scopedRegisterCommand,
     onDispose: (fn: () => void) => { cleanups.push(fn); },
   };

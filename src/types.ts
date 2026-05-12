@@ -149,6 +149,15 @@ export interface ExtensionContext {
   // ── Slash command registration ─────────────────────────────
   /** Register a slash command available in any input mode. */
   registerCommand: (name: string, description: string, handler: (args: string) => Promise<void> | void) => void;
+  /** Wrap an already-registered command's handler. Name is normalized
+   *  (leading `/` optional). */
+  adviseCommand: (
+    name: string,
+    advisor: (
+      next: (args: string) => Promise<void> | void,
+      args: string,
+    ) => Promise<void> | void,
+  ) => () => void;
 
   // ── Tool registration (agent-sh backend only) ─────────────
   /** Throws on duplicate name — use `adviseTool` to wrap, not replace.
