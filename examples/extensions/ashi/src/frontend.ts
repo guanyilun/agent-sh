@@ -4,10 +4,9 @@ import {
   Container,
   Editor,
   Loader,
-  Spacer,
 } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
-import { editorTheme, markdownTheme, c } from "./theme.js";
+import { editorTheme, theme } from "./theme.js";
 import {
   AssistantMessage,
   ErrorLine,
@@ -15,6 +14,9 @@ import {
   ToolExecution,
   UserMessage,
 } from "./components.js";
+
+const fgAccent = (t: string): string => theme.fg("accent", t);
+const fgMuted = (t: string): string => theme.fg("muted", t);
 
 export interface AshiHandle {
   tui: TUI;
@@ -49,8 +51,7 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
 
   const ensureAssistant = (): AssistantMessage => {
     if (!activeAssistant) {
-      activeAssistant = new AssistantMessage(markdownTheme());
-      chat.addChild(new Spacer(1));
+      activeAssistant = new AssistantMessage();
       chat.addChild(activeAssistant);
     }
     return activeAssistant;
@@ -58,7 +59,7 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
 
   const startLoader = () => {
     if (loader) return;
-    loader = new Loader(tui, c.accent, c.muted, "thinking…");
+    loader = new Loader(tui, fgAccent, fgMuted, "thinking…");
     footerSlot.addChild(loader);
   };
   const stopLoader = () => {
@@ -70,7 +71,6 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
 
   // ── Bus wiring ───────────────────────────────────────────────
   bus.on("agent:query", ({ query }) => {
-    chat.addChild(new Spacer(1));
     chat.addChild(new UserMessage(query));
     activeAssistant = null;
     tui.requestRender();
@@ -98,9 +98,16 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
 
   bus.on("agent:tool-started", (e) => {
     const id = e.toolCallId ?? `${e.title}-${Date.now()}`;
-    const tool = new ToolExecution(e.title, e.displayDetail);
+    const tool = new ToolExecution(e.title, e.kind, e.displayDetail);
     activeTools.set(id, tool);
     chat.addChild(tool);
+    tui.requestRender();
+  });
+
+  bus.on("agent:tool-output-chunk", ({ chunk }) => {
+    if (activeTools.size === 0) return;
+    const last = [...activeTools.values()].pop();
+    last?.appendOutput(chunk);
     tui.requestRender();
   });
 
