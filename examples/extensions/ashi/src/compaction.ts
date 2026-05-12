@@ -66,7 +66,7 @@ export function registerCompaction(ctx: ExtensionContext, tree: TreeHistoryAdapt
       summary = await ctx.llm.ask({
         system: SUMMARY_PROMPT,
         query: buildQuery(older, prevSummary),
-        maxTokens: 4096,
+        maxTokens: 16384,
         reasoningEffort: "low",
       });
     } catch (e) {
