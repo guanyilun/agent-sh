@@ -14,6 +14,12 @@ import { getSettings } from "agent-sh/settings";
 import type { AgentShellConfig } from "agent-sh/types";
 
 import { mountAshi } from "./frontend.js";
+import { TreeHistoryAdapter } from "./tree-history.js";
+import { registerTreeCommands } from "./commands.js";
+import { registerCompaction } from "./compaction.js";
+import { registerSessionRestore, restoreSnapshot } from "./session-restore.js";
+import * as os from "node:os";
+import * as path from "node:path";
 
 function parseArgs(argv: string[]): AgentShellConfig & { extensions?: string[] } {
   let model: string | undefined;
@@ -53,7 +59,11 @@ async function main(): Promise<void> {
     process.stderr.write("ashi requires a TTY for interactive rendering.\n");
     process.exit(1);
   }
-  const core = createCore(config);
+  // Per-cwd tree so different projects don't share branches.
+  const cwdSlug = process.cwd().replace(/\//g, "-").replace(/^-/, "");
+  const historyDir = path.join(os.homedir(), ".agent-sh", "extensions", "ashi", "history", cwdSlug);
+  const treeHistory = new TreeHistoryAdapter(historyDir);
+  const core = createCore({ ...config, history: treeHistory });
 
   // Built by frontend.ts; declared up here so cleanup can reach it.
   let stopFrontend: (() => void) | null = null;
@@ -87,10 +97,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  registerTreeCommands(ctx, treeHistory);
+  registerCompaction(ctx, treeHistory);
+  registerSessionRestore(ctx, treeHistory);
+
   const handle = mountAshi(ctx);
   stopFrontend = handle.stop;
 
   await core.activateBackend(config.backend ?? getSettings().defaultBackend);
+  restoreSnapshot(ctx, treeHistory);
 
   process.on("SIGTERM", cleanup);
   process.on("SIGHUP", cleanup);

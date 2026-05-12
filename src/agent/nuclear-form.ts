@@ -35,6 +35,13 @@ export interface NuclearEntry {
    * survives into summaries. Displayed as `{why}` in formatNuclearLine.
    */
   why?: string;
+  /**
+   * Optional parent pointer for tree-shaped history. The default
+   * HistoryFile adapter ignores this and treats the file as linear;
+   * tree-aware HistoryAdapter implementations use it to fork and to
+   * walk a single path on resume.
+   */
+  parentSeq?: number;
 }
 
 /**
