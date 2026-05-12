@@ -196,24 +196,26 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
     tui.requestRender();
   });
 
-  // Ctrl-C: cancel active turn first; on a second press with nothing running, quit.
-  // Registered before tui.start() so it sees raw input ahead of the editor.
-  let lastCtrlC = 0;
+  // Match pi-coding-agent's keybindings:
+  //   Esc    — cancel active turn (when autocomplete is closed, which the
+  //            editor handles itself; we only fire during processing)
+  //   Ctrl+C — clear editor
+  //   Ctrl+D — quit when editor is empty
+  // Registered before tui.start() so the listener sees raw input ahead of the editor.
   tui.addInputListener((data) => {
-    if (data !== "\x03") return undefined;
-    if (processing) {
+    if (data === "\x1b" && processing) {
       bus.emit("agent:cancel-request", {});
       return { consume: true };
     }
-    const now = Date.now();
-    if (now - lastCtrlC < 1500) {
+    if (data === "\x03") {
+      editor.setText("");
+      return { consume: true };
+    }
+    if (data === "\x04" && editor.getText().length === 0) {
       ctx.quit();
       return { consume: true };
     }
-    lastCtrlC = now;
-    chat.addChild(new InfoLine("press Ctrl-C again to exit"));
-    tui.requestRender();
-    return { consume: true };
+    return undefined;
   });
 
   tui.start();

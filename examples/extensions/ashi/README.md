@@ -46,14 +46,25 @@ CLI flags mirror `agent-sh`:
 -e, --extensions     Extra extensions to load (comma-separated)
 ```
 
+## Keybindings
+
+Match pi-coding-agent's convention:
+
+```
+Esc      Cancel active turn
+Ctrl+C   Clear editor
+Ctrl+D   Quit (when editor is empty)
+```
+
 ## What's intentionally missing
 
 This is a spike, not a clone of pi's full UI. The MVP renders:
 
 - User submissions, streaming assistant Markdown
 - Tool invocations with start/complete state
+- Slash commands with autocomplete (`/help`, `/model`, `/backend`, …)
 - Loader, errors, info messages
 
-Out of scope for v0: permission dialogs, diff renderer, slash-command autocomplete, session
+Out of scope for v0: permission dialogs, diff renderer, file-path autocomplete, session
 selector, theme selector, image rendering. Each can be added by writing a pi-tui Component and
 subscribing to the corresponding bus event.
