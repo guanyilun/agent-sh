@@ -88,8 +88,8 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
 
   tui.addChild(chat);
   tui.addChild(footerSlot);
-  tui.addChild(statusFooter);
   tui.addChild(editor);
+  tui.addChild(statusFooter);
   tui.setFocus(editor);
 
   // ── Active render targets ────────────────────────────────────
