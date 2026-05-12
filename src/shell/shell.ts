@@ -236,6 +236,7 @@ export class Shell implements InputContext {
     this.inputHandler = new InputHandler({
       ctx: this,
       bus: opts.bus,
+      handlers: opts.handlers,
       onShowAgentInfo: opts.onShowAgentInfo ?? (() => ({ info: "" })),
     });
 

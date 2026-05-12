@@ -146,6 +146,19 @@ export interface ExtensionContext {
    */
   getStoragePath: (namespace: string) => string;
 
+  // ── Input mode registration ───────────────────────────────
+  /** Wrap an input mode's `onSubmit`. Lets extensions transform queries
+   *  on the way to the agent (logging, redaction, vetoing). The mode
+   *  must already be registered via the `input-mode:register` bus event. */
+  adviseInputMode: (
+    id: string,
+    advisor: (
+      next: (query: string, bus: EventBus) => void,
+      query: string,
+      bus: EventBus,
+    ) => void,
+  ) => () => void;
+
   // ── Slash command registration ─────────────────────────────
   /** Register a slash command available in any input mode. */
   registerCommand: (name: string, description: string, handler: (args: string) => Promise<void> | void) => void;
