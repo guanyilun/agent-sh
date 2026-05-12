@@ -14,6 +14,7 @@ import {
   ToolExecution,
   UserMessage,
 } from "./components.js";
+import { BusAutocompleteProvider } from "./autocomplete.js";
 
 const fgAccent = (t: string): string => theme.fg("accent", t);
 const fgMuted = (t: string): string => theme.fg("muted", t);
@@ -59,6 +60,7 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
   const chat = new Container();
   const footerSlot = new Container();
   const editor = new Editor(tui, editorTheme(), { paddingX: 1 });
+  editor.setAutocompleteProvider(new BusAutocompleteProvider(bus));
   editor.onSubmit = (text) => {
     const query = text.trim();
     if (!query) return;
