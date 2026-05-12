@@ -1,7 +1,7 @@
 import type { EventBus, ContentBlock } from "./event-bus.js";
 import type { ColorPalette } from "./utils/palette.js";
 import type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
-import type { ToolDefinition, ToolSchemaView } from "./agent/types.js";
+import type { SkillView, ToolDefinition, ToolSchemaView } from "./agent/types.js";
 import type { Compositor } from "./utils/compositor.js";
 import type { HistoryAdapter } from "./agent/history-file.js";
 
@@ -189,6 +189,12 @@ export interface ExtensionContext {
   registerSkill: (name: string, description: string, filePath: string) => void;
   /** Remove a registered skill by name. */
   removeSkill: (name: string) => void;
+  /** Wrap an already-registered skill's LLM-facing view. Skill name is
+   *  frozen (dispatch key for the catalog). */
+  adviseSkill: (
+    name: string,
+    advisor: (next: () => SkillView) => SkillView,
+  ) => () => void;
 
   // ── Dynamic context registration ──────────────────────────
   /**

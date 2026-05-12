@@ -77,6 +77,12 @@ export interface ToolSchemaView {
   parameters: Record<string, unknown>;
 }
 
+/** LLM-facing view of a skill — what `adviseSkill` advisors return. */
+export interface SkillView {
+  description: string;
+  filePath: string;
+}
+
 export interface ToolDefinition {
   name: string;
   /** Short label for TUI display (e.g. "search" instead of "ads_search"). Defaults to name. */

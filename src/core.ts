@@ -225,6 +225,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         adviseInstruction: (name, advisor) => handlers.advise(`instruction:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
         registerSkill: (name, description, filePath) => bus.emit("agent:register-skill", { name, description, filePath, extensionName: "" }),
         removeSkill: (name) => bus.emit("agent:remove-skill", { name }),
+        adviseSkill: (name, advisor) => handlers.advise(`skill:${name}:view`, advisor as Parameters<typeof handlers.advise>[1]),
         registerContextProducer: (_name, producer, opts) => {
           const handlerName = opts?.mode === "per-query"
             ? "query-context:build"

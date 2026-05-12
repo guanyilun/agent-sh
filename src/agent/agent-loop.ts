@@ -21,7 +21,7 @@ import * as fsSync from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { computeDiff, computeEditDiff, computeInputDiff } from "../utils/diff.js";
-import type { AgentBackend, ToolDefinition, ToolExecutionContext } from "./types.js";
+import type { AgentBackend, SkillView, ToolDefinition, ToolExecutionContext } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { normalizeToolArgs } from "./normalize-args.js";
 import { ConversationState, type CompactResult } from "./conversation-state.js";
@@ -493,11 +493,15 @@ export class AgentLoop implements AgentBackend {
   /** Register a named skill (on-demand reference material). */
   registerSkill(name: string, description: string, filePath: string, extensionName: string): void {
     this.skills.set(name, { description, filePath, extensionName });
+    this.handlers.define(`skill:${name}:view`, (): SkillView => {
+      const s = this.skills.get(name);
+      return { description: s?.description ?? "", filePath: s?.filePath ?? "" };
+    });
   }
 
-  /** Remove a registered skill. */
   removeSkill(name: string): void {
     this.skills.delete(name);
+    // Handler entry retained so external advisors survive a reload of the owner.
   }
 
   /**
@@ -526,9 +530,10 @@ export class AgentLoop implements AgentBackend {
       ensure(extensionName).instructions.push({ text });
     }
 
-    // Attribute skills
-    for (const [skillName, { description, filePath, extensionName }] of this.skills) {
-      ensure(extensionName).skills.push({ name: skillName, description, filePath });
+    // Attribute skills — read description/filePath through the advisor chain
+    for (const [skillName, { extensionName }] of this.skills) {
+      const view = this.handlers.call(`skill:${skillName}:view`) as SkillView;
+      ensure(extensionName).skills.push({ name: skillName, description: view.description, filePath: view.filePath });
     }
 
     // Attribute tools (skip built-in scratchpad tools).
