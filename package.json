@@ -93,7 +93,7 @@
     "examples/extensions/*/package.json",
     "examples/extensions/*/tsconfig.json",
     "examples/extensions/*/README.md",
-    "examples/extensions/*/src",
+    "examples/extensions/*/src/**",
     "examples/extensions/*/index.ts",
     "examples/extensions/*/index.js"
   ],
@@ -101,7 +101,7 @@
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "prepare": "npm run build"
+    "prepare": "test -d dist || npm run build"
   },
   "keywords": [
     "terminal",

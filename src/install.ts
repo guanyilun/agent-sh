@@ -111,6 +111,30 @@ function readPackageJson(target: string): PackageJson | null {
   return JSON.parse(fs.readFileSync(pkgJson, "utf-8")) as PackageJson;
 }
 
+/** Relative `file:` deps in bundled extensions (e.g. `"agent-sh": "file:../../.."`)
+ *  point at the wrong location after the source is copied into ~/.agent-sh/extensions/.
+ *  Resolve them against the original source dir so npm install in the target succeeds. */
+function rewriteFileDeps(target: string, sourcePath: string): void {
+  const pkgJson = path.join(target, "package.json");
+  if (!fs.existsSync(pkgJson)) return;
+  const raw = fs.readFileSync(pkgJson, "utf-8");
+  const pkg = JSON.parse(raw) as Record<string, unknown>;
+  const sections = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] as const;
+  let changed = false;
+  for (const section of sections) {
+    const deps = pkg[section];
+    if (!deps || typeof deps !== "object") continue;
+    for (const [name, spec] of Object.entries(deps as Record<string, string>)) {
+      if (typeof spec !== "string" || !spec.startsWith("file:")) continue;
+      const rel = spec.slice("file:".length);
+      if (path.isAbsolute(rel)) continue;
+      (deps as Record<string, string>)[name] = `file:${path.resolve(sourcePath, rel)}`;
+      changed = true;
+    }
+  }
+  if (changed) fs.writeFileSync(pkgJson, `${JSON.stringify(pkg, null, 2)}\n`);
+}
+
 function maybeNpmInstall(target: string, pkg: PackageJson): void {
   const deps = { ...(pkg.dependencies ?? {}), ...(pkg.peerDependencies ?? {}) };
   if (Object.keys(deps).length === 0) return;
@@ -202,6 +226,7 @@ export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<
   if (resolved.isDirectory) {
     fs.cpSync(resolved.sourcePath, target, { recursive: true });
     try {
+      rewriteFileDeps(target, resolved.sourcePath);
       const pkg = readPackageJson(target);
       if (pkg) {
         maybeNpmInstall(target, pkg);
