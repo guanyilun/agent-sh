@@ -16,6 +16,8 @@ import {
   UserMessage,
 } from "./components.js";
 import { BusAutocompleteProvider } from "./autocomplete.js";
+import { StatusFooter } from "./status-footer.js";
+import type { TreeHistoryAdapter } from "./tree-history.js";
 
 const fgAccent = (t: string): string => theme.fg("accent", t);
 const fgMuted = (t: string): string => theme.fg("muted", t);
@@ -53,7 +55,7 @@ export interface AshiHandle {
   stop: () => void;
 }
 
-export function mountAshi(ctx: ExtensionContext): AshiHandle {
+export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): AshiHandle {
   const { bus } = ctx;
   const terminal = new ProcessTerminal();
   const tui = new TUI(terminal);
@@ -76,8 +78,17 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
     bus.emit("agent:submit", { query });
   };
 
+  const statusFooter = new StatusFooter();
+  statusFooter.update({ cwd: ctx.call("cwd") as string });
+  let compactions = 0;
+  const refreshFooterStats = (): void => {
+    const tokens = ctx.call("conversation:estimate-prompt-tokens") as number | undefined;
+    statusFooter.update({ leaf: tree.getActiveLeaf(), tokens: tokens ?? 0 });
+  };
+
   tui.addChild(chat);
   tui.addChild(footerSlot);
+  tui.addChild(statusFooter);
   tui.addChild(editor);
   tui.setFocus(editor);
 
@@ -170,6 +181,7 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
     processing = false;
     stopLoader();
     if (activeAssistant) activeAssistant.finalize();
+    refreshFooterStats();
     tui.requestRender();
   });
 
@@ -199,8 +211,22 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
 
   bus.on("agent:info", (info) => {
     chat.addChild(new InfoLine(`${info.name}${info.model ? ` · ${info.model}` : ""}`));
+    statusFooter.update({
+      model: info.model,
+      provider: info.provider,
+      contextWindow: info.contextWindow,
+    });
     tui.requestRender();
   });
+
+  bus.on("conversation:after-compact", () => {
+    compactions++;
+    statusFooter.update({ compactions });
+    refreshFooterStats();
+    tui.requestRender();
+  });
+
+  refreshFooterStats();
 
   // Match pi-coding-agent's keybindings:
   //   Esc    — cancel active turn (when autocomplete is closed, which the

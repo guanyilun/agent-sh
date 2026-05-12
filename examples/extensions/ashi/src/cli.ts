@@ -101,7 +101,7 @@ async function main(): Promise<void> {
   registerCompaction(ctx, treeHistory);
   registerSessionRestore(ctx, treeHistory);
 
-  const handle = mountAshi(ctx);
+  const handle = mountAshi(ctx, treeHistory);
   stopFrontend = handle.stop;
 
   await core.activateBackend(config.backend ?? getSettings().defaultBackend);
