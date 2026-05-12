@@ -19,6 +19,12 @@ export interface InputContext {
   freshPrompt(): void;
 }
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export interface InputHandlers {
+  define: (name: string, fn: (...a: any[]) => any) => void;
+  call: (name: string, ...a: any[]) => any;
+}
+
 /** Line editor + shell-passthrough buffer. Delegates rendering to TuiInputView. */
 export class InputHandler {
   private ctx: InputContext;
@@ -36,17 +42,20 @@ export class InputHandler {
   private savedBuffer = "";
   private escapeTimer: ReturnType<typeof setTimeout> | null = null;
   private bus: EventBus;
+  private handlers: InputHandlers;
   private onShowAgentInfo: () => { info: string; model?: string };
   private view: TuiInputView;
 
   constructor(opts: {
     ctx: InputContext;
     bus: EventBus;
+    handlers: InputHandlers;
     onShowAgentInfo: () => { info: string; model?: string };
     view?: TuiInputView;
   }) {
     this.ctx = opts.ctx;
     this.bus = opts.bus;
+    this.handlers = opts.handlers;
     this.onShowAgentInfo = opts.onShowAgentInfo;
     this.view = opts.view ?? new TuiInputView();
     this.loadHistory();
@@ -69,6 +78,7 @@ export class InputHandler {
     }
     this.modes.set(config.trigger, config);
     this.modesById.set(config.id, config);
+    this.handlers.define(`input-mode:${config.id}:submit`, config.onSubmit.bind(config));
   }
 
   private loadHistory(): void {
@@ -390,7 +400,7 @@ export class InputHandler {
             }
           } else if (query) {
             this.pendingReturnMode = currentMode.returnToSelf ? currentMode.id : null;
-            currentMode.onSubmit(query, this.bus);
+            this.handlers.call(`input-mode:${currentMode.id}:submit`, query, this.bus);
           } else {
             this.exitMode();
           }

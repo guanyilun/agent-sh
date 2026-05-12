@@ -215,6 +215,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         },
         registerCommand: (name, description, handler) =>
           bus.emit("command:register", { name, description, handler }),
+        adviseInputMode: (id, advisor) => handlers.advise(`input-mode:${id}:submit`, advisor as Parameters<typeof handlers.advise>[1]),
         adviseCommand: (name, advisor) => {
           const key = name.startsWith("/") ? name : `/${name}`;
           return handlers.advise(`command:${key}`, advisor as Parameters<typeof handlers.advise>[1]);
