@@ -11,14 +11,37 @@ import {
 export class TreeHistoryAdapter implements HistoryAdapter {
   private entriesPath: string;
   private leafPath: string;
+  private snapshotsDir: string;
   private entries = new Map<number, NuclearEntry>();
   private activeLeaf = 0;
 
   constructor(dir: string) {
     this.entriesPath = path.join(dir, "tree.jsonl");
     this.leafPath = path.join(dir, "active-leaf");
+    this.snapshotsDir = path.join(dir, "snapshots");
     fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(this.snapshotsDir, { recursive: true });
     this.loadFromDisk();
+  }
+
+  saveSnapshot(leaf: number, messages: unknown[]): void {
+    if (leaf === 0 || messages.length === 0) return;
+    fs.writeFileSync(path.join(this.snapshotsDir, `${leaf}.json`), JSON.stringify(messages));
+  }
+
+  loadSnapshot(leaf: number): unknown[] | null {
+    if (leaf === 0) return null;
+    try {
+      const raw = fs.readFileSync(path.join(this.snapshotsDir, `${leaf}.json`), "utf-8");
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : null;
+    } catch { return null; }
+  }
+
+  hasSnapshot(leaf: number): boolean {
+    if (leaf === 0) return false;
+    try { fs.statSync(path.join(this.snapshotsDir, `${leaf}.json`)); return true; }
+    catch { return false; }
   }
 
   private loadFromDisk(): void {

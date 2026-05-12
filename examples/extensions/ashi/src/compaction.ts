@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "agent-sh/types";
-import { type NuclearEntry, formatNuclearLine } from "agent-sh/core";
+import { type NuclearEntry } from "agent-sh/core";
 import type { TreeHistoryAdapter } from "./tree-history.js";
 
 const KEEP_RECENT_TOKEN_BUDGET = 20_000;
@@ -44,19 +44,6 @@ interface AgentMessage {
 }
 
 export function registerCompaction(ctx: ExtensionContext, tree: TreeHistoryAdapter): void {
-  ctx.advise("conversation:format-prior-history", (_next: unknown, entries: NuclearEntry[]) => {
-    if (!entries || entries.length === 0) return null;
-    const parts: string[] = ["[Prior session history]"];
-    for (const e of entries) {
-      if (e.kind === "compaction" && e.body) {
-        parts.push(`\n--- Compaction at #${e.seq} ---\n${e.body}\n--- End compaction ---\n`);
-      } else {
-        parts.push(formatNuclearLine(e));
-      }
-    }
-    return parts.join("\n");
-  });
-
   ctx.advise("conversation:compact", async (next: (...a: unknown[]) => unknown, opts: unknown) => {
     if (!ctx.llm.available) return next(opts);
 

@@ -97,6 +97,18 @@ The kernel exposes one extra handler (`conversation:allocate-seq`) so the compac
 gets a fresh seq from the same counter as kernel-produced entries. Everything else
 (prompt template, cut-point walker, serialization, LLM call) lives in this extension.
 
+## Session restore
+
+After every turn, ashi snapshots the live message array to
+`history/<cwd-slug>/snapshots/<leaf-seq>.json`. On startup, it reloads the snapshot for
+the active leaf and calls `conversation:replace-messages`, so the agent resumes with the
+exact same context it had at shutdown — including the post-compaction `[summary, ...kept]`
+shape that pi preserves on reload.
+
+`/fork <seq>` now also rewinds the agent context: if a snapshot exists at that seq, it's
+loaded; otherwise the on-disk parent pointer changes but the in-memory messages stay put
+(degraded mode for forks to leaves that predate snapshotting).
+
 ## What's intentionally missing
 
 This is a spike, not a clone of pi's full UI. The MVP renders:

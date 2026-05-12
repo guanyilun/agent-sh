@@ -17,6 +17,7 @@ import { mountAshi } from "./frontend.js";
 import { TreeHistoryAdapter } from "./tree-history.js";
 import { registerTreeCommands } from "./commands.js";
 import { registerCompaction } from "./compaction.js";
+import { registerSessionRestore, restoreSnapshot } from "./session-restore.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -98,11 +99,13 @@ async function main(): Promise<void> {
 
   registerTreeCommands(ctx, treeHistory);
   registerCompaction(ctx, treeHistory);
+  registerSessionRestore(ctx, treeHistory);
 
   const handle = mountAshi(ctx);
   stopFrontend = handle.stop;
 
   await core.activateBackend(config.backend ?? getSettings().defaultBackend);
+  restoreSnapshot(ctx, treeHistory);
 
   process.on("SIGTERM", cleanup);
   process.on("SIGHUP", cleanup);

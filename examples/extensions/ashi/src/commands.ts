@@ -37,9 +37,13 @@ export function registerTreeCommands(
       return;
     }
     tree.setLeaf(seq);
-    bus.emit("ui:info", {
-      message: `fork: next turn parents from #${seq}. (Caveat: the agent's in-context messages don't rewind — only the on-disk parent pointer changes.)`,
-    });
+    const snapshot = tree.loadSnapshot(seq);
+    if (snapshot && snapshot.length > 0) {
+      ctx.call("conversation:replace-messages", snapshot);
+      bus.emit("ui:info", { message: `fork: restored ${snapshot.length} messages from snapshot @ #${seq}` });
+    } else {
+      bus.emit("ui:info", { message: `fork: next turn parents from #${seq} (no snapshot — agent context not rewound)` });
+    }
   });
 
   ctx.registerCommand("branch", "Show the active branch (root → leaf)", async () => {
