@@ -63,6 +63,13 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
     const query = text.trim();
     if (!query) return;
     editor.setText("");
+    if (query.startsWith("/")) {
+      const sp = query.indexOf(" ");
+      const name = sp === -1 ? query : query.slice(0, sp);
+      const args = sp === -1 ? "" : query.slice(sp + 1).trim();
+      bus.emit("command:execute", { name, args });
+      return;
+    }
     bus.emit("agent:submit", { query });
   };
 
