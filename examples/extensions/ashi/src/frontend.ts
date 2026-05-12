@@ -18,6 +18,34 @@ import {
 const fgAccent = (t: string): string => theme.fg("accent", t);
 const fgMuted = (t: string): string => theme.fg("muted", t);
 
+/** Tools without a `formatCall` rely on the renderer to surface the
+ *  meaningful bit of their rawInput (the command, the file path, the
+ *  search pattern). Mirrors src/extensions/tui-renderer.ts extractDetail. */
+function detailFor(
+  rawInput: unknown,
+  locations: { path: string; line?: number | null }[] | undefined,
+  cwd: string,
+): string {
+  const home = process.env.HOME;
+  const relativize = (fp: string): string => {
+    if (fp.startsWith(`${cwd}/`)) return fp.slice(cwd.length + 1);
+    if (home && fp.startsWith(`${home}/`)) return `~/${fp.slice(home.length + 1)}`;
+    return fp;
+  };
+  if (locations && locations.length > 0) {
+    const loc = locations[0]!;
+    const fp = relativize(loc.path);
+    return loc.line ? `${fp}:${loc.line}` : fp;
+  }
+  const raw = rawInput as Record<string, unknown> | undefined;
+  if (!raw) return "";
+  if (typeof raw.command === "string") return `$ ${raw.command}`;
+  if (typeof raw.pattern === "string") return raw.pattern;
+  if (typeof raw.path === "string") return relativize(raw.path);
+  if (typeof raw.query === "string") return `"${raw.query}"`;
+  return "";
+}
+
 export interface AshiHandle {
   tui: TUI;
   stop: () => void;
@@ -98,7 +126,8 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
 
   bus.on("agent:tool-started", (e) => {
     const id = e.toolCallId ?? `${e.title}-${Date.now()}`;
-    const tool = new ToolExecution(e.title, e.kind, e.displayDetail);
+    const detail = e.displayDetail || detailFor(e.rawInput, e.locations, ctx.call("cwd"));
+    const tool = new ToolExecution(e.title, e.kind, detail);
     activeTools.set(id, tool);
     chat.addChild(tool);
     tui.requestRender();
