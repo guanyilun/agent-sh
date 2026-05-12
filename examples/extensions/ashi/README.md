@@ -7,17 +7,6 @@ uses `createCore()` from agent-sh, skips `activateShell()`, disables the shell-c
 (`shell-context`, `tui-renderer`, `file-autocomplete`), and mounts `@earendil-works/pi-tui` as
 the only frontend. Backend, tools, slash commands, providers, and skills come along unchanged.
 
-## Setup
-
-```bash
-cd examples/extensions/ashi
-npm install
-npm run build   # or `npm run dev` for a tsx-driven run without compiling
-```
-
-`file:../../..` wires `agent-sh` to the parent checkout; run `npm run build` at the repo root
-first if you haven't already.
-
 ## Install
 
 ```bash
@@ -26,9 +15,8 @@ export PATH="$HOME/.agent-sh/bin:$PATH"
 ashi
 ```
 
-`agent-sh install` copies this directory into `~/.agent-sh/extensions/ashi/` (preserving
-`node_modules/`, so the local `agent-sh` symlink resolves), then symlinks the built bin into
-`~/.agent-sh/bin/`.
+`agent-sh install` copies this directory into `~/.agent-sh/extensions/ashi/`, runs
+`npm install` and `npm run build` there, and symlinks the built bin into `~/.agent-sh/bin/`.
 
 ## Configure
 
@@ -120,5 +108,19 @@ This is a spike, not a clone of pi's full UI. The MVP renders:
 - Loader, errors, info messages
 
 Out of scope for v0: permission dialogs, diff renderer, file-path autocomplete, session
-selector, theme selector, image rendering, full conversation rewind on fork. Each can be
-added by writing a pi-tui Component and subscribing to the corresponding bus event.
+selector, theme selector, image rendering. Each can be added by writing a pi-tui Component
+and subscribing to the corresponding bus event.
+
+## Development
+
+To iterate on ashi from inside this repo:
+
+```bash
+cd examples/extensions/ashi
+npm install
+npm run dev      # tsx-driven, no compile step
+# or: npm run build && node dist/cli.js
+```
+
+`file:../../..` in `package.json` wires `agent-sh` to the parent checkout — run
+`npm run build` at the repo root first if you haven't already.
