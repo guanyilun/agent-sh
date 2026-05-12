@@ -482,11 +482,12 @@ export class AgentLoop implements AgentBackend {
   /** Register a named instruction block for the system prompt. */
   registerInstruction(name: string, text: string, extensionName: string): void {
     this.instructions.set(name, { text, extensionName });
+    this.handlers.define(`instruction:${name}`, () => this.instructions.get(name)?.text ?? "");
   }
 
-  /** Remove a named instruction block. */
   removeInstruction(name: string): void {
     this.instructions.delete(name);
+    // Handler entry retained so external advisors survive a reload of the owner.
   }
 
   /** Register a named skill (on-demand reference material). */
@@ -519,8 +520,9 @@ export class AgentLoop implements AgentBackend {
     const ensure = (name: string): ExtensionGroup =>
       groups.get(name) ?? (groups.set(name, { tools: [], skills: [], instructions: [] }).get(name)!);
 
-    // Attribute instructions
-    for (const { text, extensionName } of this.instructions.values()) {
+    // Attribute instructions — read text through the advisor chain
+    for (const [name, { extensionName }] of this.instructions) {
+      const text = this.handlers.call(`instruction:${name}`) as string;
       ensure(extensionName).instructions.push({ text });
     }
 

@@ -222,6 +222,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         getTools: () => bus.emitPipe("agent:get-tools", { tools: [] }).tools,
         registerInstruction: (name, text) => bus.emit("agent:register-instruction", { name, text, extensionName: "" }),
         removeInstruction: (name) => bus.emit("agent:remove-instruction", { name }),
+        adviseInstruction: (name, advisor) => handlers.advise(`instruction:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
         registerSkill: (name, description, filePath) => bus.emit("agent:register-skill", { name, description, filePath, extensionName: "" }),
         removeSkill: (name) => bus.emit("agent:remove-skill", { name }),
         registerContextProducer: (_name, producer, opts) => {

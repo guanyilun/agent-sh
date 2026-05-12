@@ -178,6 +178,11 @@ export interface ExtensionContext {
   registerInstruction: (name: string, text: string) => void;
   /** Remove a named instruction block from the system prompt. */
   removeInstruction: (name: string) => void;
+  /** Wrap an already-registered instruction's text. */
+  adviseInstruction: (
+    name: string,
+    advisor: (next: () => string) => string,
+  ) => () => void;
 
   // ── Skill registration ────────────────────────────────────
   /** Register a skill (on-demand reference material) for the agent. */
