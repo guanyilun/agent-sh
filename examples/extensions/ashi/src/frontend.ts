@@ -135,8 +135,13 @@ export function mountAshi(ctx: ExtensionContext): AshiHandle {
 
   bus.on("agent:tool-started", (e) => {
     const id = e.toolCallId ?? `${e.title}-${Date.now()}`;
+    // Kernel composes title as "<toolName>: <args.description>" when the
+    // tool's args carry a description. The command/path shown right next
+    // to the title already conveys what the call is doing — strip the
+    // suffix so the header reads as "bash" / "read_file" / etc.
+    const title = e.title.split(":")[0]!.trim();
     const detail = e.displayDetail || detailFor(e.rawInput, e.locations, ctx.call("cwd"));
-    const tool = new ToolExecution(e.title, e.kind, detail);
+    const tool = new ToolExecution(title, e.kind, detail);
     activeTools.set(id, tool);
     chat.addChild(tool);
     tui.requestRender();
