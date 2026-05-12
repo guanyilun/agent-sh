@@ -16,6 +16,7 @@ import type { AgentShellConfig } from "agent-sh/types";
 import { mountAshi } from "./frontend.js";
 import { TreeHistoryAdapter } from "./tree-history.js";
 import { registerTreeCommands } from "./commands.js";
+import { registerCompaction } from "./compaction.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -96,6 +97,7 @@ async function main(): Promise<void> {
   }
 
   registerTreeCommands(ctx, treeHistory);
+  registerCompaction(ctx, treeHistory);
 
   const handle = mountAshi(ctx);
   stopFrontend = handle.stop;

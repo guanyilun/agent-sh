@@ -75,6 +75,28 @@ The kernel side of this is just three lines: an optional `parentSeq` on `Nuclear
 optional `getBranch` / `getTree` / `setLeaf` on `HistoryAdapter`. Everything else (storage,
 walk, slash commands) lives in this extension.
 
+## Compaction
+
+ashi replaces agent-sh's default deterministic two-tier-pin compaction with a pi-style
+LLM-driven path:
+
+1. Cut point: walk back from the newest message until ~20K tokens are kept; never cut at
+   tool results or in the middle of an assistant→tool call group.
+2. LLM summarizes the older span into the pi structured format (Goal / Constraints /
+   Progress / Decisions / Next Steps / Critical Context).
+3. The live message array becomes `[summary, ...kept messages]`.
+4. The summary lands in the tree as a `compaction` `NuclearEntry`, parented at the
+   pre-compaction leaf. Subsequent compactions reference the previous one's summary so
+   chains stay coherent.
+
+Triggered automatically when prompt tokens cross agent-sh's threshold, or manually with
+`/compact`. If the LLM call fails or the conversation is too short, falls through to the
+default eviction.
+
+The kernel exposes one extra handler (`conversation:allocate-seq`) so the compaction entry
+gets a fresh seq from the same counter as kernel-produced entries. Everything else
+(prompt template, cut-point walker, serialization, LLM call) lives in this extension.
+
 ## What's intentionally missing
 
 This is a spike, not a clone of pi's full UI. The MVP renders:
