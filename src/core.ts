@@ -215,13 +215,21 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
         },
         registerCommand: (name, description, handler) =>
           bus.emit("command:register", { name, description, handler }),
+        adviseCommand: (name, advisor) => {
+          const key = name.startsWith("/") ? name : `/${name}`;
+          return handlers.advise(`command:${key}`, advisor as Parameters<typeof handlers.advise>[1]);
+        },
         registerTool: (tool) => bus.emit("agent:register-tool", { tool, extensionName: "" }),
         unregisterTool: (name) => bus.emit("agent:unregister-tool", { name }),
+        adviseTool: (name, advisor) => handlers.advise(`tool:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
+        adviseToolSchema: (name, advisor) => handlers.advise(`tool:${name}:schema`, advisor as Parameters<typeof handlers.advise>[1]),
         getTools: () => bus.emitPipe("agent:get-tools", { tools: [] }).tools,
         registerInstruction: (name, text) => bus.emit("agent:register-instruction", { name, text, extensionName: "" }),
         removeInstruction: (name) => bus.emit("agent:remove-instruction", { name }),
+        adviseInstruction: (name, advisor) => handlers.advise(`instruction:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
         registerSkill: (name, description, filePath) => bus.emit("agent:register-skill", { name, description, filePath, extensionName: "" }),
         removeSkill: (name) => bus.emit("agent:remove-skill", { name }),
+        adviseSkill: (name, advisor) => handlers.advise(`skill:${name}:view`, advisor as Parameters<typeof handlers.advise>[1]),
         registerContextProducer: (_name, producer, opts) => {
           const handlerName = opts?.mode === "per-query"
             ? "query-context:build"

@@ -21,7 +21,7 @@ import * as fsSync from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { computeDiff, computeEditDiff, computeInputDiff } from "../utils/diff.js";
-import type { AgentBackend, ToolDefinition, ToolExecutionContext } from "./types.js";
+import type { AgentBackend, SkillView, ToolDefinition, ToolExecutionContext } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { normalizeToolArgs } from "./normalize-args.js";
 import { ConversationState, type CompactResult } from "./conversation-state.js";
@@ -92,7 +92,7 @@ export interface AgentLoopConfig {
 
 export class AgentLoop implements AgentBackend {
   private abortController: AbortController | null = null;
-  private toolRegistry = new ToolRegistry();
+  private toolRegistry: ToolRegistry;
   private history: HistoryAdapter;
   private conversation: ConversationState;
   private fileReadCache: FileReadCache = new Map();
@@ -149,6 +149,7 @@ export class AgentLoop implements AgentBackend {
     this.handlers = config.handlers;
     this.compositor = config.compositor ?? null;
     this.instanceId = config.instanceId ?? "unknown";
+    this.toolRegistry = new ToolRegistry(this.handlers);
 
     // Shell-history-shaped log. Default writes go through the advisable
     // `history:append` handler registered below; extensions swap the
@@ -481,21 +482,26 @@ export class AgentLoop implements AgentBackend {
   /** Register a named instruction block for the system prompt. */
   registerInstruction(name: string, text: string, extensionName: string): void {
     this.instructions.set(name, { text, extensionName });
+    this.handlers.define(`instruction:${name}`, () => this.instructions.get(name)?.text ?? "");
   }
 
-  /** Remove a named instruction block. */
   removeInstruction(name: string): void {
     this.instructions.delete(name);
+    // Handler entry retained so external advisors survive a reload of the owner.
   }
 
   /** Register a named skill (on-demand reference material). */
   registerSkill(name: string, description: string, filePath: string, extensionName: string): void {
     this.skills.set(name, { description, filePath, extensionName });
+    this.handlers.define(`skill:${name}:view`, (): SkillView => {
+      const s = this.skills.get(name);
+      return { description: s?.description ?? "", filePath: s?.filePath ?? "" };
+    });
   }
 
-  /** Remove a registered skill. */
   removeSkill(name: string): void {
     this.skills.delete(name);
+    // Handler entry retained so external advisors survive a reload of the owner.
   }
 
   /**
@@ -518,14 +524,16 @@ export class AgentLoop implements AgentBackend {
     const ensure = (name: string): ExtensionGroup =>
       groups.get(name) ?? (groups.set(name, { tools: [], skills: [], instructions: [] }).get(name)!);
 
-    // Attribute instructions
-    for (const { text, extensionName } of this.instructions.values()) {
+    // Attribute instructions — read text through the advisor chain
+    for (const [name, { extensionName }] of this.instructions) {
+      const text = this.handlers.call(`instruction:${name}`) as string;
       ensure(extensionName).instructions.push({ text });
     }
 
-    // Attribute skills
-    for (const [skillName, { description, filePath, extensionName }] of this.skills) {
-      ensure(extensionName).skills.push({ name: skillName, description, filePath });
+    // Attribute skills — read description/filePath through the advisor chain
+    for (const [skillName, { extensionName }] of this.skills) {
+      const view = this.handlers.call(`skill:${skillName}:view`) as SkillView;
+      ensure(extensionName).skills.push({ name: skillName, description: view.description, filePath: view.filePath });
     }
 
     // Attribute tools (skip built-in scratchpad tools).
@@ -539,7 +547,7 @@ export class AgentLoop implements AgentBackend {
         "bash", "read_file", "write_file", "edit_file", "grep", "glob", "ls",
         "list_skills",
       ]);
-      for (const tool of this.toolRegistry.all()) {
+      for (const tool of this.toolRegistry.allView()) {
         if (builtinTools.has(tool.name)) continue;
         const extName = this.toolExtensions.get(tool.name);
         if (!extName) continue;
@@ -1161,7 +1169,7 @@ export class AgentLoop implements AgentBackend {
       }
       let result: Awaited<ReturnType<typeof tool.execute>>;
       try {
-        result = await raceAbort(tool.execute(args, onChunk, toolCtx), signal);
+        result = await raceAbort(this.toolRegistry.call(name, args, onChunk, toolCtx), signal);
       } catch (err) {
         if (signal.aborted) {
           try { this.handlers.call("tool:cancel", { name, args, reason: "user-aborted" }); } catch {}
@@ -1736,8 +1744,9 @@ export class AgentLoop implements AgentBackend {
     const pendingToolCalls: PendingToolCall[] = [];
 
     // Tool protocol controls what goes in the API tools param vs dynamic context
-    const apiTools = this.toolProtocol.getApiTools(this.toolRegistry.all());
-    const toolPrompt = this.toolProtocol.getToolPrompt(this.toolRegistry.all());
+    const toolView = this.toolRegistry.allView();
+    const apiTools = this.toolProtocol.getApiTools(toolView);
+    const toolPrompt = this.toolProtocol.getToolPrompt(toolView);
 
     // Dynamic context rides on the trailing message — see
     // wrapTrailingWithDynamicContext for the cache-stability rationale.

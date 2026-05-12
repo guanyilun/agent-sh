@@ -67,12 +67,13 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
     cleanups.push(() => bus.offPipe(event, fn));
   }) as typeof bus.onPipe;
 
-  // Track advise registrations
-  const scopedAdvise: typeof ctx.advise = (name, wrapper) => {
-    const unadvise = ctx.advise(name, wrapper);
-    cleanups.push(unadvise);
-    return unadvise;
+  // Wrap any (name, fn) → unsubscribe registrar so its disposer runs on teardown.
+  const trackUnsub = <A, B>(fn: (a: A, b: B) => () => void) => (a: A, b: B) => {
+    const unsub = fn(a, b);
+    cleanups.push(unsub);
+    return unsub;
   };
+  const scopedAdvise: typeof ctx.advise = trackUnsub(ctx.advise);
 
   // Track instruction registrations — extension name captured in scope
   const scopedRegisterInstruction: typeof ctx.registerInstruction = (name, text) => {
@@ -99,6 +100,12 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
     cleanups.push(() => bus.emit("agent:unregister-tool", { name: tool.name }));
   };
 
+  const scopedAdviseTool: typeof ctx.adviseTool = trackUnsub(ctx.adviseTool);
+  const scopedAdviseToolSchema: typeof ctx.adviseToolSchema = trackUnsub(ctx.adviseToolSchema);
+  const scopedAdviseInstruction: typeof ctx.adviseInstruction = trackUnsub(ctx.adviseInstruction);
+  const scopedAdviseSkill: typeof ctx.adviseSkill = trackUnsub(ctx.adviseSkill);
+  const scopedAdviseCommand: typeof ctx.adviseCommand = trackUnsub(ctx.adviseCommand);
+
   // Track slash command registrations — without this, reloading an
   // extension stacks its commands (old `/status` + new `/status`) in
   // the slash-commands registry.
@@ -118,6 +125,11 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
     registerContextProducer: scopedRegisterContextProducer,
     registerTool: scopedRegisterTool,
     unregisterTool: ctx.unregisterTool,
+    adviseTool: scopedAdviseTool,
+    adviseToolSchema: scopedAdviseToolSchema,
+    adviseInstruction: scopedAdviseInstruction,
+    adviseSkill: scopedAdviseSkill,
+    adviseCommand: scopedAdviseCommand,
     registerCommand: scopedRegisterCommand,
     onDispose: (fn: () => void) => { cleanups.push(fn); },
   };

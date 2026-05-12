@@ -1,7 +1,7 @@
 import type { EventBus, ContentBlock } from "./event-bus.js";
 import type { ColorPalette } from "./utils/palette.js";
 import type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
-import type { ToolDefinition } from "./agent/types.js";
+import type { SkillView, ToolDefinition, ToolSchemaView } from "./agent/types.js";
 import type { Compositor } from "./utils/compositor.js";
 import type { HistoryAdapter } from "./agent/history-file.js";
 
@@ -149,13 +149,37 @@ export interface ExtensionContext {
   // ── Slash command registration ─────────────────────────────
   /** Register a slash command available in any input mode. */
   registerCommand: (name: string, description: string, handler: (args: string) => Promise<void> | void) => void;
+  /** Wrap an already-registered command's handler. Name is normalized
+   *  (leading `/` optional). */
+  adviseCommand: (
+    name: string,
+    advisor: (
+      next: (args: string) => Promise<void> | void,
+      args: string,
+    ) => Promise<void> | void,
+  ) => () => void;
 
   // ── Tool registration (agent-sh backend only) ─────────────
-  /** Register a tool for the built-in agent. No-op when using bridge backends. */
+  /** Throws on duplicate name — use `adviseTool` to wrap, not replace.
+   *  No-op under bridge backends. */
   registerTool: (tool: ToolDefinition) => void;
-  /** Unregister a tool by name. */
   unregisterTool: (name: string) => void;
-  /** Get all registered tools (for subagent tool subsets). Returns [] when using bridge backends. */
+  adviseTool: (
+    name: string,
+    advisor: (
+      next: ToolDefinition["execute"],
+      args: Record<string, unknown>,
+      onChunk?: (chunk: string) => void,
+      ctx?: import("./agent/types.js").ToolExecutionContext,
+    ) => ReturnType<ToolDefinition["execute"]>,
+  ) => () => void;
+  /** Tool name is frozen (dispatch key). If an advisor adds a parameter,
+   *  pair with `adviseTool` so the underlying exec accepts it. */
+  adviseToolSchema: (
+    name: string,
+    advisor: (next: () => ToolSchemaView) => ToolSchemaView,
+  ) => () => void;
+  /** Returns [] under bridge backends. */
   getTools: () => ToolDefinition[];
 
   // ── System prompt instructions ────────────────────────────
@@ -163,12 +187,23 @@ export interface ExtensionContext {
   registerInstruction: (name: string, text: string) => void;
   /** Remove a named instruction block from the system prompt. */
   removeInstruction: (name: string) => void;
+  /** Wrap an already-registered instruction's text. */
+  adviseInstruction: (
+    name: string,
+    advisor: (next: () => string) => string,
+  ) => () => void;
 
   // ── Skill registration ────────────────────────────────────
   /** Register a skill (on-demand reference material) for the agent. */
   registerSkill: (name: string, description: string, filePath: string) => void;
   /** Remove a registered skill by name. */
   removeSkill: (name: string) => void;
+  /** Wrap an already-registered skill's LLM-facing view. Skill name is
+   *  frozen (dispatch key for the catalog). */
+  adviseSkill: (
+    name: string,
+    advisor: (next: () => SkillView) => SkillView,
+  ) => () => void;
 
   // ── Dynamic context registration ──────────────────────────
   /**
