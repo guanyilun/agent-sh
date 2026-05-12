@@ -1000,6 +1000,13 @@ export class AgentLoop implements AgentBackend {
     h.define("history:search", async (query: string) => this.history.search(query));
     h.define("history:find-by-seq", async (seq: number) => this.history.findBySeq(seq));
     h.define("history:read-recent", async (max?: number) => this.history.readRecent(max));
+    h.define("history:get-branch", async (leafSeq: number) =>
+      this.history.getBranch ? this.history.getBranch(leafSeq) : this.history.readRecent());
+    h.define("history:get-tree", async () =>
+      this.history.getTree ? this.history.getTree() : this.history.readRecent());
+    h.define("history:set-leaf", (seq: number) => {
+      this.history.setLeaf?.(seq);
+    });
 
     // Prior-session preamble renderer. Default: flat chronological list.
     h.define("conversation:format-prior-history", (entries: NuclearEntry[]) => {

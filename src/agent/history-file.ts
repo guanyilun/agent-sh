@@ -27,6 +27,12 @@ export interface HistoryAdapter {
   readRecent(maxEntries?: number): Promise<NuclearEntry[]>;
   search(query: string): Promise<{ entry: NuclearEntry; line: string }[]>;
   findBySeq(seq: number): Promise<NuclearEntry | null>;
+  /** Walk parent pointers from a leaf back to the root. Tree-aware adapters only. */
+  getBranch?(leafSeq: number): Promise<NuclearEntry[]>;
+  /** Return every entry, including sibling branches. Tree-aware adapters only. */
+  getTree?(): Promise<NuclearEntry[]>;
+  /** Move the active leaf for the next append. Tree-aware adapters only. */
+  setLeaf?(seq: number): void;
 }
 
 export class InMemoryHistory implements HistoryAdapter {

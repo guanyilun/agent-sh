@@ -14,6 +14,10 @@ import { getSettings } from "agent-sh/settings";
 import type { AgentShellConfig } from "agent-sh/types";
 
 import { mountAshi } from "./frontend.js";
+import { TreeHistoryAdapter } from "./tree-history.js";
+import { registerTreeCommands } from "./commands.js";
+import * as os from "node:os";
+import * as path from "node:path";
 
 function parseArgs(argv: string[]): AgentShellConfig & { extensions?: string[] } {
   let model: string | undefined;
@@ -53,7 +57,10 @@ async function main(): Promise<void> {
     process.stderr.write("ashi requires a TTY for interactive rendering.\n");
     process.exit(1);
   }
-  const core = createCore(config);
+  // Separate dir so the tree doesn't share state with the shell's linear ~/.agent-sh/history.
+  const ashiDir = path.join(os.homedir(), ".agent-sh", "extensions", "ashi");
+  const treeHistory = new TreeHistoryAdapter(ashiDir);
+  const core = createCore({ ...config, history: treeHistory });
 
   // Built by frontend.ts; declared up here so cleanup can reach it.
   let stopFrontend: (() => void) | null = null;
@@ -86,6 +93,8 @@ async function main(): Promise<void> {
     process.stderr.write("ashi: no agent backend registered. Set OPENAI_API_KEY or OPENROUTER_API_KEY, or configure ~/.agent-sh/settings.json.\n");
     process.exit(1);
   }
+
+  registerTreeCommands(ctx, treeHistory);
 
   const handle = mountAshi(ctx);
   stopFrontend = handle.stop;

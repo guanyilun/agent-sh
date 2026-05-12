@@ -56,15 +56,35 @@ Ctrl+C   Clear editor
 Ctrl+D   Quit (when editor is empty)
 ```
 
+## History tree
+
+ashi swaps the linear `~/.agent-sh/history` JSONL for a pi-style tree, persisted at
+`~/.agent-sh/extensions/ashi/tree.jsonl`. Each entry carries a `parentSeq`; sibling branches
+live on disk so you can navigate between them.
+
+```
+/tree      Show the whole tree, marking the active branch and fork points
+/branch    Show the active branch (root → leaf)
+/fork <seq> Reparent the next turn off <seq> instead of the current leaf
+```
+
+`/fork` only changes the on-disk parent pointer for the *next* batch — it doesn't rewind the
+agent's in-context messages. Full conversation replay from a branch is a follow-up.
+
+The kernel side of this is just three lines: an optional `parentSeq` on `NuclearEntry` plus
+optional `getBranch` / `getTree` / `setLeaf` on `HistoryAdapter`. Everything else (storage,
+walk, slash commands) lives in this extension.
+
 ## What's intentionally missing
 
 This is a spike, not a clone of pi's full UI. The MVP renders:
 
 - User submissions, streaming assistant Markdown
 - Tool invocations with start/complete state
-- Slash commands with autocomplete (`/help`, `/model`, `/backend`, …)
+- Slash commands with autocomplete (`/help`, `/model`, `/backend`, `/tree`, `/fork`, …)
+- Tree-shaped on-disk history with `/fork` divergence
 - Loader, errors, info messages
 
 Out of scope for v0: permission dialogs, diff renderer, file-path autocomplete, session
-selector, theme selector, image rendering. Each can be added by writing a pi-tui Component and
-subscribing to the corresponding bus event.
+selector, theme selector, image rendering, full conversation rewind on fork. Each can be
+added by writing a pi-tui Component and subscribing to the corresponding bus event.
