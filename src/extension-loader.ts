@@ -99,6 +99,13 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
     cleanups.push(() => bus.emit("agent:unregister-tool", { name: tool.name }));
   };
 
+  // Track adviseTool registrations so /reload tears them down
+  const scopedAdviseTool: typeof ctx.adviseTool = (name, advisor) => {
+    const unadvise = ctx.adviseTool(name, advisor);
+    cleanups.push(unadvise);
+    return unadvise;
+  };
+
   // Track slash command registrations — without this, reloading an
   // extension stacks its commands (old `/status` + new `/status`) in
   // the slash-commands registry.
@@ -118,6 +125,7 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
     registerContextProducer: scopedRegisterContextProducer,
     registerTool: scopedRegisterTool,
     unregisterTool: ctx.unregisterTool,
+    adviseTool: scopedAdviseTool,
     registerCommand: scopedRegisterCommand,
     onDispose: (fn: () => void) => { cleanups.push(fn); },
   };

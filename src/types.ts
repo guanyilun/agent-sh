@@ -151,10 +151,25 @@ export interface ExtensionContext {
   registerCommand: (name: string, description: string, handler: (args: string) => Promise<void> | void) => void;
 
   // ── Tool registration (agent-sh backend only) ─────────────
-  /** Register a tool for the built-in agent. No-op when using bridge backends. */
+  /** Register a tool for the built-in agent. No-op when using bridge backends.
+   *  Throws if a tool with the same name is already registered — use
+   *  `adviseTool` to wrap an existing tool instead of replacing it. */
   registerTool: (tool: ToolDefinition) => void;
   /** Unregister a tool by name. */
   unregisterTool: (name: string) => void;
+  /** Wrap an already-registered tool's execution. The advisor receives
+   *  `next` (the underlying chain) and the original execute() arguments;
+   *  call `next` to delegate, skip it to short-circuit, transform its
+   *  result to post-process. Returns an unadvise function. */
+  adviseTool: (
+    name: string,
+    advisor: (
+      next: ToolDefinition["execute"],
+      args: Record<string, unknown>,
+      onChunk?: (chunk: string) => void,
+      ctx?: import("./agent/types.js").ToolExecutionContext,
+    ) => ReturnType<ToolDefinition["execute"]>,
+  ) => () => void;
   /** Get all registered tools (for subagent tool subsets). Returns [] when using bridge backends. */
   getTools: () => ToolDefinition[];
 

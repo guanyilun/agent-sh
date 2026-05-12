@@ -92,7 +92,7 @@ export interface AgentLoopConfig {
 
 export class AgentLoop implements AgentBackend {
   private abortController: AbortController | null = null;
-  private toolRegistry = new ToolRegistry();
+  private toolRegistry: ToolRegistry;
   private history: HistoryAdapter;
   private conversation: ConversationState;
   private fileReadCache: FileReadCache = new Map();
@@ -149,6 +149,7 @@ export class AgentLoop implements AgentBackend {
     this.handlers = config.handlers;
     this.compositor = config.compositor ?? null;
     this.instanceId = config.instanceId ?? "unknown";
+    this.toolRegistry = new ToolRegistry(this.handlers);
 
     // Shell-history-shaped log. Default writes go through the advisable
     // `history:append` handler registered below; extensions swap the
@@ -1161,7 +1162,7 @@ export class AgentLoop implements AgentBackend {
       }
       let result: Awaited<ReturnType<typeof tool.execute>>;
       try {
-        result = await raceAbort(tool.execute(args, onChunk, toolCtx), signal);
+        result = await raceAbort(this.toolRegistry.call(name, args, onChunk, toolCtx), signal);
       } catch (err) {
         if (signal.aborted) {
           try { this.handlers.call("tool:cancel", { name, args, reason: "user-aborted" }); } catch {}
