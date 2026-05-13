@@ -342,6 +342,9 @@ export function mountAshi(
     const branch = getStore().current().getBranch();
     const toolMap = new Map<string, ReplayEntry>();
     for (const e of branch) replayEntry(e, toolMap);
+    // Match the trailing gap that processing-done adds in live turns, so the
+    // editor doesn't sit flush against the last replayed response.
+    chat.addChild(new Spacer(1));
     tui.requestRender();
   };
 
