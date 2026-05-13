@@ -23,6 +23,9 @@ ashi
 Reads `~/.agent-sh/settings.json` for providers and defaults, same as `agent-sh` itself. The
 quickest path is exporting `OPENROUTER_API_KEY` or `OPENAI_API_KEY` and running `ashi`.
 
+See the agent-sh [Usage Guide](https://github.com/guanyilun/agent-sh/blob/main/docs/usage.md)
+for the full `settings.json` schema, provider profiles, and model selection details.
+
 CLI flags mirror `agent-sh`:
 
 ```
@@ -34,6 +37,10 @@ CLI flags mirror `agent-sh`:
 -e, --extensions     Extra extensions to load (comma-separated)
 ```
 
+Extensions loaded via `-e` follow the standard agent-sh extension contract — see
+[Extensions](https://github.com/guanyilun/agent-sh/blob/main/docs/extensions.md) for the
+`ExtensionContext` API, event bus, content transforms, and custom backends.
+
 ## Keybindings
 
 Match pi-coding-agent's convention:
@@ -42,6 +49,8 @@ Match pi-coding-agent's convention:
 Esc      Cancel active turn
 Ctrl+C   Clear editor
 Ctrl+D   Quit (when editor is empty)
+Ctrl+T   Toggle thinking-block visibility
+Ctrl+O   Expand/collapse the most recent tool result
 ```
 
 ## Sessions
@@ -119,39 +128,57 @@ This is a spike, not a clone of pi's full UI. The MVP renders:
 - Multi-session tree history with `/resume` and `/fork` pickers
 - LLM compaction with summaries that survive across `/resume`
 - Loader, errors, info messages
+- Inline images via the `image` ContentBlock and the `render:image` handler — the
+  bundled `latex-images` extension works against ashi without modification
+  (terminal must support iTerm2 or Kitty graphics)
 
 Out of scope for v0: branch summaries on `/fork` navigation (pi has this), `/clone`
 (duplicate active branch into a new session), permission dialogs, diff renderer, file-path
-autocomplete, session search/rename/delete inside the `/resume` picker, theme selector,
-image rendering. Each can be added by writing a pi-tui Component and subscribing to the
-corresponding bus event.
+autocomplete, session search/rename/delete inside the `/resume` picker, theme selector.
+Each can be added by writing a pi-tui Component and subscribing to the corresponding
+bus event.
 
 ## Extension surface
 
 Other extensions can override how chat entries render without forking ashi.
-Four hooks are exposed via `ctx.define` (defaults) + `ctx.advise` (override):
+Hooks are exposed via `ctx.define` (defaults) + `ctx.advise` (override).
+
+### Chat hooks
 
 | Hook | Args | Returns |
 |---|---|---|
 | `ashi:render-user-message` | `{ text, state, invalidate }` | `Component` |
 | `ashi:render-assistant` | `{ text, state, invalidate }` | `Component` |
 | `ashi:render-thinking` | `{ text, hidden, state, invalidate }` | `Component` |
-| `ashi:render-tool-execution` | `{ toolCallId, name, title, kind, displayDetail, rawInput, state, invalidate }` | `ToolExecutionView` |
+
+### Tool hooks (per-tool)
+
+Tool rendering is split into a call line (the input header) and a result body
+(streaming output + final state). Each side is dispatched by tool name with a
+`:default` fallback:
+
+| Hook | Args | Returns |
+|---|---|---|
+| `ashi:render-tool-call:{name}` | `{ toolCallId, name, title, kind, displayDetail, rawInput, state, invalidate }` | `ToolCallView` |
+| `ashi:render-tool-call:default` | (same) | `ToolCallView` |
+| `ashi:render-tool-result:{name}` | `{ toolCallId, name, kind, rawInput, mode, previewLines, state, invalidate }` | `ToolResultView` |
+| `ashi:render-tool-result:default` | (same) | `ToolResultView` |
 
 `state` is a per-call mutable bag; `invalidate()` requests a re-render.
 
-`ToolExecutionView` extends `Component` with `appendOutput(chunk)`, `setBody(lines)`,
-`complete(exitCode, summary)` — ashi mutates the returned view as the tool progresses,
-so custom renderers must satisfy this contract (or replace the entire tool render
-including completion handling).
+- `ToolCallView` extends `Component` with `setStatus({ exitCode, elapsedMs, summary })` — called once on completion.
+- `ToolResultView` extends `Component` with `appendChunk(chunk)`, `setDiff(lines)`, `finalize({ exitCode, summary })`, and `toggleExpanded()` — ashi mutates the result view as output streams in and when the user hits `Ctrl+O`.
 
-Example: override how `edit_file` results render.
+`mode` and `previewLines` on result args come from `ashi.display.{name}` config
+(see below) so renderers can honor the user's compactness preference without
+re-implementing the resolution logic.
+
+Example: override how `bash` calls render.
 
 ```ts
 export default function activate(ctx) {
-  ctx.advise("ashi:render-tool-execution", (next, args) => {
-    if (args.kind !== "write") return next(args);
-    return new MyPrettyEditView(args);  // must implement ToolExecutionView
+  ctx.advise("ashi:render-tool-call:bash", (next, args) => {
+    return new MyFancyBashLine(args);  // must implement ToolCallView
   });
 }
 ```
@@ -159,16 +186,65 @@ export default function activate(ctx) {
 For non-render concerns (commands, settings, tools, providers) use the standard
 agent-sh extension API.
 
+## Display configuration
+
+Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
+
+```json
+{
+  "ashi": {
+    "display": {
+      "default": { "result": "preview", "previewLines": 8 },
+      "read":    { "result": "hidden" },
+      "ls":      { "result": "hidden" },
+      "grep":    { "result": "summary" },
+      "bash":    { "result": "preview", "previewLines": 12 },
+      "edit":    { "result": "preview" },
+      "write":   { "result": "preview" }
+    }
+  }
+}
+```
+
+`result` modes:
+
+- `"hidden"` — call line only while streaming; line count (`↳ 42 lines`) after completion.
+- `"summary"` — 2-line tail while streaming; line count after completion.
+- `"preview"` — last `previewLines` lines of output (default 8), with a `... (N more lines)` hint when content overflows.
+
+For `edit_file` / `write_file`, the diff frame is treated as the output and
+follows the same gating: shown for `preview`, hidden for `hidden`/`summary`
+(the call line already carries `+12 -3` stats). The line-count hint is
+suppressed for diff-producing tools so edits stay quiet.
+
+Hit `Ctrl+O` to expand the most recent tool result inline — shows the full
+output buffer and the full diff regardless of mode. Press again to collapse.
+
+Each tool inherits from `default` and is overridden by its own block. Unknown
+tool names fall through to `default`. Built-in defaults aim for compactness
+(`read`/`ls` hidden, `grep` summarized) — override under `default` to widen
+everything, or under a specific tool to tune one.
+
 ## Development
 
-To iterate on ashi from inside this repo:
+`@guanyilun/ashi` depends on the published `agent-sh` package. To iterate against
+the parent checkout instead, use `npm link`:
 
 ```bash
+# one-time: register the local agent-sh checkout
+cd /path/to/agent-sh
+npm run build
+npm link
+
+# in ashi, point its agent-sh dependency at the linked checkout
 cd examples/extensions/ashi
 npm install
+npm link agent-sh
+
 npm run dev      # tsx-driven, no compile step
 # or: npm run build && node dist/cli.js
 ```
 
-`file:../../..` in `package.json` wires `agent-sh` to the parent checkout — run
-`npm run build` at the repo root first if you haven't already.
+Rebuild agent-sh (`npm run build` at the repo root) whenever you change the
+kernel — the link picks up `dist/` directly. To go back to the published
+version, run `npm unlink agent-sh && npm install` inside `examples/extensions/ashi`.

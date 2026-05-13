@@ -1,13 +1,12 @@
 import {
-  Box,
   Container,
   Markdown,
   type MarkdownTheme,
   Spacer,
   Text,
-  type Component,
 } from "@earendil-works/pi-tui";
-import { iconFor, markdownTheme, theme } from "./theme.js";
+import { markdownTheme, theme } from "./theme.js";
+import type { ToolResultMode } from "./display-config.js";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -33,8 +32,6 @@ export class UserMessage extends Container {
   }
 }
 
-/** paddingY=0 so the Markdown sits flush against the following tool box,
- *  matching pi's vertical rhythm. */
 export class AssistantMessage extends Container {
   private md: Markdown;
   private buffer = "";
@@ -102,85 +99,222 @@ export class ThinkingBlock extends Container {
   }
 }
 
-export class ToolExecution extends Container {
-  private box: Box;
-  private header: Text;
+export class ToolResultBody extends Container {
   private outputText: Text;
-  private outputBuffer = "";
-  private title: string;
-  private detail?: string;
-  private kind?: string;
-  private startedAt: number;
-  private exitCode: number | null | undefined;
-  private elapsedMs?: number;
-  private summary?: string;
-
   private bodyText: Text;
+  private outputBuffer = "";
+  private diffLines: string[] = [];
+  private mode: ToolResultMode;
+  private previewLines: number;
+  private finalized = false;
+  private expanded = false;
+  private exitCode: number | null | undefined;
 
-  constructor(title: string, kind?: string, detail?: string) {
+  constructor(mode: ToolResultMode, previewLines: number) {
     super();
-    this.title = title;
-    this.kind = kind;
-    this.detail = detail;
-    this.startedAt = Date.now();
-    this.box = new Box(1, 1, (t) => theme.bg("toolPendingBg", t));
-    this.header = new Text("", 0, 0);
+    this.mode = mode;
+    this.previewLines = previewLines;
+    this.outputText = new Text("", 1, 0);
     this.bodyText = new Text("", 0, 0);
-    this.outputText = new Text("", 0, 0);
-    this.box.addChild(this.header);
-    this.box.addChild(this.outputText);
-    this.addChild(new Spacer(1));
-    this.addChild(this.box);
+    this.addChild(this.outputText);
     this.addChild(this.bodyText);
-    this.repaint();
   }
 
-  setBody(lines: string[]): void {
-    this.bodyText.setText(lines.join("\n"));
-  }
-
-  appendOutput(chunk: string): void {
+  appendChunk(chunk: string): void {
     this.outputBuffer += chunk;
     this.repaint();
   }
 
-  complete(exitCode: number | null, summary?: string): void {
-    this.exitCode = exitCode;
-    this.elapsedMs = Date.now() - this.startedAt;
-    this.summary = summary;
-    const ok = exitCode === null || exitCode === 0;
-    this.box.setBgFn((t) => theme.bg(ok ? "toolSuccessBg" : "toolErrorBg", t));
+  setDiff(lines: string[]): void {
+    this.diffLines = lines;
+    this.repaint();
+  }
+
+  finalize(opts: { exitCode: number | null; summary?: string }): void {
+    this.finalized = true;
+    this.exitCode = opts.exitCode;
+    this.repaint();
+  }
+
+  toggleExpanded(): void {
+    this.expanded = !this.expanded;
     this.repaint();
   }
 
   private repaint(): void {
-    const icon = iconFor(this.kind);
-    const titlePart = theme.bold(theme.fg("toolTitle", `${icon} ${this.title}`));
-    const detailPart = this.detail ? ` ${theme.fg("muted", this.detail)}` : "";
-    let tailPart = "";
-    if (this.exitCode !== undefined) {
-      const ok = this.exitCode === null || this.exitCode === 0;
-      const mark = ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
-      const elapsed = this.elapsedMs !== undefined ? ` ${theme.fg("muted", fmtElapsed(this.elapsedMs))}` : "";
-      const sum = this.summary ? ` ${theme.fg("muted", this.summary)}` : "";
-      tailPart = `   ${mark}${elapsed}${sum}`;
-    } else {
-      tailPart = `   ${theme.fg("muted", "…")}`;
-    }
-    this.header.setText(`${titlePart}${detailPart}\n${tailPart}`);
-    if (this.outputBuffer) {
-      const trimmed = this.outputBuffer.split("\n").slice(-8).join("\n");
-      this.outputText.setText(theme.fg("toolOutput", trimmed));
-    } else {
+    // Hide the framed diff in hidden/summary modes — the stats already live
+    // on the call line so showing it again is noise.
+    const hasDiff = this.diffLines.length > 0;
+    const showDiff = hasDiff && (this.expanded || this.mode === "preview");
+    this.bodyText.setText(showDiff ? this.diffLines.join("\n") : "");
+
+    // When a diff exists, the textual output ("Edited /path (+12 -3)") just
+    // restates the call line — suppress its line-count hint to keep edits quiet.
+    if (hasDiff && !this.expanded) {
       this.outputText.setText("");
+      return;
     }
+    if (!this.outputBuffer) {
+      this.outputText.setText("");
+      return;
+    }
+    if (this.expanded) {
+      this.outputText.setText(theme.fg("toolOutput", this.outputBuffer));
+      return;
+    }
+    if (this.mode === "hidden") {
+      if (!this.finalized) { this.outputText.setText(""); return; }
+      this.outputText.setText(lineCountHint(this.outputBuffer, this.exitCode));
+      return;
+    }
+    if (this.mode === "summary") {
+      if (!this.finalized) {
+        // Brief tail while streaming; collapses to a line count on finalize.
+        const tail = this.outputBuffer.split("\n").slice(-2).join("\n");
+        this.outputText.setText(theme.fg("muted", tail));
+        return;
+      }
+      this.outputText.setText(lineCountHint(this.outputBuffer, this.exitCode));
+      return;
+    }
+    const lines = this.outputBuffer.split("\n");
+    const trimmed = lines.slice(-this.previewLines).join("\n");
+    const remaining = Math.max(0, lines.length - this.previewLines);
+    const overflow = remaining > 0
+      ? `\n${theme.fg("muted", `... (${remaining} more ${remaining === 1 ? "line" : "lines"})`)}`
+      : "";
+    this.outputText.setText(`${theme.fg("toolOutput", trimmed)}${overflow}`);
   }
 }
 
-function fmtElapsed(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 10_000) return `${(ms / 1000).toFixed(2)}s`;
-  return `${(ms / 1000).toFixed(1)}s`;
+function lineCountHint(buffer: string, exitCode: number | null | undefined): string {
+  const lines = buffer.split("\n").filter((l) => l.length > 0);
+  const label = lines.length === 1 ? "1 line" : `${lines.length} lines`;
+  const ok = exitCode === null || exitCode === 0;
+  const arrow = ok ? theme.fg("muted", "↳ ") : theme.fg("error", "↳ ");
+  return `${arrow}${theme.fg("muted", label)}`;
+}
+
+const GROUP_ICONS: Record<string, string> = { read: "◆", search: "⌕" };
+
+interface GroupChild {
+  name: string;
+  detail: string;
+  text: Text;
+  status?: { exitCode: number | null; summary?: string };
+}
+
+const SHORT_TOOL_NAMES: Record<string, string> = {
+  read_file: "read",
+  edit_file: "edit",
+  write_file: "write",
+};
+
+function shortToolName(name: string): string {
+  return SHORT_TOOL_NAMES[name] ?? name;
+}
+
+/** A batch of parallel same-kind tool calls. Renders one header, per-call
+ *  child branch lines that each carry their own summary on completion, and
+ *  a final aggregate. Mirrors ash's grouping (read_file/ls → "read";
+ *  grep/glob → "search"). */
+export class ToolGroup extends Container {
+  private headerText: Text;
+  private childContainer: Container;
+  private aggregateText: Text;
+  private kind: string;
+  private total: number;
+  private maxVisible: number;
+  private visibleChildren = new Map<string, GroupChild>();
+  private hiddenSummaries: string[] = [];
+  private addedCount = 0;
+  private renderedCount = 0;
+  private completedCount = 0;
+  private allOk = true;
+
+  constructor(kind: string, total: number, maxVisible = 5) {
+    super();
+    this.kind = kind;
+    this.total = total;
+    this.maxVisible = maxVisible;
+    this.headerText = new Text("", 1, 0);
+    this.childContainer = new Container();
+    this.aggregateText = new Text("", 1, 0);
+    this.addChild(new Spacer(1));
+    this.addChild(this.headerText);
+    this.addChild(this.childContainer);
+    this.addChild(this.aggregateText);
+    this.repaintHeader();
+  }
+
+  addCall(toolCallId: string, name: string, detail: string): void {
+    this.addedCount++;
+    if (this.renderedCount < this.maxVisible && toolCallId) {
+      const text = new Text("", 1, 0);
+      const child: GroupChild = { name: shortToolName(name), detail: detail || "…", text };
+      this.visibleChildren.set(toolCallId, child);
+      this.childContainer.addChild(text);
+      this.renderedCount++;
+      this.repaintChild(child);
+    }
+  }
+
+  recordCompletion(toolCallId: string, exitCode: number | null, summary?: string): void {
+    this.completedCount++;
+    if (exitCode !== null && exitCode !== 0) this.allOk = false;
+    const child = this.visibleChildren.get(toolCallId);
+    if (child) {
+      child.status = { exitCode, summary };
+      this.repaintChild(child);
+    } else if (summary) {
+      this.hiddenSummaries.push(summary);
+    }
+    if (this.completedCount >= this.total) this.finalize();
+  }
+
+  finalize(): void {
+    const collapsed = this.addedCount - this.renderedCount;
+    // No overflow ⇒ no aggregate; close the tree by promoting the last
+    // visible child's ├ to a └.
+    if (collapsed === 0) {
+      this.aggregateText.setText("");
+      const last = [...this.visibleChildren.values()].pop();
+      if (last) this.repaintChild(last, true);
+      return;
+    }
+    const mark = this.allOk ? theme.fg("success", "✓") : theme.fg("error", "✗");
+    const more = theme.fg("muted", `+${collapsed} more`);
+    const sumText = this.hiddenSummaries.length > 0
+      ? ` ${theme.fg("muted", this.hiddenSummaries.join(", "))}`
+      : "";
+    this.aggregateText.setText(`${theme.fg("muted", "└")} ${more} ${mark}${sumText}`);
+  }
+
+  isComplete(): boolean { return this.completedCount >= this.total; }
+
+  private repaintChild(child: GroupChild, isLast = false): void {
+    let tail: string;
+    if (!child.status) {
+      tail = ` ${theme.fg("muted", "…")}`;
+    } else {
+      const ok = child.status.exitCode === null || child.status.exitCode === 0;
+      const mark = ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
+      const sum = child.status.summary ? ` ${theme.fg("muted", child.status.summary)}` : "";
+      tail = ` ${mark}${sum}`;
+    }
+    const connector = isLast ? "└" : "├";
+    // Tool name omitted when it duplicates the kind header (e.g. read_file
+    // children under "◆ read").
+    const namePart = child.name !== this.kind
+      ? `${theme.bold(theme.fg("toolTitle", child.name))} `
+      : "";
+    child.text.setText(`${theme.fg("muted", connector)} ${namePart}${theme.fg("muted", child.detail)} ${tail}`);
+  }
+
+  private repaintHeader(): void {
+    const icon = GROUP_ICONS[this.kind] ?? "▶";
+    this.headerText.setText(`${theme.fg("warning", icon)} ${theme.bold(theme.fg("toolTitle", this.kind))}`);
+  }
 }
 
 export class ErrorLine extends Container {

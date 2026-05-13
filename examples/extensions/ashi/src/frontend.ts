@@ -3,11 +3,13 @@ import {
   ProcessTerminal,
   Container,
   Editor,
+  Image,
   Loader,
   SelectList,
   Spacer,
   type Component,
   type SelectItem,
+  getImageDimensions,
   matchesKey,
 } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
@@ -17,8 +19,16 @@ import {
   ErrorLine,
   InfoLine,
   ThinkingBlock,
+  ToolGroup,
 } from "./components.js";
-import type { ToolExecutionView } from "./hooks.js";
+import type { ToolCallView, ToolResultView } from "./hooks.js";
+import { createToolHookResolver } from "./hooks.js";
+
+const GROUPABLE_KINDS = new Set(["read", "search"]);
+const TOOL_KIND: Record<string, string> = {
+  read_file: "read", ls: "read",
+  grep: "search", glob: "search",
+};
 import { BusAutocompleteProvider } from "./autocomplete.js";
 import { StatusFooter } from "./status-footer.js";
 import type { MultiSessionStore } from "./multi-session-store.js";
@@ -69,6 +79,30 @@ function detailFromArgs(argsJson: string | undefined): string {
     if (typeof args.query === "string") return `"${args.query}"`;
   } catch { /* fall through */ }
   return "";
+}
+
+/** Recompute the per-tool summary from a saved tool result message. We don't
+ *  persist resultDisplay, so /resume would otherwise lose "16 entries" / "117
+ *  lines" etc. Mirrors agent-sh's formatResult logic for the common tools. */
+function inferSummary(toolName: string, content: unknown): string | undefined {
+  if (typeof content !== "string" || content.length === 0) return undefined;
+  const lines = content.split("\n").filter((l) => l.length > 0);
+  switch (toolName) {
+    case "ls":
+      if (content === "(empty directory)") return "0 entries";
+      return `${lines.length} entries`;
+    case "glob":
+      if (content === "No files matched.") return "0 files";
+      return `${lines.length} files`;
+    case "grep":
+      if (content === "No matches found.") return "0 matches";
+      return `${lines.length} lines`;
+    case "read_file":
+      if (content.startsWith("File unchanged")) return "cached";
+      return `${lines.length} lines`;
+    default:
+      return undefined;
+  }
 }
 
 function relativize(fp: string): string {
@@ -132,9 +166,16 @@ export function mountAshi(
   tui.addChild(statusFooter);
   tui.setFocus(editor);
 
+  interface ToolPair { call: ToolCallView; result: ToolResultView; startedAt: number }
+  type LiveToolEntry = { kind: "pair"; pair: ToolPair } | { kind: "group"; group: ToolGroup };
+
   let activeAssistant: AssistantMessage | null = null;
   let activeThinking: ThinkingBlock | null = null;
-  const activeTools = new Map<string, ToolExecutionView>();
+  const activeTools = new Map<string, LiveToolEntry>();
+  /** Per-batch state from agent:tool-batch — the group is created lazily on
+   *  the first member's tool-started so the chat insertion order is correct. */
+  const batchGroups = new Map<string, { total: number; group: ToolGroup | null }>();
+  let lastToolResult: ToolResultView | null = null;
   let loader: Loader | null = null;
   let processing = false;
   let hideThinking = false;
@@ -143,6 +184,8 @@ export function mountAshi(
     state: {},
     invalidate: () => tui.requestRender(),
   });
+
+  const tools = createToolHookResolver(ctx, renderState);
 
   const renderUserMessage = (text: string): Component =>
     ctx.call("ashi:render-user-message", { text, ...renderState() }) as Component;
@@ -159,11 +202,19 @@ export function mountAshi(
   const renderThinkingFinal = (text: string): Component =>
     ctx.call("ashi:render-thinking", { text, hidden: hideThinking, ...renderState() }) as Component;
 
-  const renderToolExecution = (args: {
+  const renderToolPair = (args: {
     toolCallId: string; name: string; title: string;
     kind?: string; displayDetail?: string; rawInput?: unknown;
-  }): ToolExecutionView =>
-    ctx.call("ashi:render-tool-execution", { ...args, ...renderState() }) as ToolExecutionView;
+  }): ToolPair => {
+    const call = tools.call(args);
+    const result = tools.result({
+      toolCallId: args.toolCallId,
+      name: args.name,
+      kind: args.kind,
+      rawInput: args.rawInput,
+    });
+    return { call, result, startedAt: Date.now() };
+  };
 
   const ensureAssistant = (): AssistantMessage => {
     if (!activeAssistant) {
@@ -200,7 +251,11 @@ export function mountAshi(
     loader = null;
   };
 
-  const replayEntry = (entry: SessionEntry, toolMap: Map<string, ToolExecutionView>): void => {
+  type ReplayEntry =
+    | { kind: "pair"; pair: ToolPair; name: string }
+    | { kind: "group"; group: ToolGroup; name: string };
+
+  const replayEntry = (entry: SessionEntry, toolMap: Map<string, ReplayEntry>): void => {
     if (entry.type === "session") return;
     if (entry.type === "compaction") {
       chat.addChild(new InfoLine(`▼ compacted (firstKept=${entry.firstKeptId.slice(0, 6)}, ${entry.tokensBefore} tokens)`));
@@ -221,29 +276,61 @@ export function mountAshi(
         chat.addChild(renderAssistantFinal(text));
       }
       if (m.tool_calls) {
-        for (const tc of m.tool_calls) {
+        const calls = m.tool_calls;
+        let i = 0;
+        while (i < calls.length) {
+          const startName = calls[i]!.function?.name ?? "";
+          const startKind = TOOL_KIND[startName];
+          if (startKind && GROUPABLE_KINDS.has(startKind)) {
+            let j = i;
+            while (j < calls.length && TOOL_KIND[calls[j]!.function?.name ?? ""] === startKind) j++;
+            const runLen = j - i;
+            if (runLen > 1) {
+              const group = new ToolGroup(startKind, runLen);
+              chat.addChild(group);
+              for (let k = i; k < j; k++) {
+                const c = calls[k]!;
+                const cid = c.id ?? "";
+                const cname = c.function?.name ?? "tool";
+                group.addCall(cid, cname, detailFromArgs(c.function?.arguments));
+                if (cid) toolMap.set(cid, { kind: "group", group, name: cname });
+              }
+              i = j;
+              continue;
+            }
+          }
+          const tc = calls[i]!;
           const id = tc.id ?? "";
           const name = tc.function?.name ?? "tool";
-          const exec = renderToolExecution({
+          const pair = renderToolPair({
             toolCallId: id, name, title: name, kind: undefined,
             displayDetail: detailFromArgs(tc.function?.arguments),
             rawInput: tc.function?.arguments,
           });
-          chat.addChild(exec);
-          if (id) toolMap.set(id, exec);
+          chat.addChild(pair.call);
+          chat.addChild(pair.result);
+          if (id) toolMap.set(id, { kind: "pair", pair, name });
+          lastToolResult = pair.result;
+          i++;
         }
       }
     } else if (m.role === "tool") {
       const id = m.tool_call_id ?? "";
       const text = typeof m.content === "string" ? m.content : "";
-      const exec = id ? toolMap.get(id) : undefined;
-      if (exec) {
-        if (text) exec.appendOutput(text);
-        exec.complete(0, undefined);
-        if (id) toolMap.delete(id);
-      } else {
+      const found = id ? toolMap.get(id) : undefined;
+      if (!found) {
         chat.addChild(new InfoLine(`tool result (no matching call): ${text.slice(0, 80)}`));
+        return;
       }
+      const summary = inferSummary(found.name, text);
+      if (found.kind === "group") {
+        found.group.recordCompletion(id, 0, summary);
+      } else {
+        if (text) found.pair.result.appendChunk(text);
+        found.pair.result.finalize({ exitCode: 0, summary });
+        found.pair.call.setStatus({ exitCode: 0, elapsedMs: 0, summary });
+      }
+      if (id) toolMap.delete(id);
     }
   };
 
@@ -251,10 +338,15 @@ export function mountAshi(
     activeAssistant = null;
     activeThinking = null;
     activeTools.clear();
+    batchGroups.clear();
+    lastToolResult = null;
     chat.clear();
     const branch = getStore().current().getBranch();
-    const toolMap = new Map<string, ToolExecutionView>();
+    const toolMap = new Map<string, ReplayEntry>();
     for (const e of branch) replayEntry(e, toolMap);
+    // Match the trailing gap that processing-done adds in live turns, so the
+    // editor doesn't sit flush against the last replayed response.
+    chat.addChild(new Spacer(1));
     tui.requestRender();
   };
 
@@ -271,12 +363,40 @@ export function mountAshi(
     tui.requestRender();
   });
 
+  const imageComponentFromPng = (data: Buffer): Image | null => {
+    const base64 = data.toString("base64");
+    const dims = getImageDimensions(base64, "image/png");
+    if (!dims) return null;
+    return new Image(
+      base64, "image/png",
+      { fallbackColor: (t) => theme.fg("muted", t) },
+      { maxWidthCells: 60, maxHeightCells: 20 },
+      dims,
+    );
+  };
+
+  /** Drop the live assistant message so the image lands as its own block,
+   *  then subsequent text starts a fresh markdown context below it. */
+  const appendImage = (data: Buffer): void => {
+    const img = imageComponentFromPng(data);
+    if (!img) return;
+    if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
+    chat.addChild(img);
+  };
+
+  // tui-renderer normally owns render:image, but ashi disables it; provide
+  // our own so latex-images and friends reach the chat.
+  ctx.define("render:image", (data: Buffer) => {
+    appendImage(data);
+    tui.requestRender();
+  });
+
   bus.on("agent:response-chunk", ({ blocks }) => {
     finalizeThinking();
-    const msg = ensureAssistant();
     for (const b of blocks) {
-      if (b.type === "text") msg.appendText(b.text);
-      else if (b.type === "code-block") msg.appendCodeBlock(b.language, b.code);
+      if (b.type === "text") ensureAssistant().appendText(b.text);
+      else if (b.type === "code-block") ensureAssistant().appendCodeBlock(b.language, b.code);
+      else if (b.type === "image") appendImage(b.data);
     }
     tui.requestRender();
   });
@@ -285,6 +405,13 @@ export function mountAshi(
     if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
     ensureThinking().appendText(text);
     tui.requestRender();
+  });
+
+  bus.on("agent:tool-batch", (e) => {
+    batchGroups.clear();
+    for (const g of e.groups) {
+      batchGroups.set(g.kind, { total: g.tools.length, group: null });
+    }
   });
 
   bus.on("agent:tool-started", (e) => {
@@ -298,28 +425,57 @@ export function mountAshi(
     const detail = e.displayDetail || detailFromArgs(
       typeof e.rawInput === "string" ? e.rawInput : JSON.stringify(e.rawInput ?? {})
     );
-    const tool = renderToolExecution({
+
+    const kind = e.kind ?? "";
+    const batchEntry = batchGroups.get(kind);
+    const shouldGroup = !!batchEntry && batchEntry.total > 1 && GROUPABLE_KINDS.has(kind);
+    if (shouldGroup) {
+      if (!batchEntry!.group) {
+        batchEntry!.group = new ToolGroup(kind, batchEntry!.total);
+        chat.addChild(batchEntry!.group);
+      }
+      batchEntry!.group.addCall(id, title, detail);
+      activeTools.set(id, { kind: "group", group: batchEntry!.group });
+      // Grouped tools have no individual result body — Ctrl+O wouldn't have
+      // anything to expand, so leave lastToolResult pointing at the prior tool.
+      tui.requestRender();
+      return;
+    }
+
+    const pair = renderToolPair({
       toolCallId: id, name: title, title, kind: e.kind,
       displayDetail: detail, rawInput: e.rawInput,
     });
-    activeTools.set(id, tool);
-    chat.addChild(tool);
+    activeTools.set(id, { kind: "pair", pair });
+    chat.addChild(pair.call);
+    chat.addChild(pair.result);
+    lastToolResult = pair.result;
     tui.requestRender();
   });
 
   bus.on("agent:tool-output-chunk", ({ chunk }) => {
-    if (activeTools.size === 0) return;
-    const last = [...activeTools.values()].pop();
-    last?.appendOutput(chunk);
-    tui.requestRender();
+    for (const entry of [...activeTools.values()].reverse()) {
+      if (entry.kind === "pair") {
+        entry.pair.result.appendChunk(chunk);
+        tui.requestRender();
+        return;
+      }
+    }
   });
 
   bus.on("agent:tool-completed", (e) => {
     const id = e.toolCallId;
     if (!id) return;
-    const tool = activeTools.get(id);
-    if (!tool) return;
+    const entry = activeTools.get(id);
+    if (!entry) return;
     const summary = e.resultDisplay?.summary;
+    if (entry.kind === "group") {
+      entry.group.recordCompletion(id, e.exitCode, summary);
+      activeTools.delete(id);
+      tui.requestRender();
+      return;
+    }
+    const pair = entry.pair;
     const body = e.resultDisplay?.body;
     const ok = e.exitCode === null || e.exitCode === 0;
     if (body?.kind === "diff") {
@@ -341,10 +497,11 @@ export function mountAshi(
           title: diffFrameTitle(body.filePath, diff),
           bgColor: theme.bgCode(ok ? "toolSuccessBg" : "toolErrorBg"),
         });
-        tool.setBody(framed);
+        pair.result.setDiff(framed);
       }
     }
-    tool.complete(e.exitCode, summary);
+    pair.call.setStatus({ exitCode: e.exitCode, elapsedMs: Date.now() - pair.startedAt, summary });
+    pair.result.finalize({ exitCode: e.exitCode, summary });
     activeTools.delete(id);
     tui.requestRender();
   });
@@ -391,12 +548,7 @@ export function mountAshi(
     tui.requestRender();
   });
 
-  let bootBannerShown = false;
   bus.on("agent:info", (info) => {
-    if (!bootBannerShown) {
-      chat.addChild(new InfoLine(`${info.name}${info.model ? ` · ${info.model}` : ""}`));
-      bootBannerShown = true;
-    }
     statusFooter.update({
       model: info.model,
       provider: info.provider,
@@ -525,6 +677,13 @@ export function mountAshi(
     }
     if (matchesKey(data, "ctrl+t")) {
       toggleThinking();
+      return { consume: true };
+    }
+    if (matchesKey(data, "ctrl+o")) {
+      if (lastToolResult) {
+        lastToolResult.toggleExpanded();
+        tui.requestRender();
+      }
       return { consume: true };
     }
     return undefined;

@@ -1,6 +1,12 @@
 import type { Component } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
-import { AssistantMessage, ThinkingBlock, ToolExecution, UserMessage } from "./components.js";
+import {
+  AssistantMessage,
+  ThinkingBlock,
+  ToolResultBody,
+  UserMessage,
+} from "./components.js";
+import { entryFor, loadToolDisplayConfig, type ToolResultMode } from "./display-config.js";
 
 export interface RenderState {
   state: Record<string, unknown>;
@@ -13,7 +19,7 @@ export interface AssistantArgs extends RenderState { text: string }
 
 export interface ThinkingArgs extends RenderState { text: string; hidden: boolean }
 
-export interface ToolExecutionArgs extends RenderState {
+export interface ToolCallArgs extends RenderState {
   toolCallId: string;
   name: string;
   title: string;
@@ -22,18 +28,38 @@ export interface ToolExecutionArgs extends RenderState {
   rawInput?: unknown;
 }
 
-/** ToolExecutionView is the contract a tool-execution renderer must satisfy.
- *  ashi mutates the returned component as the tool progresses; custom
- *  renderers must accept these mutations or override them at the bus level. */
-export interface ToolExecutionView extends Component {
-  appendOutput(chunk: string): void;
-  setBody(lines: string[]): void;
-  complete(exitCode: number | null, summary?: string): void;
+export interface ToolResultArgs extends RenderState {
+  toolCallId: string;
+  name: string;
+  kind?: string;
+  rawInput?: unknown;
+  /** Resolved from ashi.display.{name} (or .default) in settings.json. */
+  mode: ToolResultMode;
+  previewLines: number;
 }
 
-/** Register the default render-* handlers. Extensions advise these names
- *  via ctx.advise to override or wrap. ashi's frontend.ts only ever calls
- *  ctx.call("ashi:render-*", args), never instantiates components directly. */
+/** Mutated by ashi when the tool completes. Renderers may ignore setStatus
+ *  if they encode status differently (e.g. a sigil in the call line). */
+export interface ToolCallView extends Component {
+  setStatus(opts: { exitCode: number | null; elapsedMs: number; summary?: string }): void;
+}
+
+/** Mutated by ashi as output streams in and when the tool completes.
+ *  setDiff is optional behavior — renderers may no-op if they don't show diffs.
+ *  toggleExpanded flips the view's internal expansion state (Ctrl+O). */
+export interface ToolResultView extends Component {
+  appendChunk(chunk: string): void;
+  setDiff(lines: string[]): void;
+  finalize(opts: { exitCode: number | null; summary?: string }): void;
+  toggleExpanded(): void;
+}
+
+const CALL_PREFIX = "ashi:render-tool-call:";
+const RESULT_PREFIX = "ashi:render-tool-result:";
+
+/** Register the default render-* handlers. Per-tool overrides are advised by
+ *  name (e.g. `ashi:render-tool-call:bash`); unknown tools fall back to
+ *  `:default`. */
 export function registerRenderDefaults(ctx: ExtensionContext): void {
   ctx.define("ashi:render-user-message", (args: UserMessageArgs): Component => {
     return new UserMessage(args.text);
@@ -58,7 +84,53 @@ export function registerRenderDefaults(ctx: ExtensionContext): void {
     return tb;
   });
 
-  ctx.define("ashi:render-tool-execution", (args: ToolExecutionArgs): ToolExecutionView => {
-    return new ToolExecution(args.title, args.kind, args.displayDetail);
+  ctx.define(`${RESULT_PREFIX}default`, (args: ToolResultArgs): ToolResultView => {
+    return new ToolResultBody(args.mode, args.previewLines);
   });
+}
+
+export interface ToolHookResolver {
+  call: (args: Omit<ToolCallArgs, "state" | "invalidate"> & Partial<RenderState>) => ToolCallView;
+  result: (args: Omit<ToolResultArgs, "mode" | "previewLines" | "state" | "invalidate"> & Partial<RenderState>) => ToolResultView;
+  modeFor: (name: string) => { mode: ToolResultMode; previewLines: number };
+}
+
+/** Resolves :{name} → :default for tool render hooks and looks up each tool's
+ *  display mode from ashi.display. Cache the registered-handler set; callers
+ *  can `refresh()` after extensions register new tool-specific renderers. */
+export function createToolHookResolver(
+  ctx: ExtensionContext,
+  renderState: () => RenderState,
+): ToolHookResolver & { refresh: () => void } {
+  const config = loadToolDisplayConfig();
+  let registered = new Set(ctx.list());
+
+  const pick = (prefix: string, name: string): string => {
+    const specific = `${prefix}${name}`;
+    return registered.has(specific) ? specific : `${prefix}default`;
+  };
+
+  return {
+    refresh(): void {
+      registered = new Set(ctx.list());
+    },
+    modeFor(name: string) {
+      const e = entryFor(config, name);
+      return { mode: e.result, previewLines: e.previewLines };
+    },
+    call(args) {
+      const handler = pick(CALL_PREFIX, args.name);
+      return ctx.call(handler, { ...renderState(), ...args }) as ToolCallView;
+    },
+    result(args) {
+      const { mode, previewLines } = this.modeFor(args.name);
+      const handler = pick(RESULT_PREFIX, args.name);
+      return ctx.call(handler, {
+        ...renderState(),
+        ...args,
+        mode,
+        previewLines,
+      }) as ToolResultView;
+    },
+  };
 }
