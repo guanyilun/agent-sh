@@ -64,6 +64,7 @@ export class SessionStore {
   private rootId = "";
   private activeLeaf = "";
   private meta: SessionMeta;
+  private pendingHeader: SessionHeaderEntry | null = null;
   readonly id: string;
 
   constructor(filePath: string, opts?: { create?: { cwd: string; sessionId: string } }) {
@@ -83,19 +84,26 @@ export class SessionStore {
         cwd: opts.create.cwd,
         version: 1,
       };
-      fs.writeFileSync(this.entriesPath, JSON.stringify(header) + "\n");
       this.entries.set(header.id, header);
       this.rootId = header.id;
       this.activeLeaf = header.id;
       this.meta = { createdAt: header.timestamp };
-      this.persistMeta();
-      this.persistLeaf();
+      this.pendingHeader = header;
     } else {
       this.id = "";
       this.load();
       if (!this.rootId) throw new Error(`session file lacks a session header: ${filePath}`);
       this.id = this.rootId;
     }
+  }
+
+  private flushHeader(): void {
+    if (!this.pendingHeader) return;
+    const headerLine = JSON.stringify(this.pendingHeader) + "\n";
+    this.pendingHeader = null;
+    fs.writeFileSync(this.entriesPath, headerLine);
+    this.persistMeta();
+    this.persistLeaf();
   }
 
   getActiveLeaf(): string { return this.activeLeaf; }
@@ -120,6 +128,7 @@ export class SessionStore {
    *  entry ids in order. */
   async appendMessages(messages: AgentMessage[]): Promise<string[]> {
     if (messages.length === 0) return [];
+    this.flushHeader();
     let parent = this.activeLeaf;
     const lines: string[] = [];
     const newIds: string[] = [];
@@ -144,6 +153,7 @@ export class SessionStore {
 
   async appendCompaction(summary: string, firstKeptId: string, tokensBefore: number): Promise<string> {
     if (!this.entries.has(firstKeptId)) throw new Error(`firstKeptId unknown: ${firstKeptId}`);
+    this.flushHeader();
     const e: CompactionEntry = {
       type: "compaction",
       id: newEntryId(),
@@ -244,9 +254,11 @@ export class SessionStore {
   }
 
   private persistLeaf(): void {
+    if (this.pendingHeader) return;
     fs.writeFileSync(this.leafPath, this.activeLeaf);
   }
   private persistMeta(): void {
+    if (this.pendingHeader) return;
     fs.writeFileSync(this.metaPath, JSON.stringify(this.meta));
   }
 }

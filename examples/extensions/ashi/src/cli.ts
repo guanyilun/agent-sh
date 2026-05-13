@@ -98,6 +98,7 @@ async function main(): Promise<void> {
   registerCompaction(ctx, getStore, capture);
 
   ctx.advise("conversation:format-prior-history", () => null);
+  ctx.advise("system-prompt:build", (base) => `${base}\n\n<cwd>${process.cwd()}</cwd>`);
 
   const handle = mountAshi(ctx, getStore, capture);
   stopFrontend = handle.stop;

@@ -62,6 +62,46 @@ export class AssistantMessage extends Container {
   }
 }
 
+export class ThinkingBlock extends Container {
+  private md: Markdown;
+  private placeholder: Text;
+  private buffer = "";
+  private hidden = false;
+  private mdTheme: MarkdownTheme;
+  constructor(mdTheme: MarkdownTheme = markdownTheme()) {
+    super();
+    this.mdTheme = mdTheme;
+    this.md = new Markdown("", 1, 0, mdTheme, {
+      color: (t) => theme.italic(theme.fg("thinkingText", t)),
+    });
+    this.placeholder = new Text(theme.italic(theme.fg("thinkingText", "Thinking…")), 1, 0);
+    this.addChild(new Spacer(1));
+    this.addChild(this.md);
+  }
+  appendText(t: string): void {
+    this.buffer += t;
+    if (!this.hidden) this.md.setText(this.buffer);
+  }
+  finalize(): void {
+    if (this.buffer === "") this.buffer = " ";
+    if (!this.hidden) this.md.setText(this.buffer);
+  }
+  setHidden(hidden: boolean): void {
+    if (hidden === this.hidden) return;
+    this.hidden = hidden;
+    this.clear();
+    this.addChild(new Spacer(1));
+    if (hidden) {
+      this.addChild(this.placeholder);
+    } else {
+      this.md = new Markdown(this.buffer, 1, 0, this.mdTheme, {
+        color: (t) => theme.italic(theme.fg("thinkingText", t)),
+      });
+      this.addChild(this.md);
+    }
+  }
+}
+
 export class ToolExecution extends Container {
   private box: Box;
   private header: Text;
@@ -75,6 +115,8 @@ export class ToolExecution extends Container {
   private elapsedMs?: number;
   private summary?: string;
 
+  private bodyText: Text;
+
   constructor(title: string, kind?: string, detail?: string) {
     super();
     this.title = title;
@@ -83,12 +125,18 @@ export class ToolExecution extends Container {
     this.startedAt = Date.now();
     this.box = new Box(1, 1, (t) => theme.bg("toolPendingBg", t));
     this.header = new Text("", 0, 0);
+    this.bodyText = new Text("", 0, 0);
     this.outputText = new Text("", 0, 0);
     this.box.addChild(this.header);
     this.box.addChild(this.outputText);
     this.addChild(new Spacer(1));
     this.addChild(this.box);
+    this.addChild(this.bodyText);
     this.repaint();
+  }
+
+  setBody(lines: string[]): void {
+    this.bodyText.setText(lines.join("\n"));
   }
 
   appendOutput(chunk: string): void {
@@ -113,7 +161,7 @@ export class ToolExecution extends Container {
     if (this.exitCode !== undefined) {
       const ok = this.exitCode === null || this.exitCode === 0;
       const mark = ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
-      const elapsed = this.elapsedMs !== undefined ? ` ${theme.fg("muted", `${(this.elapsedMs / 1000).toFixed(1)}s`)}` : "";
+      const elapsed = this.elapsedMs !== undefined ? ` ${theme.fg("muted", fmtElapsed(this.elapsedMs))}` : "";
       const sum = this.summary ? ` ${theme.fg("muted", this.summary)}` : "";
       tailPart = `   ${mark}${elapsed}${sum}`;
     } else {
@@ -127,6 +175,12 @@ export class ToolExecution extends Container {
       this.outputText.setText("");
     }
   }
+}
+
+function fmtElapsed(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 10_000) return `${(ms / 1000).toFixed(2)}s`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 export class ErrorLine extends Container {

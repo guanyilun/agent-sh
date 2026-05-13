@@ -51,9 +51,15 @@ export function registerSessionCommands(
   });
 }
 
+function formatLocal(ts: number): string {
+  const d = new Date(ts);
+  const pad = (n: number): string => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function formatSessionRow(s: SessionInfo, isCurrent: boolean): string {
   const marker = isCurrent ? "●" : " ";
-  const when = s.createdAt ? new Date(s.createdAt).toISOString().slice(0, 16).replace("T", " ") : "?";
+  const when = s.createdAt ? formatLocal(s.createdAt) : "?";
   const label = s.name ?? s.preview;
   return `${marker} ${when}  ${label}  (${s.entryCount})`;
 }

@@ -6,6 +6,7 @@ interface StatusFields {
   provider?: string;
   contextWindow?: number;
   cwd?: string;
+  branch?: string;
   leaf?: number;
   tokens?: number;
   compactions?: number;
@@ -28,10 +29,11 @@ export class StatusFooter extends Container {
 
   private repaint(): void {
     const parts: string[] = [];
-    const { model, provider, contextWindow, cwd, leaf, tokens, compactions } = this.fields;
+    const { model, provider, contextWindow, cwd, branch, leaf, tokens, compactions } = this.fields;
     if (model) parts.push(model);
     if (provider) parts.push(provider);
     if (cwd) parts.push(shortenCwd(cwd));
+    if (branch) parts.push(branch);
     if (leaf != null && leaf > 0) parts.push(`#${leaf}`);
     if (tokens != null) {
       parts.push(contextWindow ? `${fmtTokens(tokens)}/${fmtTokens(contextWindow)}` : fmtTokens(tokens));

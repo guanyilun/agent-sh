@@ -5,6 +5,7 @@ import {
   Editor,
   Loader,
   SelectList,
+  Spacer,
   type SelectItem,
   matchesKey,
 } from "@earendil-works/pi-tui";
@@ -14,6 +15,7 @@ import {
   AssistantMessage,
   ErrorLine,
   InfoLine,
+  ThinkingBlock,
   ToolExecution,
   UserMessage,
 } from "./components.js";
@@ -25,6 +27,33 @@ import { formatSessionRow } from "./session-commands.js";
 import { resumeSession } from "./session-commands.js";
 import { applyBranchMessages } from "./commands.js";
 import type { Capture } from "./capture.js";
+import { execSync } from "node:child_process";
+import { renderDiff } from "agent-sh/utils/diff-renderer.js";
+import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
+
+interface DiffStats { added: number; removed: number; isNewFile: boolean; isIdentical: boolean }
+
+function diffFrameTitle(filePath: string, diff: DiffStats): string {
+  const stats = diff.isNewFile
+    ? theme.fg("success", `+${diff.added}`)
+    : `${theme.fg("success", `+${diff.added}`)} ${theme.fg("error", `-${diff.removed}`)}`;
+  return `${theme.fg("muted", filePath)}  ${stats}`;
+}
+
+function readReasoning(m: unknown): string {
+  const mm = m as { reasoning?: unknown; reasoning_content?: unknown };
+  const r = mm.reasoning ?? mm.reasoning_content;
+  return typeof r === "string" ? r : "";
+}
+
+function currentGitBranch(cwd: string): string | undefined {
+  try {
+    const out = execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd, stdio: ["ignore", "pipe", "ignore"], timeout: 500,
+    }).toString().trim();
+    return out || undefined;
+  } catch { return undefined; }
+}
 
 const fgAccent = (t: string): string => theme.fg("accent", t);
 const fgMuted = (t: string): string => theme.fg("muted", t);
@@ -86,11 +115,15 @@ export function mountAshi(
   };
 
   const statusFooter = new StatusFooter();
-  statusFooter.update({ cwd: ctx.call("cwd") as string });
+  const cwd = ctx.call("cwd") as string;
+  statusFooter.update({ cwd, branch: currentGitBranch(cwd) });
   let compactions = 0;
   const refreshFooterStats = (): void => {
     const tokens = ctx.call("conversation:estimate-prompt-tokens") as number | undefined;
     statusFooter.update({ tokens: tokens ?? 0 });
+  };
+  const refreshBranch = (): void => {
+    statusFooter.update({ branch: currentGitBranch(cwd) });
   };
 
   tui.addChild(chat);
@@ -100,9 +133,11 @@ export function mountAshi(
   tui.setFocus(editor);
 
   let activeAssistant: AssistantMessage | null = null;
+  let activeThinking: ThinkingBlock | null = null;
   const activeTools = new Map<string, ToolExecution>();
   let loader: Loader | null = null;
   let processing = false;
+  let hideThinking = false;
 
   const ensureAssistant = (): AssistantMessage => {
     if (!activeAssistant) {
@@ -110,6 +145,22 @@ export function mountAshi(
       chat.addChild(activeAssistant);
     }
     return activeAssistant;
+  };
+
+  const finalizeThinking = (): void => {
+    if (activeThinking) {
+      activeThinking.finalize();
+      activeThinking = null;
+    }
+  };
+
+  const ensureThinking = (): ThinkingBlock => {
+    if (!activeThinking) {
+      activeThinking = new ThinkingBlock();
+      activeThinking.setHidden(hideThinking);
+      chat.addChild(activeThinking);
+    }
+    return activeThinking;
   };
 
   const startLoader = (): void => {
@@ -136,6 +187,14 @@ export function mountAshi(
       if (text.startsWith("[Compacted conversation summary]")) return;
       chat.addChild(new UserMessage(text));
     } else if (m.role === "assistant") {
+      const reasoning = readReasoning(m);
+      if (reasoning) {
+        const tb = new ThinkingBlock();
+        tb.appendText(reasoning);
+        tb.finalize();
+        tb.setHidden(hideThinking);
+        chat.addChild(tb);
+      }
       const text = typeof m.content === "string" ? m.content : "";
       if (text) {
         const msg = new AssistantMessage();
@@ -168,6 +227,7 @@ export function mountAshi(
 
   const rebuildChat = async (): Promise<void> => {
     activeAssistant = null;
+    activeThinking = null;
     activeTools.clear();
     chat.clear();
     const branch = getStore().current().getBranch();
@@ -190,6 +250,7 @@ export function mountAshi(
   });
 
   bus.on("agent:response-chunk", ({ blocks }) => {
+    finalizeThinking();
     const msg = ensureAssistant();
     for (const b of blocks) {
       if (b.type === "text") msg.appendText(b.text);
@@ -198,9 +259,14 @@ export function mountAshi(
     tui.requestRender();
   });
 
-  bus.on("agent:thinking-chunk", () => { /* loader covers this */ });
+  bus.on("agent:thinking-chunk", ({ text }) => {
+    if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
+    ensureThinking().appendText(text);
+    tui.requestRender();
+  });
 
   bus.on("agent:tool-started", (e) => {
+    finalizeThinking();
     if (activeAssistant) {
       activeAssistant.finalize();
       activeAssistant = null;
@@ -229,6 +295,30 @@ export function mountAshi(
     const tool = activeTools.get(id);
     if (!tool) return;
     const summary = e.resultDisplay?.summary;
+    const body = e.resultDisplay?.body;
+    const ok = e.exitCode === null || e.exitCode === 0;
+    if (body?.kind === "diff") {
+      const diff = body.diff as DiffStats & Parameters<typeof renderDiff>[0];
+      if (!diff.isIdentical) {
+        const termW = process.stdout.columns ?? 80;
+        const boxW = Math.max(40, termW);
+        const contentW = Math.max(20, boxW - 4);
+        const diffLines = renderDiff(diff, {
+          width: contentW,
+          filePath: body.filePath,
+          trueColor: true,
+          maxLines: 30,
+        });
+        const inner = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
+        const framed = renderBoxFrame(inner, {
+          width: boxW,
+          style: "rounded",
+          title: diffFrameTitle(body.filePath, diff),
+          bgColor: theme.bgCode(ok ? "toolSuccessBg" : "toolErrorBg"),
+        });
+        tool.setBody(framed);
+      }
+    }
     tool.complete(e.exitCode, summary);
     activeTools.delete(id);
     tui.requestRender();
@@ -237,9 +327,19 @@ export function mountAshi(
   bus.on("agent:processing-done", () => {
     processing = false;
     stopLoader();
+    finalizeThinking();
     if (activeAssistant) activeAssistant.finalize();
+    chat.addChild(new Spacer(1));
     refreshFooterStats();
+    refreshBranch();
     tui.requestRender();
+  });
+
+  bus.on("agent:usage", (u) => {
+    if (u.prompt_tokens > 0) {
+      statusFooter.update({ tokens: u.prompt_tokens });
+      tui.requestRender();
+    }
   });
 
   bus.on("agent:cancelled", () => {
@@ -266,8 +366,12 @@ export function mountAshi(
     tui.requestRender();
   });
 
+  let bootBannerShown = false;
   bus.on("agent:info", (info) => {
-    chat.addChild(new InfoLine(`${info.name}${info.model ? ` · ${info.model}` : ""}`));
+    if (!bootBannerShown) {
+      chat.addChild(new InfoLine(`${info.name}${info.model ? ` · ${info.model}` : ""}`));
+      bootBannerShown = true;
+    }
     statusFooter.update({
       model: info.model,
       provider: info.provider,
@@ -332,19 +436,17 @@ export function mountAshi(
 
   const openSessionPicker = async (): Promise<void> => {
     if (pickerOpen) return;
-    const list = getStore().listSessions();
+    const currentId = getStore().current().id;
+    const list = getStore().listSessions().filter((s) => s.id !== currentId);
     if (list.length === 0) {
       bus.emit("ui:info", { message: "no past sessions in this cwd" });
       return;
     }
-    const currentId = getStore().current().id;
     const items: SelectItem[] = list.map((s) => ({
       value: s.id,
-      label: formatSessionRow(s, s.id === currentId),
+      label: formatSessionRow(s, false),
     }));
     const picker = new SelectList(items, 15, selectListTheme());
-    const currentIdx = items.findIndex((it) => it.value === currentId);
-    if (currentIdx >= 0) picker.setSelectedIndex(currentIdx);
 
     const close = (): void => {
       pickerOpen = false;
@@ -356,7 +458,6 @@ export function mountAshi(
     picker.onSelect = async (item) => {
       const id = item.value;
       close();
-      if (id === currentId) return;
       resumeSession(ctx, getStore, capture, id);
       bus.emit("ui:info", { message: `resumed session ${id}` });
       await rebuildChat();
@@ -371,6 +472,19 @@ export function mountAshi(
   };
 
   // ── Keybindings ────────────────────────────────────────────────
+  const toggleThinking = (): void => {
+    hideThinking = !hideThinking;
+    const walk = (node: Container): void => {
+      for (const child of node.children) {
+        if (child instanceof ThinkingBlock) child.setHidden(hideThinking);
+        else if (child instanceof Container) walk(child);
+      }
+    };
+    walk(chat);
+    bus.emit("ui:info", { message: `thinking: ${hideThinking ? "hidden" : "visible"}` });
+    tui.requestRender();
+  };
+
   tui.addInputListener((data) => {
     if (matchesKey(data, "escape") && processing) {
       bus.emit("agent:cancel-request", {});
@@ -382,6 +496,10 @@ export function mountAshi(
     }
     if (matchesKey(data, "ctrl+d") && editor.getText().length === 0) {
       ctx.quit();
+      return { consume: true };
+    }
+    if (matchesKey(data, "ctrl+t")) {
+      toggleThinking();
       return { consume: true };
     }
     return undefined;
