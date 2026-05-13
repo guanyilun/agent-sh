@@ -251,9 +251,20 @@ function fmtElapsed(ms: number): string {
 const GROUP_ICONS: Record<string, string> = { read: "◆", search: "⌕" };
 
 interface GroupChild {
+  name: string;
   detail: string;
   text: Text;
   status?: { exitCode: number | null; summary?: string };
+}
+
+const SHORT_TOOL_NAMES: Record<string, string> = {
+  read_file: "read",
+  edit_file: "edit",
+  write_file: "write",
+};
+
+function shortToolName(name: string): string {
+  return SHORT_TOOL_NAMES[name] ?? name;
 }
 
 /** A batch of parallel same-kind tool calls. Renders one header, per-call
@@ -289,11 +300,11 @@ export class ToolGroup extends Container {
     this.repaintHeader();
   }
 
-  addCall(toolCallId: string, detail: string): void {
+  addCall(toolCallId: string, name: string, detail: string): void {
     this.addedCount++;
     if (this.renderedCount < this.maxVisible && toolCallId) {
       const text = new Text("", 1, 0);
-      const child: GroupChild = { detail: detail || "…", text };
+      const child: GroupChild = { name: shortToolName(name), detail: detail || "…", text };
       this.visibleChildren.set(toolCallId, child);
       this.childContainer.addChild(text);
       this.renderedCount++;
@@ -345,7 +356,12 @@ export class ToolGroup extends Container {
       tail = ` ${mark}${sum}`;
     }
     const connector = isLast ? "└" : "├";
-    child.text.setText(`${theme.fg("muted", connector)} ${theme.fg("muted", child.detail)} ${tail}`);
+    // Only show the tool name when it diverges from the kind header — for
+    // a pure read_file batch under "◆ read", the per-child "read" is noise.
+    const namePart = child.name !== this.kind
+      ? `${theme.bold(theme.fg("toolTitle", child.name))} `
+      : "";
+    child.text.setText(`${theme.fg("muted", connector)} ${namePart}${theme.fg("muted", child.detail)} ${tail}`);
   }
 
   private repaintHeader(): void {

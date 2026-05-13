@@ -263,7 +263,8 @@ export function mountAshi(
               for (let k = i; k < j; k++) {
                 const c = calls[k]!;
                 const cid = c.id ?? "";
-                group.addCall(cid, detailFromArgs(c.function?.arguments));
+                const cname = c.function?.name ?? "tool";
+                group.addCall(cid, cname, detailFromArgs(c.function?.arguments));
                 if (cid) toolMap.set(cid, { kind: "group", group });
               }
               i = j;
@@ -373,7 +374,7 @@ export function mountAshi(
         batchEntry!.group = new ToolGroup(kind, batchEntry!.total);
         chat.addChild(batchEntry!.group);
       }
-      batchEntry!.group.addCall(id, detail);
+      batchEntry!.group.addCall(id, title, detail);
       activeTools.set(id, { kind: "group", group: batchEntry!.group });
       // Grouped tools have no individual result body — Ctrl+O wouldn't have
       // anything to expand, so leave lastToolResult pointing at the prior tool.
