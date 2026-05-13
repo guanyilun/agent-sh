@@ -209,8 +209,13 @@ Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
 - `"summary"` — 2-line tail while streaming; line count after completion.
 - `"preview"` — last `previewLines` lines of output (default 8), with a `... (N more lines)` hint when content overflows.
 
+For `edit_file` / `write_file`, the diff frame is treated as the output and
+follows the same gating: shown for `preview`, hidden for `hidden`/`summary`
+(the call line already carries `+12 -3` stats). The line-count hint is
+suppressed for diff-producing tools so edits stay quiet.
+
 Hit `Ctrl+O` to expand the most recent tool result inline — shows the full
-buffer regardless of mode. Press again to collapse back.
+output buffer and the full diff regardless of mode. Press again to collapse.
 
 Each tool inherits from `default` and is overridden by its own block. Unknown
 tool names fall through to `default`. Built-in defaults aim for compactness

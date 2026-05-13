@@ -150,6 +150,7 @@ export class ToolResultBody extends Container {
   private outputText: Text;
   private bodyText: Text;
   private outputBuffer = "";
+  private diffLines: string[] = [];
   private mode: ToolResultMode;
   private previewLines: number;
   private finalized = false;
@@ -172,7 +173,8 @@ export class ToolResultBody extends Container {
   }
 
   setDiff(lines: string[]): void {
-    this.bodyText.setText(lines.join("\n"));
+    this.diffLines = lines;
+    this.repaint();
   }
 
   finalize(opts: { exitCode: number | null; summary?: string }): void {
@@ -187,11 +189,22 @@ export class ToolResultBody extends Container {
   }
 
   private repaint(): void {
+    // Diff body shows for mode=preview or when expanded; otherwise the diff
+    // stats already live on the call line so the framed view is redundant.
+    const hasDiff = this.diffLines.length > 0;
+    const showDiff = hasDiff && (this.expanded || this.mode === "preview");
+    this.bodyText.setText(showDiff ? this.diffLines.join("\n") : "");
+
+    // When a diff exists, the textual output ("Edited /path (+12 -3)") just
+    // restates the call line — suppress its line-count hint to keep edits quiet.
+    if (hasDiff && !this.expanded) {
+      this.outputText.setText("");
+      return;
+    }
     if (!this.outputBuffer) {
       this.outputText.setText("");
       return;
     }
-    // Expanded view bypasses collapse: full output regardless of mode.
     if (this.expanded) {
       this.outputText.setText(theme.fg("toolOutput", this.outputBuffer));
       return;
