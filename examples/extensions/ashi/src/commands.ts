@@ -27,12 +27,16 @@ export function registerTreeCommands(
 
   ctx.registerCommand("fork", "Fork the next turn from a specific seq: /fork <seq>", async (args) => {
     const trimmed = args.trim();
-    const seq = trimmed === "" ? 0 : parseInt(trimmed, 10);
-    if (Number.isNaN(seq)) {
-      bus.emit("ui:error", { message: "fork: expected a numeric seq" });
+    if (trimmed === "") {
+      bus.emit("ui:error", { message: "fork: missing seq — usage: /fork <seq> (try /tree to list seqs)" });
       return;
     }
-    if (seq !== 0 && !(await tree.findBySeq(seq))) {
+    const seq = parseInt(trimmed, 10);
+    if (Number.isNaN(seq) || seq < 1) {
+      bus.emit("ui:error", { message: "fork: expected a positive numeric seq" });
+      return;
+    }
+    if (!(await tree.findBySeq(seq))) {
       bus.emit("ui:error", { message: `fork: no entry at seq ${seq}` });
       return;
     }
