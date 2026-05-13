@@ -17,9 +17,16 @@ import {
   ErrorLine,
   InfoLine,
   ThinkingBlock,
+  ToolGroup,
 } from "./components.js";
 import type { ToolCallView, ToolResultView } from "./hooks.js";
 import { createToolHookResolver } from "./hooks.js";
+
+const GROUPABLE_KINDS = new Set(["read", "search"]);
+const TOOL_KIND: Record<string, string> = {
+  read_file: "read", ls: "read",
+  grep: "search", glob: "search",
+};
 import { BusAutocompleteProvider } from "./autocomplete.js";
 import { StatusFooter } from "./status-footer.js";
 import type { MultiSessionStore } from "./multi-session-store.js";
@@ -134,10 +141,14 @@ export function mountAshi(
   tui.setFocus(editor);
 
   interface ToolPair { call: ToolCallView; result: ToolResultView; startedAt: number }
+  type LiveToolEntry = { kind: "pair"; pair: ToolPair } | { kind: "group"; group: ToolGroup };
 
   let activeAssistant: AssistantMessage | null = null;
   let activeThinking: ThinkingBlock | null = null;
-  const activeTools = new Map<string, ToolPair>();
+  const activeTools = new Map<string, LiveToolEntry>();
+  /** Per-batch state from agent:tool-batch — the group is created lazily on
+   *  the first member's tool-started so the chat insertion order is correct. */
+  const batchGroups = new Map<string, { total: number; group: ToolGroup | null }>();
   let lastToolResult: ToolResultView | null = null;
   let loader: Loader | null = null;
   let processing = false;
@@ -214,7 +225,9 @@ export function mountAshi(
     loader = null;
   };
 
-  const replayEntry = (entry: SessionEntry, toolMap: Map<string, ToolPair>): void => {
+  type ReplayEntry = { kind: "pair"; pair: ToolPair } | { kind: "group"; group: ToolGroup };
+
+  const replayEntry = (entry: SessionEntry, toolMap: Map<string, ReplayEntry>): void => {
     if (entry.type === "session") return;
     if (entry.type === "compaction") {
       chat.addChild(new InfoLine(`▼ compacted (firstKept=${entry.firstKeptId.slice(0, 6)}, ${entry.tokensBefore} tokens)`));
@@ -235,7 +248,29 @@ export function mountAshi(
         chat.addChild(renderAssistantFinal(text));
       }
       if (m.tool_calls) {
-        for (const tc of m.tool_calls) {
+        const calls = m.tool_calls;
+        let i = 0;
+        while (i < calls.length) {
+          const startName = calls[i]!.function?.name ?? "";
+          const startKind = TOOL_KIND[startName];
+          if (startKind && GROUPABLE_KINDS.has(startKind)) {
+            let j = i;
+            while (j < calls.length && TOOL_KIND[calls[j]!.function?.name ?? ""] === startKind) j++;
+            const runLen = j - i;
+            if (runLen > 1) {
+              const group = new ToolGroup(startKind, runLen);
+              chat.addChild(group);
+              for (let k = i; k < j; k++) {
+                const c = calls[k]!;
+                const cid = c.id ?? "";
+                group.addCall(detailFromArgs(c.function?.arguments));
+                if (cid) toolMap.set(cid, { kind: "group", group });
+              }
+              i = j;
+              continue;
+            }
+          }
+          const tc = calls[i]!;
           const id = tc.id ?? "";
           const name = tc.function?.name ?? "tool";
           const pair = renderToolPair({
@@ -245,22 +280,27 @@ export function mountAshi(
           });
           chat.addChild(pair.call);
           chat.addChild(pair.result);
-          if (id) toolMap.set(id, pair);
+          if (id) toolMap.set(id, { kind: "pair", pair });
           lastToolResult = pair.result;
+          i++;
         }
       }
     } else if (m.role === "tool") {
       const id = m.tool_call_id ?? "";
       const text = typeof m.content === "string" ? m.content : "";
-      const pair = id ? toolMap.get(id) : undefined;
-      if (pair) {
-        if (text) pair.result.appendChunk(text);
-        pair.result.finalize({ exitCode: 0 });
-        pair.call.setStatus({ exitCode: 0, elapsedMs: 0 });
-        if (id) toolMap.delete(id);
-      } else {
+      const found = id ? toolMap.get(id) : undefined;
+      if (!found) {
         chat.addChild(new InfoLine(`tool result (no matching call): ${text.slice(0, 80)}`));
+        return;
       }
+      if (found.kind === "group") {
+        found.group.recordCompletion(0);
+      } else {
+        if (text) found.pair.result.appendChunk(text);
+        found.pair.result.finalize({ exitCode: 0 });
+        found.pair.call.setStatus({ exitCode: 0, elapsedMs: 0 });
+      }
+      if (id) toolMap.delete(id);
     }
   };
 
@@ -268,10 +308,11 @@ export function mountAshi(
     activeAssistant = null;
     activeThinking = null;
     activeTools.clear();
+    batchGroups.clear();
     lastToolResult = null;
     chat.clear();
     const branch = getStore().current().getBranch();
-    const toolMap = new Map<string, ToolPair>();
+    const toolMap = new Map<string, ReplayEntry>();
     for (const e of branch) replayEntry(e, toolMap);
     tui.requestRender();
   };
@@ -305,6 +346,13 @@ export function mountAshi(
     tui.requestRender();
   });
 
+  bus.on("agent:tool-batch", (e) => {
+    batchGroups.clear();
+    for (const g of e.groups) {
+      batchGroups.set(g.kind, { total: g.tools.length, group: null });
+    }
+  });
+
   bus.on("agent:tool-started", (e) => {
     finalizeThinking();
     if (activeAssistant) {
@@ -316,11 +364,28 @@ export function mountAshi(
     const detail = e.displayDetail || detailFromArgs(
       typeof e.rawInput === "string" ? e.rawInput : JSON.stringify(e.rawInput ?? {})
     );
+
+    const kind = e.kind ?? "";
+    const batchEntry = batchGroups.get(kind);
+    const shouldGroup = !!batchEntry && batchEntry.total > 1 && GROUPABLE_KINDS.has(kind);
+    if (shouldGroup) {
+      if (!batchEntry!.group) {
+        batchEntry!.group = new ToolGroup(kind, batchEntry!.total);
+        chat.addChild(batchEntry!.group);
+      }
+      batchEntry!.group.addCall(detail);
+      activeTools.set(id, { kind: "group", group: batchEntry!.group });
+      // Grouped tools have no individual result body — Ctrl+O wouldn't have
+      // anything to expand, so leave lastToolResult pointing at the prior tool.
+      tui.requestRender();
+      return;
+    }
+
     const pair = renderToolPair({
       toolCallId: id, name: title, title, kind: e.kind,
       displayDetail: detail, rawInput: e.rawInput,
     });
-    activeTools.set(id, pair);
+    activeTools.set(id, { kind: "pair", pair });
     chat.addChild(pair.call);
     chat.addChild(pair.result);
     lastToolResult = pair.result;
@@ -328,18 +393,29 @@ export function mountAshi(
   });
 
   bus.on("agent:tool-output-chunk", ({ chunk }) => {
-    if (activeTools.size === 0) return;
-    const last = [...activeTools.values()].pop();
-    last?.result.appendChunk(chunk);
-    tui.requestRender();
+    // Stream output only into pair-shaped tools; grouped tools have no body.
+    for (const entry of [...activeTools.values()].reverse()) {
+      if (entry.kind === "pair") {
+        entry.pair.result.appendChunk(chunk);
+        tui.requestRender();
+        return;
+      }
+    }
   });
 
   bus.on("agent:tool-completed", (e) => {
     const id = e.toolCallId;
     if (!id) return;
-    const pair = activeTools.get(id);
-    if (!pair) return;
+    const entry = activeTools.get(id);
+    if (!entry) return;
     const summary = e.resultDisplay?.summary;
+    if (entry.kind === "group") {
+      entry.group.recordCompletion(e.exitCode, summary);
+      activeTools.delete(id);
+      tui.requestRender();
+      return;
+    }
+    const pair = entry.pair;
     const body = e.resultDisplay?.body;
     const ok = e.exitCode === null || e.exitCode === 0;
     if (body?.kind === "diff") {

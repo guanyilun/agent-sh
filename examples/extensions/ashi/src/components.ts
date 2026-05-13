@@ -248,6 +248,75 @@ function fmtElapsed(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+const GROUP_ICONS: Record<string, string> = { read: "◆", search: "⌕" };
+
+/** A batch of parallel same-kind tool calls. Renders one header + child
+ *  branch lines + a single aggregate completion. Mirrors the ash renderer's
+ *  grouping (read_file/ls grouped under "read"; grep/glob under "search"). */
+export class ToolGroup extends Container {
+  private headerText: Text;
+  private childContainer: Container;
+  private aggregateText: Text;
+  private kind: string;
+  private maxVisible: number;
+  private count = 0;
+  private renderedCount = 0;
+  private completedCount = 0;
+  private total = 0;
+  private allOk = true;
+  private summaries: string[] = [];
+
+  constructor(kind: string, total: number, maxVisible = 5) {
+    super();
+    this.kind = kind;
+    this.total = total;
+    this.maxVisible = maxVisible;
+    this.headerText = new Text("", 1, 0);
+    this.childContainer = new Container();
+    this.aggregateText = new Text("", 1, 0);
+    this.addChild(new Spacer(1));
+    this.addChild(this.headerText);
+    this.addChild(this.childContainer);
+    this.addChild(this.aggregateText);
+    this.repaintHeader();
+  }
+
+  addCall(detail: string): void {
+    this.count++;
+    if (this.renderedCount < this.maxVisible) {
+      const text = detail || "…";
+      this.childContainer.addChild(
+        new Text(`${theme.fg("muted", "├")} ${theme.fg("muted", text)}`, 1, 0),
+      );
+      this.renderedCount++;
+    }
+  }
+
+  recordCompletion(exitCode: number | null, summary?: string): void {
+    this.completedCount++;
+    if (exitCode !== null && exitCode !== 0) this.allOk = false;
+    if (summary) this.summaries.push(summary);
+    if (this.completedCount >= this.total) this.finalize();
+  }
+
+  finalize(): void {
+    const mark = this.allOk ? theme.fg("success", "✓") : theme.fg("error", "✗");
+    const collapsed = this.count - this.renderedCount;
+    const more = collapsed > 0 ? `${theme.fg("muted", `+${collapsed} more`)} ` : "";
+    const sumText = this.summaries.length > 0
+      ? ` ${theme.fg("muted", this.summaries.join(", "))}`
+      : "";
+    this.aggregateText.setText(`${theme.fg("muted", "└")} ${more}${mark}${sumText}`);
+  }
+
+  isComplete(): boolean { return this.completedCount >= this.total; }
+
+  private repaintHeader(): void {
+    const icon = GROUP_ICONS[this.kind] ?? "▶";
+    this.headerText.setText(`${theme.fg("warning", icon)} ${theme.bold(theme.fg("toolTitle", this.kind))}`);
+  }
+}
+
 export class ErrorLine extends Container {
   constructor(message: string) {
     super();
