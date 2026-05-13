@@ -341,7 +341,6 @@ export function mountAshi(
     const items: SelectItem[] = list.map((s) => ({
       value: s.id,
       label: formatSessionRow(s, s.id === currentId),
-      description: s.id,
     }));
     const picker = new SelectList(items, 15, selectListTheme());
     const currentIdx = items.findIndex((it) => it.value === currentId);
