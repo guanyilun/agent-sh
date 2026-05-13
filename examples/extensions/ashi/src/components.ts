@@ -250,21 +250,29 @@ function fmtElapsed(ms: number): string {
 
 const GROUP_ICONS: Record<string, string> = { read: "◆", search: "⌕" };
 
-/** A batch of parallel same-kind tool calls. Renders one header + child
- *  branch lines + a single aggregate completion. Mirrors the ash renderer's
- *  grouping (read_file/ls grouped under "read"; grep/glob under "search"). */
+interface GroupChild {
+  detail: string;
+  text: Text;
+  status?: { exitCode: number | null; summary?: string };
+}
+
+/** A batch of parallel same-kind tool calls. Renders one header, per-call
+ *  child branch lines that each carry their own summary on completion, and
+ *  a final aggregate. Mirrors ash's grouping (read_file/ls → "read";
+ *  grep/glob → "search"). */
 export class ToolGroup extends Container {
   private headerText: Text;
   private childContainer: Container;
   private aggregateText: Text;
   private kind: string;
+  private total: number;
   private maxVisible: number;
-  private count = 0;
+  private visibleChildren = new Map<string, GroupChild>();
+  private hiddenSummaries: string[] = [];
+  private addedCount = 0;
   private renderedCount = 0;
   private completedCount = 0;
-  private total = 0;
   private allOk = true;
-  private summaries: string[] = [];
 
   constructor(kind: string, total: number, maxVisible = 5) {
     super();
@@ -281,35 +289,64 @@ export class ToolGroup extends Container {
     this.repaintHeader();
   }
 
-  addCall(detail: string): void {
-    this.count++;
-    if (this.renderedCount < this.maxVisible) {
-      const text = detail || "…";
-      this.childContainer.addChild(
-        new Text(`${theme.fg("muted", "├")} ${theme.fg("muted", text)}`, 1, 0),
-      );
+  addCall(toolCallId: string, detail: string): void {
+    this.addedCount++;
+    if (this.renderedCount < this.maxVisible && toolCallId) {
+      const text = new Text("", 1, 0);
+      const child: GroupChild = { detail: detail || "…", text };
+      this.visibleChildren.set(toolCallId, child);
+      this.childContainer.addChild(text);
       this.renderedCount++;
+      this.repaintChild(child);
     }
   }
 
-  recordCompletion(exitCode: number | null, summary?: string): void {
+  recordCompletion(toolCallId: string, exitCode: number | null, summary?: string): void {
     this.completedCount++;
     if (exitCode !== null && exitCode !== 0) this.allOk = false;
-    if (summary) this.summaries.push(summary);
+    const child = this.visibleChildren.get(toolCallId);
+    if (child) {
+      child.status = { exitCode, summary };
+      this.repaintChild(child);
+    } else if (summary) {
+      this.hiddenSummaries.push(summary);
+    }
     if (this.completedCount >= this.total) this.finalize();
   }
 
   finalize(): void {
+    const collapsed = this.addedCount - this.renderedCount;
+    // No overflow ⇒ no aggregate; close the tree by swapping the last
+    // visible child's ├ for a └.
+    if (collapsed === 0) {
+      this.aggregateText.setText("");
+      const last = [...this.visibleChildren.values()].pop();
+      if (last) this.repaintChild(last, true);
+      return;
+    }
     const mark = this.allOk ? theme.fg("success", "✓") : theme.fg("error", "✗");
-    const collapsed = this.count - this.renderedCount;
-    const more = collapsed > 0 ? `${theme.fg("muted", `+${collapsed} more`)} ` : "";
-    const sumText = this.summaries.length > 0
-      ? ` ${theme.fg("muted", this.summaries.join(", "))}`
+    const more = theme.fg("muted", `+${collapsed} more`);
+    const sumText = this.hiddenSummaries.length > 0
+      ? ` ${theme.fg("muted", this.hiddenSummaries.join(", "))}`
       : "";
-    this.aggregateText.setText(`${theme.fg("muted", "└")} ${more}${mark}${sumText}`);
+    this.aggregateText.setText(`${theme.fg("muted", "└")} ${more} ${mark}${sumText}`);
   }
 
   isComplete(): boolean { return this.completedCount >= this.total; }
+
+  private repaintChild(child: GroupChild, isLast = false): void {
+    let tail: string;
+    if (!child.status) {
+      tail = ` ${theme.fg("muted", "…")}`;
+    } else {
+      const ok = child.status.exitCode === null || child.status.exitCode === 0;
+      const mark = ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
+      const sum = child.status.summary ? ` ${theme.fg("muted", child.status.summary)}` : "";
+      tail = ` ${mark}${sum}`;
+    }
+    const connector = isLast ? "└" : "├";
+    child.text.setText(`${theme.fg("muted", connector)} ${theme.fg("muted", child.detail)} ${tail}`);
+  }
 
   private repaintHeader(): void {
     const icon = GROUP_ICONS[this.kind] ?? "▶";

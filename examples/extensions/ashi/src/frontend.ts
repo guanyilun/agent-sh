@@ -263,7 +263,7 @@ export function mountAshi(
               for (let k = i; k < j; k++) {
                 const c = calls[k]!;
                 const cid = c.id ?? "";
-                group.addCall(detailFromArgs(c.function?.arguments));
+                group.addCall(cid, detailFromArgs(c.function?.arguments));
                 if (cid) toolMap.set(cid, { kind: "group", group });
               }
               i = j;
@@ -294,7 +294,7 @@ export function mountAshi(
         return;
       }
       if (found.kind === "group") {
-        found.group.recordCompletion(0);
+        found.group.recordCompletion(id, 0);
       } else {
         if (text) found.pair.result.appendChunk(text);
         found.pair.result.finalize({ exitCode: 0 });
@@ -373,7 +373,7 @@ export function mountAshi(
         batchEntry!.group = new ToolGroup(kind, batchEntry!.total);
         chat.addChild(batchEntry!.group);
       }
-      batchEntry!.group.addCall(detail);
+      batchEntry!.group.addCall(id, detail);
       activeTools.set(id, { kind: "group", group: batchEntry!.group });
       // Grouped tools have no individual result body — Ctrl+O wouldn't have
       // anything to expand, so leave lastToolResult pointing at the prior tool.
@@ -410,7 +410,7 @@ export function mountAshi(
     if (!entry) return;
     const summary = e.resultDisplay?.summary;
     if (entry.kind === "group") {
-      entry.group.recordCompletion(e.exitCode, summary);
+      entry.group.recordCompletion(id, e.exitCode, summary);
       activeTools.delete(id);
       tui.requestRender();
       return;
