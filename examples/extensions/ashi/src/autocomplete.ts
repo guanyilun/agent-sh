@@ -18,9 +18,23 @@ export class BusAutocompleteProvider implements AutocompleteProvider {
     if (cursorLine !== 0) return null;
     const line = lines[0] ?? "";
     const before = line.slice(0, cursorCol);
+
+    const atSpan = findAtTrigger(before);
+    if (atSpan) {
+      const result = this.bus.emitPipe("autocomplete:request", {
+        buffer: atSpan.text, command: null, commandArgs: null, items: [],
+      });
+      if (result.items.length === 0) return null;
+      const items: AutocompleteItem[] = result.items.map((it) => ({
+        value: "@" + it.name,
+        label: "@" + it.name,
+        description: it.description,
+      }));
+      return { items, prefix: atSpan.text };
+    }
+
     if (!before.startsWith("/")) return null;
 
-    // Split command from args. "/backend " → command="/backend", args=""
     const sp = before.indexOf(" ");
     const command = sp === -1 ? null : before.slice(0, sp);
     const commandArgs = sp === -1 ? null : before.slice(sp + 1);
@@ -38,11 +52,7 @@ export class BusAutocompleteProvider implements AutocompleteProvider {
       label: it.name,
       description: it.description,
     }));
-    // pi-tui matches selected completion against this prefix. When in arg
-    // context, the prefix is the whole line so far ("/backend cla"); when
-    // matching command names, the prefix is just the slash word.
-    const prefix = command === null ? before : before;
-    return { items, prefix };
+    return { items, prefix: before };
   }
 
   applyCompletion(
@@ -66,4 +76,16 @@ export class BusAutocompleteProvider implements AutocompleteProvider {
       cursorCol: (head + item.value).length,
     };
   }
+}
+
+/** Locate an active `@` file-trigger in the text preceding the cursor.
+ *  Matches when `@` is at start or after whitespace and the chars from
+ *  `@` to cursor are path-friendly (letters, digits, `.`, `/`, `_`, `-`). */
+function findAtTrigger(before: string): { text: string } | null {
+  const at = before.lastIndexOf("@");
+  if (at < 0) return null;
+  if (at > 0 && !/\s/.test(before[at - 1]!)) return null;
+  const query = before.slice(at + 1);
+  if (!/^[a-zA-Z0-9_./-]*$/.test(query)) return null;
+  return { text: before.slice(at) };
 }

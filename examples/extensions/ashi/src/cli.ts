@@ -80,7 +80,7 @@ async function main(): Promise<void> {
 
   const ctx = core.extensionContext({ quit: cleanup });
 
-  const disabled = ["shell-context", "tui-renderer", "file-autocomplete"];
+  const disabled = ["shell-context", "tui-renderer"];
   await loadBuiltinExtensions(ctx, disabled);
 
   const loaded = await loadExtensions(ctx, config.extensions);
