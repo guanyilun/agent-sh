@@ -201,6 +201,10 @@ export function mountAshi(
   bus.on("agent:thinking-chunk", () => { /* loader covers this */ });
 
   bus.on("agent:tool-started", (e) => {
+    if (activeAssistant) {
+      activeAssistant.finalize();
+      activeAssistant = null;
+    }
     const id = e.toolCallId ?? `${e.title}-${Date.now()}`;
     const title = e.title.split(":")[0]!.trim();
     const detail = e.displayDetail || detailFromArgs(
