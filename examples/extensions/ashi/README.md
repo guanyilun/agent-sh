@@ -49,6 +49,8 @@ Match pi-coding-agent's convention:
 Esc      Cancel active turn
 Ctrl+C   Clear editor
 Ctrl+D   Quit (when editor is empty)
+Ctrl+T   Toggle thinking-block visibility
+Ctrl+O   Expand/collapse the most recent tool result
 ```
 
 ## Sessions
@@ -162,7 +164,7 @@ Tool rendering is split into a call line (the input header) and a result body
 `state` is a per-call mutable bag; `invalidate()` requests a re-render.
 
 - `ToolCallView` extends `Component` with `setStatus({ exitCode, elapsedMs, summary })` — called once on completion.
-- `ToolResultView` extends `Component` with `appendChunk(chunk)`, `setDiff(lines)`, and `finalize({ exitCode, summary })` — ashi mutates the result view as output streams in.
+- `ToolResultView` extends `Component` with `appendChunk(chunk)`, `setDiff(lines)`, `finalize({ exitCode, summary })`, and `toggleExpanded()` — ashi mutates the result view as output streams in and when the user hits `Ctrl+O`.
 
 `mode` and `previewLines` on result args come from `ashi.display.{name}` config
 (see below) so renderers can honor the user's compactness preference without
@@ -203,10 +205,12 @@ Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
 
 `result` modes:
 
-- `"hidden"` — call line only; suppress the output body.
-- `"summary"` — collapsed: a line count after the tool completes (e.g. `↳ 42 lines`).
-  Bash-style streaming previews degrade to a 2-line tail until completion.
-- `"preview"` — last `previewLines` lines of output (default 8).
+- `"hidden"` — call line only while streaming; line count (`↳ 42 lines`) after completion.
+- `"summary"` — 2-line tail while streaming; line count after completion.
+- `"preview"` — last `previewLines` lines of output (default 8), with a `... (N more lines)` hint when content overflows.
+
+Hit `Ctrl+O` to expand the most recent tool result inline — shows the full
+buffer regardless of mode. Press again to collapse back.
 
 Each tool inherits from `default` and is overridden by its own block. Unknown
 tool names fall through to `default`. Built-in defaults aim for compactness

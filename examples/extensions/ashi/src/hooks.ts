@@ -46,11 +46,13 @@ export interface ToolCallView extends Component {
 }
 
 /** Mutated by ashi as output streams in and when the tool completes.
- *  setDiff is optional behavior — renderers may no-op if they don't show diffs. */
+ *  setDiff is optional behavior — renderers may no-op if they don't show diffs.
+ *  toggleExpanded flips the view's internal expansion state (Ctrl+O). */
 export interface ToolResultView extends Component {
   appendChunk(chunk: string): void;
   setDiff(lines: string[]): void;
   finalize(opts: { exitCode: number | null; summary?: string }): void;
+  toggleExpanded(): void;
 }
 
 const CALL_PREFIX = "ashi:render-tool-call:";

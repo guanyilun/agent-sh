@@ -138,6 +138,7 @@ export function mountAshi(
   let activeAssistant: AssistantMessage | null = null;
   let activeThinking: ThinkingBlock | null = null;
   const activeTools = new Map<string, ToolPair>();
+  let lastToolResult: ToolResultView | null = null;
   let loader: Loader | null = null;
   let processing = false;
   let hideThinking = false;
@@ -245,6 +246,7 @@ export function mountAshi(
           chat.addChild(pair.call);
           chat.addChild(pair.result);
           if (id) toolMap.set(id, pair);
+          lastToolResult = pair.result;
         }
       }
     } else if (m.role === "tool") {
@@ -266,6 +268,7 @@ export function mountAshi(
     activeAssistant = null;
     activeThinking = null;
     activeTools.clear();
+    lastToolResult = null;
     chat.clear();
     const branch = getStore().current().getBranch();
     const toolMap = new Map<string, ToolPair>();
@@ -320,6 +323,7 @@ export function mountAshi(
     activeTools.set(id, pair);
     chat.addChild(pair.call);
     chat.addChild(pair.result);
+    lastToolResult = pair.result;
     tui.requestRender();
   });
 
@@ -542,6 +546,13 @@ export function mountAshi(
     }
     if (matchesKey(data, "ctrl+t")) {
       toggleThinking();
+      return { consume: true };
+    }
+    if (matchesKey(data, "ctrl+o")) {
+      if (lastToolResult) {
+        lastToolResult.toggleExpanded();
+        tui.requestRender();
+      }
       return { consume: true };
     }
     return undefined;

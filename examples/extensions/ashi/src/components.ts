@@ -153,6 +153,7 @@ export class ToolResultBody extends Container {
   private mode: ToolResultMode;
   private previewLines: number;
   private finalized = false;
+  private expanded = false;
   private exitCode: number | null | undefined;
 
   constructor(mode: ToolResultMode, previewLines: number) {
@@ -180,13 +181,24 @@ export class ToolResultBody extends Container {
     this.repaint();
   }
 
+  toggleExpanded(): void {
+    this.expanded = !this.expanded;
+    this.repaint();
+  }
+
   private repaint(): void {
-    if (this.mode === "hidden") {
+    if (!this.outputBuffer) {
       this.outputText.setText("");
       return;
     }
-    if (!this.outputBuffer) {
-      this.outputText.setText("");
+    // Expanded view bypasses collapse: full output regardless of mode.
+    if (this.expanded) {
+      this.outputText.setText(theme.fg("toolOutput", this.outputBuffer));
+      return;
+    }
+    if (this.mode === "hidden") {
+      if (!this.finalized) { this.outputText.setText(""); return; }
+      this.outputText.setText(lineCountHint(this.outputBuffer, this.exitCode));
       return;
     }
     if (this.mode === "summary") {
@@ -196,16 +208,25 @@ export class ToolResultBody extends Container {
         this.outputText.setText(theme.fg("muted", tail));
         return;
       }
-      const lines = this.outputBuffer.split("\n").filter((l) => l.length > 0);
-      const label = lines.length === 1 ? "1 line" : `${lines.length} lines`;
-      const ok = this.exitCode === null || this.exitCode === 0;
-      const prefix = ok ? theme.fg("muted", "↳ ") : theme.fg("error", "↳ ");
-      this.outputText.setText(`${prefix}${theme.fg("muted", label)}`);
+      this.outputText.setText(lineCountHint(this.outputBuffer, this.exitCode));
       return;
     }
-    const trimmed = this.outputBuffer.split("\n").slice(-this.previewLines).join("\n");
-    this.outputText.setText(theme.fg("toolOutput", trimmed));
+    const lines = this.outputBuffer.split("\n");
+    const trimmed = lines.slice(-this.previewLines).join("\n");
+    const remaining = Math.max(0, lines.length - this.previewLines);
+    const overflow = remaining > 0
+      ? `\n${theme.fg("muted", `... (${remaining} more ${remaining === 1 ? "line" : "lines"})`)}`
+      : "";
+    this.outputText.setText(`${theme.fg("toolOutput", trimmed)}${overflow}`);
   }
+}
+
+function lineCountHint(buffer: string, exitCode: number | null | undefined): string {
+  const lines = buffer.split("\n").filter((l) => l.length > 0);
+  const label = lines.length === 1 ? "1 line" : `${lines.length} lines`;
+  const ok = exitCode === null || exitCode === 0;
+  const arrow = ok ? theme.fg("muted", "↳ ") : theme.fg("error", "↳ ");
+  return `${arrow}${theme.fg("muted", label)}`;
 }
 
 function fmtElapsed(ms: number): string {
