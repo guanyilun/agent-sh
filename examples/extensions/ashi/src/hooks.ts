@@ -59,7 +59,7 @@ const RESULT_PREFIX = "ashi:render-tool-result:";
 
 /** Register the default render-* handlers. Per-tool overrides are advised by
  *  name (e.g. `ashi:render-tool-call:bash`); unknown tools fall back to
- *  `:default`. ashi's frontend never instantiates components directly. */
+ *  `:default`. */
 export function registerRenderDefaults(ctx: ExtensionContext): void {
   ctx.define("ashi:render-user-message", (args: UserMessageArgs): Component => {
     return new UserMessage(args.text);
@@ -95,9 +95,9 @@ export interface ToolHookResolver {
   modeFor: (name: string) => { mode: ToolResultMode; previewLines: number };
 }
 
-/** Build a resolver bound to the current ctx + display config. Caches the
- *  handler-name list lazily; callers can call `refresh()` after extensions
- *  register new tool-specific renderers. */
+/** Resolves :{name} → :default for tool render hooks and looks up each tool's
+ *  display mode from ashi.display. Cache the registered-handler set; callers
+ *  can `refresh()` after extensions register new tool-specific renderers. */
 export function createToolHookResolver(
   ctx: ExtensionContext,
   renderState: () => RenderState,

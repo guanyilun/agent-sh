@@ -384,9 +384,8 @@ export function mountAshi(
     chat.addChild(img);
   };
 
-  // `render:image` is the seam latex-images and similar extensions call after
-  // generating a PNG (e.g. from ```latex code blocks). agent-sh's bundled
-  // tui-renderer defines it, but ashi disables that renderer, so we own it.
+  // tui-renderer normally owns render:image, but ashi disables it; provide
+  // our own so latex-images and friends reach the chat.
   ctx.define("render:image", (data: Buffer) => {
     appendImage(data);
     tui.requestRender();
@@ -455,7 +454,6 @@ export function mountAshi(
   });
 
   bus.on("agent:tool-output-chunk", ({ chunk }) => {
-    // Stream output only into pair-shaped tools; grouped tools have no body.
     for (const entry of [...activeTools.values()].reverse()) {
       if (entry.kind === "pair") {
         entry.pair.result.appendChunk(chunk);

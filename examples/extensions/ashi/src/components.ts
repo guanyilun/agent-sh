@@ -142,8 +142,8 @@ export class ToolResultBody extends Container {
   }
 
   private repaint(): void {
-    // Diff body shows for mode=preview or when expanded; otherwise the diff
-    // stats already live on the call line so the framed view is redundant.
+    // Hide the framed diff in hidden/summary modes — the stats already live
+    // on the call line so showing it again is noise.
     const hasDiff = this.diffLines.length > 0;
     const showDiff = hasDiff && (this.expanded || this.mode === "preview");
     this.bodyText.setText(showDiff ? this.diffLines.join("\n") : "");
@@ -169,7 +169,7 @@ export class ToolResultBody extends Container {
     }
     if (this.mode === "summary") {
       if (!this.finalized) {
-        // While streaming, summary mode shows a brief tail; on finalize, switch to a line count.
+        // Brief tail while streaming; collapses to a line count on finalize.
         const tail = this.outputBuffer.split("\n").slice(-2).join("\n");
         this.outputText.setText(theme.fg("muted", tail));
         return;
@@ -274,8 +274,8 @@ export class ToolGroup extends Container {
 
   finalize(): void {
     const collapsed = this.addedCount - this.renderedCount;
-    // No overflow ⇒ no aggregate; close the tree by swapping the last
-    // visible child's ├ for a └.
+    // No overflow ⇒ no aggregate; close the tree by promoting the last
+    // visible child's ├ to a └.
     if (collapsed === 0) {
       this.aggregateText.setText("");
       const last = [...this.visibleChildren.values()].pop();
@@ -303,8 +303,8 @@ export class ToolGroup extends Container {
       tail = ` ${mark}${sum}`;
     }
     const connector = isLast ? "└" : "├";
-    // Only show the tool name when it diverges from the kind header — for
-    // a pure read_file batch under "◆ read", the per-child "read" is noise.
+    // Tool name omitted when it duplicates the kind header (e.g. read_file
+    // children under "◆ read").
     const namePart = child.name !== this.kind
       ? `${theme.bold(theme.fg("toolTitle", child.name))} `
       : "";
