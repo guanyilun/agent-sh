@@ -4,10 +4,12 @@ import {
   Container,
   Editor,
   Loader,
+  SelectList,
+  type SelectItem,
   matchesKey,
 } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
-import { editorTheme, theme } from "./theme.js";
+import { editorTheme, selectListTheme, theme } from "./theme.js";
 import {
   AssistantMessage,
   ErrorLine,
@@ -53,6 +55,7 @@ function detailFor(
 export interface AshiHandle {
   tui: TUI;
   stop: () => void;
+  openTreePicker: () => Promise<void>;
 }
 
 export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): AshiHandle {
@@ -252,10 +255,61 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
     return undefined;
   });
 
+  let pickerOpen = false;
+  const openTreePicker = async (): Promise<void> => {
+    if (pickerOpen) return;
+    const entries = await tree.getTree();
+    if (entries.length === 0) {
+      bus.emit("ui:info", { message: "tree: empty" });
+      return;
+    }
+    const activeLeaf = tree.getActiveLeaf();
+    const branchSeqs = new Set((await tree.getBranch(activeLeaf)).map((e) => e.seq));
+    const items: SelectItem[] = entries.map((e) => ({
+      value: String(e.seq),
+      label: `${e.seq === activeLeaf ? "●" : branchSeqs.has(e.seq) ? "│" : " "} #${e.seq} ${e.sum}`,
+      description: e.parentSeq != null ? `← #${e.parentSeq}` : "root",
+    }));
+
+    const picker = new SelectList(items, 15, selectListTheme());
+    const activeIdx = items.findIndex((it) => it.value === String(activeLeaf));
+    if (activeIdx >= 0) picker.setSelectedIndex(activeIdx);
+
+    const close = (): void => {
+      pickerOpen = false;
+      footerSlot.removeChild(picker);
+      tui.setFocus(editor);
+      tui.requestRender();
+    };
+
+    picker.onSelect = (item) => {
+      const seq = parseInt(item.value, 10);
+      close();
+      if (seq === activeLeaf) return;
+      tree.setLeaf(seq);
+      const snapshot = tree.loadSnapshot(seq);
+      if (snapshot && snapshot.length > 0) {
+        ctx.call("conversation:replace-messages", snapshot);
+        bus.emit("ui:info", { message: `fork: restored ${snapshot.length} messages from snapshot @ #${seq}` });
+      } else {
+        bus.emit("ui:info", { message: `fork: next turn parents from #${seq} (no snapshot — agent context not rewound)` });
+      }
+      refreshFooterStats();
+      tui.requestRender();
+    };
+    picker.onCancel = close;
+
+    pickerOpen = true;
+    footerSlot.addChild(picker);
+    tui.setFocus(picker);
+    tui.requestRender();
+  };
+
   tui.start();
 
   return {
     tui,
     stop: () => { tui.stop(); },
+    openTreePicker,
   };
 }

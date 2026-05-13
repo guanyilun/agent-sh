@@ -97,12 +97,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  registerTreeCommands(ctx, treeHistory);
   registerCompaction(ctx, treeHistory);
   registerSessionRestore(ctx, treeHistory);
 
   const handle = mountAshi(ctx, treeHistory);
   stopFrontend = handle.stop;
+  registerTreeCommands(ctx, treeHistory, handle.openTreePicker);
 
   await core.activateBackend(config.backend ?? getSettings().defaultBackend);
   restoreSnapshot(ctx, treeHistory);
