@@ -519,12 +519,7 @@ export function mountAshi(
     tui.requestRender();
   });
 
-  let bootBannerShown = false;
   bus.on("agent:info", (info) => {
-    if (!bootBannerShown) {
-      chat.addChild(new InfoLine(`${info.name}${info.model ? ` · ${info.model}` : ""}`));
-      bootBannerShown = true;
-    }
     statusFooter.update({
       model: info.model,
       provider: info.provider,
