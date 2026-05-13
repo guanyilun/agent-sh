@@ -126,6 +126,39 @@ autocomplete, session search/rename/delete inside the `/resume` picker, theme se
 image rendering. Each can be added by writing a pi-tui Component and subscribing to the
 corresponding bus event.
 
+## Extension surface
+
+Other extensions can override how chat entries render without forking ashi.
+Four hooks are exposed via `ctx.define` (defaults) + `ctx.advise` (override):
+
+| Hook | Args | Returns |
+|---|---|---|
+| `ashi:render-user-message` | `{ text, state, invalidate }` | `Component` |
+| `ashi:render-assistant` | `{ text, state, invalidate }` | `Component` |
+| `ashi:render-thinking` | `{ text, hidden, state, invalidate }` | `Component` |
+| `ashi:render-tool-execution` | `{ toolCallId, name, title, kind, displayDetail, rawInput, state, invalidate }` | `ToolExecutionView` |
+
+`state` is a per-call mutable bag; `invalidate()` requests a re-render.
+
+`ToolExecutionView` extends `Component` with `appendOutput(chunk)`, `setBody(lines)`,
+`complete(exitCode, summary)` — ashi mutates the returned view as the tool progresses,
+so custom renderers must satisfy this contract (or replace the entire tool render
+including completion handling).
+
+Example: override how `edit_file` results render.
+
+```ts
+export default function activate(ctx) {
+  ctx.advise("ashi:render-tool-execution", (next, args) => {
+    if (args.kind !== "write") return next(args);
+    return new MyPrettyEditView(args);  // must implement ToolExecutionView
+  });
+}
+```
+
+For non-render concerns (commands, settings, tools, providers) use the standard
+agent-sh extension API.
+
 ## Development
 
 To iterate on ashi from inside this repo:
