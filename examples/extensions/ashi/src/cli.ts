@@ -7,18 +7,18 @@
  * frontend. Demonstrates that the kernel is frontend-agnostic — same
  * backend, tools, slash commands, providers; different presentation.
  */
-import { createCore } from "agent-sh/core";
+import { createCore, NoopHistory } from "agent-sh/core";
 import { loadBuiltinExtensions } from "agent-sh/extensions";
 import { loadExtensions } from "agent-sh/extension-loader";
 import { getSettings } from "agent-sh/settings";
 import type { AgentShellConfig } from "agent-sh/types";
 
 import { mountAshi } from "./frontend.js";
-import { MultiSessionTreeAdapter } from "./multi-session-tree-history.js";
-import { registerTreeCommands } from "./commands.js";
+import { MultiSessionStore } from "./multi-session-store.js";
+import { registerForkCommands } from "./commands.js";
 import { registerSessionCommands } from "./session-commands.js";
 import { registerCompaction } from "./compaction.js";
-import { registerSessionRestore } from "./session-restore.js";
+import { registerCapture } from "./capture.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -48,25 +48,28 @@ function parseArgs(argv: string[]): AgentShellConfig & { extensions?: string[] }
     }
   }
 
-  // shell is required by AgentShellConfig's type but unused without the PTY frontend.
   return { shell: "/bin/sh", model, apiKey, baseURL, provider, backend, extensions };
 }
 
 async function main(): Promise<void> {
-  // parseArgs handles --help by exiting before we reach the TTY check.
   const config = parseArgs(process.argv.slice(2));
 
   if (!process.stdin.isTTY) {
     process.stderr.write("ashi requires a TTY for interactive rendering.\n");
     process.exit(1);
   }
-  // Per-cwd sessions root; each launch creates a fresh session, /resume to browse past ones.
-  const cwdSlug = process.cwd().replace(/\//g, "-").replace(/^-/, "");
-  const sessionsRoot = path.join(os.homedir(), ".agent-sh", "extensions", "ashi", "history", cwdSlug, "sessions");
-  const treeHistory = new MultiSessionTreeAdapter(sessionsRoot);
-  const core = createCore({ ...config, history: treeHistory });
 
-  // Built by frontend.ts; declared up here so cleanup can reach it.
+  // Each launch starts a fresh session; /resume browses past ones.
+  const cwd = process.cwd();
+  const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
+  const sessionsDir = path.join(os.homedir(), ".agent-sh", "extensions", "ashi", "history", cwdSlug, "sessions");
+  const store = new MultiSessionStore(sessionsDir, cwd);
+  const storeRef = (): MultiSessionStore => store;
+
+  // We persist raw AgentMessages ourselves via capture; the kernel's nuclear
+  // history pipeline is bypassed by injecting a NoopHistory adapter.
+  const core = createCore({ ...config, history: new NoopHistory() });
+
   let stopFrontend: (() => void) | null = null;
 
   const cleanup = (): void => {
@@ -80,10 +83,6 @@ async function main(): Promise<void> {
 
   const ctx = core.extensionContext({ quit: cleanup });
 
-  // Skip shell-context (no PTY → no cwd tracking via shell events; core's
-  // process.cwd() default is fine), the default streaming tui-renderer
-  // (pi-tui replaces it), and file-autocomplete (it advises the shell's
-  // input handler, which doesn't exist here).
   const disabled = ["shell-context", "tui-renderer", "file-autocomplete"];
   await loadBuiltinExtensions(ctx, disabled);
 
@@ -98,13 +97,18 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  registerCompaction(ctx, treeHistory);
-  registerSessionRestore(ctx, treeHistory);
+  const capture = registerCapture(ctx, storeRef);
+  registerCompaction(ctx, storeRef, capture);
 
-  const handle = mountAshi(ctx, treeHistory, treeHistory);
+  // Kernel's default startup preamble is empty for fresh sessions; for resumes
+  // we drive it ourselves via applyBranchMessages.
+  ctx.advise("conversation:format-prior-history", () => null);
+
+  const handle = mountAshi(ctx, storeRef, capture);
   stopFrontend = handle.stop;
-  registerTreeCommands(ctx, treeHistory, handle.openTreePicker, handle.rebuildChat);
-  registerSessionCommands(ctx, treeHistory, {
+
+  registerForkCommands(ctx, storeRef, handle.openTreePicker, handle.rebuildChat, capture);
+  registerSessionCommands(ctx, storeRef, capture, {
     openSessionPicker: handle.openSessionPicker,
     rebuildChat: handle.rebuildChat,
   });

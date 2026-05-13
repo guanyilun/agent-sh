@@ -46,9 +46,7 @@ Ctrl+D   Quit (when editor is empty)
 
 ## Sessions
 
-ashi defaults to pi's many-sessions-per-cwd model: every launch starts a fresh session.
-Past sessions live under `~/.agent-sh/extensions/ashi/history/<cwd-slug>/sessions/<id>/`
-and you opt into resuming them with `/resume`.
+ashi mirrors pi's session model: many sessions per cwd, fresh by default.
 
 ```
 /resume      Browse past sessions in this cwd (interactive picker)
@@ -57,32 +55,38 @@ and you opt into resuming them with `/resume`.
 /sessions    Text dump of all sessions in this cwd
 ```
 
-Each session is itself a tree: every entry carries a `parentSeq`, sibling branches stay
-on disk, and you can rewind/branch within a session.
+Each session is its own tree (one JSONL file per session). Every entry has an `id` and
+`parentId`; sibling branches stay on disk; you can rewind and branch within a session.
 
 ```
-/fork        Open the in-session tree picker (interactive)
-/fork <seq>  Direct rewind to <seq>
-/branch      Text dump of the active branch (root → leaf)
+/fork              Interactive in-session tree picker
+/fork <id-prefix>  Direct rewind to a specific entry
+/branch            Text dump of the active branch (root → leaf)
 ```
 
-Snapshots of the live message array are saved per leaf inside each session's directory,
-so resuming a session puts the agent back into the exact context it had at shutdown
-(including any compaction summaries). `/fork` to a snapshotted leaf rewinds the agent
-context; `/fork` to a leaf that predates snapshotting just moves the on-disk parent
-pointer.
+Storage: `~/.agent-sh/extensions/ashi/history/<cwd-slug>/sessions/<id>.jsonl`. Each line
+is a `SessionEntry`:
 
-The kernel side adds five small handlers:
-`parentSeq` on `NuclearEntry`; optional `getBranch`/`getTree`/`setLeaf` on `HistoryAdapter`;
-`conversation:allocate-seq` for synthesized entries; `conversation:reset-for-session` so
-multi-session adapters can swap sessions without nuclear-state bleed-through.
+```typescript
+type SessionEntry =
+  | { type: "session"; id; parentId: null; cwd; timestamp; version }
+  | { type: "message"; id; parentId; timestamp; message: AgentMessage }
+  | { type: "compaction"; id; parentId; timestamp; summary; firstKeptId; tokensBefore };
+```
 
-### Alternative: single-tree-per-cwd
+Raw `AgentMessage` objects are stored verbatim (full tool call arguments, tool results,
+etc.) so `/resume` and `/fork` faithfully reconstruct the original conversation — same
+shape as pi's session format.
 
-`LeafTrackingTreeAdapter` (in `src/leaf-tracking-tree-history.ts`) is the original adapter
-ashi shipped with: one ever-growing tree per cwd, auto-resume the leaf at startup, no
-session boundaries. Still exported; swap it into `cli.ts` instead of `MultiSessionTreeAdapter`
-if you prefer that workflow.
+The kernel side adds three small handlers:
+optional `parentSeq`/`getBranch`/`getTree`/`setLeaf` on `NuclearEntry`/`HistoryAdapter`
+(useful for tree-aware HistoryAdapters in general — not used by this extension);
+`conversation:allocate-seq` and `conversation:reset-for-session` so multi-session adapters
+can swap context without nuclear-state bleed-through.
+
+ashi itself bypasses agent-sh's `NuclearEntry` pipeline entirely by installing a
+`NoopHistory` adapter — raw messages are captured directly via `agent:processing-done`
+and the `conversation:get-messages` handler.
 
 ## Compaction
 
@@ -94,17 +98,16 @@ LLM-driven path:
 2. LLM summarizes the older span into the pi structured format (Goal / Constraints /
    Progress / Decisions / Next Steps / Critical Context).
 3. The live message array becomes `[summary, ...kept messages]`.
-4. The summary lands in the tree as a `compaction` `NuclearEntry`, parented at the
-   pre-compaction leaf. Subsequent compactions reference the previous one's summary so
-   chains stay coherent.
+4. The summary lands in the session as a `CompactionEntry` carrying `summary`,
+   `firstKeptId`, and `tokensBefore` — same shape as pi's compaction. Subsequent
+   compactions reference the previous one's summary so chains stay coherent.
 
 Triggered automatically when prompt tokens cross agent-sh's threshold, or manually with
 `/compact`. If the LLM call fails or the conversation is too short, falls through to the
 default eviction.
 
-The kernel exposes one extra handler (`conversation:allocate-seq`) so the compaction entry
-gets a fresh seq from the same counter as kernel-produced entries. Everything else
-(prompt template, cut-point walker, serialization, LLM call) lives in this extension.
+The cut-point walker, prompt template, serialization, and LLM call all live in this
+extension. The kernel side is just the advisable `conversation:compact` seam.
 
 ## What's intentionally missing
 

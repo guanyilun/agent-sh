@@ -1,48 +1,81 @@
 import type { ExtensionContext } from "agent-sh/types";
-import { formatNuclearLine } from "agent-sh/core";
-import type { SessionTree } from "./leaf-tracking-tree-history.js";
+import type { MultiSessionStore } from "./multi-session-store.js";
+import type { AgentMessage } from "./session-store.js";
+import type { Capture } from "./capture.js";
 
-export function registerTreeCommands(
+export function registerForkCommands(
   ctx: ExtensionContext,
-  tree: SessionTree,
+  store: () => MultiSessionStore,
   openTreePicker: () => Promise<void>,
   rebuildChat: () => Promise<void>,
+  capture: Capture,
 ): void {
   const { bus } = ctx;
 
-  ctx.registerCommand("fork", "Rewind and branch: /fork (interactive picker) or /fork <seq>", async (args) => {
-    const trimmed = args.trim();
-    if (trimmed === "") {
+  ctx.registerCommand("fork", "Rewind and branch: /fork (interactive picker) or /fork <id-prefix>", async (args) => {
+    const arg = args.trim();
+    if (arg === "") {
       await openTreePicker();
       return;
     }
-    const seq = parseInt(trimmed, 10);
-    if (Number.isNaN(seq) || seq < 1) {
-      bus.emit("ui:error", { message: "fork: expected a positive numeric seq" });
+    const branch = store().current().getBranch();
+    const matches = branch.filter((e) => e.id.startsWith(arg));
+    if (matches.length === 0) {
+      bus.emit("ui:error", { message: `fork: no entry matches "${arg}"` });
       return;
     }
-    if (!(await tree.findBySeq(seq))) {
-      bus.emit("ui:error", { message: `fork: no entry at seq ${seq}` });
+    if (matches.length > 1) {
+      bus.emit("ui:error", { message: `fork: ambiguous prefix "${arg}" matches ${matches.length} entries` });
       return;
     }
-    tree.setLeaf(seq);
-    const snapshot = tree.loadSnapshot(seq);
-    if (snapshot && snapshot.length > 0) {
-      ctx.call("conversation:replace-messages", snapshot);
-      bus.emit("ui:info", { message: `fork: restored ${snapshot.length} messages from snapshot @ #${seq}` });
-    } else {
-      bus.emit("ui:info", { message: `fork: next turn parents from #${seq} (no snapshot — agent context not rewound)` });
-    }
+    const target = matches[0]!;
+    store().current().setActiveLeaf(target.id);
+    applyBranchMessages(ctx, store, capture);
+    bus.emit("ui:info", { message: `fork: rewound to ${target.id}` });
     await rebuildChat();
   });
 
   ctx.registerCommand("branch", "Show the active branch (root → leaf)", async () => {
-    const branch = await tree.getBranch(tree.getActiveLeaf());
+    const branch = store().current().getBranch();
     if (branch.length === 0) {
       bus.emit("ui:info", { message: "branch: empty" });
       return;
     }
-    const lines = branch.map(formatNuclearLine);
+    const lines = branch.map((e) => {
+      if (e.type === "session") return `[${e.id}] session start (${e.cwd})`;
+      if (e.type === "compaction") return `[${e.id}] compaction (firstKept=${e.firstKeptId})`;
+      const msg = (e as { message: AgentMessage }).message;
+      const text = typeof msg.content === "string" ? msg.content : "";
+      return `[${e.id}] ${msg.role}: ${text.slice(0, 60)}`;
+    });
     bus.emit("ui:info", { message: `branch (${branch.length} entries):\n${lines.join("\n")}` });
   });
+}
+
+export function applyBranchMessages(
+  ctx: ExtensionContext,
+  store: () => MultiSessionStore,
+  capture: Capture,
+): void {
+  const msgs = store().current().buildMessages();
+  ctx.call("conversation:replace-messages", msgs);
+  // Build the parallel id array: first slot may be the synthetic compaction
+  // summary (no entry id); the rest are real message entries from firstKeptId.
+  const branch = store().current().getBranch();
+  let compactionIdx = -1;
+  for (let i = branch.length - 1; i >= 0; i--) {
+    if (branch[i]!.type === "compaction") { compactionIdx = i; break; }
+  }
+  const ids: (string | null)[] = [];
+  if (compactionIdx >= 0) {
+    ids.push(null);
+    const c = branch[compactionIdx] as { firstKeptId: string };
+    const startIdx = branch.findIndex((e) => e.id === c.firstKeptId);
+    for (let i = Math.max(0, startIdx); i < branch.length; i++) {
+      if (branch[i]!.type === "message") ids.push(branch[i]!.id);
+    }
+  } else {
+    for (const e of branch) if (e.type === "message") ids.push(e.id);
+  }
+  capture.resetTo(ids);
 }
