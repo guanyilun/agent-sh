@@ -6,6 +6,7 @@ export function registerTreeCommands(
   ctx: ExtensionContext,
   tree: SessionTree,
   openTreePicker: () => Promise<void>,
+  rebuildChat: () => Promise<void>,
 ): void {
   const { bus } = ctx;
 
@@ -32,6 +33,7 @@ export function registerTreeCommands(
     } else {
       bus.emit("ui:info", { message: `fork: next turn parents from #${seq} (no snapshot — agent context not rewound)` });
     }
+    await rebuildChat();
   });
 
   ctx.registerCommand("branch", "Show the active branch (root → leaf)", async () => {

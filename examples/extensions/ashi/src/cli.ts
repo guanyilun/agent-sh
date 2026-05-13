@@ -103,10 +103,10 @@ async function main(): Promise<void> {
 
   const handle = mountAshi(ctx, treeHistory, treeHistory);
   stopFrontend = handle.stop;
-  registerTreeCommands(ctx, treeHistory, handle.openTreePicker);
+  registerTreeCommands(ctx, treeHistory, handle.openTreePicker, handle.rebuildChat);
   registerSessionCommands(ctx, treeHistory, {
     openSessionPicker: handle.openSessionPicker,
-    applySessionSnapshot: () => { /* picker handles this itself */ },
+    rebuildChat: handle.rebuildChat,
   });
 
   await core.activateBackend(config.backend ?? getSettings().defaultBackend);

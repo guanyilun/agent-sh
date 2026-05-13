@@ -9,6 +9,7 @@ import {
   matchesKey,
 } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
+import type { NuclearEntry } from "agent-sh/core";
 import { editorTheme, selectListTheme, theme } from "./theme.js";
 import {
   AssistantMessage,
@@ -59,6 +60,7 @@ export interface AshiHandle {
   stop: () => void;
   openTreePicker: () => Promise<void>;
   openSessionPicker: () => Promise<void>;
+  rebuildChat: () => Promise<void>;
 }
 
 export function mountAshi(
@@ -126,6 +128,46 @@ export function mountAshi(
     loader.stop();
     footerSlot.removeChild(loader);
     loader = null;
+  };
+
+  const replayEntry = (entry: NuclearEntry): void => {
+    const text = entry.body ?? entry.sum;
+    switch (entry.kind) {
+      case "user":
+        chat.addChild(new UserMessage(text));
+        break;
+      case "agent": {
+        const msg = new AssistantMessage();
+        msg.appendText(text);
+        msg.finalize();
+        chat.addChild(msg);
+        break;
+      }
+      case "tool":
+      case "error": {
+        const tool = new ToolExecution(entry.tool ?? "tool", undefined, "");
+        if (entry.body) tool.appendOutput(entry.body);
+        tool.complete(entry.kind === "error" ? 1 : 0, entry.sum);
+        chat.addChild(tool);
+        break;
+      }
+      case "compaction":
+        chat.addChild(new InfoLine(`▼ ${entry.sum}`));
+        break;
+      case "session":
+        break;
+      default:
+        chat.addChild(new InfoLine(entry.sum));
+    }
+  };
+
+  const rebuildChat = async (): Promise<void> => {
+    activeAssistant = null;
+    activeTools.clear();
+    chat.clear();
+    const branch = await tree.getBranch(tree.getActiveLeaf());
+    for (const e of branch) replayEntry(e);
+    tui.requestRender();
   };
 
   // ── Bus wiring ───────────────────────────────────────────────
@@ -289,7 +331,7 @@ export function mountAshi(
       tui.requestRender();
     };
 
-    picker.onSelect = (item) => {
+    picker.onSelect = async (item) => {
       const seq = parseInt(item.value, 10);
       close();
       if (seq === activeLeaf) return;
@@ -301,8 +343,8 @@ export function mountAshi(
       } else {
         bus.emit("ui:info", { message: `fork: next turn parents from #${seq} (no snapshot — agent context not rewound)` });
       }
+      await rebuildChat();
       refreshFooterStats();
-      tui.requestRender();
     };
     picker.onCancel = close;
 
@@ -356,8 +398,8 @@ export function mountAshi(
         ctx.call("conversation:replace-messages", []);
         bus.emit("ui:info", { message: `resumed session ${id} (no snapshot — empty context)` });
       }
+      await rebuildChat();
       refreshFooterStats();
-      tui.requestRender();
     };
     picker.onCancel = close;
 
@@ -374,5 +416,6 @@ export function mountAshi(
     stop: () => { tui.stop(); },
     openTreePicker,
     openSessionPicker,
+    rebuildChat,
   };
 }

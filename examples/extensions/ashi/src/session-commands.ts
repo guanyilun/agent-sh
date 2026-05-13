@@ -3,7 +3,7 @@ import type { MultiSessionTreeAdapter, SessionInfo } from "./multi-session-tree-
 
 export interface SessionCommandsDeps {
   openSessionPicker: () => Promise<void>;
-  applySessionSnapshot: () => void;
+  rebuildChat: () => Promise<void>;
 }
 
 export function registerSessionCommands(
@@ -21,6 +21,7 @@ export function registerSessionCommands(
     const id = sessions.newSession();
     ctx.call("conversation:reset-for-session", 1);
     ctx.call("conversation:replace-messages", []);
+    await deps.rebuildChat();
     bus.emit("ui:info", { message: `new session: ${id}` });
   });
 
