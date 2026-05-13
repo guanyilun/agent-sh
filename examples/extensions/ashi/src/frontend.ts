@@ -3,11 +3,13 @@ import {
   ProcessTerminal,
   Container,
   Editor,
+  Image,
   Loader,
   SelectList,
   Spacer,
   type Component,
   type SelectItem,
+  getImageDimensions,
   matchesKey,
 } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
@@ -361,12 +363,41 @@ export function mountAshi(
     tui.requestRender();
   });
 
+  const imageComponentFromPng = (data: Buffer): Image | null => {
+    const base64 = data.toString("base64");
+    const dims = getImageDimensions(base64, "image/png");
+    if (!dims) return null;
+    return new Image(
+      base64, "image/png",
+      { fallbackColor: (t) => theme.fg("muted", t) },
+      { maxWidthCells: 60, maxHeightCells: 20 },
+      dims,
+    );
+  };
+
+  /** Drop the live assistant message so the image lands as its own block,
+   *  then subsequent text starts a fresh markdown context below it. */
+  const appendImage = (data: Buffer): void => {
+    const img = imageComponentFromPng(data);
+    if (!img) return;
+    if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
+    chat.addChild(img);
+  };
+
+  // `render:image` is the seam latex-images and similar extensions call after
+  // generating a PNG (e.g. from ```latex code blocks). agent-sh's bundled
+  // tui-renderer defines it, but ashi disables that renderer, so we own it.
+  ctx.define("render:image", (data: Buffer) => {
+    appendImage(data);
+    tui.requestRender();
+  });
+
   bus.on("agent:response-chunk", ({ blocks }) => {
     finalizeThinking();
-    const msg = ensureAssistant();
     for (const b of blocks) {
-      if (b.type === "text") msg.appendText(b.text);
-      else if (b.type === "code-block") msg.appendCodeBlock(b.language, b.code);
+      if (b.type === "text") ensureAssistant().appendText(b.text);
+      else if (b.type === "code-block") ensureAssistant().appendCodeBlock(b.language, b.code);
+      else if (b.type === "image") appendImage(b.data);
     }
     tui.requestRender();
   });

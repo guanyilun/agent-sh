@@ -128,12 +128,15 @@ This is a spike, not a clone of pi's full UI. The MVP renders:
 - Multi-session tree history with `/resume` and `/fork` pickers
 - LLM compaction with summaries that survive across `/resume`
 - Loader, errors, info messages
+- Inline images via the `image` ContentBlock and the `render:image` handler — the
+  bundled `latex-images` extension works against ashi without modification
+  (terminal must support iTerm2 or Kitty graphics)
 
 Out of scope for v0: branch summaries on `/fork` navigation (pi has this), `/clone`
 (duplicate active branch into a new session), permission dialogs, diff renderer, file-path
-autocomplete, session search/rename/delete inside the `/resume` picker, theme selector,
-image rendering. Each can be added by writing a pi-tui Component and subscribing to the
-corresponding bus event.
+autocomplete, session search/rename/delete inside the `/resume` picker, theme selector.
+Each can be added by writing a pi-tui Component and subscribing to the corresponding
+bus event.
 
 ## Extension surface
 
