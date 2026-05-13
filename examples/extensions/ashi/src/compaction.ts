@@ -39,7 +39,7 @@ Be concrete. Quote file paths, function names, error strings verbatim when relev
 
 export function registerCompaction(
   ctx: ExtensionContext,
-  store: () => MultiSessionStore,
+  getStore: () => MultiSessionStore,
   capture: Capture,
 ): void {
   ctx.advise("conversation:compact", async (next: (...a: unknown[]) => unknown, opts: unknown) => {
@@ -61,7 +61,7 @@ export function registerCompaction(
     const older = messages.slice(0, cutIdx);
     const kept = messages.slice(cutIdx);
 
-    const branch = store().current().getBranch();
+    const branch = getStore().current().getBranch();
     const prevCompaction = [...branch].reverse().find((e) => e.type === "compaction") as CompactionEntry | undefined;
     const prevSummary = prevCompaction?.summary;
 
@@ -80,7 +80,7 @@ export function registerCompaction(
       return next(opts);
     }
 
-    await store().current().appendCompaction(summary.trim(), firstKeptId, tokensBefore);
+    await getStore().current().appendCompaction(summary.trim(), firstKeptId, tokensBefore);
 
     const summaryMessage: AgentMessage = {
       role: "user",
@@ -88,7 +88,11 @@ export function registerCompaction(
     };
     ctx.call("conversation:replace-messages", [summaryMessage, ...kept]);
 
-    capture.resetTo([null, ...kept.map((_, i) => capture.getEntryIdAt(cutIdx + i))]);
+    const keptIds = kept.map((_, i) => capture.getEntryIdAt(cutIdx + i));
+    if (keptIds.some((id) => id === null)) {
+      ctx.bus.emit("ui:error", { message: "compaction: a kept message has no on-disk entry — capture invariant broken" });
+    }
+    capture.resetTo([null, ...keptIds]);
 
     const tokensAfter = (ctx.call("conversation:estimate-prompt-tokens") as number) ?? 0;
     ctx.bus.emit("ui:info", { message: `compacted ${older.length} messages: ${tokensBefore} → ${tokensAfter} tokens` });
@@ -114,15 +118,13 @@ function isSafeCutPoint(messages: AgentMessage[], idx: number): boolean {
   const m = messages[idx];
   if (!m) return true;
   if (m.role === "tool") return false;
-  const tc = (m as { tool_calls?: unknown[] }).tool_calls;
-  return !(m.role === "assistant" && Array.isArray(tc) && tc.length > 0);
+  return !(m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0);
 }
 
 function estimateMessageTokens(m: AgentMessage): number {
   let chars = 0;
   if (typeof m.content === "string") chars += m.content.length;
-  const tc = (m as { tool_calls?: Array<{ function?: { arguments?: string } }> }).tool_calls;
-  if (tc) for (const t of tc) chars += (t.function?.arguments?.length ?? 0);
+  if (m.tool_calls) for (const t of m.tool_calls) chars += (t.function?.arguments?.length ?? 0);
   return Math.ceil(chars * APPROX_TOKENS_PER_CHAR) + 20;
 }
 
@@ -135,9 +137,8 @@ function buildQuery(messages: AgentMessage[], prevSummary?: string): string {
     if (m.role === "user") lines.push(`[User]: ${text}`);
     else if (m.role === "assistant") {
       if (text) lines.push(`[Assistant]: ${text}`);
-      const tc = (m as { tool_calls?: Array<{ function?: { name: string; arguments: string } }> }).tool_calls;
-      if (tc) {
-        for (const t of tc) {
+      if (m.tool_calls) {
+        for (const t of m.tool_calls) {
           const args = t.function?.arguments ?? "";
           lines.push(`[Assistant tool call]: ${t.function?.name ?? "?"}(${truncate(args, 400)})`);
         }

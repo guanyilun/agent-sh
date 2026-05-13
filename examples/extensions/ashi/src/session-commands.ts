@@ -10,7 +10,7 @@ export interface SessionCommandsDeps {
 
 export function registerSessionCommands(
   ctx: ExtensionContext,
-  store: () => MultiSessionStore,
+  getStore: () => MultiSessionStore,
   capture: Capture,
   deps: SessionCommandsDeps,
 ): void {
@@ -21,7 +21,7 @@ export function registerSessionCommands(
   });
 
   ctx.registerCommand("new", "Start a fresh session (discards in-memory context)", async () => {
-    const s = store().newSession();
+    const s = getStore().newSession();
     ctx.call("conversation:reset-for-session", 1);
     ctx.call("conversation:replace-messages", []);
     capture.resetTo([]);
@@ -35,17 +35,17 @@ export function registerSessionCommands(
       bus.emit("ui:error", { message: "name: expected a name" });
       return;
     }
-    store().current().setName(name);
+    getStore().current().setName(name);
     bus.emit("ui:info", { message: `session named: ${name}` });
   });
 
   ctx.registerCommand("sessions", "List past sessions in this cwd (text dump)", async () => {
-    const list = store().listSessions();
+    const list = getStore().listSessions();
     if (list.length === 0) {
       bus.emit("ui:info", { message: "sessions: none" });
       return;
     }
-    const currentId = store().current().id;
+    const currentId = getStore().current().id;
     const lines = list.map((s) => formatSessionRow(s, s.id === currentId));
     bus.emit("ui:info", { message: `sessions (${list.length}):\n${lines.join("\n")}` });
   });
@@ -58,14 +58,13 @@ export function formatSessionRow(s: SessionInfo, isCurrent: boolean): string {
   return `${marker} ${when}  ${label}  (${s.entryCount})`;
 }
 
-/** Switch the store to a different session and sync the agent + chat. */
 export function resumeSession(
   ctx: ExtensionContext,
-  store: () => MultiSessionStore,
+  getStore: () => MultiSessionStore,
   capture: Capture,
   id: string,
 ): void {
-  store().openSession(id);
+  getStore().openSession(id);
   ctx.call("conversation:reset-for-session", 1);
-  applyBranchMessages(ctx, store, capture);
+  applyBranchMessages(ctx, getStore, capture);
 }

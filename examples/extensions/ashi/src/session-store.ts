@@ -3,13 +3,15 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 
-/** Raw LLM message shape carried in `MessageEntry`. Mirrors agent-sh's
- *  ChatCompletionMessageParam loose enough to round-trip through JSON
- *  without committing to a specific provider's schema. */
+export interface ToolCall {
+  id?: string;
+  function?: { name: string; arguments?: string };
+}
+
 export interface AgentMessage {
   role: "system" | "user" | "assistant" | "tool";
   content?: unknown;
-  tool_calls?: unknown[];
+  tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
 }
@@ -48,10 +50,8 @@ export interface SessionMeta {
   createdAt: number;
 }
 
-const ID_BYTES = 4; // 8 hex chars, matches pi
-
 export function newEntryId(): string {
-  return crypto.randomBytes(ID_BYTES).toString("hex");
+  return crypto.randomBytes(4).toString("hex");
 }
 
 /** One session = one JSONL file (entries) + sidecar files for leaf & meta.
@@ -234,10 +234,10 @@ export class SessionStore {
     try {
       this.activeLeaf = fs.readFileSync(this.leafPath, "utf-8").trim();
       if (!this.entries.has(this.activeLeaf)) this.activeLeaf = this.rootId;
-    } catch { this.activeLeaf = this.lastWrittenId(); }
+    } catch { this.activeLeaf = this.lastEntryId(); }
   }
 
-  private lastWrittenId(): string {
+  private lastEntryId(): string {
     let lastId = this.rootId;
     for (const e of this.entries.values()) lastId = e.id;
     return lastId;

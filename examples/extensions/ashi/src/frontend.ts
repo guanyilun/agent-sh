@@ -20,7 +20,7 @@ import {
 import { BusAutocompleteProvider } from "./autocomplete.js";
 import { StatusFooter } from "./status-footer.js";
 import type { MultiSessionStore } from "./multi-session-store.js";
-import type { AgentMessage, SessionEntry, MessageEntry, CompactionEntry } from "./session-store.js";
+import type { SessionEntry } from "./session-store.js";
 import { formatSessionRow } from "./session-commands.js";
 import { resumeSession } from "./session-commands.js";
 import { applyBranchMessages } from "./commands.js";
@@ -28,11 +28,6 @@ import type { Capture } from "./capture.js";
 
 const fgAccent = (t: string): string => theme.fg("accent", t);
 const fgMuted = (t: string): string => theme.fg("muted", t);
-
-interface ToolCallShape {
-  id?: string;
-  function?: { name: string; arguments?: string };
-}
 
 function detailFromArgs(argsJson: string | undefined): string {
   if (!argsJson) return "";
@@ -65,7 +60,7 @@ export interface AshiHandle {
 
 export function mountAshi(
   ctx: ExtensionContext,
-  store: () => MultiSessionStore,
+  getStore: () => MultiSessionStore,
   capture: Capture,
 ): AshiHandle {
   const { bus } = ctx;
@@ -104,9 +99,8 @@ export function mountAshi(
   tui.addChild(statusFooter);
   tui.setFocus(editor);
 
-  // ── Active render targets ────────────────────────────────────
   let activeAssistant: AssistantMessage | null = null;
-  const activeTools = new Map<string, ToolExecution>(); // keyed by toolCallId
+  const activeTools = new Map<string, ToolExecution>();
   let loader: Loader | null = null;
   let processing = false;
 
@@ -130,22 +124,16 @@ export function mountAshi(
     loader = null;
   };
 
-  /** Render one SessionEntry as chat UI components. Walks user/assistant/
-   *  tool messages, pairing tool_calls with their results by id. */
   const replayEntry = (entry: SessionEntry, toolMap: Map<string, ToolExecution>): void => {
     if (entry.type === "session") return;
     if (entry.type === "compaction") {
-      const c = entry as CompactionEntry;
-      chat.addChild(new InfoLine(`▼ compacted (firstKept=${c.firstKeptId.slice(0, 6)}, ${c.tokensBefore} tokens)`));
+      chat.addChild(new InfoLine(`▼ compacted (firstKept=${entry.firstKeptId.slice(0, 6)}, ${entry.tokensBefore} tokens)`));
       return;
     }
-    const m = (entry as MessageEntry).message;
+    const m = entry.message;
     if (m.role === "user") {
       const text = typeof m.content === "string" ? m.content : "";
-      if (text.startsWith("[")) {
-        // Synthetic preamble (e.g. nuclear preamble); skip
-        return;
-      }
+      if (text.startsWith("[Compacted conversation summary]")) return;
       chat.addChild(new UserMessage(text));
     } else if (m.role === "assistant") {
       const text = typeof m.content === "string" ? m.content : "";
@@ -155,19 +143,17 @@ export function mountAshi(
         msg.finalize();
         chat.addChild(msg);
       }
-      const tcs = (m as { tool_calls?: ToolCallShape[] }).tool_calls;
-      if (Array.isArray(tcs)) {
-        for (const tc of tcs) {
+      if (m.tool_calls) {
+        for (const tc of m.tool_calls) {
           const id = tc.id ?? "";
           const name = tc.function?.name ?? "tool";
-          const detail = detailFromArgs(tc.function?.arguments);
-          const exec = new ToolExecution(name, undefined, detail);
+          const exec = new ToolExecution(name, undefined, detailFromArgs(tc.function?.arguments));
           chat.addChild(exec);
           if (id) toolMap.set(id, exec);
         }
       }
     } else if (m.role === "tool") {
-      const id = (m as { tool_call_id?: string }).tool_call_id ?? "";
+      const id = m.tool_call_id ?? "";
       const text = typeof m.content === "string" ? m.content : "";
       const exec = id ? toolMap.get(id) : undefined;
       if (exec) {
@@ -184,7 +170,7 @@ export function mountAshi(
     activeAssistant = null;
     activeTools.clear();
     chat.clear();
-    const branch = store().current().getBranch();
+    const branch = getStore().current().getBranch();
     const toolMap = new Map<string, ToolExecution>();
     for (const e of branch) replayEntry(e, toolMap);
     tui.requestRender();
@@ -300,12 +286,12 @@ export function mountAshi(
 
   const openTreePicker = async (): Promise<void> => {
     if (pickerOpen) return;
-    const branch = store().current().getBranch();
+    const branch = getStore().current().getBranch();
     if (branch.length <= 1) {
       bus.emit("ui:info", { message: "tree: nothing to rewind to yet" });
       return;
     }
-    const activeId = store().current().getActiveLeaf();
+    const activeId = getStore().current().getActiveLeaf();
     const items: SelectItem[] = branch.map((e) => ({
       value: e.id,
       label: pickerLabel(e, e.id === activeId),
@@ -326,8 +312,8 @@ export function mountAshi(
       const id = item.value;
       close();
       if (id === activeId) return;
-      store().current().setActiveLeaf(id);
-      applyBranchMessages(ctx, store, capture);
+      getStore().current().setActiveLeaf(id);
+      applyBranchMessages(ctx, getStore, capture);
       bus.emit("ui:info", { message: `fork: rewound to ${id.slice(0, 6)}` });
       await rebuildChat();
       refreshFooterStats();
@@ -342,12 +328,12 @@ export function mountAshi(
 
   const openSessionPicker = async (): Promise<void> => {
     if (pickerOpen) return;
-    const list = store().listSessions();
+    const list = getStore().listSessions();
     if (list.length === 0) {
       bus.emit("ui:info", { message: "no past sessions in this cwd" });
       return;
     }
-    const currentId = store().current().id;
+    const currentId = getStore().current().id;
     const items: SelectItem[] = list.map((s) => ({
       value: s.id,
       label: formatSessionRow(s, s.id === currentId),
@@ -368,7 +354,7 @@ export function mountAshi(
       const id = item.value;
       close();
       if (id === currentId) return;
-      resumeSession(ctx, store, capture, id);
+      resumeSession(ctx, getStore, capture, id);
       bus.emit("ui:info", { message: `resumed session ${id}` });
       await rebuildChat();
       refreshFooterStats();
@@ -413,11 +399,8 @@ function pickerLabel(e: SessionEntry, isActive: boolean): string {
   const marker = isActive ? "●" : "│";
   const short = e.id.slice(0, 6);
   if (e.type === "session") return `${marker} ${short} session start`;
-  if (e.type === "compaction") {
-    const c = e as CompactionEntry;
-    return `${marker} ${short} ▼ compacted (firstKept=${c.firstKeptId.slice(0, 6)})`;
-  }
-  const m = (e as MessageEntry).message;
+  if (e.type === "compaction") return `${marker} ${short} ▼ compacted (firstKept=${e.firstKeptId.slice(0, 6)})`;
+  const m = e.message;
   const text = typeof m.content === "string" ? m.content.slice(0, 70).replace(/\n/g, " ") : "";
   return `${marker} ${short} ${m.role}: ${text}`;
 }

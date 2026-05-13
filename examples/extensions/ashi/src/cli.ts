@@ -59,15 +59,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Each launch starts a fresh session; /resume browses past ones.
   const cwd = process.cwd();
   const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
   const sessionsDir = path.join(os.homedir(), ".agent-sh", "extensions", "ashi", "history", cwdSlug, "sessions");
   const store = new MultiSessionStore(sessionsDir, cwd);
-  const storeRef = (): MultiSessionStore => store;
+  const getStore = (): MultiSessionStore => store;
 
-  // We persist raw AgentMessages ourselves via capture; the kernel's nuclear
-  // history pipeline is bypassed by injecting a NoopHistory adapter.
   const core = createCore({ ...config, history: new NoopHistory() });
 
   let stopFrontend: (() => void) | null = null;
@@ -97,18 +94,16 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const capture = registerCapture(ctx, storeRef);
-  registerCompaction(ctx, storeRef, capture);
+  const capture = registerCapture(ctx, getStore);
+  registerCompaction(ctx, getStore, capture);
 
-  // Kernel's default startup preamble is empty for fresh sessions; for resumes
-  // we drive it ourselves via applyBranchMessages.
   ctx.advise("conversation:format-prior-history", () => null);
 
-  const handle = mountAshi(ctx, storeRef, capture);
+  const handle = mountAshi(ctx, getStore, capture);
   stopFrontend = handle.stop;
 
-  registerForkCommands(ctx, storeRef, handle.openTreePicker, handle.rebuildChat, capture);
-  registerSessionCommands(ctx, storeRef, capture, {
+  registerForkCommands(ctx, getStore, handle.openTreePicker, handle.rebuildChat, capture);
+  registerSessionCommands(ctx, getStore, capture, {
     openSessionPicker: handle.openSessionPicker,
     rebuildChat: handle.rebuildChat,
   });

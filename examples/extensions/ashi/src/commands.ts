@@ -5,7 +5,7 @@ import type { Capture } from "./capture.js";
 
 export function registerForkCommands(
   ctx: ExtensionContext,
-  store: () => MultiSessionStore,
+  getStore: () => MultiSessionStore,
   openTreePicker: () => Promise<void>,
   rebuildChat: () => Promise<void>,
   capture: Capture,
@@ -18,7 +18,7 @@ export function registerForkCommands(
       await openTreePicker();
       return;
     }
-    const branch = store().current().getBranch();
+    const branch = getStore().current().getBranch();
     const matches = branch.filter((e) => e.id.startsWith(arg));
     if (matches.length === 0) {
       bus.emit("ui:error", { message: `fork: no entry matches "${arg}"` });
@@ -29,14 +29,14 @@ export function registerForkCommands(
       return;
     }
     const target = matches[0]!;
-    store().current().setActiveLeaf(target.id);
-    applyBranchMessages(ctx, store, capture);
+    getStore().current().setActiveLeaf(target.id);
+    applyBranchMessages(ctx, getStore, capture);
     bus.emit("ui:info", { message: `fork: rewound to ${target.id}` });
     await rebuildChat();
   });
 
   ctx.registerCommand("branch", "Show the active branch (root → leaf)", async () => {
-    const branch = store().current().getBranch();
+    const branch = getStore().current().getBranch();
     if (branch.length === 0) {
       bus.emit("ui:info", { message: "branch: empty" });
       return;
@@ -54,23 +54,24 @@ export function registerForkCommands(
 
 export function applyBranchMessages(
   ctx: ExtensionContext,
-  store: () => MultiSessionStore,
+  getStore: () => MultiSessionStore,
   capture: Capture,
 ): void {
-  const msgs = store().current().buildMessages();
-  ctx.call("conversation:replace-messages", msgs);
-  // Build the parallel id array: first slot may be the synthetic compaction
-  // summary (no entry id); the rest are real message entries from firstKeptId.
-  const branch = store().current().getBranch();
-  let compactionIdx = -1;
+  const store = getStore().current();
+  ctx.call("conversation:replace-messages", store.buildMessages());
+
+  const branch = store.getBranch();
+  let compaction: { firstKeptId: string } | null = null;
   for (let i = branch.length - 1; i >= 0; i--) {
-    if (branch[i]!.type === "compaction") { compactionIdx = i; break; }
+    if (branch[i]!.type === "compaction") {
+      compaction = branch[i] as { firstKeptId: string };
+      break;
+    }
   }
   const ids: (string | null)[] = [];
-  if (compactionIdx >= 0) {
+  if (compaction) {
     ids.push(null);
-    const c = branch[compactionIdx] as { firstKeptId: string };
-    const startIdx = branch.findIndex((e) => e.id === c.firstKeptId);
+    const startIdx = branch.findIndex((e) => e.id === compaction!.firstKeptId);
     for (let i = Math.max(0, startIdx); i < branch.length; i++) {
       if (branch[i]!.type === "message") ids.push(branch[i]!.id);
     }
