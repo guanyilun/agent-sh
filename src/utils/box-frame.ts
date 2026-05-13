@@ -43,6 +43,10 @@ export interface BoxFrameOptions {
   titleRight?: string;
   /** Footer lines shown below a divider, inside the box. */
   footer?: string[];
+  /** Raw bg ANSI open code (e.g. "\x1b[48;2;40;50;40m"). When set, fills
+   *  the frame interior with this bg and rewrites internal `\x1b[49m` /
+   *  `\x1b[0m` resets so per-cell colors in content don't punch holes. */
+  bgColor?: string;
 }
 
 // ── Public API ───────────────────────────────────────────────────
@@ -60,6 +64,7 @@ export function renderBoxFrame(content: string[], opts: BoxFrameOptions): string
   const style = opts.style ?? "rounded";
   const b = BORDERS[style];
   const bc = borderColor;
+  const bg = opts.bgColor ?? "";
 
   // Content area width = total - 2 borders - 2 padding spaces
   const innerW = Math.max(1, width - 4);
@@ -84,29 +89,39 @@ export function renderBoxFrame(content: string[], opts: BoxFrameOptions): string
 
     const dashCount = Math.max(1, width - 2 - leftVis - rightVis);
     output.push(
-      `${bc}${b.tl}${leftPart}${b.h.repeat(dashCount)}${rightPart}${b.tr}${p.reset}`,
+      paintBg(`${bc}${b.tl}${leftPart}${b.h.repeat(dashCount)}${rightPart}${b.tr}${p.reset}`, bg),
     );
   } else {
-    output.push(`${bc}${b.tl}${b.h.repeat(width - 2)}${b.tr}${p.reset}`);
+    output.push(paintBg(`${bc}${b.tl}${b.h.repeat(width - 2)}${b.tr}${p.reset}`, bg));
   }
 
   // Content lines
   for (const line of content) {
-    output.push(boxLine(line, innerW, b.v, bc));
+    output.push(paintBg(boxLine(line, innerW, b.v, bc), bg));
   }
 
   // Footer with divider
   if (opts.footer && opts.footer.length > 0) {
-    output.push(`${bc}${b.ml}${b.h.repeat(width - 2)}${b.mr}${p.reset}`);
+    output.push(paintBg(`${bc}${b.ml}${b.h.repeat(width - 2)}${b.mr}${p.reset}`, bg));
     for (const line of opts.footer) {
-      output.push(boxLine(line, innerW, b.v, bc));
+      output.push(paintBg(boxLine(line, innerW, b.v, bc), bg));
     }
   }
 
   // Bottom border
-  output.push(`${bc}${b.bl}${b.h.repeat(width - 2)}${b.br}${p.reset}`);
+  output.push(paintBg(`${bc}${b.bl}${b.h.repeat(width - 2)}${b.br}${p.reset}`, bg));
 
   return output;
+}
+
+/** Wrap a line with a uniform bg, rewriting internal `\x1b[49m` (bg-default)
+ *  and `\x1b[0m` (full-reset) so embedded colors don't punch through. */
+function paintBg(line: string, bg: string): string {
+  if (!bg) return line;
+  const fixed = line
+    .replaceAll("\x1b[49m", bg)
+    .replaceAll("\x1b[0m", "\x1b[0m" + bg);
+  return `${bg}${fixed}\x1b[49m`;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
