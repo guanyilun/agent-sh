@@ -1,5 +1,5 @@
 {
-  "name": "agent-sh-ashi",
+  "name": "@guanyilun/ashi",
   "version": "0.1.0",
   "description": "Ash with a pi-tui frontend — agent-sh's kernel without the shell, rendered through pi's TUI library",
   "type": "module",
@@ -7,20 +7,54 @@
   "bin": {
     "ashi": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "dev": "tsx src/cli.ts",
-    "build": "tsc",
-    "start": "node dist/cli.js"
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc",
+    "start": "node dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "agent-sh",
+    "ashi",
+    "ash",
+    "pi-tui",
+    "tui",
+    "agent",
+    "ai",
+    "llm",
+    "cli"
+  ],
+  "author": "Yilun Guan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guanyilun/agent-sh.git",
+    "directory": "examples/extensions/ashi"
+  },
+  "homepage": "https://github.com/guanyilun/agent-sh/tree/main/examples/extensions/ashi",
+  "bugs": {
+    "url": "https://github.com/guanyilun/agent-sh/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@earendil-works/pi-tui": "^0.74.0",
-    "agent-sh": "file:../../..",
+    "agent-sh": "^0.12.27",
     "chalk": "^5.5.0",
-    "cli-highlight": "^2.1.11",
-    "tsx": "^4.20.0"
+    "cli-highlight": "^2.1.11"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "tsx": "^4.20.0",
     "typescript": "^5.7.0"
   }
 }

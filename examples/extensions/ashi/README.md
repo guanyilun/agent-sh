@@ -23,6 +23,9 @@ ashi
 Reads `~/.agent-sh/settings.json` for providers and defaults, same as `agent-sh` itself. The
 quickest path is exporting `OPENROUTER_API_KEY` or `OPENAI_API_KEY` and running `ashi`.
 
+See the agent-sh [Usage Guide](https://github.com/guanyilun/agent-sh/blob/main/docs/usage.md)
+for the full `settings.json` schema, provider profiles, and model selection details.
+
 CLI flags mirror `agent-sh`:
 
 ```
@@ -33,6 +36,10 @@ CLI flags mirror `agent-sh`:
 --backend <name>     Agent backend (default: ash)
 -e, --extensions     Extra extensions to load (comma-separated)
 ```
+
+Extensions loaded via `-e` follow the standard agent-sh extension contract — see
+[Extensions](https://github.com/guanyilun/agent-sh/blob/main/docs/extensions.md) for the
+`ExtensionContext` API, event bus, content transforms, and custom backends.
 
 ## Keybindings
 
@@ -161,14 +168,24 @@ agent-sh extension API.
 
 ## Development
 
-To iterate on ashi from inside this repo:
+`@guanyilun/ashi` depends on the published `agent-sh` package. To iterate against
+the parent checkout instead, use `npm link`:
 
 ```bash
+# one-time: register the local agent-sh checkout
+cd /path/to/agent-sh
+npm run build
+npm link
+
+# in ashi, point its agent-sh dependency at the linked checkout
 cd examples/extensions/ashi
 npm install
+npm link agent-sh
+
 npm run dev      # tsx-driven, no compile step
 # or: npm run build && node dist/cli.js
 ```
 
-`file:../../..` in `package.json` wires `agent-sh` to the parent checkout — run
-`npm run build` at the repo root first if you haven't already.
+Rebuild agent-sh (`npm run build` at the repo root) whenever you change the
+kernel — the link picks up `dist/` directly. To go back to the published
+version, run `npm unlink agent-sh && npm install` inside `examples/extensions/ashi`.
