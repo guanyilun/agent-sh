@@ -1,19 +1,15 @@
 import type { ExtensionContext } from "agent-sh/types";
 import { formatNuclearLine } from "agent-sh/core";
-import type { TreeHistoryAdapter } from "./tree-history.js";
+import type { SessionTree } from "./leaf-tracking-tree-history.js";
 
 export function registerTreeCommands(
   ctx: ExtensionContext,
-  tree: TreeHistoryAdapter,
+  tree: SessionTree,
   openTreePicker: () => Promise<void>,
 ): void {
   const { bus } = ctx;
 
-  ctx.registerCommand("tree", "Open the history tree picker", async () => {
-    await openTreePicker();
-  });
-
-  ctx.registerCommand("fork", "Fork the next turn: /fork (interactive) or /fork <seq>", async (args) => {
+  ctx.registerCommand("fork", "Rewind and branch: /fork (interactive picker) or /fork <seq>", async (args) => {
     const trimmed = args.trim();
     if (trimmed === "") {
       await openTreePicker();

@@ -44,24 +44,45 @@ Ctrl+C   Clear editor
 Ctrl+D   Quit (when editor is empty)
 ```
 
-## History tree
+## Sessions
 
-ashi swaps the linear `~/.agent-sh/history` JSONL for a pi-style tree, persisted per-cwd
-under `~/.agent-sh/extensions/ashi/history/<cwd-slug>/tree.jsonl`. Each entry carries a
-`parentSeq`; sibling branches live on disk so you can navigate between them.
+ashi defaults to pi's many-sessions-per-cwd model: every launch starts a fresh session.
+Past sessions live under `~/.agent-sh/extensions/ashi/history/<cwd-slug>/sessions/<id>/`
+and you opt into resuming them with `/resume`.
 
 ```
-/tree      Show the whole tree, marking the active branch and fork points
-/branch    Show the active branch (root → leaf)
-/fork <seq> Reparent the next turn off <seq> instead of the current leaf
+/resume      Browse past sessions in this cwd (interactive picker)
+/new         Start a fresh session (discards in-memory context)
+/name <text> Set a display name for the current session
+/sessions    Text dump of all sessions in this cwd
 ```
 
-`/fork` only changes the on-disk parent pointer for the *next* batch — it doesn't rewind the
-agent's in-context messages. Full conversation replay from a branch is a follow-up.
+Each session is itself a tree: every entry carries a `parentSeq`, sibling branches stay
+on disk, and you can rewind/branch within a session.
 
-The kernel side of this is just three lines: an optional `parentSeq` on `NuclearEntry` plus
-optional `getBranch` / `getTree` / `setLeaf` on `HistoryAdapter`. Everything else (storage,
-walk, slash commands) lives in this extension.
+```
+/fork        Open the in-session tree picker (interactive)
+/fork <seq>  Direct rewind to <seq>
+/branch      Text dump of the active branch (root → leaf)
+```
+
+Snapshots of the live message array are saved per leaf inside each session's directory,
+so resuming a session puts the agent back into the exact context it had at shutdown
+(including any compaction summaries). `/fork` to a snapshotted leaf rewinds the agent
+context; `/fork` to a leaf that predates snapshotting just moves the on-disk parent
+pointer.
+
+The kernel side adds five small handlers:
+`parentSeq` on `NuclearEntry`; optional `getBranch`/`getTree`/`setLeaf` on `HistoryAdapter`;
+`conversation:allocate-seq` for synthesized entries; `conversation:reset-for-session` so
+multi-session adapters can swap sessions without nuclear-state bleed-through.
+
+### Alternative: single-tree-per-cwd
+
+`LeafTrackingTreeAdapter` (in `src/leaf-tracking-tree-history.ts`) is the original adapter
+ashi shipped with: one ever-growing tree per cwd, auto-resume the leaf at startup, no
+session boundaries. Still exported; swap it into `cli.ts` instead of `MultiSessionTreeAdapter`
+if you prefer that workflow.
 
 ## Compaction
 
@@ -85,31 +106,22 @@ The kernel exposes one extra handler (`conversation:allocate-seq`) so the compac
 gets a fresh seq from the same counter as kernel-produced entries. Everything else
 (prompt template, cut-point walker, serialization, LLM call) lives in this extension.
 
-## Session restore
-
-After every turn, ashi snapshots the live message array to
-`history/<cwd-slug>/snapshots/<leaf-seq>.json`. On startup, it reloads the snapshot for
-the active leaf and calls `conversation:replace-messages`, so the agent resumes with the
-exact same context it had at shutdown — including the post-compaction `[summary, ...kept]`
-shape that pi preserves on reload.
-
-`/fork <seq>` now also rewinds the agent context: if a snapshot exists at that seq, it's
-loaded; otherwise the on-disk parent pointer changes but the in-memory messages stay put
-(degraded mode for forks to leaves that predate snapshotting).
-
 ## What's intentionally missing
 
 This is a spike, not a clone of pi's full UI. The MVP renders:
 
 - User submissions, streaming assistant Markdown
 - Tool invocations with start/complete state
-- Slash commands with autocomplete (`/help`, `/model`, `/backend`, `/tree`, `/fork`, …)
-- Tree-shaped on-disk history with `/fork` divergence
+- Slash commands with autocomplete (`/help`, `/model`, `/backend`, `/resume`, `/new`, `/fork`, …)
+- Multi-session tree history with `/resume` and `/fork` pickers
+- LLM compaction with summaries that survive across `/resume`
 - Loader, errors, info messages
 
-Out of scope for v0: permission dialogs, diff renderer, file-path autocomplete, session
-selector, theme selector, image rendering. Each can be added by writing a pi-tui Component
-and subscribing to the corresponding bus event.
+Out of scope for v0: branch summaries on `/fork` navigation (pi has this), `/clone`
+(duplicate active branch into a new session), permission dialogs, diff renderer, file-path
+autocomplete, session search/rename/delete inside the `/resume` picker, theme selector,
+image rendering. Each can be added by writing a pi-tui Component and subscribing to the
+corresponding bus event.
 
 ## Development
 

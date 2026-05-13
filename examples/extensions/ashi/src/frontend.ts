@@ -19,7 +19,9 @@ import {
 } from "./components.js";
 import { BusAutocompleteProvider } from "./autocomplete.js";
 import { StatusFooter } from "./status-footer.js";
-import type { TreeHistoryAdapter } from "./tree-history.js";
+import type { SessionTree } from "./leaf-tracking-tree-history.js";
+import type { MultiSessionTreeAdapter } from "./multi-session-tree-history.js";
+import { formatSessionRow } from "./session-commands.js";
 
 const fgAccent = (t: string): string => theme.fg("accent", t);
 const fgMuted = (t: string): string => theme.fg("muted", t);
@@ -56,9 +58,14 @@ export interface AshiHandle {
   tui: TUI;
   stop: () => void;
   openTreePicker: () => Promise<void>;
+  openSessionPicker: () => Promise<void>;
 }
 
-export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): AshiHandle {
+export function mountAshi(
+  ctx: ExtensionContext,
+  tree: SessionTree,
+  sessions: MultiSessionTreeAdapter | null,
+): AshiHandle {
   const { bus } = ctx;
   const terminal = new ProcessTerminal();
   const tui = new TUI(terminal);
@@ -305,11 +312,67 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
     tui.requestRender();
   };
 
+  const openSessionPicker = async (): Promise<void> => {
+    if (pickerOpen) return;
+    if (!sessions) {
+      bus.emit("ui:error", { message: "resume: not supported by the active history adapter" });
+      return;
+    }
+    const list = await sessions.listSessions();
+    if (list.length === 0) {
+      bus.emit("ui:info", { message: "no past sessions in this cwd" });
+      return;
+    }
+    const currentId = sessions.getCurrentId();
+    const items: SelectItem[] = list.map((s) => ({
+      value: s.id,
+      label: formatSessionRow(s, s.id === currentId),
+      description: s.id,
+    }));
+    const picker = new SelectList(items, 15, selectListTheme());
+    const currentIdx = items.findIndex((it) => it.value === currentId);
+    if (currentIdx >= 0) picker.setSelectedIndex(currentIdx);
+
+    const close = (): void => {
+      pickerOpen = false;
+      footerSlot.removeChild(picker);
+      tui.setFocus(editor);
+      tui.requestRender();
+    };
+
+    picker.onSelect = async (item) => {
+      const id = item.value;
+      close();
+      if (id === currentId) return;
+      sessions.switchTo(id);
+      const branch = await sessions.readRecent();
+      const nextSeq = (branch.length === 0 ? 0 : Math.max(...branch.map((e) => e.seq))) + 1;
+      ctx.call("conversation:reset-for-session", nextSeq);
+      const snapshot = sessions.loadSnapshot(sessions.getActiveLeaf());
+      if (snapshot && snapshot.length > 0) {
+        ctx.call("conversation:replace-messages", snapshot);
+        bus.emit("ui:info", { message: `resumed session ${id} (${snapshot.length} messages)` });
+      } else {
+        ctx.call("conversation:replace-messages", []);
+        bus.emit("ui:info", { message: `resumed session ${id} (no snapshot — empty context)` });
+      }
+      refreshFooterStats();
+      tui.requestRender();
+    };
+    picker.onCancel = close;
+
+    pickerOpen = true;
+    footerSlot.addChild(picker);
+    tui.setFocus(picker);
+    tui.requestRender();
+  };
+
   tui.start();
 
   return {
     tui,
     stop: () => { tui.stop(); },
     openTreePicker,
+    openSessionPicker,
   };
 }

@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "agent-sh/types";
 import { type NuclearEntry } from "agent-sh/core";
-import type { TreeHistoryAdapter } from "./tree-history.js";
+import type { SessionTree } from "./leaf-tracking-tree-history.js";
 
 const KEEP_RECENT_TOKEN_BUDGET = 20_000;
 // Matches agent-sh ConversationState.estimateTokens (chars/4).
@@ -43,7 +43,7 @@ interface AgentMessage {
   tool_calls?: Array<{ function?: { name: string; arguments: string } }>;
 }
 
-export function registerCompaction(ctx: ExtensionContext, tree: TreeHistoryAdapter): void {
+export function registerCompaction(ctx: ExtensionContext, tree: SessionTree): void {
   ctx.advise("conversation:compact", async (next: (...a: unknown[]) => unknown, opts: unknown) => {
     if (!ctx.llm.available) return next(opts);
 

@@ -14,10 +14,11 @@ import { getSettings } from "agent-sh/settings";
 import type { AgentShellConfig } from "agent-sh/types";
 
 import { mountAshi } from "./frontend.js";
-import { TreeHistoryAdapter } from "./tree-history.js";
+import { MultiSessionTreeAdapter } from "./multi-session-tree-history.js";
 import { registerTreeCommands } from "./commands.js";
+import { registerSessionCommands } from "./session-commands.js";
 import { registerCompaction } from "./compaction.js";
-import { registerSessionRestore, restoreSnapshot } from "./session-restore.js";
+import { registerSessionRestore } from "./session-restore.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -59,10 +60,10 @@ async function main(): Promise<void> {
     process.stderr.write("ashi requires a TTY for interactive rendering.\n");
     process.exit(1);
   }
-  // Per-cwd tree so different projects don't share branches.
+  // Per-cwd sessions root; each launch creates a fresh session, /resume to browse past ones.
   const cwdSlug = process.cwd().replace(/\//g, "-").replace(/^-/, "");
-  const historyDir = path.join(os.homedir(), ".agent-sh", "extensions", "ashi", "history", cwdSlug);
-  const treeHistory = new TreeHistoryAdapter(historyDir);
+  const sessionsRoot = path.join(os.homedir(), ".agent-sh", "extensions", "ashi", "history", cwdSlug, "sessions");
+  const treeHistory = new MultiSessionTreeAdapter(sessionsRoot);
   const core = createCore({ ...config, history: treeHistory });
 
   // Built by frontend.ts; declared up here so cleanup can reach it.
@@ -100,12 +101,15 @@ async function main(): Promise<void> {
   registerCompaction(ctx, treeHistory);
   registerSessionRestore(ctx, treeHistory);
 
-  const handle = mountAshi(ctx, treeHistory);
+  const handle = mountAshi(ctx, treeHistory, treeHistory);
   stopFrontend = handle.stop;
   registerTreeCommands(ctx, treeHistory, handle.openTreePicker);
+  registerSessionCommands(ctx, treeHistory, {
+    openSessionPicker: handle.openSessionPicker,
+    applySessionSnapshot: () => { /* picker handles this itself */ },
+  });
 
   await core.activateBackend(config.backend ?? getSettings().defaultBackend);
-  restoreSnapshot(ctx, treeHistory);
 
   process.on("SIGTERM", cleanup);
   process.on("SIGHUP", cleanup);

@@ -976,6 +976,7 @@ export class AgentLoop implements AgentBackend {
       (toolName: string, args: Record<string, unknown>, content: string, isError: boolean, iid: string, seq: number) =>
         nucleate(isError ? "error" : "tool", toolName, args, content, isError, iid, seq));
     h.define("conversation:allocate-seq", () => this.conversation.allocateSeq());
+    h.define("conversation:reset-for-session", (nextSeq: number) => this.conversation.resetForSession(nextSeq));
 
     // Read-only views into the nuclear state, for compact strategies
     // and introspect that read without replacing.

@@ -8,7 +8,22 @@ import {
   matchEntry,
 } from "agent-sh/core";
 
-export class TreeHistoryAdapter implements HistoryAdapter {
+/** Common surface for ashi's tree-shaped history adapters. Consumers
+ *  (frontend, commands, compaction, session-restore) depend on this
+ *  interface so the underlying adapter can be swapped — e.g. between
+ *  the leaf-tracking single-tree variant and the multi-session variant. */
+export interface SessionTree extends HistoryAdapter {
+  getBranch(leafSeq: number): Promise<NuclearEntry[]>;
+  getTree(): Promise<NuclearEntry[]>;
+  setLeaf(seq: number): void;
+  getActiveLeaf(): number;
+  saveSnapshot(leaf: number, messages: unknown[]): void;
+  loadSnapshot(leaf: number): unknown[] | null;
+  hasSnapshot(leaf: number): boolean;
+}
+
+/** Single tree per cwd, auto-resume the leaf across launches. */
+export class LeafTrackingTreeAdapter implements SessionTree {
   private entriesPath: string;
   private leafPath: string;
   private snapshotsDir: string;

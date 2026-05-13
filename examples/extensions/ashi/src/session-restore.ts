@@ -1,8 +1,8 @@
 import type { ExtensionContext } from "agent-sh/types";
 import { type NuclearEntry, formatNuclearLine } from "agent-sh/core";
-import type { TreeHistoryAdapter } from "./tree-history.js";
+import type { SessionTree } from "./leaf-tracking-tree-history.js";
 
-export function registerSessionRestore(ctx: ExtensionContext, tree: TreeHistoryAdapter): void {
+export function registerSessionRestore(ctx: ExtensionContext, tree: SessionTree): void {
   ctx.advise("conversation:format-prior-history", (_next: unknown, entries: NuclearEntry[]) => {
     if (tree.hasSnapshot(tree.getActiveLeaf())) return null;
     if (!entries || entries.length === 0) return null;
@@ -24,7 +24,7 @@ export function registerSessionRestore(ctx: ExtensionContext, tree: TreeHistoryA
   });
 }
 
-export function restoreSnapshot(ctx: ExtensionContext, tree: TreeHistoryAdapter): boolean {
+export function restoreSnapshot(ctx: ExtensionContext, tree: SessionTree): boolean {
   const leaf = tree.getActiveLeaf();
   const snapshot = tree.loadSnapshot(leaf);
   if (!snapshot || snapshot.length === 0) return false;
