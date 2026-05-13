@@ -1,72 +1,82 @@
 import type { ExtensionContext } from "agent-sh/types";
-import { type NuclearEntry, formatNuclearLine } from "agent-sh/core";
-import type { TreeHistoryAdapter } from "./tree-history.js";
+import type { MultiSessionStore } from "./multi-session-store.js";
+import type { AgentMessage } from "./session-store.js";
+import type { Capture } from "./capture.js";
 
-export function registerTreeCommands(
+export function registerForkCommands(
   ctx: ExtensionContext,
-  tree: TreeHistoryAdapter,
+  getStore: () => MultiSessionStore,
+  openTreePicker: () => Promise<void>,
+  rebuildChat: () => Promise<void>,
+  capture: Capture,
 ): void {
   const { bus } = ctx;
 
-  ctx.registerCommand("tree", "Show the history tree (active branch + sibling counts)", async () => {
-    const all = await tree.getTree();
-    if (all.length === 0) {
-      bus.emit("ui:info", { message: "tree: empty" });
+  ctx.registerCommand("fork", "Rewind and branch: /fork (interactive picker) or /fork <id-prefix>", async (args) => {
+    const arg = args.trim();
+    if (arg === "") {
+      await openTreePicker();
       return;
     }
-    const activeLeaf = tree.getActiveLeaf();
-    const branchSeqs = new Set((await tree.getBranch(activeLeaf)).map((e) => e.seq));
-    const childCount = new Map<number, number>();
-    for (const e of all) {
-      if (e.parentSeq == null) continue;
-      childCount.set(e.parentSeq, (childCount.get(e.parentSeq) ?? 0) + 1);
-    }
-    const lines = all.map((e) => formatRow(e, branchSeqs, childCount, activeLeaf));
-    bus.emit("ui:info", { message: `tree (active leaf #${activeLeaf}):\n${lines.join("\n")}` });
-  });
-
-  ctx.registerCommand("fork", "Fork the next turn from a specific seq: /fork <seq>", async (args) => {
-    const trimmed = args.trim();
-    const seq = trimmed === "" ? 0 : parseInt(trimmed, 10);
-    if (Number.isNaN(seq)) {
-      bus.emit("ui:error", { message: "fork: expected a numeric seq" });
+    const branch = getStore().current().getBranch();
+    const matches = branch.filter((e) => e.id.startsWith(arg));
+    if (matches.length === 0) {
+      bus.emit("ui:error", { message: `fork: no entry matches "${arg}"` });
       return;
     }
-    if (seq !== 0 && !(await tree.findBySeq(seq))) {
-      bus.emit("ui:error", { message: `fork: no entry at seq ${seq}` });
+    if (matches.length > 1) {
+      bus.emit("ui:error", { message: `fork: ambiguous prefix "${arg}" matches ${matches.length} entries` });
       return;
     }
-    tree.setLeaf(seq);
-    const snapshot = tree.loadSnapshot(seq);
-    if (snapshot && snapshot.length > 0) {
-      ctx.call("conversation:replace-messages", snapshot);
-      bus.emit("ui:info", { message: `fork: restored ${snapshot.length} messages from snapshot @ #${seq}` });
-    } else {
-      bus.emit("ui:info", { message: `fork: next turn parents from #${seq} (no snapshot — agent context not rewound)` });
-    }
+    const target = matches[0]!;
+    getStore().current().setActiveLeaf(target.id);
+    applyBranchMessages(ctx, getStore, capture);
+    bus.emit("ui:info", { message: `fork: rewound to ${target.id}` });
+    await rebuildChat();
   });
 
   ctx.registerCommand("branch", "Show the active branch (root → leaf)", async () => {
-    const branch = await tree.getBranch(tree.getActiveLeaf());
+    const branch = getStore().current().getBranch();
     if (branch.length === 0) {
       bus.emit("ui:info", { message: "branch: empty" });
       return;
     }
-    const lines = branch.map(formatNuclearLine);
+    const lines = branch.map((e) => {
+      if (e.type === "session") return `[${e.id}] session start (${e.cwd})`;
+      if (e.type === "compaction") return `[${e.id}] compaction (firstKept=${e.firstKeptId})`;
+      const msg = (e as { message: AgentMessage }).message;
+      const text = typeof msg.content === "string" ? msg.content : "";
+      return `[${e.id}] ${msg.role}: ${text.slice(0, 60)}`;
+    });
     bus.emit("ui:info", { message: `branch (${branch.length} entries):\n${lines.join("\n")}` });
   });
 }
 
-function formatRow(
-  e: NuclearEntry,
-  branchSeqs: Set<number>,
-  childCount: Map<number, number>,
-  activeLeaf: number,
-): string {
-  const onBranch = branchSeqs.has(e.seq);
-  const marker = e.seq === activeLeaf ? "●" : onBranch ? "│" : " ";
-  const kids = childCount.get(e.seq) ?? 0;
-  const fork = kids > 1 ? ` (${kids} branches)` : "";
-  const parent = e.parentSeq != null ? ` ← #${e.parentSeq}` : "";
-  return `${marker} #${e.seq} ${e.sum}${parent}${fork}`;
+export function applyBranchMessages(
+  ctx: ExtensionContext,
+  getStore: () => MultiSessionStore,
+  capture: Capture,
+): void {
+  const store = getStore().current();
+  ctx.call("conversation:replace-messages", store.buildMessages());
+
+  const branch = store.getBranch();
+  let compaction: { firstKeptId: string } | null = null;
+  for (let i = branch.length - 1; i >= 0; i--) {
+    if (branch[i]!.type === "compaction") {
+      compaction = branch[i] as { firstKeptId: string };
+      break;
+    }
+  }
+  const ids: (string | null)[] = [];
+  if (compaction) {
+    ids.push(null);
+    const startIdx = branch.findIndex((e) => e.id === compaction!.firstKeptId);
+    for (let i = Math.max(0, startIdx); i < branch.length; i++) {
+      if (branch[i]!.type === "message") ids.push(branch[i]!.id);
+    }
+  } else {
+    for (const e of branch) if (e.type === "message") ids.push(e.id);
+  }
+  capture.resetTo(ids);
 }

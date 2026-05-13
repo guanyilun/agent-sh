@@ -95,6 +95,7 @@ class Theme {
   }
   fg(color: ThemeColor, text: string): string { return `${this.fgCodes.get(color)}${text}\x1b[39m`; }
   bg(color: ThemeColor, text: string): string { return `${this.bgCodes.get(color)}${text}\x1b[49m`; }
+  bgCode(color: ThemeColor): string { return this.bgCodes.get(color) ?? ""; }
   bold(text: string): string { return chalk.bold(text); }
   italic(text: string): string { return chalk.italic(text); }
   underline(text: string): string { return chalk.underline(text); }
@@ -152,6 +153,7 @@ export function editorTheme(): EditorTheme {
 export const KIND_ICONS: Record<string, string> = {
   read: "◆",
   edit: "✎",
+  write: "✎",
   delete: "✕",
   move: "↗",
   search: "⌕",

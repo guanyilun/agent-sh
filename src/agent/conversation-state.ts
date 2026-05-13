@@ -412,6 +412,17 @@ export class ConversationState {
     return this.nextSeq++;
   }
 
+  /** Clear nuclear bookkeeping and reset the seq counter. For extensions
+   *  that swap sessions (multi-session history adapters) so the in-memory
+   *  nuclear list, recall archive, and seq counter don't carry over from
+   *  the previous session's tree. */
+  resetForSession(nextSeq: number): void {
+    this.nuclearEntries = [];
+    this.nuclearBySeq.clear();
+    this.recallArchive.clear();
+    this.nextSeq = nextSeq;
+  }
+
   // ── Token estimation ──────────────────────────────────────────
 
   updateApiTokenCount(promptTokens: number): void {

@@ -7,17 +7,18 @@
  * frontend. Demonstrates that the kernel is frontend-agnostic — same
  * backend, tools, slash commands, providers; different presentation.
  */
-import { createCore } from "agent-sh/core";
+import { createCore, NoopHistory } from "agent-sh/core";
 import { loadBuiltinExtensions } from "agent-sh/extensions";
 import { loadExtensions } from "agent-sh/extension-loader";
 import { getSettings } from "agent-sh/settings";
 import type { AgentShellConfig } from "agent-sh/types";
 
 import { mountAshi } from "./frontend.js";
-import { TreeHistoryAdapter } from "./tree-history.js";
-import { registerTreeCommands } from "./commands.js";
+import { MultiSessionStore } from "./multi-session-store.js";
+import { registerForkCommands } from "./commands.js";
+import { registerSessionCommands } from "./session-commands.js";
 import { registerCompaction } from "./compaction.js";
-import { registerSessionRestore, restoreSnapshot } from "./session-restore.js";
+import { registerCapture } from "./capture.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -47,25 +48,25 @@ function parseArgs(argv: string[]): AgentShellConfig & { extensions?: string[] }
     }
   }
 
-  // shell is required by AgentShellConfig's type but unused without the PTY frontend.
   return { shell: "/bin/sh", model, apiKey, baseURL, provider, backend, extensions };
 }
 
 async function main(): Promise<void> {
-  // parseArgs handles --help by exiting before we reach the TTY check.
   const config = parseArgs(process.argv.slice(2));
 
   if (!process.stdin.isTTY) {
     process.stderr.write("ashi requires a TTY for interactive rendering.\n");
     process.exit(1);
   }
-  // Per-cwd tree so different projects don't share branches.
-  const cwdSlug = process.cwd().replace(/\//g, "-").replace(/^-/, "");
-  const historyDir = path.join(os.homedir(), ".agent-sh", "extensions", "ashi", "history", cwdSlug);
-  const treeHistory = new TreeHistoryAdapter(historyDir);
-  const core = createCore({ ...config, history: treeHistory });
 
-  // Built by frontend.ts; declared up here so cleanup can reach it.
+  const cwd = process.cwd();
+  const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
+  const sessionsDir = path.join(os.homedir(), ".agent-sh", "ashi", "history", cwdSlug, "sessions");
+  const store = new MultiSessionStore(sessionsDir, cwd);
+  const getStore = (): MultiSessionStore => store;
+
+  const core = createCore({ ...config, history: new NoopHistory() });
+
   let stopFrontend: (() => void) | null = null;
 
   const cleanup = (): void => {
@@ -79,11 +80,7 @@ async function main(): Promise<void> {
 
   const ctx = core.extensionContext({ quit: cleanup });
 
-  // Skip shell-context (no PTY → no cwd tracking via shell events; core's
-  // process.cwd() default is fine), the default streaming tui-renderer
-  // (pi-tui replaces it), and file-autocomplete (it advises the shell's
-  // input handler, which doesn't exist here).
-  const disabled = ["shell-context", "tui-renderer", "file-autocomplete"];
+  const disabled = ["shell-context", "tui-renderer"];
   await loadBuiltinExtensions(ctx, disabled);
 
   const loaded = await loadExtensions(ctx, config.extensions);
@@ -97,15 +94,22 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  registerTreeCommands(ctx, treeHistory);
-  registerCompaction(ctx, treeHistory);
-  registerSessionRestore(ctx, treeHistory);
+  const capture = registerCapture(ctx, getStore);
+  registerCompaction(ctx, getStore, capture);
 
-  const handle = mountAshi(ctx, treeHistory);
+  ctx.advise("conversation:format-prior-history", () => null);
+  ctx.advise("system-prompt:build", (base) => `${base}\n\n<cwd>${process.cwd()}</cwd>`);
+
+  const handle = mountAshi(ctx, getStore, capture);
   stopFrontend = handle.stop;
 
+  registerForkCommands(ctx, getStore, handle.openTreePicker, handle.rebuildChat, capture);
+  registerSessionCommands(ctx, getStore, capture, {
+    openSessionPicker: handle.openSessionPicker,
+    rebuildChat: handle.rebuildChat,
+  });
+
   await core.activateBackend(config.backend ?? getSettings().defaultBackend);
-  restoreSnapshot(ctx, treeHistory);
 
   process.on("SIGTERM", cleanup);
   process.on("SIGHUP", cleanup);

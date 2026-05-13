@@ -4,58 +4,94 @@ import {
   Container,
   Editor,
   Loader,
+  SelectList,
+  Spacer,
+  type SelectItem,
   matchesKey,
 } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
-import { editorTheme, theme } from "./theme.js";
+import { editorTheme, selectListTheme, theme } from "./theme.js";
 import {
   AssistantMessage,
   ErrorLine,
   InfoLine,
+  ThinkingBlock,
   ToolExecution,
   UserMessage,
 } from "./components.js";
 import { BusAutocompleteProvider } from "./autocomplete.js";
 import { StatusFooter } from "./status-footer.js";
-import type { TreeHistoryAdapter } from "./tree-history.js";
+import type { MultiSessionStore } from "./multi-session-store.js";
+import type { SessionEntry } from "./session-store.js";
+import { formatSessionRow } from "./session-commands.js";
+import { resumeSession } from "./session-commands.js";
+import { applyBranchMessages } from "./commands.js";
+import type { Capture } from "./capture.js";
+import { execSync } from "node:child_process";
+import { renderDiff } from "agent-sh/utils/diff-renderer.js";
+import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
+
+interface DiffStats { added: number; removed: number; isNewFile: boolean; isIdentical: boolean }
+
+function diffFrameTitle(filePath: string, diff: DiffStats): string {
+  const stats = diff.isNewFile
+    ? theme.fg("success", `+${diff.added}`)
+    : `${theme.fg("success", `+${diff.added}`)} ${theme.fg("error", `-${diff.removed}`)}`;
+  return `${theme.fg("muted", filePath)}  ${stats}`;
+}
+
+function readReasoning(m: unknown): string {
+  const mm = m as { reasoning?: unknown; reasoning_content?: unknown };
+  const r = mm.reasoning ?? mm.reasoning_content;
+  return typeof r === "string" ? r : "";
+}
+
+function currentGitBranch(cwd: string): string | undefined {
+  try {
+    const out = execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd, stdio: ["ignore", "pipe", "ignore"], timeout: 500,
+    }).toString().trim();
+    return out || undefined;
+  } catch { return undefined; }
+}
 
 const fgAccent = (t: string): string => theme.fg("accent", t);
 const fgMuted = (t: string): string => theme.fg("muted", t);
 
-/** Tools without a `formatCall` rely on the renderer to surface the
- *  meaningful bit of their rawInput (the command, the file path, the
- *  search pattern). Mirrors src/extensions/tui-renderer.ts extractDetail. */
-function detailFor(
-  rawInput: unknown,
-  locations: { path: string; line?: number | null }[] | undefined,
-  cwd: string,
-): string {
-  const home = process.env.HOME;
-  const relativize = (fp: string): string => {
-    if (fp.startsWith(`${cwd}/`)) return fp.slice(cwd.length + 1);
-    if (home && fp.startsWith(`${home}/`)) return `~/${fp.slice(home.length + 1)}`;
-    return fp;
-  };
-  if (locations && locations.length > 0) {
-    const loc = locations[0]!;
-    const fp = relativize(loc.path);
-    return loc.line ? `${fp}:${loc.line}` : fp;
-  }
-  const raw = rawInput as Record<string, unknown> | undefined;
-  if (!raw) return "";
-  if (typeof raw.command === "string") return `$ ${raw.command}`;
-  if (typeof raw.pattern === "string") return raw.pattern;
-  if (typeof raw.path === "string") return relativize(raw.path);
-  if (typeof raw.query === "string") return `"${raw.query}"`;
+function detailFromArgs(argsJson: string | undefined): string {
+  if (!argsJson) return "";
+  try {
+    const args = JSON.parse(argsJson) as Record<string, unknown>;
+    if (typeof args.command === "string") return `$ ${args.command}`;
+    if (typeof args.pattern === "string") return args.pattern;
+    if (typeof args.path === "string") return relativize(args.path);
+    if (typeof args.file_path === "string") return relativize(args.file_path);
+    if (typeof args.query === "string") return `"${args.query}"`;
+  } catch { /* fall through */ }
   return "";
+}
+
+function relativize(fp: string): string {
+  const home = process.env.HOME;
+  const cwd = process.cwd();
+  if (fp.startsWith(`${cwd}/`)) return fp.slice(cwd.length + 1);
+  if (home && fp.startsWith(`${home}/`)) return `~/${fp.slice(home.length + 1)}`;
+  return fp;
 }
 
 export interface AshiHandle {
   tui: TUI;
   stop: () => void;
+  openTreePicker: () => Promise<void>;
+  openSessionPicker: () => Promise<void>;
+  rebuildChat: () => Promise<void>;
 }
 
-export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): AshiHandle {
+export function mountAshi(
+  ctx: ExtensionContext,
+  getStore: () => MultiSessionStore,
+  capture: Capture,
+): AshiHandle {
   const { bus } = ctx;
   const terminal = new ProcessTerminal();
   const tui = new TUI(terminal);
@@ -79,11 +115,15 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
   };
 
   const statusFooter = new StatusFooter();
-  statusFooter.update({ cwd: ctx.call("cwd") as string });
+  const cwd = ctx.call("cwd") as string;
+  statusFooter.update({ cwd, branch: currentGitBranch(cwd) });
   let compactions = 0;
   const refreshFooterStats = (): void => {
     const tokens = ctx.call("conversation:estimate-prompt-tokens") as number | undefined;
-    statusFooter.update({ leaf: tree.getActiveLeaf(), tokens: tokens ?? 0 });
+    statusFooter.update({ tokens: tokens ?? 0 });
+  };
+  const refreshBranch = (): void => {
+    statusFooter.update({ branch: currentGitBranch(cwd) });
   };
 
   tui.addChild(chat);
@@ -92,11 +132,12 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
   tui.addChild(statusFooter);
   tui.setFocus(editor);
 
-  // ── Active render targets ────────────────────────────────────
   let activeAssistant: AssistantMessage | null = null;
-  const activeTools = new Map<string, ToolExecution>(); // keyed by toolCallId
+  let activeThinking: ThinkingBlock | null = null;
+  const activeTools = new Map<string, ToolExecution>();
   let loader: Loader | null = null;
   let processing = false;
+  let hideThinking = false;
 
   const ensureAssistant = (): AssistantMessage => {
     if (!activeAssistant) {
@@ -106,16 +147,93 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
     return activeAssistant;
   };
 
-  const startLoader = () => {
+  const finalizeThinking = (): void => {
+    if (activeThinking) {
+      activeThinking.finalize();
+      activeThinking = null;
+    }
+  };
+
+  const ensureThinking = (): ThinkingBlock => {
+    if (!activeThinking) {
+      activeThinking = new ThinkingBlock();
+      activeThinking.setHidden(hideThinking);
+      chat.addChild(activeThinking);
+    }
+    return activeThinking;
+  };
+
+  const startLoader = (): void => {
     if (loader) return;
     loader = new Loader(tui, fgAccent, fgMuted, "thinking…");
     footerSlot.addChild(loader);
   };
-  const stopLoader = () => {
+  const stopLoader = (): void => {
     if (!loader) return;
     loader.stop();
     footerSlot.removeChild(loader);
     loader = null;
+  };
+
+  const replayEntry = (entry: SessionEntry, toolMap: Map<string, ToolExecution>): void => {
+    if (entry.type === "session") return;
+    if (entry.type === "compaction") {
+      chat.addChild(new InfoLine(`▼ compacted (firstKept=${entry.firstKeptId.slice(0, 6)}, ${entry.tokensBefore} tokens)`));
+      return;
+    }
+    const m = entry.message;
+    if (m.role === "user") {
+      const text = typeof m.content === "string" ? m.content : "";
+      if (text.startsWith("[Compacted conversation summary]")) return;
+      chat.addChild(new UserMessage(text));
+    } else if (m.role === "assistant") {
+      const reasoning = readReasoning(m);
+      if (reasoning) {
+        const tb = new ThinkingBlock();
+        tb.appendText(reasoning);
+        tb.finalize();
+        tb.setHidden(hideThinking);
+        chat.addChild(tb);
+      }
+      const text = typeof m.content === "string" ? m.content : "";
+      if (text) {
+        const msg = new AssistantMessage();
+        msg.appendText(text);
+        msg.finalize();
+        chat.addChild(msg);
+      }
+      if (m.tool_calls) {
+        for (const tc of m.tool_calls) {
+          const id = tc.id ?? "";
+          const name = tc.function?.name ?? "tool";
+          const exec = new ToolExecution(name, undefined, detailFromArgs(tc.function?.arguments));
+          chat.addChild(exec);
+          if (id) toolMap.set(id, exec);
+        }
+      }
+    } else if (m.role === "tool") {
+      const id = m.tool_call_id ?? "";
+      const text = typeof m.content === "string" ? m.content : "";
+      const exec = id ? toolMap.get(id) : undefined;
+      if (exec) {
+        if (text) exec.appendOutput(text);
+        exec.complete(0, undefined);
+        if (id) toolMap.delete(id);
+      } else {
+        chat.addChild(new InfoLine(`tool result (no matching call): ${text.slice(0, 80)}`));
+      }
+    }
+  };
+
+  const rebuildChat = async (): Promise<void> => {
+    activeAssistant = null;
+    activeThinking = null;
+    activeTools.clear();
+    chat.clear();
+    const branch = getStore().current().getBranch();
+    const toolMap = new Map<string, ToolExecution>();
+    for (const e of branch) replayEntry(e, toolMap);
+    tui.requestRender();
   };
 
   // ── Bus wiring ───────────────────────────────────────────────
@@ -132,6 +250,7 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
   });
 
   bus.on("agent:response-chunk", ({ blocks }) => {
+    finalizeThinking();
     const msg = ensureAssistant();
     for (const b of blocks) {
       if (b.type === "text") msg.appendText(b.text);
@@ -140,19 +259,23 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
     tui.requestRender();
   });
 
-  bus.on("agent:thinking-chunk", () => {
-    // Thinking is currently not surfaced as its own component; keep
-    // the loader spinning. A future ThinkingPanel could subscribe here.
+  bus.on("agent:thinking-chunk", ({ text }) => {
+    if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
+    ensureThinking().appendText(text);
+    tui.requestRender();
   });
 
   bus.on("agent:tool-started", (e) => {
+    finalizeThinking();
+    if (activeAssistant) {
+      activeAssistant.finalize();
+      activeAssistant = null;
+    }
     const id = e.toolCallId ?? `${e.title}-${Date.now()}`;
-    // Kernel composes title as "<toolName>: <args.description>" when the
-    // tool's args carry a description. The command/path shown right next
-    // to the title already conveys what the call is doing — strip the
-    // suffix so the header reads as "bash" / "read_file" / etc.
     const title = e.title.split(":")[0]!.trim();
-    const detail = e.displayDetail || detailFor(e.rawInput, e.locations, ctx.call("cwd"));
+    const detail = e.displayDetail || detailFromArgs(
+      typeof e.rawInput === "string" ? e.rawInput : JSON.stringify(e.rawInput ?? {})
+    );
     const tool = new ToolExecution(title, e.kind, detail);
     activeTools.set(id, tool);
     chat.addChild(tool);
@@ -172,6 +295,30 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
     const tool = activeTools.get(id);
     if (!tool) return;
     const summary = e.resultDisplay?.summary;
+    const body = e.resultDisplay?.body;
+    const ok = e.exitCode === null || e.exitCode === 0;
+    if (body?.kind === "diff") {
+      const diff = body.diff as DiffStats & Parameters<typeof renderDiff>[0];
+      if (!diff.isIdentical) {
+        const termW = process.stdout.columns ?? 80;
+        const boxW = Math.max(40, termW);
+        const contentW = Math.max(20, boxW - 4);
+        const diffLines = renderDiff(diff, {
+          width: contentW,
+          filePath: body.filePath,
+          trueColor: true,
+          maxLines: 30,
+        });
+        const inner = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
+        const framed = renderBoxFrame(inner, {
+          width: boxW,
+          style: "rounded",
+          title: diffFrameTitle(body.filePath, diff),
+          bgColor: theme.bgCode(ok ? "toolSuccessBg" : "toolErrorBg"),
+        });
+        tool.setBody(framed);
+      }
+    }
     tool.complete(e.exitCode, summary);
     activeTools.delete(id);
     tui.requestRender();
@@ -180,9 +327,19 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
   bus.on("agent:processing-done", () => {
     processing = false;
     stopLoader();
+    finalizeThinking();
     if (activeAssistant) activeAssistant.finalize();
+    chat.addChild(new Spacer(1));
     refreshFooterStats();
+    refreshBranch();
     tui.requestRender();
+  });
+
+  bus.on("agent:usage", (u) => {
+    if (u.prompt_tokens > 0) {
+      statusFooter.update({ tokens: u.prompt_tokens });
+      tui.requestRender();
+    }
   });
 
   bus.on("agent:cancelled", () => {
@@ -209,8 +366,12 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
     tui.requestRender();
   });
 
+  let bootBannerShown = false;
   bus.on("agent:info", (info) => {
-    chat.addChild(new InfoLine(`${info.name}${info.model ? ` · ${info.model}` : ""}`));
+    if (!bootBannerShown) {
+      chat.addChild(new InfoLine(`${info.name}${info.model ? ` · ${info.model}` : ""}`));
+      bootBannerShown = true;
+    }
     statusFooter.update({
       model: info.model,
       provider: info.provider,
@@ -228,14 +389,102 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
 
   refreshFooterStats();
 
-  // Match pi-coding-agent's keybindings:
-  //   Esc    — cancel active turn (when autocomplete is closed, which the
-  //            editor handles itself; we only fire during processing)
-  //   Ctrl+C — clear editor
-  //   Ctrl+D — quit when editor is empty
-  // matchesKey() covers both legacy bytes (\x03, \x04, \x1b) and the Kitty
-  // keyboard protocol CSI encodings used by Ghostty/Kitty/iTerm. Direct byte
-  // comparison would miss Kitty-mode terminals.
+  // ── Pickers ────────────────────────────────────────────────────
+  let pickerOpen = false;
+
+  const openTreePicker = async (): Promise<void> => {
+    if (pickerOpen) return;
+    const branch = getStore().current().getBranch();
+    if (branch.length <= 1) {
+      bus.emit("ui:info", { message: "tree: nothing to rewind to yet" });
+      return;
+    }
+    const activeId = getStore().current().getActiveLeaf();
+    const items: SelectItem[] = branch.map((e) => ({
+      value: e.id,
+      label: pickerLabel(e, e.id === activeId),
+      description: e.parentId ? `← ${e.parentId.slice(0, 6)}` : "root",
+    }));
+    const picker = new SelectList(items, 15, selectListTheme());
+    const activeIdx = items.findIndex((it) => it.value === activeId);
+    if (activeIdx >= 0) picker.setSelectedIndex(activeIdx);
+
+    const close = (): void => {
+      pickerOpen = false;
+      footerSlot.removeChild(picker);
+      tui.setFocus(editor);
+      tui.requestRender();
+    };
+
+    picker.onSelect = async (item) => {
+      const id = item.value;
+      close();
+      if (id === activeId) return;
+      getStore().current().setActiveLeaf(id);
+      applyBranchMessages(ctx, getStore, capture);
+      bus.emit("ui:info", { message: `fork: rewound to ${id.slice(0, 6)}` });
+      await rebuildChat();
+      refreshFooterStats();
+    };
+    picker.onCancel = close;
+
+    pickerOpen = true;
+    footerSlot.addChild(picker);
+    tui.setFocus(picker);
+    tui.requestRender();
+  };
+
+  const openSessionPicker = async (): Promise<void> => {
+    if (pickerOpen) return;
+    const currentId = getStore().current().id;
+    const list = getStore().listSessions().filter((s) => s.id !== currentId);
+    if (list.length === 0) {
+      bus.emit("ui:info", { message: "no past sessions in this cwd" });
+      return;
+    }
+    const items: SelectItem[] = list.map((s) => ({
+      value: s.id,
+      label: formatSessionRow(s, false),
+    }));
+    const picker = new SelectList(items, 15, selectListTheme());
+
+    const close = (): void => {
+      pickerOpen = false;
+      footerSlot.removeChild(picker);
+      tui.setFocus(editor);
+      tui.requestRender();
+    };
+
+    picker.onSelect = async (item) => {
+      const id = item.value;
+      close();
+      resumeSession(ctx, getStore, capture, id);
+      bus.emit("ui:info", { message: `resumed session ${id}` });
+      await rebuildChat();
+      refreshFooterStats();
+    };
+    picker.onCancel = close;
+
+    pickerOpen = true;
+    footerSlot.addChild(picker);
+    tui.setFocus(picker);
+    tui.requestRender();
+  };
+
+  // ── Keybindings ────────────────────────────────────────────────
+  const toggleThinking = (): void => {
+    hideThinking = !hideThinking;
+    const walk = (node: Container): void => {
+      for (const child of node.children) {
+        if (child instanceof ThinkingBlock) child.setHidden(hideThinking);
+        else if (child instanceof Container) walk(child);
+      }
+    };
+    walk(chat);
+    bus.emit("ui:info", { message: `thinking: ${hideThinking ? "hidden" : "visible"}` });
+    tui.requestRender();
+  };
+
   tui.addInputListener((data) => {
     if (matchesKey(data, "escape") && processing) {
       bus.emit("agent:cancel-request", {});
@@ -249,6 +498,10 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
       ctx.quit();
       return { consume: true };
     }
+    if (matchesKey(data, "ctrl+t")) {
+      toggleThinking();
+      return { consume: true };
+    }
     return undefined;
   });
 
@@ -257,5 +510,18 @@ export function mountAshi(ctx: ExtensionContext, tree: TreeHistoryAdapter): Ashi
   return {
     tui,
     stop: () => { tui.stop(); },
+    openTreePicker,
+    openSessionPicker,
+    rebuildChat,
   };
+}
+
+function pickerLabel(e: SessionEntry, isActive: boolean): string {
+  const marker = isActive ? "●" : "│";
+  const short = e.id.slice(0, 6);
+  if (e.type === "session") return `${marker} ${short} session start`;
+  if (e.type === "compaction") return `${marker} ${short} ▼ compacted (firstKept=${e.firstKeptId.slice(0, 6)})`;
+  const m = e.message;
+  const text = typeof m.content === "string" ? m.content.slice(0, 70).replace(/\n/g, " ") : "";
+  return `${marker} ${short} ${m.role}: ${text}`;
 }
