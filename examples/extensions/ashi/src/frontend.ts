@@ -18,7 +18,8 @@ import {
   InfoLine,
   ThinkingBlock,
 } from "./components.js";
-import type { ToolExecutionView } from "./hooks.js";
+import type { ToolCallView, ToolResultView } from "./hooks.js";
+import { createToolHookResolver } from "./hooks.js";
 import { BusAutocompleteProvider } from "./autocomplete.js";
 import { StatusFooter } from "./status-footer.js";
 import type { MultiSessionStore } from "./multi-session-store.js";
@@ -132,9 +133,11 @@ export function mountAshi(
   tui.addChild(statusFooter);
   tui.setFocus(editor);
 
+  interface ToolPair { call: ToolCallView; result: ToolResultView; startedAt: number }
+
   let activeAssistant: AssistantMessage | null = null;
   let activeThinking: ThinkingBlock | null = null;
-  const activeTools = new Map<string, ToolExecutionView>();
+  const activeTools = new Map<string, ToolPair>();
   let loader: Loader | null = null;
   let processing = false;
   let hideThinking = false;
@@ -143,6 +146,8 @@ export function mountAshi(
     state: {},
     invalidate: () => tui.requestRender(),
   });
+
+  const tools = createToolHookResolver(ctx, renderState);
 
   const renderUserMessage = (text: string): Component =>
     ctx.call("ashi:render-user-message", { text, ...renderState() }) as Component;
@@ -159,11 +164,19 @@ export function mountAshi(
   const renderThinkingFinal = (text: string): Component =>
     ctx.call("ashi:render-thinking", { text, hidden: hideThinking, ...renderState() }) as Component;
 
-  const renderToolExecution = (args: {
+  const renderToolPair = (args: {
     toolCallId: string; name: string; title: string;
     kind?: string; displayDetail?: string; rawInput?: unknown;
-  }): ToolExecutionView =>
-    ctx.call("ashi:render-tool-execution", { ...args, ...renderState() }) as ToolExecutionView;
+  }): ToolPair => {
+    const call = tools.call(args);
+    const result = tools.result({
+      toolCallId: args.toolCallId,
+      name: args.name,
+      kind: args.kind,
+      rawInput: args.rawInput,
+    });
+    return { call, result, startedAt: Date.now() };
+  };
 
   const ensureAssistant = (): AssistantMessage => {
     if (!activeAssistant) {
@@ -200,7 +213,7 @@ export function mountAshi(
     loader = null;
   };
 
-  const replayEntry = (entry: SessionEntry, toolMap: Map<string, ToolExecutionView>): void => {
+  const replayEntry = (entry: SessionEntry, toolMap: Map<string, ToolPair>): void => {
     if (entry.type === "session") return;
     if (entry.type === "compaction") {
       chat.addChild(new InfoLine(`▼ compacted (firstKept=${entry.firstKeptId.slice(0, 6)}, ${entry.tokensBefore} tokens)`));
@@ -224,22 +237,24 @@ export function mountAshi(
         for (const tc of m.tool_calls) {
           const id = tc.id ?? "";
           const name = tc.function?.name ?? "tool";
-          const exec = renderToolExecution({
+          const pair = renderToolPair({
             toolCallId: id, name, title: name, kind: undefined,
             displayDetail: detailFromArgs(tc.function?.arguments),
             rawInput: tc.function?.arguments,
           });
-          chat.addChild(exec);
-          if (id) toolMap.set(id, exec);
+          chat.addChild(pair.call);
+          chat.addChild(pair.result);
+          if (id) toolMap.set(id, pair);
         }
       }
     } else if (m.role === "tool") {
       const id = m.tool_call_id ?? "";
       const text = typeof m.content === "string" ? m.content : "";
-      const exec = id ? toolMap.get(id) : undefined;
-      if (exec) {
-        if (text) exec.appendOutput(text);
-        exec.complete(0, undefined);
+      const pair = id ? toolMap.get(id) : undefined;
+      if (pair) {
+        if (text) pair.result.appendChunk(text);
+        pair.result.finalize({ exitCode: 0 });
+        pair.call.setStatus({ exitCode: 0, elapsedMs: 0 });
         if (id) toolMap.delete(id);
       } else {
         chat.addChild(new InfoLine(`tool result (no matching call): ${text.slice(0, 80)}`));
@@ -253,7 +268,7 @@ export function mountAshi(
     activeTools.clear();
     chat.clear();
     const branch = getStore().current().getBranch();
-    const toolMap = new Map<string, ToolExecutionView>();
+    const toolMap = new Map<string, ToolPair>();
     for (const e of branch) replayEntry(e, toolMap);
     tui.requestRender();
   };
@@ -298,27 +313,28 @@ export function mountAshi(
     const detail = e.displayDetail || detailFromArgs(
       typeof e.rawInput === "string" ? e.rawInput : JSON.stringify(e.rawInput ?? {})
     );
-    const tool = renderToolExecution({
+    const pair = renderToolPair({
       toolCallId: id, name: title, title, kind: e.kind,
       displayDetail: detail, rawInput: e.rawInput,
     });
-    activeTools.set(id, tool);
-    chat.addChild(tool);
+    activeTools.set(id, pair);
+    chat.addChild(pair.call);
+    chat.addChild(pair.result);
     tui.requestRender();
   });
 
   bus.on("agent:tool-output-chunk", ({ chunk }) => {
     if (activeTools.size === 0) return;
     const last = [...activeTools.values()].pop();
-    last?.appendOutput(chunk);
+    last?.result.appendChunk(chunk);
     tui.requestRender();
   });
 
   bus.on("agent:tool-completed", (e) => {
     const id = e.toolCallId;
     if (!id) return;
-    const tool = activeTools.get(id);
-    if (!tool) return;
+    const pair = activeTools.get(id);
+    if (!pair) return;
     const summary = e.resultDisplay?.summary;
     const body = e.resultDisplay?.body;
     const ok = e.exitCode === null || e.exitCode === 0;
@@ -341,10 +357,11 @@ export function mountAshi(
           title: diffFrameTitle(body.filePath, diff),
           bgColor: theme.bgCode(ok ? "toolSuccessBg" : "toolErrorBg"),
         });
-        tool.setBody(framed);
+        pair.result.setDiff(framed);
       }
     }
-    tool.complete(e.exitCode, summary);
+    pair.call.setStatus({ exitCode: e.exitCode, elapsedMs: Date.now() - pair.startedAt, summary });
+    pair.result.finalize({ exitCode: e.exitCode, summary });
     activeTools.delete(id);
     tui.requestRender();
   });

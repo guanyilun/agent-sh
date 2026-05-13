@@ -1,13 +1,12 @@
 import {
-  Box,
   Container,
   Markdown,
   type MarkdownTheme,
   Spacer,
   Text,
-  type Component,
 } from "@earendil-works/pi-tui";
 import { iconFor, markdownTheme, theme } from "./theme.js";
+import type { ToolResultMode } from "./display-config.js";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -33,8 +32,6 @@ export class UserMessage extends Container {
   }
 }
 
-/** paddingY=0 so the Markdown sits flush against the following tool box,
- *  matching pi's vertical rhythm. */
 export class AssistantMessage extends Container {
   private md: Markdown;
   private buffer = "";
@@ -102,11 +99,8 @@ export class ThinkingBlock extends Container {
   }
 }
 
-export class ToolExecution extends Container {
-  private box: Box;
-  private header: Text;
-  private outputText: Text;
-  private outputBuffer = "";
+export class ToolCallLine extends Container {
+  private line: Text;
   private title: string;
   private detail?: string;
   private kind?: string;
@@ -115,65 +109,102 @@ export class ToolExecution extends Container {
   private elapsedMs?: number;
   private summary?: string;
 
-  private bodyText: Text;
-
   constructor(title: string, kind?: string, detail?: string) {
     super();
     this.title = title;
     this.kind = kind;
     this.detail = detail;
     this.startedAt = Date.now();
-    this.box = new Box(1, 1, (t) => theme.bg("toolPendingBg", t));
-    this.header = new Text("", 0, 0);
-    this.bodyText = new Text("", 0, 0);
-    this.outputText = new Text("", 0, 0);
-    this.box.addChild(this.header);
-    this.box.addChild(this.outputText);
+    this.line = new Text("", 1, 0);
     this.addChild(new Spacer(1));
-    this.addChild(this.box);
-    this.addChild(this.bodyText);
+    this.addChild(this.line);
     this.repaint();
   }
 
-  setBody(lines: string[]): void {
-    this.bodyText.setText(lines.join("\n"));
-  }
-
-  appendOutput(chunk: string): void {
-    this.outputBuffer += chunk;
-    this.repaint();
-  }
-
-  complete(exitCode: number | null, summary?: string): void {
-    this.exitCode = exitCode;
-    this.elapsedMs = Date.now() - this.startedAt;
-    this.summary = summary;
-    const ok = exitCode === null || exitCode === 0;
-    this.box.setBgFn((t) => theme.bg(ok ? "toolSuccessBg" : "toolErrorBg", t));
+  setStatus(opts: { exitCode: number | null; elapsedMs: number; summary?: string }): void {
+    this.exitCode = opts.exitCode;
+    this.elapsedMs = opts.elapsedMs;
+    this.summary = opts.summary;
     this.repaint();
   }
 
   private repaint(): void {
     const icon = iconFor(this.kind);
-    const titlePart = theme.bold(theme.fg("toolTitle", `${icon} ${this.title}`));
-    const detailPart = this.detail ? ` ${theme.fg("muted", this.detail)}` : "";
-    let tailPart = "";
+    const head = theme.bold(theme.fg("toolTitle", `${icon} ${this.title}`));
+    const detail = this.detail ? ` ${theme.fg("muted", this.detail)}` : "";
+    let tail: string;
     if (this.exitCode !== undefined) {
       const ok = this.exitCode === null || this.exitCode === 0;
       const mark = ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
       const elapsed = this.elapsedMs !== undefined ? ` ${theme.fg("muted", fmtElapsed(this.elapsedMs))}` : "";
       const sum = this.summary ? ` ${theme.fg("muted", this.summary)}` : "";
-      tailPart = `   ${mark}${elapsed}${sum}`;
+      tail = `  ${mark}${elapsed}${sum}`;
     } else {
-      tailPart = `   ${theme.fg("muted", "…")}`;
+      tail = `  ${theme.fg("muted", "…")}`;
     }
-    this.header.setText(`${titlePart}${detailPart}\n${tailPart}`);
-    if (this.outputBuffer) {
-      const trimmed = this.outputBuffer.split("\n").slice(-8).join("\n");
-      this.outputText.setText(theme.fg("toolOutput", trimmed));
-    } else {
+    this.line.setText(`${head}${detail}${tail}`);
+  }
+}
+
+export class ToolResultBody extends Container {
+  private outputText: Text;
+  private bodyText: Text;
+  private outputBuffer = "";
+  private mode: ToolResultMode;
+  private previewLines: number;
+  private finalized = false;
+  private exitCode: number | null | undefined;
+
+  constructor(mode: ToolResultMode, previewLines: number) {
+    super();
+    this.mode = mode;
+    this.previewLines = previewLines;
+    this.outputText = new Text("", 1, 0);
+    this.bodyText = new Text("", 0, 0);
+    this.addChild(this.outputText);
+    this.addChild(this.bodyText);
+  }
+
+  appendChunk(chunk: string): void {
+    this.outputBuffer += chunk;
+    this.repaint();
+  }
+
+  setDiff(lines: string[]): void {
+    this.bodyText.setText(lines.join("\n"));
+  }
+
+  finalize(opts: { exitCode: number | null; summary?: string }): void {
+    this.finalized = true;
+    this.exitCode = opts.exitCode;
+    this.repaint();
+  }
+
+  private repaint(): void {
+    if (this.mode === "hidden") {
       this.outputText.setText("");
+      return;
     }
+    if (!this.outputBuffer) {
+      this.outputText.setText("");
+      return;
+    }
+    if (this.mode === "summary") {
+      if (!this.finalized) {
+        // While streaming, summary mode shows a brief tail; on finalize, switch to a line count.
+        const tail = this.outputBuffer.split("\n").slice(-2).join("\n");
+        this.outputText.setText(theme.fg("muted", tail));
+        return;
+      }
+      const lines = this.outputBuffer.split("\n").filter((l) => l.length > 0);
+      const label = lines.length === 1 ? "1 line" : `${lines.length} lines`;
+      const ok = this.exitCode === null || this.exitCode === 0;
+      const prefix = ok ? theme.fg("muted", "↳ ") : theme.fg("error", "↳ ");
+      this.outputText.setText(`${prefix}${theme.fg("muted", label)}`);
+      return;
+    }
+    const trimmed = this.outputBuffer.split("\n").slice(-this.previewLines).join("\n");
+    this.outputText.setText(theme.fg("toolOutput", trimmed));
   }
 }
 

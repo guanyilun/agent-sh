@@ -136,35 +136,82 @@ corresponding bus event.
 ## Extension surface
 
 Other extensions can override how chat entries render without forking ashi.
-Four hooks are exposed via `ctx.define` (defaults) + `ctx.advise` (override):
+Hooks are exposed via `ctx.define` (defaults) + `ctx.advise` (override).
+
+### Chat hooks
 
 | Hook | Args | Returns |
 |---|---|---|
 | `ashi:render-user-message` | `{ text, state, invalidate }` | `Component` |
 | `ashi:render-assistant` | `{ text, state, invalidate }` | `Component` |
 | `ashi:render-thinking` | `{ text, hidden, state, invalidate }` | `Component` |
-| `ashi:render-tool-execution` | `{ toolCallId, name, title, kind, displayDetail, rawInput, state, invalidate }` | `ToolExecutionView` |
+
+### Tool hooks (per-tool)
+
+Tool rendering is split into a call line (the input header) and a result body
+(streaming output + final state). Each side is dispatched by tool name with a
+`:default` fallback:
+
+| Hook | Args | Returns |
+|---|---|---|
+| `ashi:render-tool-call:{name}` | `{ toolCallId, name, title, kind, displayDetail, rawInput, state, invalidate }` | `ToolCallView` |
+| `ashi:render-tool-call:default` | (same) | `ToolCallView` |
+| `ashi:render-tool-result:{name}` | `{ toolCallId, name, kind, rawInput, mode, previewLines, state, invalidate }` | `ToolResultView` |
+| `ashi:render-tool-result:default` | (same) | `ToolResultView` |
 
 `state` is a per-call mutable bag; `invalidate()` requests a re-render.
 
-`ToolExecutionView` extends `Component` with `appendOutput(chunk)`, `setBody(lines)`,
-`complete(exitCode, summary)` — ashi mutates the returned view as the tool progresses,
-so custom renderers must satisfy this contract (or replace the entire tool render
-including completion handling).
+- `ToolCallView` extends `Component` with `setStatus({ exitCode, elapsedMs, summary })` — called once on completion.
+- `ToolResultView` extends `Component` with `appendChunk(chunk)`, `setDiff(lines)`, and `finalize({ exitCode, summary })` — ashi mutates the result view as output streams in.
 
-Example: override how `edit_file` results render.
+`mode` and `previewLines` on result args come from `ashi.display.{name}` config
+(see below) so renderers can honor the user's compactness preference without
+re-implementing the resolution logic.
+
+Example: override how `bash` calls render.
 
 ```ts
 export default function activate(ctx) {
-  ctx.advise("ashi:render-tool-execution", (next, args) => {
-    if (args.kind !== "write") return next(args);
-    return new MyPrettyEditView(args);  // must implement ToolExecutionView
+  ctx.advise("ashi:render-tool-call:bash", (next, args) => {
+    return new MyFancyBashLine(args);  // must implement ToolCallView
   });
 }
 ```
 
 For non-render concerns (commands, settings, tools, providers) use the standard
 agent-sh extension API.
+
+## Display configuration
+
+Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
+
+```json
+{
+  "ashi": {
+    "display": {
+      "default": { "result": "preview", "previewLines": 8 },
+      "read":    { "result": "hidden" },
+      "ls":      { "result": "hidden" },
+      "grep":    { "result": "summary" },
+      "bash":    { "result": "preview", "previewLines": 12 },
+      "edit":    { "result": "preview" },
+      "write":   { "result": "preview" }
+    }
+  }
+}
+```
+
+`result` modes:
+
+- `"hidden"` — call line only; suppress the output body.
+- `"summary"` — collapsed: a line count after the tool completes (e.g. `↳ 42 lines`).
+  Bash-style streaming previews degrade to a 2-line tail until completion.
+- `"preview"` — last `previewLines` lines of output (default 8).
+
+Each tool inherits from `default` and is overridden by its own block. Unknown
+tool names fall through to `default`. Built-in defaults aim for compactness
+(`read`/`ls` hidden, `grep` summarized) — override under `default` to widen
+everything, or under a specific tool to tune one.
 
 ## Development
 
