@@ -3,7 +3,6 @@ import type { ExtensionContext } from "agent-sh/types";
 import {
   AssistantMessage,
   ThinkingBlock,
-  ToolCallLine,
   ToolResultBody,
   UserMessage,
 } from "./components.js";
@@ -83,10 +82,6 @@ export function registerRenderDefaults(ctx: ExtensionContext): void {
     }
     tb.setHidden(args.hidden);
     return tb;
-  });
-
-  ctx.define(`${CALL_PREFIX}default`, (args: ToolCallArgs): ToolCallView => {
-    return new ToolCallLine(args.title, args.kind, args.displayDetail);
   });
 
   ctx.define(`${RESULT_PREFIX}default`, (args: ToolResultArgs): ToolResultView => {

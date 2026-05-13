@@ -149,20 +149,3 @@ export function editorTheme(): EditorTheme {
   };
 }
 
-/** Kind icon table — kept in sync with agent-sh/src/utils/tool-display.ts KIND_ICONS. */
-export const KIND_ICONS: Record<string, string> = {
-  read: "◆",
-  edit: "✎",
-  write: "✎",
-  delete: "✕",
-  move: "↗",
-  search: "⌕",
-  execute: "▶",
-  think: "◇",
-  fetch: "↓",
-  switch_mode: "⇄",
-};
-
-export function iconFor(kind?: string): string {
-  return kind ? (KIND_ICONS[kind] ?? "▶") : "▶";
-}

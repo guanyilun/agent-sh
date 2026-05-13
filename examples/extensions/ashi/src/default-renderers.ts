@@ -149,8 +149,5 @@ export function registerDefaultToolRenderers(ctx: ExtensionContext): void {
   define("write_file", (args) => new LabeledCallLine(() => pathOnlyLabel("write", args)));
   define("write", (args) => new LabeledCallLine(() => pathOnlyLabel("write", args)));
 
-  // Fallback for unknown tools: name + displayDetail, no icon, no boxing.
-  ctx.advise("ashi:render-tool-call:default", (_next, args: ToolCallArgs) => {
-    return new LabeledCallLine(() => genericLabel(args));
-  });
+  define("default", (args) => new LabeledCallLine(() => genericLabel(args)));
 }

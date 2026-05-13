@@ -5,7 +5,7 @@ import {
   Spacer,
   Text,
 } from "@earendil-works/pi-tui";
-import { iconFor, markdownTheme, theme } from "./theme.js";
+import { markdownTheme, theme } from "./theme.js";
 import type { ToolResultMode } from "./display-config.js";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -96,53 +96,6 @@ export class ThinkingBlock extends Container {
       });
       this.addChild(this.md);
     }
-  }
-}
-
-export class ToolCallLine extends Container {
-  private line: Text;
-  private title: string;
-  private detail?: string;
-  private kind?: string;
-  private startedAt: number;
-  private exitCode: number | null | undefined;
-  private elapsedMs?: number;
-  private summary?: string;
-
-  constructor(title: string, kind?: string, detail?: string) {
-    super();
-    this.title = title;
-    this.kind = kind;
-    this.detail = detail;
-    this.startedAt = Date.now();
-    this.line = new Text("", 1, 0);
-    this.addChild(new Spacer(1));
-    this.addChild(this.line);
-    this.repaint();
-  }
-
-  setStatus(opts: { exitCode: number | null; elapsedMs: number; summary?: string }): void {
-    this.exitCode = opts.exitCode;
-    this.elapsedMs = opts.elapsedMs;
-    this.summary = opts.summary;
-    this.repaint();
-  }
-
-  private repaint(): void {
-    const icon = iconFor(this.kind);
-    const head = theme.bold(theme.fg("toolTitle", `${icon} ${this.title}`));
-    const detail = this.detail ? ` ${theme.fg("muted", this.detail)}` : "";
-    let tail: string;
-    if (this.exitCode !== undefined) {
-      const ok = this.exitCode === null || this.exitCode === 0;
-      const mark = ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
-      const elapsed = this.elapsedMs !== undefined ? ` ${theme.fg("muted", fmtElapsed(this.elapsedMs))}` : "";
-      const sum = this.summary ? ` ${theme.fg("muted", this.summary)}` : "";
-      tail = `  ${mark}${elapsed}${sum}`;
-    } else {
-      tail = `  ${theme.fg("muted", "…")}`;
-    }
-    this.line.setText(`${head}${detail}${tail}`);
   }
 }
 
@@ -240,12 +193,6 @@ function lineCountHint(buffer: string, exitCode: number | null | undefined): str
   const ok = exitCode === null || exitCode === 0;
   const arrow = ok ? theme.fg("muted", "↳ ") : theme.fg("error", "↳ ");
   return `${arrow}${theme.fg("muted", label)}`;
-}
-
-function fmtElapsed(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 10_000) return `${(ms / 1000).toFixed(2)}s`;
-  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 const GROUP_ICONS: Record<string, string> = { read: "◆", search: "⌕" };
