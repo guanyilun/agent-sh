@@ -6,6 +6,7 @@ import {
   Loader,
   SelectList,
   Spacer,
+  type Component,
   type SelectItem,
   matchesKey,
 } from "@earendil-works/pi-tui";
@@ -16,9 +17,8 @@ import {
   ErrorLine,
   InfoLine,
   ThinkingBlock,
-  ToolExecution,
-  UserMessage,
 } from "./components.js";
+import type { ToolExecutionView } from "./hooks.js";
 import { BusAutocompleteProvider } from "./autocomplete.js";
 import { StatusFooter } from "./status-footer.js";
 import type { MultiSessionStore } from "./multi-session-store.js";
@@ -134,14 +134,40 @@ export function mountAshi(
 
   let activeAssistant: AssistantMessage | null = null;
   let activeThinking: ThinkingBlock | null = null;
-  const activeTools = new Map<string, ToolExecution>();
+  const activeTools = new Map<string, ToolExecutionView>();
   let loader: Loader | null = null;
   let processing = false;
   let hideThinking = false;
 
+  const renderState = (): { state: Record<string, unknown>; invalidate: () => void } => ({
+    state: {},
+    invalidate: () => tui.requestRender(),
+  });
+
+  const renderUserMessage = (text: string): Component =>
+    ctx.call("ashi:render-user-message", { text, ...renderState() }) as Component;
+
+  const renderAssistantLive = (): AssistantMessage =>
+    ctx.call("ashi:render-assistant", { text: "", ...renderState() }) as AssistantMessage;
+
+  const renderAssistantFinal = (text: string): Component =>
+    ctx.call("ashi:render-assistant", { text, ...renderState() }) as Component;
+
+  const renderThinkingLive = (): ThinkingBlock =>
+    ctx.call("ashi:render-thinking", { text: "", hidden: hideThinking, ...renderState() }) as ThinkingBlock;
+
+  const renderThinkingFinal = (text: string): Component =>
+    ctx.call("ashi:render-thinking", { text, hidden: hideThinking, ...renderState() }) as Component;
+
+  const renderToolExecution = (args: {
+    toolCallId: string; name: string; title: string;
+    kind?: string; displayDetail?: string; rawInput?: unknown;
+  }): ToolExecutionView =>
+    ctx.call("ashi:render-tool-execution", { ...args, ...renderState() }) as ToolExecutionView;
+
   const ensureAssistant = (): AssistantMessage => {
     if (!activeAssistant) {
-      activeAssistant = new AssistantMessage();
+      activeAssistant = renderAssistantLive();
       chat.addChild(activeAssistant);
     }
     return activeAssistant;
@@ -156,8 +182,7 @@ export function mountAshi(
 
   const ensureThinking = (): ThinkingBlock => {
     if (!activeThinking) {
-      activeThinking = new ThinkingBlock();
-      activeThinking.setHidden(hideThinking);
+      activeThinking = renderThinkingLive();
       chat.addChild(activeThinking);
     }
     return activeThinking;
@@ -175,7 +200,7 @@ export function mountAshi(
     loader = null;
   };
 
-  const replayEntry = (entry: SessionEntry, toolMap: Map<string, ToolExecution>): void => {
+  const replayEntry = (entry: SessionEntry, toolMap: Map<string, ToolExecutionView>): void => {
     if (entry.type === "session") return;
     if (entry.type === "compaction") {
       chat.addChild(new InfoLine(`▼ compacted (firstKept=${entry.firstKeptId.slice(0, 6)}, ${entry.tokensBefore} tokens)`));
@@ -185,28 +210,25 @@ export function mountAshi(
     if (m.role === "user") {
       const text = typeof m.content === "string" ? m.content : "";
       if (text.startsWith("[Compacted conversation summary]")) return;
-      chat.addChild(new UserMessage(text));
+      chat.addChild(renderUserMessage(text));
     } else if (m.role === "assistant") {
       const reasoning = readReasoning(m);
       if (reasoning) {
-        const tb = new ThinkingBlock();
-        tb.appendText(reasoning);
-        tb.finalize();
-        tb.setHidden(hideThinking);
-        chat.addChild(tb);
+        chat.addChild(renderThinkingFinal(reasoning));
       }
       const text = typeof m.content === "string" ? m.content : "";
       if (text) {
-        const msg = new AssistantMessage();
-        msg.appendText(text);
-        msg.finalize();
-        chat.addChild(msg);
+        chat.addChild(renderAssistantFinal(text));
       }
       if (m.tool_calls) {
         for (const tc of m.tool_calls) {
           const id = tc.id ?? "";
           const name = tc.function?.name ?? "tool";
-          const exec = new ToolExecution(name, undefined, detailFromArgs(tc.function?.arguments));
+          const exec = renderToolExecution({
+            toolCallId: id, name, title: name, kind: undefined,
+            displayDetail: detailFromArgs(tc.function?.arguments),
+            rawInput: tc.function?.arguments,
+          });
           chat.addChild(exec);
           if (id) toolMap.set(id, exec);
         }
@@ -231,14 +253,14 @@ export function mountAshi(
     activeTools.clear();
     chat.clear();
     const branch = getStore().current().getBranch();
-    const toolMap = new Map<string, ToolExecution>();
+    const toolMap = new Map<string, ToolExecutionView>();
     for (const e of branch) replayEntry(e, toolMap);
     tui.requestRender();
   };
 
   // ── Bus wiring ───────────────────────────────────────────────
   bus.on("agent:query", ({ query }) => {
-    chat.addChild(new UserMessage(query));
+    chat.addChild(renderUserMessage(query));
     activeAssistant = null;
     tui.requestRender();
   });
@@ -276,7 +298,10 @@ export function mountAshi(
     const detail = e.displayDetail || detailFromArgs(
       typeof e.rawInput === "string" ? e.rawInput : JSON.stringify(e.rawInput ?? {})
     );
-    const tool = new ToolExecution(title, e.kind, detail);
+    const tool = renderToolExecution({
+      toolCallId: id, name: title, title, kind: e.kind,
+      displayDetail: detail, rawInput: e.rawInput,
+    });
     activeTools.set(id, tool);
     chat.addChild(tool);
     tui.requestRender();
