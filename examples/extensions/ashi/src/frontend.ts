@@ -79,6 +79,30 @@ function detailFromArgs(argsJson: string | undefined): string {
   return "";
 }
 
+/** Recompute the per-tool summary from a saved tool result message. We don't
+ *  persist resultDisplay, so /resume would otherwise lose "16 entries" / "117
+ *  lines" etc. Mirrors agent-sh's formatResult logic for the common tools. */
+function inferSummary(toolName: string, content: unknown): string | undefined {
+  if (typeof content !== "string" || content.length === 0) return undefined;
+  const lines = content.split("\n").filter((l) => l.length > 0);
+  switch (toolName) {
+    case "ls":
+      if (content === "(empty directory)") return "0 entries";
+      return `${lines.length} entries`;
+    case "glob":
+      if (content === "No files matched.") return "0 files";
+      return `${lines.length} files`;
+    case "grep":
+      if (content === "No matches found.") return "0 matches";
+      return `${lines.length} lines`;
+    case "read_file":
+      if (content.startsWith("File unchanged")) return "cached";
+      return `${lines.length} lines`;
+    default:
+      return undefined;
+  }
+}
+
 function relativize(fp: string): string {
   const home = process.env.HOME;
   const cwd = process.cwd();
@@ -225,7 +249,9 @@ export function mountAshi(
     loader = null;
   };
 
-  type ReplayEntry = { kind: "pair"; pair: ToolPair } | { kind: "group"; group: ToolGroup };
+  type ReplayEntry =
+    | { kind: "pair"; pair: ToolPair; name: string }
+    | { kind: "group"; group: ToolGroup; name: string };
 
   const replayEntry = (entry: SessionEntry, toolMap: Map<string, ReplayEntry>): void => {
     if (entry.type === "session") return;
@@ -265,7 +291,7 @@ export function mountAshi(
                 const cid = c.id ?? "";
                 const cname = c.function?.name ?? "tool";
                 group.addCall(cid, cname, detailFromArgs(c.function?.arguments));
-                if (cid) toolMap.set(cid, { kind: "group", group });
+                if (cid) toolMap.set(cid, { kind: "group", group, name: cname });
               }
               i = j;
               continue;
@@ -281,7 +307,7 @@ export function mountAshi(
           });
           chat.addChild(pair.call);
           chat.addChild(pair.result);
-          if (id) toolMap.set(id, { kind: "pair", pair });
+          if (id) toolMap.set(id, { kind: "pair", pair, name });
           lastToolResult = pair.result;
           i++;
         }
@@ -294,12 +320,13 @@ export function mountAshi(
         chat.addChild(new InfoLine(`tool result (no matching call): ${text.slice(0, 80)}`));
         return;
       }
+      const summary = inferSummary(found.name, text);
       if (found.kind === "group") {
-        found.group.recordCompletion(id, 0);
+        found.group.recordCompletion(id, 0, summary);
       } else {
         if (text) found.pair.result.appendChunk(text);
-        found.pair.result.finalize({ exitCode: 0 });
-        found.pair.call.setStatus({ exitCode: 0, elapsedMs: 0 });
+        found.pair.result.finalize({ exitCode: 0, summary });
+        found.pair.call.setStatus({ exitCode: 0, elapsedMs: 0, summary });
       }
       if (id) toolMap.delete(id);
     }
