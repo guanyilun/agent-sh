@@ -20,6 +20,7 @@ import { registerSessionCommands } from "./session-commands.js";
 import { registerCompaction } from "./compaction.js";
 import { registerCapture } from "./capture.js";
 import { registerRenderDefaults } from "./hooks.js";
+import { registerDefaultToolRenderers } from "./default-renderers.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -98,6 +99,7 @@ async function main(): Promise<void> {
   const capture = registerCapture(ctx, getStore);
   registerCompaction(ctx, getStore, capture);
   registerRenderDefaults(ctx);
+  registerDefaultToolRenderers(ctx);
 
   ctx.advise("conversation:format-prior-history", () => null);
   ctx.advise("system-prompt:build", (base) => `${base}\n\n<cwd>${process.cwd()}</cwd>`);
