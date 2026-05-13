@@ -61,7 +61,7 @@ async function main(): Promise<void> {
 
   const cwd = process.cwd();
   const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
-  const sessionsDir = path.join(os.homedir(), ".agent-sh", "extensions", "ashi", "history", cwdSlug, "sessions");
+  const sessionsDir = path.join(os.homedir(), ".agent-sh", "ashi", "history", cwdSlug, "sessions");
   const store = new MultiSessionStore(sessionsDir, cwd);
   const getStore = (): MultiSessionStore => store;
 
