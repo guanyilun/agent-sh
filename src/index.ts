@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import * as path from "node:path";
 import { activateShell, registerShellHandlers, type ShellHandle } from "./shell/index.js";
+import { pickStrategy, FALLBACK_STRATEGY } from "./shell/strategies/index.js";
 import { createCore } from "./core.js";
 import { palette as p } from "./utils/palette.js";
 import { loadBuiltinExtensions } from "./extensions/index.js";
@@ -27,13 +27,10 @@ async function captureShellEnvAsync(shell: string): Promise<Record<string, strin
     };
 
     try {
-      const shellName = path.basename(shell);
-      const isZsh = shellName.includes("zsh");
-      const sourceRc = isZsh
-        ? 'source ~/.zshrc 2>/dev/null;'
-        : '[ -f ~/.bashrc ] && source ~/.bashrc 2>/dev/null;';
+      const strategy = pickStrategy(shell) ?? FALLBACK_STRATEGY;
+      const captureCmd = strategy.envCaptureCommand();
 
-      const child = spawn(shell, ["-l", "-c", `${sourceRc} env -0`], {
+      const child = spawn(shell, ["-l", "-c", captureCmd], {
         stdio: ["ignore", "pipe", "ignore"],
         timeout: 5000,
       });

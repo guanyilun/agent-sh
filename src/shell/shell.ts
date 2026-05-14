@@ -1,11 +1,16 @@
 import * as fs from "fs";
 import * as os from "os";
-import * as path from "path";
 import * as pty from "node-pty";
 import type { EventBus } from "../event-bus.js";
 import { InputHandler, type InputContext } from "./input-handler.js";
 import { OutputParser } from "./output-parser.js";
 import { getSettings } from "../settings.js";
+import {
+  pickStrategy,
+  FALLBACK_STRATEGY,
+  SUPPORTED_SHELL_NAMES,
+  type ShellStrategy,
+} from "./strategies/index.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface ShellHandlers {
@@ -37,7 +42,7 @@ export class Shell implements InputContext {
   private unmuteScopes = new Set<ShellScope>();
   private pendingEchoSkips = 0;
   private agentActive = false;
-  private isZsh = false;
+  private strategy: ShellStrategy;
   private tmpDir?: string;
 
   constructor(opts: {
@@ -64,129 +69,31 @@ export class Shell implements InputContext {
     //   - OSC 7: cwd tracking (required by OutputParser)
     //   - OSC 9999: prompt start marker (command boundary detection)
     //   - OSC 9998: prompt end marker (bracketed prompt capture)
-    // Prompt theming is left entirely to the user's shell config.
-    const shellName = path.basename(opts.shell);
-    const isZsh = shellName.includes("zsh");
-    const isBash = shellName.includes("bash");
-    if (!isZsh && !isBash) {
+    // Prompt theming is left entirely to the user's shell config. Per-shell
+    // rc-file generation lives in src/shell/strategies/.
+    const matched = pickStrategy(opts.shell);
+    if (!matched) {
       console.warn(
-        `Warning: agent-sh only supports zsh and bash. ` +
+        `Warning: agent-sh only supports ${SUPPORTED_SHELL_NAMES.join(", ")}. ` +
         `"${opts.shell}" may not work correctly — falling back to /bin/bash.`
       );
     }
-    const shellBin = (isZsh || isBash) ? opts.shell : "/bin/bash";
-    let shellArgs: string[];
+    this.strategy = matched ?? FALLBACK_STRATEGY;
+    const shellBin = matched ? opts.shell : "/bin/bash";
 
     // Per-instance tag so nested agent-sh hooks don't cross-trigger.
     const instanceTag = `id=${opts.instanceId}`;
-    const osc7Cmd = 'printf "\\e]7;file://%s%s\\a" "$(hostname)" "$PWD"';
-    const promptMarker = `printf "\\e]9999;${instanceTag};PROMPT\\a"`;
-    const titleCmd = 'printf "\\e]0;⚡ agent-sh: %s\\a" "${PWD/#$HOME/~}"';
-
-    this.isZsh = isZsh;
     const settings = getSettings();
-    const showIndicator = settings.promptIndicator !== false;
-
-    if (isZsh) {
-      // For zsh: use ZDOTDIR to source user's real config, then append
-      // our hooks via precmd_functions (additive — doesn't clobber p10k/omz).
-      this.tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-sh-"));
-      const userZdotdir = env.ZDOTDIR || env.HOME || os.homedir();
-      const zshrcLines = [
-        `ZDOTDIR="${userZdotdir}"`,
-        `[ -f "${userZdotdir}/.zshrc" ] && source "${userZdotdir}/.zshrc"`,
-        "",
-        "# agent-sh hooks (invisible OSC sequences for cwd + prompt detection)",
-        "__agent_sh_precmd() {",
-        `  ${osc7Cmd}`,
-        `  ${promptMarker}`,
-        ...(showIndicator ? [`  ${titleCmd}`] : []),
-        "}",
-        "precmd_functions+=(__agent_sh_precmd)",
-        "",
-        "# Preexec hook: emit actual command text so agent-sh can track",
-        "# history-recalled and tab-completed commands accurately",
-        "__agent_sh_preexec() {",
-        `  printf "\\e]9997;${instanceTag};%s\\a" "$1"`,
-        "}",
-        "preexec_functions+=(__agent_sh_preexec)",
-      ];
-
-      zshrcLines.push(
-        "",
-        "# End-of-prompt marker via zle-line-init (fires after prompt is rendered)",
-        "# Chain onto existing widget (p10k uses zle-line-init) rather than clobbering",
-        'if (( ${+widgets[zle-line-init]} )); then',
-        "  zle -A zle-line-init __agent_sh_orig_line_init",
-        "  __agent_sh_line_init() {",
-        "    zle __agent_sh_orig_line_init",
-        `    printf "\\e]9998;${instanceTag};READY\\a"`,
-        "  }",
-        "else",
-        "  __agent_sh_line_init() {",
-        `    printf "\\e]9998;${instanceTag};READY\\a"`,
-        "  }",
-        "fi",
-        "zle -N zle-line-init __agent_sh_line_init",
-        "",
-        "# Hidden widget to trigger prompt redraw from Node.js side",
-        "# Bound to an unused escape sequence that no real key produces",
-        "__agent_sh_redraw() {",
-        "  zle reset-prompt",
-        "}",
-        "zle -N __agent_sh_redraw",
-        "bindkey '\\e[9999~' __agent_sh_redraw",
-      );
-
-      fs.writeFileSync(path.join(this.tmpDir, ".zshrc"), zshrcLines.join("\n") + "\n");
-      env.ZDOTDIR = this.tmpDir;
-      shellArgs = ["--no-globalrcs"];
-    } else {
-      // For bash: use --rcfile to source our wrapper, which sources the user's
-      // real bashrc then appends our hooks. No HOME override needed.
-      this.tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-sh-"));
-      const userHome = env.HOME || os.homedir();
-      const bashrcLines = [
-        `[ -f "${userHome}/.bashrc" ] && source "${userHome}/.bashrc"`,
-        "",
-        "# agent-sh hooks (invisible OSC sequences for cwd + prompt detection)",
-        "# Wrapped in a function because inlining printf \"...\" into",
-        "# PROMPT_COMMAND=\"...\" breaks the outer quoting.",
-        "__agent_sh_precmd() {",
-        `  ${osc7Cmd}`,
-        `  ${promptMarker}`,
-        ...(showIndicator ? [`  ${titleCmd}`] : []),
-        "  __agent_sh_preexec_ran=0",
-        "}",
-        `PROMPT_COMMAND="\${PROMPT_COMMAND%;}"`,
-        `PROMPT_COMMAND="\${PROMPT_COMMAND:+\$PROMPT_COMMAND;}__agent_sh_precmd"`,
-        "",
-        "# Preexec hook via DEBUG trap: emit actual command text so agent-sh",
-        "# can track history-recalled and tab-completed commands accurately",
-        "__agent_sh_preexec_ran=0",
-        "__agent_sh_emit_preexec() {",
-        '  [[ $__agent_sh_preexec_ran == 1 ]] && return',
-        '  [[ -n $COMP_LINE ]] && return',
-        "  __agent_sh_preexec_ran=1",
-        "  local this_cmd",
-        `  this_cmd=$(HISTTIMEFORMAT='' builtin history 1 | command sed 's/^ *[0-9]* *//')`,
-        `  printf '\\e]9997;${instanceTag};%s\\a' "$this_cmd"`,
-        "}",
-        "trap '__agent_sh_emit_preexec' DEBUG",
-        "",
-        "# End-of-prompt marker: append to PS1 (\\[...\\] marks it zero-width)",
-        `case "$PS1" in *9998*) ;; *) PS1="\${PS1}\\[\\e]9998;${instanceTag};READY\\a\\]";; esac`,
-        "",
-        "# Mirrors the zsh \\e[9999~ reset-prompt widget — used by agent-sh",
-        "# to repaint the prompt in place. All keymaps so `set -o vi` works.",
-        `bind -m emacs '"\\e[9999~":redraw-current-line' 2>/dev/null`,
-        `bind -m vi-insert '"\\e[9999~":redraw-current-line' 2>/dev/null`,
-        `bind -m vi-command '"\\e[9999~":redraw-current-line' 2>/dev/null`,
-      ];
-
-      fs.writeFileSync(path.join(this.tmpDir, ".bashrc"), bashrcLines.join("\n") + "\n");
-      shellArgs = ["--rcfile", path.join(this.tmpDir, ".bashrc")];
-    }
+    const spawnConfig = this.strategy.prepareSpawn({
+      tmpDirRoot: os.tmpdir(),
+      instanceTag,
+      showIndicator: settings.promptIndicator !== false,
+      userHome: env.HOME || os.homedir(),
+      env,
+    });
+    this.tmpDir = spawnConfig.tmpDir;
+    Object.assign(env, spawnConfig.envOverrides);
+    const shellArgs = spawnConfig.args;
 
     // Pause stdin before spawning PTY to avoid TTY contention on macOS.
     // The PTY will become the controlling terminal for the child shell.
@@ -340,8 +247,10 @@ export class Shell implements InputContext {
   }
 
   /**
-   * Ask the shell to redraw its own prompt in place via \e[9999~, which both
-   * zsh (ZLE widget) and bash (readline redraw-current-line) bind to repaint.
+   * Ask the shell to redraw its own prompt in place. The escape sequence is
+   * defined per-strategy and bound in the generated rc file (zsh: ZLE widget,
+   * bash: readline redraw-current-line). When the strategy returns null we
+   * skip the in-place redraw and let freshPrompt do a heavy redraw instead.
    */
   redrawPrompt(): void {
     const result = this.bus.emitPipe("shell:redraw-prompt", {
@@ -349,9 +258,9 @@ export class Shell implements InputContext {
       kind: "redraw",
       handled: false,
     });
-    if (!result.handled) {
-      this.ptyProcess.write("\x1b[9999~");
-    }
+    if (result.handled) return;
+    const escape = this.strategy.redrawEscape();
+    if (escape) this.ptyProcess.write(escape);
   }
 
   /**
