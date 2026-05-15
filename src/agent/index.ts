@@ -169,7 +169,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list },
     modes,
     initialModeIndex,
-    compositor: ctx.compositor,
+    compositor: ctx.shell?.compositor,
     instanceId: ctx.instanceId,
     history: config.history,
   });

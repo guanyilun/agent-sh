@@ -1,5 +1,4 @@
 import type { EventBus } from "./event-bus.js";
-import type { Compositor } from "../utils/compositor.js";
 
 export type { ContentBlock } from "./event-bus.js";
 
@@ -45,15 +44,6 @@ export interface CoreContext {
   /** Teardown callback fired on /reload. For resources the scoped context
    *  can't track: process listeners, timers, watchers, sockets. */
   onDispose: (fn: () => void) => void;
-
-  /** Generic surface-routing primitive. Routes named render streams
-   *  ("agent", "query", "status", or any extension-defined name) to
-   *  surfaces. Frontends register the default surface for each stream
-   *  during their activation; extensions can `redirect()` a stream to
-   *  capture output (overlay panels, ACP framing, web sinks). Substrate
-   *  rather than shell because it's frontend-agnostic — TUI, ACP, web,
-   *  and headless test harnesses all use it. */
-  compositor: Compositor;
 }
 
 // ── Core config ───────────────────────────────────────────────────

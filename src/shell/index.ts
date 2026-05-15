@@ -5,7 +5,7 @@
  */
 import type { ExtensionContext, RemoteSession, RemoteSessionOptions, ShellSurface } from "./host-types.js";
 import { Shell } from "./shell.js";
-import { StdoutSurface } from "../utils/compositor.js";
+import { DefaultCompositor, StdoutSurface } from "../utils/compositor.js";
 import { TerminalBuffer } from "../utils/terminal-buffer.js";
 import { setPalette } from "../utils/palette.js";
 import * as streamTransform from "../utils/stream-transform.js";
@@ -37,9 +37,11 @@ export interface ShellHandle {
  * extensions see `ctx.shell` populated.
  */
 export function registerShellHandlers(ctx: ExtensionContext): void {
-  const { bus, compositor } = ctx;
+  const { bus } = ctx;
+  const compositor = new DefaultCompositor(bus);
 
   const shellSurface: ShellSurface = {
+    compositor,
     setPalette,
     createBlockTransform: (o) => streamTransform.createBlockTransform(bus, o),
     createFencedBlockTransform: (o) => streamTransform.createFencedBlockTransform(bus, o),
@@ -104,9 +106,9 @@ export function activateShell(
   // Stdout-as-default is a frontend choice, not a kernel one — a hub or
   // web bridge would point these at its own surfaces.
   const stdoutSurface = new StdoutSurface();
-  ctx.compositor.setDefault("agent", stdoutSurface);
-  ctx.compositor.setDefault("query", stdoutSurface);
-  ctx.compositor.setDefault("status", stdoutSurface);
+  ctx.shell!.compositor.setDefault("agent", stdoutSurface);
+  ctx.shell!.compositor.setDefault("query", stdoutSurface);
+  ctx.shell!.compositor.setDefault("status", stdoutSurface);
 
   const shell = new Shell({
     bus: ctx.bus,

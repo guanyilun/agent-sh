@@ -88,7 +88,6 @@ Picking a narrower type makes host requirements explicit. Under a mismatch (exte
 | `bus` | `EventBus` | Subscribe to events, emit events, register pipe handlers |
 | `instanceId` | `string` | Stable per-instance identifier (4-char hex) |
 | `quit` | `() => void` | Exit agent-sh |
-| `compositor` | `Compositor` | Generic surface-routing primitive — frontends register the default surface for each named render stream during activation, extensions can `redirect()` to capture output. Used by TUI, ACP, web bridges, and headless test harnesses. See [TUI Composition](tui-composition.md) |
 | `getExtensionSettings` | `(namespace, defaults) => T` | Read extension settings from `~/.agent-sh/settings.json` |
 | `getStoragePath` | `(namespace) => string` | Get (and lazily create) a per-extension storage directory under `~/.agent-sh/<namespace>/` |
 | `define` | `(name, fn) => void` | Register a named handler |
@@ -126,6 +125,7 @@ Attached by the TUI shell frontend (`registerShellHandlers`). Headless backends 
 
 | Property | Type | Description |
 |---|---|---|
+| `compositor` | `Compositor` | Routes named render streams to terminal surfaces. Frontends set defaults during activation; extensions can `redirect()` to capture output. See [TUI Composition](tui-composition.md) |
 | `setPalette` | `(overrides) => void` | Override color palette slots for theming |
 | `createBlockTransform` | `(opts) => void` | Register an inline delimiter transform (e.g. `$$...$$`) |
 | `createFencedBlockTransform` | `(opts) => void` | Register a fenced block transform (e.g. ` ```lang...``` `) |

@@ -24,7 +24,6 @@ import { HandlerRegistry } from "../utils/handler-registry.js";
 import crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DefaultCompositor } from "../utils/compositor.js";
 import { CONFIG_DIR } from "./settings.js";
 
 // Re-export types that library consumers need
@@ -134,12 +133,6 @@ export function createCore(config: AppConfig): AgentShellCore {
     return { names, active: activeBackendName };
   });
 
-  // ── Compositor ──────────────────────────────────────────────
-  // Generic surface-routing primitive. No defaults here — the active
-  // frontend (src/shell/, a web bridge, headless test harness, etc.)
-  // sets its own surfaces during activation.
-  const compositor = new DefaultCompositor(bus);
-
   return {
     bus,
     handlers,
@@ -219,7 +212,6 @@ export function createCore(config: AppConfig): AgentShellCore {
           const key = name.startsWith("/") ? name : `/${name}`;
           return handlers.advise(`command:${key}`, advisor as Parameters<typeof handlers.advise>[1]);
         },
-        compositor,
       } as unknown as ExtensionContext;
       return ctx;
     },

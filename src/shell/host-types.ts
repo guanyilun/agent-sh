@@ -2,7 +2,7 @@ import type { EventBus } from "../core/event-bus.js";
 import type { CoreConfig, CoreContext } from "../core/types.js";
 import type { AgentSurface } from "../agent/host-types.js";
 import type { ColorPalette } from "../utils/palette.js";
-import type { RenderSurface } from "../utils/compositor.js";
+import type { Compositor, RenderSurface } from "../utils/compositor.js";
 import type { BlockTransformOptions, FencedBlockTransformOptions } from "../utils/stream-transform.js";
 
 export type { BlockTransformOptions, FencedBlockTransformOptions } from "../utils/stream-transform.js";
@@ -68,6 +68,13 @@ export interface TerminalSession {
  * no-ops (bus emits with no listeners).
  */
 export interface ShellSurface {
+  /** Routes named render streams ("agent", "query", "status", or any
+   *  extension-defined name) to terminal surfaces. Frontends register
+   *  default surfaces during activation; extensions can `redirect()`
+   *  to capture output. Shell-scoped because today only the TUI uses
+   *  it — bus events are the wire for other frontends. */
+  compositor: Compositor;
+
   /** Override color palette slots for theming. */
   setPalette: (overrides: Partial<ColorPalette>) => void;
 
