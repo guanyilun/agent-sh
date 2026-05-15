@@ -11,7 +11,7 @@ function hasIndexFile(dir: string): boolean {
   return SCRIPT_EXTS.some((ext) => fs.existsSync(path.join(dir, `index${ext}`)));
 }
 
-const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../");
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../");
 const BUNDLED_DIR = path.join(PACKAGE_ROOT, "examples/extensions");
 const EXT_DIR = path.join(CONFIG_DIR, "extensions");
 
