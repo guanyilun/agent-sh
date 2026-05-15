@@ -10,6 +10,7 @@ import { getSettings } from "./settings.js";
 import { runInit } from "./init.js";
 import { runInstall, runUninstall, runList, suggestBridgeFor } from "./install.js";
 import { PACKAGE_VERSION } from "./utils/package-version.js";
+import { clearOpost } from "./utils/tty.js";
 import type { AgentShellConfig } from "./types.js";
 
 /**
@@ -369,6 +370,7 @@ async function main(): Promise<void> {
     if (process.stdin.isTTY) {
       try {
         process.stdin.setRawMode(true);
+        clearOpost();
       } catch {
         // May fail if stdin is not a TTY
       }

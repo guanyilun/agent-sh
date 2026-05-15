@@ -5,6 +5,7 @@ import type { EventBus } from "../event-bus.js";
 import { InputHandler, type InputContext } from "./input-handler.js";
 import { OutputParser } from "./output-parser.js";
 import { getSettings } from "../settings.js";
+import { clearOpost } from "../utils/tty.js";
 import {
   pickStrategy,
   FALLBACK_STRATEGY,
@@ -126,6 +127,8 @@ export class Shell implements InputContext {
         // Ignore - will be set up later in index.ts
       }
     }
+
+    clearOpost();
 
     this.bus = opts.bus;
     this.handlers = opts.handlers;
