@@ -71,19 +71,27 @@ export default function activate(ctx: ExtensionContext): void {
   // Override core's process.cwd() default with the PTY-tracked value.
   ctx.advise("cwd", () => currentCwd);
 
-  ctx.agent.registerContextProducer("shell-context", () => {
-    const cwdTag = `<cwd>${currentCwd}</cwd>`;
-
-    const fresh = exchanges.filter(
-      (ex) => ex.id > lastSeq && ex.source !== "agent",
-    );
-    if (fresh.length === 0) return cwdTag;
-    lastSeq = exchanges[exchanges.length - 1]!.id;
-
-    const text = fresh.map(formatExchangeTruncated).filter(Boolean).join("\n");
-    if (!text) return cwdTag;
-    return `${cwdTag}\n<shell_events>\n${text}\n</shell_events>`;
-  }, { mode: "per-query" });
+  // shell-context runs as part of registerShellHandlers, which fires
+  // *before* the agent host attaches `ctx.agent`. So we advise the
+  // underlying `query-context:build` handler directly rather than going
+  // through `ctx.agent.registerContextProducer` sugar — the handler is
+  // defined in core with an empty default, so this works before (and
+  // without) any agent backend.
+  ctx.advise("query-context:build", (next) => {
+    const base = next() as string;
+    const part = (() => {
+      const cwdTag = `<cwd>${currentCwd}</cwd>`;
+      const fresh = exchanges.filter(
+        (ex) => ex.id > lastSeq && ex.source !== "agent",
+      );
+      if (fresh.length === 0) return cwdTag;
+      lastSeq = exchanges[exchanges.length - 1]!.id;
+      const text = fresh.map(formatExchangeTruncated).filter(Boolean).join("\n");
+      if (!text) return cwdTag;
+      return `${cwdTag}\n<shell_events>\n${text}\n</shell_events>`;
+    })();
+    return base ? `${base}\n\n${part}` : part;
+  });
 
   ctx.define("shell:context-recent", (n: number = 25) => {
     const recent = exchanges.slice(-n);

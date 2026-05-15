@@ -35,7 +35,7 @@ export default function activate(ctx: ExtensionContext): void {
   const apiKey = resolveApiKey("openrouter").key;
   if (!apiKey) return;
 
-  ctx.agent.providers.configure("openrouter", { reasoningParams: buildReasoningParams });
+  ctx.agent!.providers.configure("openrouter", { reasoningParams: buildReasoningParams });
 
   ctx.bus.emit("provider:register", {
     id: "openrouter",

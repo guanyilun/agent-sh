@@ -20,7 +20,7 @@ function buildReasoningParams(level: string, _model?: string): Record<string, un
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  ctx.agent.providers.configure("deepseek", { reasoningParams: buildReasoningParams });
+  ctx.agent!.providers.configure("deepseek", { reasoningParams: buildReasoningParams });
 
   const apiKey = resolveApiKey("deepseek").key;
   if (!apiKey) return;

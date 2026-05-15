@@ -27,7 +27,7 @@ import { renderDiff } from "../utils/diff-renderer.js";
 import { renderBoxFrame } from "../utils/box-frame.js";
 import type { DiffResult } from "../utils/diff.js";
 import { getSettings } from "../core/settings.js";
-import type { ShellContext } from "./host-types.js";
+import type { ExtensionContext } from "./host-types.js";
 import type { ToolResultDisplay, ToolResultBody } from "../agent/types.js";
 import type { RenderSurface } from "../utils/compositor.js";
 
@@ -138,9 +138,8 @@ function createRenderState(): RenderState {
   };
 }
 
-export default function activate(ctx: ShellContext): void {
-  const { bus, define } = ctx;
-  const { compositor } = ctx.shell;
+export default function activate(ctx: ExtensionContext): void {
+  const { bus, define, compositor } = ctx;
   const s = createRenderState();
 
   /** Track the shell's cwd so path shortening is relative to where the user actually is. */

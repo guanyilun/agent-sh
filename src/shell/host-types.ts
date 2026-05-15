@@ -2,7 +2,7 @@ import type { EventBus } from "../core/event-bus.js";
 import type { CoreConfig, CoreContext } from "../core/types.js";
 import type { AgentSurface } from "../agent/host-types.js";
 import type { ColorPalette } from "../utils/palette.js";
-import type { Compositor, RenderSurface } from "../utils/compositor.js";
+import type { RenderSurface } from "../utils/compositor.js";
 import type { BlockTransformOptions, FencedBlockTransformOptions } from "../utils/stream-transform.js";
 
 export type { BlockTransformOptions, FencedBlockTransformOptions } from "../utils/stream-transform.js";
@@ -68,10 +68,6 @@ export interface TerminalSession {
  * no-ops (bus emits with no listeners).
  */
 export interface ShellSurface {
-  /** Routes named render streams ("agent", "query", "status") to surfaces.
-   *  Extensions use `compositor.redirect()` to capture output. */
-  compositor: Compositor;
-
   /** Override color palette slots for theming. */
   setPalette: (overrides: Partial<ColorPalette>) => void;
 
@@ -126,14 +122,18 @@ export interface CommandSugar {
 // ── Extension-facing context ─────────────────────────────────────
 
 /**
- * What extension `activate()` functions receive. Combines the substrate
- * (`CoreContext`), extension-author sugar (slash commands), and nested
- * host surfaces. Methods on `ctx.agent` / `ctx.shell` are silent no-ops
- * when their host isn't loaded.
+ * What extension `activate()` functions receive. Substrate (`CoreContext`)
+ * + extension-author sugar (slash commands) + host surfaces, which are
+ * **optional** because hosts attach them on activation: under headless
+ * backends `ctx.shell` is undefined; under bridge backends `ctx.agent`
+ * may be undefined too. Extensions guard with `ctx.shell?.foo()` /
+ * `if (!ctx.agent) return;`, or type their parameter as the narrower
+ * `AgentContext` / `ShellContext` to declare host requirements (those
+ * variants make the surface non-optional).
  */
 export type ExtensionContext = CoreContext & CommandSugar & {
-  agent: AgentSurface;
-  shell: ShellSurface;
+  agent?: AgentSurface;
+  shell?: ShellSurface;
 };
 
 // ── Shell-host config surface ────────────────────────────────────

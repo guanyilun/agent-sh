@@ -18,10 +18,7 @@
  *   const response = await core.query("hello");
  */
 import { EventBus, type ContentBlock } from "./event-bus.js";
-import type { AppConfig, ExtensionContext, RemoteSessionOptions, RemoteSession } from "../shell/host-types.js";
-import { createLlmFacade } from "../utils/llm-facade.js";
-import { setPalette } from "../utils/palette.js";
-import * as streamTransform from "../utils/stream-transform.js";
+import type { AppConfig, ExtensionContext } from "../shell/host-types.js";
 import * as settingsMod from "./settings.js";
 import { HandlerRegistry } from "../utils/handler-registry.js";
 import crypto from "node:crypto";
@@ -198,50 +195,16 @@ export function createCore(config: AppConfig): AgentShellCore {
     },
 
     extensionContext(opts) {
-      const createRemoteSession = (sessOpts: RemoteSessionOptions): RemoteSession => {
-        const { surface } = sessOpts;
-        const cleanups: (() => void)[] = [];
-        let active = true;
-
-        cleanups.push(compositor.redirect("agent", surface));
-        cleanups.push(compositor.redirect("query", surface));
-        cleanups.push(compositor.redirect("status", surface));
-
-        // on-processing-done is intentionally not advised — its scope
-        // cleanup must always run.
-        cleanups.push(handlers.advise("shell:on-processing-start", (next) => active ? undefined : next()));
-        cleanups.push(handlers.advise("shell:on-processing-redraw", (next) => active ? undefined : next()));
-
-        if (sessOpts.suppressBorders !== false) {
-          cleanups.push(handlers.advise("tui:response-border", (next, ...a) => active ? null : next(...a)));
-        }
-        if (sessOpts.suppressQueryBox) {
-          cleanups.push(handlers.advise("tui:render-user-query", (next, ...a) => active ? [] : next(...a)));
-        }
-        if (sessOpts.suppressUsage !== false) {
-          cleanups.push(handlers.advise("tui:render-usage", (next, ...a) => active ? "" : next(...a)));
-        }
-        return {
-          submit(query: string) { bus.emit("agent:submit", { query }); },
-          get surface() { return surface; },
-          get active() { return active; },
-          close() {
-            if (!active) return;
-            active = false;
-            for (const fn of cleanups.reverse()) fn();
-            cleanups.length = 0;
-          },
-        };
-      };
-
-      const ctx: ExtensionContext = {
-        // ── substrate ────────────────────────────────────────
+      // Substrate only. `ctx.agent` / `ctx.shell` are attached by their
+      // hosts during activation; headless backends that skip a host
+      // leave its surface undefined so misuse fails loudly.
+      const ctx = {
         bus,
         instanceId,
         quit: opts.quit,
-        define: (name, fn) => handlers.define(name, fn),
-        advise: (name, wrapper) => handlers.advise(name, wrapper),
-        call: (name, ...args) => handlers.call(name, ...args),
+        define: (name: string, fn: (...args: any[]) => any) => handlers.define(name, fn),
+        advise: (name: string, wrapper: (next: (...args: any[]) => any, ...args: any[]) => any) => handlers.advise(name, wrapper),
+        call: (name: string, ...args: any[]) => handlers.call(name, ...args),
         list: () => handlers.list(),
         onDispose: () => {},
         getExtensionSettings: settingsMod.getExtensionSettings,
@@ -250,57 +213,14 @@ export function createCore(config: AppConfig): AgentShellCore {
           fs.mkdirSync(dir, { recursive: true });
           return dir;
         },
-
-        // ── command sugar (frontend-agnostic) ───────────────
-        registerCommand: (name, description, handler) =>
+        registerCommand: (name: string, description: string, handler: (args: string) => Promise<void> | void) =>
           bus.emit("command:register", { name, description, handler }),
-        adviseCommand: (name, advisor) => {
+        adviseCommand: (name: string, advisor: (next: (args: string) => Promise<void> | void, args: string) => Promise<void> | void) => {
           const key = name.startsWith("/") ? name : `/${name}`;
           return handlers.advise(`command:${key}`, advisor as Parameters<typeof handlers.advise>[1]);
         },
-
-        // ── agent host surface ──────────────────────────────
-        agent: {
-          llm: createLlmFacade(handlers),
-          providers: {
-            configure: (id, configureOpts) => bus.emit("provider:configure", { id, ...configureOpts }),
-          },
-          registerTool: (tool) => bus.emit("agent:register-tool", { tool, extensionName: "" }),
-          unregisterTool: (name) => bus.emit("agent:unregister-tool", { name }),
-          adviseTool: (name, advisor) => handlers.advise(`tool:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
-          adviseToolSchema: (name, advisor) => handlers.advise(`tool:${name}:schema`, advisor as Parameters<typeof handlers.advise>[1]),
-          getTools: () => bus.emitPipe("agent:get-tools", { tools: [] }).tools,
-          registerInstruction: (name, text) => bus.emit("agent:register-instruction", { name, text, extensionName: "" }),
-          removeInstruction: (name) => bus.emit("agent:remove-instruction", { name }),
-          adviseInstruction: (name, advisor) => handlers.advise(`instruction:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
-          registerSkill: (name, description, filePath) => bus.emit("agent:register-skill", { name, description, filePath, extensionName: "" }),
-          removeSkill: (name) => bus.emit("agent:remove-skill", { name }),
-          adviseSkill: (name, advisor) => handlers.advise(`skill:${name}:view`, advisor as Parameters<typeof handlers.advise>[1]),
-          registerContextProducer: (_name, producer, producerOpts) => {
-            const handlerName = producerOpts?.mode === "per-query"
-              ? "query-context:build"
-              : "dynamic-context:build";
-            return handlers.advise(handlerName, (next) => {
-              const base = next() as string;
-              const part = producer();
-              if (!part) return base;
-              const trimmed = part.trim();
-              if (!trimmed) return base;
-              return base ? `${base}\n\n${trimmed}` : trimmed;
-            });
-          },
-        },
-
-        // ── shell host surface ──────────────────────────────
-        shell: {
-          compositor,
-          setPalette,
-          createBlockTransform: (o) => streamTransform.createBlockTransform(bus, o),
-          createFencedBlockTransform: (o) => streamTransform.createFencedBlockTransform(bus, o),
-          adviseInputMode: (id, advisor) => handlers.advise(`input-mode:${id}:submit`, advisor as Parameters<typeof handlers.advise>[1]),
-          createRemoteSession,
-        },
-      };
+        compositor,
+      } as unknown as ExtensionContext;
       return ctx;
     },
 

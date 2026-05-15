@@ -34,7 +34,7 @@ export default function activate(ctx: ExtensionContext): void {
   if (!apiKey) return;
   if (process.env.OPENAI_BASE_URL) return; // openai-compatible handles this
 
-  ctx.agent.providers.configure("openai", { reasoningParams: buildReasoningParams });
+  ctx.agent!.providers.configure("openai", { reasoningParams: buildReasoningParams });
 
   ctx.bus.emit("provider:register", {
     id: "openai",

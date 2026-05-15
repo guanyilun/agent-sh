@@ -9,10 +9,11 @@
  * backend bails silently.
  */
 import type { ExtensionContext } from "../shell/host-types.js";
-import type { AgentMode } from "../agent/host-types.js";
+import type { AgentMode, AgentSurface } from "../agent/host-types.js";
 import type { AppConfig } from "../shell/host-types.js";
 import { AgentLoop } from "./agent-loop.js";
 import { LlmClient } from "../utils/llm-client.js";
+import { createLlmFacade } from "../utils/llm-facade.js";
 import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../core/settings.js";
 import { PACKAGE_VERSION } from "../utils/package-version.js";
 import { discoverSkills } from "./skills.js";
@@ -57,6 +58,40 @@ function mergeCaps(
 export default function agentBackend(ctx: ExtensionContext): void {
   const { bus } = ctx;
   const config: AppConfig = ctx.call("config:get-shell-config") ?? {};
+
+  // Attach the agent surface to ctx. Bridges that own the agent skip
+  // this — ctx.agent stays undefined and extensions fail loudly.
+  const agentSurface: AgentSurface = {
+    llm: createLlmFacade({ list: ctx.list, call: ctx.call }),
+    providers: {
+      configure: (id, configureOpts) => bus.emit("provider:configure", { id, ...configureOpts }),
+    },
+    registerTool: (tool) => bus.emit("agent:register-tool", { tool, extensionName: "" }),
+    unregisterTool: (name) => bus.emit("agent:unregister-tool", { name }),
+    adviseTool: (name, advisor) => ctx.advise(`tool:${name}`, advisor as Parameters<typeof ctx.advise>[1]),
+    adviseToolSchema: (name, advisor) => ctx.advise(`tool:${name}:schema`, advisor as Parameters<typeof ctx.advise>[1]),
+    getTools: () => bus.emitPipe("agent:get-tools", { tools: [] }).tools,
+    registerInstruction: (name, text) => bus.emit("agent:register-instruction", { name, text, extensionName: "" }),
+    removeInstruction: (name) => bus.emit("agent:remove-instruction", { name }),
+    adviseInstruction: (name, advisor) => ctx.advise(`instruction:${name}`, advisor as Parameters<typeof ctx.advise>[1]),
+    registerSkill: (name, description, filePath) => bus.emit("agent:register-skill", { name, description, filePath, extensionName: "" }),
+    removeSkill: (name) => bus.emit("agent:remove-skill", { name }),
+    adviseSkill: (name, advisor) => ctx.advise(`skill:${name}:view`, advisor as Parameters<typeof ctx.advise>[1]),
+    registerContextProducer: (_name, producer, producerOpts) => {
+      const handlerName = producerOpts?.mode === "per-query"
+        ? "query-context:build"
+        : "dynamic-context:build";
+      return ctx.advise(handlerName, (next) => {
+        const base = next() as string;
+        const part = producer();
+        if (!part) return base;
+        const trimmed = part.trim();
+        if (!trimmed) return base;
+        return base ? `${base}\n\n${trimmed}` : trimmed;
+      });
+    },
+  };
+  (ctx as { agent?: AgentSurface }).agent = agentSurface;
 
   // Immutable settings snapshot; provider:register payloads merge against it.
   const providerRegistry = new Map<string, ResolvedProvider>();
@@ -134,7 +169,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list },
     modes,
     initialModeIndex,
-    compositor: ctx.shell.compositor,
+    compositor: ctx.compositor,
     instanceId: ctx.instanceId,
     history: config.history,
   });

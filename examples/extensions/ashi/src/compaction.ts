@@ -43,7 +43,8 @@ export function registerCompaction(
   capture: Capture,
 ): void {
   ctx.advise("conversation:compact", async (next: (...a: unknown[]) => unknown, opts: unknown) => {
-    if (!ctx.agent.llm.available) return next(opts);
+    const llm = ctx.agent?.llm;
+    if (!llm?.available) return next(opts);
 
     await capture.flush();
     const messages = ctx.call("conversation:get-messages") as AgentMessage[] | undefined;
@@ -69,7 +70,7 @@ export function registerCompaction(
 
     let summary: string;
     try {
-      summary = await ctx.agent.llm.ask({
+      summary = await llm.ask({
         system: SUMMARY_PROMPT,
         query: buildQuery(older, prevSummary),
         maxTokens: 16384,

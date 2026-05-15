@@ -3,10 +3,12 @@
  * built-in extensions manifest) because PTY + stdin raw mode ownership is
  * order-critical.
  */
-import type { ExtensionContext } from "./host-types.js";
+import type { ExtensionContext, RemoteSession, RemoteSessionOptions, ShellSurface } from "./host-types.js";
 import { Shell } from "./shell.js";
 import { StdoutSurface } from "../utils/compositor.js";
 import { TerminalBuffer } from "../utils/terminal-buffer.js";
+import { setPalette } from "../utils/palette.js";
+import * as streamTransform from "../utils/stream-transform.js";
 import activateShellContext from "./shell-context.js";
 import activateTuiRenderer from "./tui-renderer.js";
 
@@ -30,10 +32,56 @@ export interface ShellHandle {
 }
 
 /**
- * Register shell-owned handlers extensions can `ctx.call`. Must run before
- * `loadExtensions`; the handlers only need the bus, not the PTY.
+ * Register shell-owned handlers extensions can `ctx.call`, and attach
+ * the shell surface to ctx. Must run before `loadExtensions` so user
+ * extensions see `ctx.shell` populated.
  */
 export function registerShellHandlers(ctx: ExtensionContext): void {
+  const { bus, compositor } = ctx;
+
+  const shellSurface: ShellSurface = {
+    setPalette,
+    createBlockTransform: (o) => streamTransform.createBlockTransform(bus, o),
+    createFencedBlockTransform: (o) => streamTransform.createFencedBlockTransform(bus, o),
+    adviseInputMode: (id, advisor) => ctx.advise(`input-mode:${id}:submit`, advisor as Parameters<typeof ctx.advise>[1]),
+    createRemoteSession: (sessOpts: RemoteSessionOptions): RemoteSession => {
+      const { surface } = sessOpts;
+      const cleanups: (() => void)[] = [];
+      let active = true;
+
+      cleanups.push(compositor.redirect("agent", surface));
+      cleanups.push(compositor.redirect("query", surface));
+      cleanups.push(compositor.redirect("status", surface));
+
+      // on-processing-done is intentionally not advised — its scope
+      // cleanup must always run.
+      cleanups.push(ctx.advise("shell:on-processing-start", (next) => active ? undefined : next()));
+      cleanups.push(ctx.advise("shell:on-processing-redraw", (next) => active ? undefined : next()));
+
+      if (sessOpts.suppressBorders !== false) {
+        cleanups.push(ctx.advise("tui:response-border", (next, ...a) => active ? null : next(...a)));
+      }
+      if (sessOpts.suppressQueryBox) {
+        cleanups.push(ctx.advise("tui:render-user-query", (next, ...a) => active ? [] : next(...a)));
+      }
+      if (sessOpts.suppressUsage !== false) {
+        cleanups.push(ctx.advise("tui:render-usage", (next, ...a) => active ? "" : next(...a)));
+      }
+      return {
+        submit(query: string) { bus.emit("agent:submit", { query }); },
+        get surface() { return surface; },
+        get active() { return active; },
+        close() {
+          if (!active) return;
+          active = false;
+          for (const fn of cleanups.reverse()) fn();
+          cleanups.length = 0;
+        },
+      };
+    },
+  };
+  (ctx as { shell?: ShellSurface }).shell = shellSurface;
+
   let terminalBufferSingleton: TerminalBuffer | null | undefined;
   ctx.define("terminal-buffer", (): TerminalBuffer | null => {
     if (terminalBufferSingleton !== undefined) return terminalBufferSingleton;
@@ -56,9 +104,9 @@ export function activateShell(
   // Stdout-as-default is a frontend choice, not a kernel one — a hub or
   // web bridge would point these at its own surfaces.
   const stdoutSurface = new StdoutSurface();
-  ctx.shell.compositor.setDefault("agent", stdoutSurface);
-  ctx.shell.compositor.setDefault("query", stdoutSurface);
-  ctx.shell.compositor.setDefault("status", stdoutSurface);
+  ctx.compositor.setDefault("agent", stdoutSurface);
+  ctx.compositor.setDefault("query", stdoutSurface);
+  ctx.compositor.setDefault("status", stdoutSurface);
 
   const shell = new Shell({
     bus: ctx.bus,

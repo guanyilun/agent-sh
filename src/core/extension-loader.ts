@@ -81,39 +81,45 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
   };
   const scopedAdviseCommand: typeof ctx.adviseCommand = trackUnsub(ctx.adviseCommand);
 
-  // ── agent surface ──────────────────────────────────────────
+  // ── agent surface (optional — bridge backends omit it) ───
   const agent = ctx.agent;
-  const scopedAgent: typeof agent = {
-    ...agent,
-    registerTool: (tool) => {
-      bus.emit("agent:register-tool", { tool, extensionName });
-      cleanups.push(() => bus.emit("agent:unregister-tool", { name: tool.name }));
-    },
-    adviseTool: trackUnsub(agent.adviseTool),
-    adviseToolSchema: trackUnsub(agent.adviseToolSchema),
-    registerInstruction: (name, text) => {
-      bus.emit("agent:register-instruction", { name, text, extensionName });
-      cleanups.push(() => bus.emit("agent:remove-instruction", { name }));
-    },
-    adviseInstruction: trackUnsub(agent.adviseInstruction),
-    registerSkill: (name, description, filePath) => {
-      bus.emit("agent:register-skill", { name, description, filePath, extensionName });
-      cleanups.push(() => bus.emit("agent:remove-skill", { name }));
-    },
-    adviseSkill: trackUnsub(agent.adviseSkill),
-    registerContextProducer: (name, producer, opts) => {
-      const dispose = agent.registerContextProducer(name, producer, opts);
-      cleanups.push(dispose);
-      return dispose;
-    },
-  };
+  let scopedAgent: typeof agent;
+  if (agent) {
+    scopedAgent = {
+      ...agent,
+      registerTool: (tool) => {
+        bus.emit("agent:register-tool", { tool, extensionName });
+        cleanups.push(() => bus.emit("agent:unregister-tool", { name: tool.name }));
+      },
+      adviseTool: trackUnsub(agent.adviseTool),
+      adviseToolSchema: trackUnsub(agent.adviseToolSchema),
+      registerInstruction: (name, text) => {
+        bus.emit("agent:register-instruction", { name, text, extensionName });
+        cleanups.push(() => bus.emit("agent:remove-instruction", { name }));
+      },
+      adviseInstruction: trackUnsub(agent.adviseInstruction),
+      registerSkill: (name, description, filePath) => {
+        bus.emit("agent:register-skill", { name, description, filePath, extensionName });
+        cleanups.push(() => bus.emit("agent:remove-skill", { name }));
+      },
+      adviseSkill: trackUnsub(agent.adviseSkill),
+      registerContextProducer: (name, producer, opts) => {
+        const dispose = agent.registerContextProducer(name, producer, opts);
+        cleanups.push(dispose);
+        return dispose;
+      },
+    };
+  }
 
-  // ── shell surface ──────────────────────────────────────────
+  // ── shell surface (optional — headless backends omit it) ──
   const shell = ctx.shell;
-  const scopedShell: typeof shell = {
-    ...shell,
-    adviseInputMode: trackUnsub(shell.adviseInputMode),
-  };
+  let scopedShell: typeof shell;
+  if (shell) {
+    scopedShell = {
+      ...shell,
+      adviseInputMode: trackUnsub(shell.adviseInputMode),
+    };
+  }
 
   const scoped: ExtensionContext = {
     ...ctx,
