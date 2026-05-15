@@ -37,7 +37,6 @@ export function createBashTool(opts: {
 
     showOutput: true,
     modifiesFiles: true,
-    requiresPermission: true,
 
     getDisplayInfo: (args) => ({
       kind: "execute",

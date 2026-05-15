@@ -106,9 +106,6 @@ export interface ToolDefinition {
    *  body on eviction (like the builtin read_file/grep/ls). Default: false. */
   readOnly?: boolean;
 
-  /** Whether to gate execution via permission:request (default: false). */
-  requiresPermission?: boolean;
-
   /** Derive display metadata (icon kind, file paths) for the TUI. */
   getDisplayInfo?: (args: Record<string, unknown>) => ToolDisplayInfo;
 

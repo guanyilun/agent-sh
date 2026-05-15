@@ -27,7 +27,6 @@ export function createWriteFileTool(getCwd: () => string): ToolDefinition {
 
     showOutput: true,
     modifiesFiles: true,
-    requiresPermission: true,
 
     getDisplayInfo: (args) => ({
       kind: "write",

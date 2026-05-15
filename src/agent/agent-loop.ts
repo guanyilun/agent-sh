@@ -16,11 +16,7 @@ import type { AgentMode } from "../core/types.js";
 import type { LlmClient } from "../utils/llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
-import * as fs from "node:fs/promises";
-import * as fsSync from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
-import { computeDiff, computeEditDiff, computeInputDiff } from "../utils/diff.js";
 import type { AgentBackend, SkillView, ToolDefinition, ToolExecutionContext } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { normalizeToolArgs } from "./normalize-args.js";
@@ -1087,74 +1083,6 @@ export class AgentLoop implements AgentBackend {
       }
 
       const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" as const };
-      let diffShown = false;
-
-      // Permission gating
-      if (tool.requiresPermission) {
-        let permKind = "tool-call";
-        let permTitle = typeof args.description === "string"
-          ? `${name}: ${args.description}`
-          : name;
-        let metadata: Record<string, unknown> = { args };
-
-        // For file-modifying tools, pre-compute diff for display
-        if (tool.modifiesFiles && typeof args.path === "string") {
-          try {
-            const absPath = path.resolve(process.cwd(), args.path as string);
-            let diff: ReturnType<typeof computeDiff> | undefined;
-
-            if (typeof args.old_text === "string" && typeof args.new_text === "string") {
-              // edit_file — read the file so line numbers are real (not relative to the edit region)
-              const normalizedOld = (args.old_text as string).replace(/\r\n/g, "\n");
-              const normalizedNew = (args.new_text as string).replace(/\r\n/g, "\n");
-              try {
-                const oldFileContent = await fs.readFile(absPath, "utf-8");
-                diff = computeEditDiff(
-                  oldFileContent, normalizedOld, normalizedNew,
-                  args.replace_all === true,
-                );
-              } catch {
-                // File doesn't exist yet — fall back to input-only diff
-                diff = computeInputDiff(normalizedOld, normalizedNew);
-              }
-            } else if (typeof args.content === "string") {
-              // write_file — still need to read the old file for comparison
-              let oldContent: string | null = null;
-              try { oldContent = await fs.readFile(absPath, "utf-8"); } catch { /* new file */ }
-              if (oldContent !== null) {
-                diff = computeDiff(oldContent, args.content as string);
-              }
-            }
-
-            if (diff && !diff.isIdentical) {
-              permKind = "file-write";
-              // Shorten path for display
-              const cwd = process.cwd();
-              const home = process.env.HOME ?? os.homedir();
-              let displayPath = absPath;
-              if (absPath.startsWith(cwd + "/")) displayPath = absPath.slice(cwd.length + 1);
-              else if (home && absPath.startsWith(home + "/")) displayPath = "~/" + absPath.slice(home.length + 1);
-              permTitle = displayPath;
-              metadata = { args, diff };
-              diffShown = true;
-            }
-          } catch { /* fall back to generic permission */ }
-        }
-
-        const ui = this.compositor
-          ? createToolUI(this.bus, this.compositor.surface("agent"))
-          : undefined;
-        const perm = await this.bus.emitPipeAsync("permission:request", {
-          kind: permKind,
-          title: permTitle,
-          metadata,
-          ui,
-          decision: { outcome: "approved" },
-        });
-        if ((perm.decision as { outcome: string }).outcome !== "approved") {
-          return { content: "Permission denied by user.", exitCode: 1, isError: true };
-        }
-      }
 
       // Emit tool-started for TUI
       const label = tool.displayName ?? name;
@@ -1168,10 +1096,7 @@ export class AgentLoop implements AgentBackend {
       this.bus.emit("agent:tool-call", { tool: name, args });
 
       // Execute — use ctx.onChunk so advisors can wrap the streaming callback.
-      // Suppress streaming output if diff was already shown.
-      const onChunk = (tool.showOutput !== false && !diffShown)
-        ? ctx.onChunk
-        : undefined;
+      const onChunk = tool.showOutput !== false ? ctx.onChunk : undefined;
       const toolCtx: ToolExecutionContext = { signal };
       if (this.compositor) {
         toolCtx.ui = createToolUI(this.bus, this.compositor.surface("agent"));
@@ -1406,7 +1331,7 @@ export class AgentLoop implements AgentBackend {
         args = normalizeToolArgs(args, tool.input_schema);
 
         // ── Round-scoped cache for cacheable read-only tools ──
-        const cacheable = !tool.modifiesFiles && !tool.requiresPermission && tool.showOutput !== true;
+        const cacheable = !tool.modifiesFiles && tool.showOutput !== true;
         const cacheKey = cacheable ? `${tc.name}:${JSON.stringify(args)}` : null;
         if (cacheKey) {
           const cached = roundCache.get(cacheKey);
@@ -1486,12 +1411,11 @@ export class AgentLoop implements AgentBackend {
         collectedResults.push(finalResult);
       };
 
-      // Partition into parallel-safe (read-only) and sequential (needs permission)
       const parallel: PendingToolCall[] = [];
       const sequential: PendingToolCall[] = [];
       for (const tc of toolCalls) {
         const tool = this.toolRegistry.get(tc.name);
-        if (tool && !tool.requiresPermission && !tool.modifiesFiles) {
+        if (tool && !tool.modifiesFiles) {
           parallel.push(tc);
         } else {
           sequential.push(tc);

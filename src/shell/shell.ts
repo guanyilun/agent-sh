@@ -355,20 +355,6 @@ export class Shell implements InputContext {
       this.handlers.call("shell:on-processing-done");
     });
 
-    // Permission UI is briefly visible during the prompt; an unmute scope
-    // overrides whatever mute is currently held, then releases cleanly.
-    // Doesn't touch agent-turn state, so suppressed handlers can't leak.
-    let permissionVisible: ShellScope | null = null;
-    this.bus.on("permission:request", () => {
-      permissionVisible?.release();
-      permissionVisible = this.acquireUnmute("permission-ui");
-    });
-    this.bus.onPipeAsync("permission:request", async (payload) => {
-      permissionVisible?.release();
-      permissionVisible = null;
-      return payload;
-    });
-
     this.bus.onPipeAsync("shell:exec-request", async (payload) => {
       const visible = this.acquireUnmute("exec-request");
       this.skipNextLine();

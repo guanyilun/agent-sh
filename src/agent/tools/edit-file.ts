@@ -73,7 +73,6 @@ export function createEditFileTool(getCwd: () => string): ToolDefinition {
 
     showOutput: true,
     modifiesFiles: true,
-    requiresPermission: true,
 
     getDisplayInfo: (args) => ({
       kind: "write",

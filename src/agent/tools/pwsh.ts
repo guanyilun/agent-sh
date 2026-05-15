@@ -67,7 +67,6 @@ export function createPwshTool(opts: {
 
     showOutput: true,
     modifiesFiles: true,
-    requiresPermission: true,
 
     getDisplayInfo: () => ({
       kind: "execute",

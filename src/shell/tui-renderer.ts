@@ -104,11 +104,6 @@ interface RenderState {
   isThinking: boolean;
   showThinkingText: boolean;
   thinkingPending: boolean;
-
-  /** Tool calls whose diff was already shown via permission preview —
-   *  suppress the duplicate diff body on tool-completed. */
-  previewedDiffPending: boolean;
-  previewedDiffToolIds: Set<string>;
 }
 
 function createRenderState(): RenderState {
@@ -140,8 +135,6 @@ function createRenderState(): RenderState {
     isThinking: false,
     showThinkingText: false,
     thinkingPending: false,
-    previewedDiffPending: false,
-    previewedDiffToolIds: new Set(),
   };
 }
 
@@ -366,10 +359,6 @@ export default function activate(ctx: ExtensionContext): void {
     s.currentToolKind = e.kind;
     s.toolStartTime = Date.now();
     s.orphanContHeaderKind = undefined;
-    if (s.previewedDiffPending && e.toolCallId) {
-      s.previewedDiffToolIds.add(e.toolCallId);
-    }
-    s.previewedDiffPending = false;
 
     if (e.title === "user_shell") {
       finalizeToolGroup();
@@ -437,13 +426,7 @@ export default function activate(ctx: ExtensionContext): void {
     s.toolExitCode = e.exitCode;
     if (e.exitCode !== 0) s.toolGroupAllOk = false;
 
-    let resultDisplay = e.resultDisplay;
-    if (e.toolCallId && s.previewedDiffToolIds.has(e.toolCallId)) {
-      s.previewedDiffToolIds.delete(e.toolCallId);
-      if (resultDisplay?.body?.kind === "diff") {
-        resultDisplay = { ...resultDisplay, body: undefined };
-      }
-    }
+    const resultDisplay = e.resultDisplay;
 
     if (s.toolGroupKind) {
       // Grouped tool — track success/failure and summaries, show aggregate on ⎿ line.
@@ -500,45 +483,6 @@ export default function activate(ctx: ExtensionContext): void {
     s.renderer!.writeLine(`${p.error}Error: ${e.message}${p.reset}`);
     s.renderer!.writeLine("");
     drain();
-  });
-
-  bus.on("permission:request", (e) => {
-    if (!shouldRender()) return;
-    stopCurrentSpinner();
-    flushCommandOutput();
-    if (s.renderer) {
-      s.renderer.flush();
-      drain();
-    }
-    // Diff rendering is handled in the async pipe below so it can yield
-    // to the event loop between hunks (keeping the spinner responsive).
-  });
-
-  // Async pipe: render diffs via the tui:render-diff handler (extensions can
-  // advise to customize).  Runs after the sync `on` handler above (which
-  // flushes state) and before shell.ts's pipe (which pauses stdout).
-  bus.onPipeAsync("permission:request", async (e) => {
-    if (!shouldRender()) return e;
-
-    if (e.kind === "file-write" && e.metadata?.diff) {
-      showCollapsedThinking();
-      const lines = ctx.call("tui:render-diff", e.title, e.metadata.diff as DiffResult, cappedW()) as string[];
-      if (lines.length > 0) {
-        if (!s.renderer) startAgentResponse();
-        contentGap("diff");
-        for (const line of lines) s.renderer!.writeLine(line);
-        drain();
-      }
-      // The diff box IS the visual representation of the upcoming tool call.
-      // Mark lastContentKind as "tool" so the tool call line that follows
-      // doesn't inject an extra gap between the diff box and the checkmark.
-      s.lastContentKind = "tool";
-      s.previewedDiffPending = true;
-    }
-    // Don't endAgentResponse() here — permission requests that aren't
-    // file-write diffs are handled inline (auto-approved or by extensions).
-    // Closing the response prematurely causes double separator borders.
-    return e;
   });
 
   bus.on("input:keypress", (e) => {
@@ -753,6 +697,22 @@ export default function activate(ctx: ExtensionContext): void {
    */
   define("tui:render-diff", (filePath: string, diff: DiffResult, width: number): string[] => {
     return renderDiffBody(diff, filePath, width);
+  });
+
+  /** Display a diff inline above the agent response (e.g. for pre-execute
+   *  preview from a gating advisor). Formats via `tui:render-diff` so
+   *  advisors can theme it. */
+  define("tui:show-diff", (filePath: string, diff: DiffResult): void => {
+    if (!shouldRender()) return;
+    stopCurrentSpinner();
+    showCollapsedThinking();
+    const lines = ctx.call("tui:render-diff", filePath, diff, cappedW()) as string[];
+    if (lines.length === 0) return;
+    if (!s.renderer) startAgentResponse();
+    contentGap("diff");
+    for (const line of lines) s.renderer!.writeLine(line);
+    drain();
+    s.lastContentKind = "tool";
   });
 
   /** Render a diff as framed box lines (pure — no TUI state side effects). */
