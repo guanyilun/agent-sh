@@ -14,6 +14,7 @@
 import { createCore, type AgentShellCore } from "agent-sh";
 import { loadExtensions } from "agent-sh/extension-loader";
 import { loadBuiltinExtensions } from "agent-sh/extensions";
+import { activateAgent } from "agent-sh/agent";
 import { getSettings } from "agent-sh/settings";
 import type { ContentBlock } from "agent-sh/types";
 
@@ -498,14 +499,8 @@ async function handleSessionNew(id: number | string, params: Record<string, unkn
     const extCtx = core.extensionContext({ quit: () => process.exit(0) });
     const settings = getSettings();
 
-    // Load built-in extensions first (agent-backend, slash-commands, etc.)
-    // Skip TUI-only extensions that don't apply in headless mode
-    const headlessDisabled = [
-      "tui-renderer",
-      "file-autocomplete",
-      "shell-context",
-      ...(settings.disabledBuiltins ?? []),
-    ];
+    activateAgent(extCtx);
+    const headlessDisabled = ["file-autocomplete", ...(settings.disabledBuiltins ?? [])];
     await loadBuiltinExtensions(extCtx, headlessDisabled);
 
     // Load user extensions with a timeout (some may hang in headless mode)

@@ -1,12 +1,14 @@
 /**
- * Frontend bootstrap. Loaded directly from src/index.ts (not the built-in
- * extensions manifest) because PTY + stdin raw mode ownership is order-
- * critical. For pluggable capability extensions see `src/extensions/`.
+ * Frontend bootstrap. Loaded directly from src/cli/index.ts (not the
+ * built-in extensions manifest) because PTY + stdin raw mode ownership is
+ * order-critical.
  */
 import type { ExtensionContext } from "../core/types.js";
 import { Shell } from "./shell.js";
 import { StdoutSurface } from "../utils/compositor.js";
 import { TerminalBuffer } from "../utils/terminal-buffer.js";
+import activateShellContext from "./shell-context.js";
+import activateTuiRenderer from "./tui-renderer.js";
 
 export interface ShellActivateOptions {
   cols: number;
@@ -38,12 +40,14 @@ export function registerShellHandlers(ctx: ExtensionContext): void {
     terminalBufferSingleton = TerminalBuffer.createWired(ctx.bus);
     return terminalBufferSingleton;
   });
+  activateShellContext(ctx);
+  activateTuiRenderer(ctx);
 }
 
 /**
  * Construct the Shell, wire resize forwarding, and register cleanup with the
  * provided ExtensionContext. Returns a handle the caller (typically
- * `src/index.ts`) uses to drive lifecycle from process-level events.
+ * `src/cli/index.ts`) uses to drive lifecycle from process-level events.
  */
 export function activateShell(
   ctx: ExtensionContext,

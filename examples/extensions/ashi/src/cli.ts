@@ -10,6 +10,7 @@
 import { createCore, NoopHistory } from "agent-sh/core";
 import { loadBuiltinExtensions } from "agent-sh/extensions";
 import { loadExtensions } from "agent-sh/extension-loader";
+import { activateAgent } from "agent-sh/agent";
 import { getSettings } from "agent-sh/settings";
 import type { AgentShellConfig } from "agent-sh/types";
 
@@ -82,8 +83,8 @@ async function main(): Promise<void> {
 
   const ctx = core.extensionContext({ quit: cleanup });
 
-  const disabled = ["shell-context", "tui-renderer"];
-  await loadBuiltinExtensions(ctx, disabled);
+  activateAgent(ctx);
+  await loadBuiltinExtensions(ctx);
 
   const loaded = await loadExtensions(ctx, config.extensions);
   core.bus.emit("core:extensions-loaded", { names: loaded });

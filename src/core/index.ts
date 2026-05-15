@@ -6,9 +6,9 @@
  * subscribing to bus events. Shell-specific tracking lives in the
  * shell-context built-in extension.
  *
- * Agent backends are loaded as extensions and register themselves via
- * the agent:register-backend bus event. The built-in "ash" backend is
- * loaded from src/extensions/agent-backend.ts.
+ * Agent backends register themselves via the agent:register-backend bus
+ * event. The built-in "ash" backend lives in src/agent/ and is activated
+ * by hosts via activateAgent().
  *
  * Usage:
  *   import { createCore } from "agent-sh";

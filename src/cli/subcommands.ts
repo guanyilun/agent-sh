@@ -12,8 +12,6 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   auth: (args) => runAuth(args),
 };
 
-export const SUBCOMMAND_NAMES = Object.keys(SUBCOMMANDS);
-
 export async function dispatchSubcommand(argv: string[]): Promise<boolean> {
   const handler = SUBCOMMANDS[argv[0] ?? ""];
   if (!handler) return false;

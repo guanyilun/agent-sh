@@ -1,6 +1,4 @@
 /**
- * Built-in agent backend extension.
- *
  * Constructs the AgentLoop synchronously with a placeholder LlmClient,
  * so core handlers (history:append, system-prompt:build, conversation:*)
  * are defined before user extensions activate. Mode resolution is
@@ -17,8 +15,12 @@ import { LlmClient } from "../utils/llm-client.js";
 import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../core/settings.js";
 import { PACKAGE_VERSION } from "../utils/package-version.js";
 import { discoverSkills } from "./skills.js";
+import { resolveApiKey } from "../cli/auth/keys.js";
+import activateOpenrouter from "./providers/openrouter.js";
+import activateOpenai from "./providers/openai.js";
+import activateOpenaiCompatible from "./providers/openai-compatible.js";
+import activateDeepseek from "./providers/deepseek.js";
 
-/** Read the user's persisted defaultModel for a provider, if any. */
 function persistedModelFor(providerName: string | undefined): string | undefined {
   if (!providerName) return undefined;
   return getSettings().providers?.[providerName]?.defaultModel;
@@ -351,3 +353,12 @@ export type { ToolDefinition, ToolResult, ToolDisplayInfo } from "./types.js";
 export { AgentLoop } from "./agent-loop.js";
 export { ToolRegistry } from "./tool-registry.js";
 export { runSubagent, type SubagentOptions } from "./subagent.js";
+
+/** Activate the ash backend and any provider whose key is configured. */
+export function activateAgent(ctx: ExtensionContext): void {
+  agentBackend(ctx);
+  if (resolveApiKey("openrouter").key) activateOpenrouter(ctx);
+  if (resolveApiKey("openai").key && !process.env.OPENAI_BASE_URL) activateOpenai(ctx);
+  if (process.env.OPENAI_BASE_URL) activateOpenaiCompatible(ctx);
+  activateDeepseek(ctx);
+}
