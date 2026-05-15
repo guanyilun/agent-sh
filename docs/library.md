@@ -7,7 +7,7 @@ agent-sh has two integration points. The difference: **extensions customize the 
 | | Extension | Library |
 |---|---|---|
 | **Use when** | You want to add features to the interactive terminal — themes, custom renderers, input modes, content transforms | You're building something else entirely — a REST API, Electron app, test harness, CI pipeline |
-| **You get** | An `ExtensionContext` — substrate (bus, handlers, lifecycle, compositor) + slash-command sugar + optional host surfaces. `ctx.agent` (LLM, tools, instructions) and `ctx.shell` (palette, transforms, remote sessions) are attached by their hosts during activation; under headless backends, the missing surface is `undefined`. Narrower types (`AgentContext`, `ShellContext`, `FullExtensionContext`) let extensions declare which hosts they require. | `AgentShellCore` — bus, `query()`, lifecycle control (`activateBackend`, `kill`) |
+| **You get** | An `ExtensionContext` — substrate (bus, handlers, lifecycle, compositor) + slash-command registration + optional host surfaces. `ctx.agent` (LLM, tools, instructions) and `ctx.shell` (palette, transforms, remote sessions) are attached by their hosts during activation; under headless backends, the missing surface is `undefined`. Narrower types (`AgentContext`, `ShellContext`, or their intersection) let extensions declare which hosts they require. | `AgentShellCore` — bus, `query()`, lifecycle control (`activateBackend`, `kill`) |
 | **Who controls the frontend?** | The built-in TUI does; you decorate it | You do; there is no TUI |
 | **How to use** | Export an `activate` function, load with `-e` | Import `createCore()`, load extensions, wire your own I/O |
 

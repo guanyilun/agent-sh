@@ -60,13 +60,15 @@ For directory-style extensions with declared dependencies, `install` runs `npm i
 
 ## ExtensionContext API
 
-The context is layered: substrate primitives + frontend-agnostic sugar at the top, host-specific surfaces nested under `ctx.agent` and `ctx.shell`. Both nested surfaces are **optional** — they're attached by their hosts during activation, and headless backends (ACP server, bridges) may skip a host's activation entirely:
+The context is layered: substrate primitives + slash-command registration at the top, host-specific surfaces nested under `ctx.agent` and `ctx.shell`. Both nested surfaces are **optional** — they're attached by their hosts during activation, and headless backends (ACP server, bridges) may skip a host's activation entirely:
 
 ```ts
-type ExtensionContext = CoreContext & CommandSugar & Partial<{
-  agent: AgentSurface;   // attached by agent host
-  shell: ShellSurface;   // attached by shell host
-}>;
+type ExtensionContext = CoreContext & {
+  registerCommand: ...;
+  adviseCommand: ...;
+  agent?: AgentSurface;   // attached by agent host
+  shell?: ShellSurface;   // attached by shell host
+};
 ```
 
 That gives extension authors a choice depending on how defensive they want to be:
@@ -76,7 +78,7 @@ That gives extension authors a choice depending on how defensive they want to be
 | `CoreContext` | substrate only | Pure bus / handler extensions; works under any backend |
 | `AgentContext` | substrate + `agent` (required) | Need tools / LLM / instructions; won't load under no-agent bridges |
 | `ShellContext` | substrate + `shell` (required) | Need compositor / palette / transforms; won't load under headless |
-| `FullExtensionContext` | substrate + both (required) | Need both surfaces; lets you skip `?.` guards |
+| `AgentContext & ShellContext` | substrate + both (required) | Need both surfaces; lets you skip `?.` guards |
 | `ExtensionContext` | substrate + both (optional) | Defensive code that adapts to whatever's available; requires `?.` guards on `ctx.agent` / `ctx.shell` |
 
 Picking a narrower type makes host requirements explicit. Under a mismatch (extension typed `AgentContext` loaded under a no-agent bridge), accessing `ctx.agent.foo` produces a real `TypeError` instead of a silent no-op — loud, debuggable failure.

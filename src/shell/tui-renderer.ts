@@ -140,7 +140,6 @@ function createRenderState(): RenderState {
 
 export default function activate(ctx: ExtensionContext): void {
   const { bus, define } = ctx;
-  // tui-renderer runs inside registerShellHandlers, after ctx.shell attaches.
   const compositor = ctx.shell!.compositor;
   const s = createRenderState();
 

@@ -57,10 +57,8 @@ function mergeCaps(
 
 export default function agentBackend(ctx: ExtensionContext): void {
   const { bus } = ctx;
-  const config: AppConfig = ctx.call("config:get-shell-config") ?? {};
+  const config: AppConfig = ctx.call("config:get-app-config") ?? {};
 
-  // Attach the agent surface to ctx. Bridges that own the agent skip
-  // this — ctx.agent stays undefined and extensions fail loudly.
   const agentSurface: AgentSurface = {
     llm: createLlmFacade({ list: ctx.list, call: ctx.call }),
     providers: {
@@ -393,8 +391,6 @@ export { runSubagent, type SubagentOptions } from "./subagent.js";
 /** Activate the ash backend and any provider whose key is configured. */
 export function activateAgent(ctx: ExtensionContext): void {
   agentBackend(ctx);
-  // Agent surface is attached now — narrow the ctx for providers that
-  // legitimately require it (cast is safe by construction).
   const agentCtx = ctx as AgentContext;
   if (resolveApiKey("openrouter").key) activateOpenrouter(agentCtx);
   if (resolveApiKey("openai").key && !process.env.OPENAI_BASE_URL) activateOpenai(agentCtx);

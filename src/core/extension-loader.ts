@@ -28,7 +28,6 @@ let tsxUnregister: (() => Promise<void>) | null = null;
 async function ensureTsSupport(force = false): Promise<void> {
   if (tsRegistered && !force) return;
   try {
-    // Unregister previous loader if reloading
     if (tsxUnregister) {
       try { await tsxUnregister(); } catch { /* ignore stale handle */ }
     }
@@ -142,7 +141,6 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
   return { scoped, dispose };
 }
 
-// Track disposers for user extensions so reload can tear them down
 const extensionDisposers = new Map<string, () => void>();
 
 
@@ -166,22 +164,18 @@ export async function loadExtensions(
 ): Promise<string[]> {
   const specifiers: string[] = [];
 
-  // 1. CLI -e / --extensions
   if (cliExtensions) {
     specifiers.push(...cliExtensions);
   }
 
-  // 2. settings.json
   const settings = getSettings();
   if (settings.extensions.length > 0) {
     specifiers.push(...settings.extensions);
   }
 
-  // 3. ~/.agent-sh/extensions/ directory
   const userSpecifiers = await discoverUserExtensions();
   specifiers.push(...userSpecifiers);
 
-  // Deduplicate
   const seen = new Set<string>();
   const unique = specifiers.filter((s) => {
     if (seen.has(s)) return false;
@@ -189,8 +183,7 @@ export async function loadExtensions(
     return true;
   });
 
-  // Load each extension (user extensions get scoped contexts for reloadability)
-  const loaded = await loadSpecifiers(unique, ctx, false, userSpecifiers);
+  const loaded = await loadSpecifiers(unique, ctx, false);
   return loaded;
 }
 
@@ -226,9 +219,7 @@ async function loadSpecifiers(
   specifiers: string[],
   ctx: ExtensionContext,
   bustCache: boolean,
-  userSpecifiers?: string[],
 ): Promise<string[]> {
-  const userSet = new Set(userSpecifiers ?? []);
   const loaded: string[] = [];
   for (const specifier of specifiers) {
     try {
@@ -237,7 +228,6 @@ async function loadSpecifiers(
       if (TS_EXTS.some((ext) => importPath.endsWith(ext))) {
         await ensureTsSupport(bustCache);
       }
-      // Append timestamp query to bust Node's module cache on reload
       if (bustCache) {
         const sep = importPath.includes("?") ? "&" : "?";
         importPath += `${sep}t=${Date.now()}`;
@@ -253,23 +243,13 @@ async function loadSpecifiers(
         const base = path.basename(specifier).replace(/\.(ts|js|mjs|mts|tsx)$/, "");
         const name = base === "index" ? path.basename(path.dirname(specifier)) : base;
 
-        // Scoped context so /reload can tear user extensions down.
         // Awaiting activate() lets extensions with async setup (e.g.
         // openrouter fetching its model catalog) finish before we move
         // on; a 10s outer timeout in index.ts guards against hangs.
-        if (userSet.has(specifier)) {
-          // Dispose previous load if reloading
-          extensionDisposers.get(name)?.();
-
-          const { scoped, dispose } = createScopedContext(ctx, name);
-          await activate(scoped);
-          extensionDisposers.set(name, dispose);
-        } else {
-          const { scoped, dispose } = createScopedContext(ctx, name);
-          await activate(scoped);
-          // Non-user extensions aren't reloadable, but track for cleanup on shutdown
-          extensionDisposers.set(name, dispose);
-        }
+        extensionDisposers.get(name)?.();
+        const { scoped, dispose } = createScopedContext(ctx, name);
+        await activate(scoped);
+        extensionDisposers.set(name, dispose);
         loaded.push(name);
       }
     } catch (err) {
@@ -287,7 +267,7 @@ async function loadSpecifiers(
  */
 export async function reloadExtensions(ctx: ExtensionContext): Promise<string[]> {
   const specifiers = await discoverUserExtensions();
-  return loadSpecifiers(specifiers, ctx, true, specifiers);
+  return loadSpecifiers(specifiers, ctx, true);
 }
 
 /**
@@ -325,15 +305,12 @@ async function resolveSpecifier(specifier: string): Promise<string> {
     // Scoped packages ("@scope/pkg") contain "/" but are npm specifiers,
     // so the "@" prefix takes precedence over the "/" heuristic.
     if (specifier.includes("/") && !specifier.startsWith("@")) {
-      // Treat as relative path from cwd
       resolved = path.resolve(process.cwd(), specifier);
     } else {
-      // Bare specifier — npm package (including @scope/pkg)
       return specifier;
     }
   }
 
-  // If it's a directory, find the index file
   try {
     const stat = await fs.stat(resolved);
     if (stat.isDirectory()) {

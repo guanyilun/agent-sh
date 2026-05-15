@@ -5,8 +5,8 @@ import type { SkillView, ToolDefinition, ToolExecutionContext, ToolSchemaView } 
 // ── LLM port ─────────────────────────────────────────────────────
 
 /**
- * Backend-agnostic LLM interface exposed via `ctx.llm`. Fulfilled by
- * defining an `llm:invoke` handler; backends without an LLM leave
+ * Backend-agnostic LLM interface exposed via `ctx.agent.llm`. Fulfilled
+ * by defining an `llm:invoke` handler; backends without an LLM leave
  * `available` false and calls reject.
  */
 export interface LlmMessage {
@@ -157,7 +157,3 @@ export interface AgentConfigSurface {
 }
 
 export type AgentConfig = CoreConfig & AgentConfigSurface;
-
-// Note: `AgentSurface` lives in this file but only describes the inner
-// shape — extensions access it via `ctx.agent.X` on `ExtensionContext`
-// or `AgentContext`, never as a bare object.

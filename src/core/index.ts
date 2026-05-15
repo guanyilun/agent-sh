@@ -26,12 +26,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONFIG_DIR } from "./settings.js";
 
-// Re-export types that library consumers need
 export { EventBus } from "./event-bus.js";
 export type { ShellEvents, ContentBlock } from "./event-bus.js";
 export type { CoreContext, CoreConfig } from "./types.js";
 export type { AgentContext, AgentConfig, AgentSurface, AgentConfigSurface, AgentMode, LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
-export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, CommandSugar, ExtensionContext, FullExtensionContext, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, AppConfig } from "../shell/host-types.js";
+export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, ExtensionContext, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, AppConfig } from "../shell/host-types.js";
 export { palette, setPalette, resetPalette } from "../utils/palette.js";
 export type { ColorPalette } from "../utils/palette.js";
 export type { AgentBackend, ToolDefinition } from "../agent/types.js";
@@ -71,9 +70,7 @@ export function createCore(config: AppConfig): AgentShellCore {
   bus.setSource(instanceId);
   const settings = settingsMod.getSettings();
 
-  // Expose raw CLI config so the agent backend extension can resolve
-  // providers and create the LLM client.
-  handlers.define("config:get-shell-config", () => config);
+  handlers.define("config:get-app-config", () => config);
 
   // Default; shell-context advises with the PTY-tracked cwd when loaded.
   handlers.define("cwd", () => process.cwd());
@@ -188,9 +185,6 @@ export function createCore(config: AppConfig): AgentShellCore {
     },
 
     extensionContext(opts) {
-      // Substrate only. `ctx.agent` / `ctx.shell` are attached by their
-      // hosts during activation; headless backends that skip a host
-      // leave its surface undefined so misuse fails loudly.
       const ctx = {
         bus,
         instanceId,

@@ -103,8 +103,6 @@ export function activateShell(
   ctx: ExtensionContext,
   opts: ShellActivateOptions,
 ): ShellHandle {
-  // Stdout-as-default is a frontend choice, not a kernel one — a hub or
-  // web bridge would point these at its own surfaces.
   const stdoutSurface = new StdoutSurface();
   ctx.shell!.compositor.setDefault("agent", stdoutSurface);
   ctx.shell!.compositor.setDefault("query", stdoutSurface);

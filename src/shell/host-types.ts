@@ -106,14 +106,20 @@ export interface ShellSurface {
  *  agent surface. */
 export type ShellContext = CoreContext & { shell: ShellSurface };
 
-// ── Slash-command sugar ──────────────────────────────────────────
-// `registerCommand` / `adviseCommand` are extension-author conveniences
-// over the bus event vocabulary (`command:register`, `command:execute`).
-// They're frontend-agnostic — any consumer (shell input parser, ACP
-// message handler, web API) can dispatch — and live at the top level
-// of `ExtensionContext` rather than nested under a host.
+// ── Extension-facing context ─────────────────────────────────────
 
-export interface CommandSugar {
+/**
+ * What extension `activate()` functions receive. Substrate (`CoreContext`)
+ * + slash-command registration + host surfaces, which are **optional**
+ * because hosts attach them on activation: under headless backends
+ * `ctx.shell` is undefined; under bridge backends `ctx.agent` may be
+ * undefined too. Extensions guard with `ctx.shell?.foo()` /
+ * `if (!ctx.agent) return;`, or type their parameter as the narrower
+ * `AgentContext` / `ShellContext` to declare host requirements (those
+ * variants make the surface non-optional). When both hosts are required,
+ * intersect them at the use site: `ctx: AgentContext & ShellContext`.
+ */
+export type ExtensionContext = CoreContext & {
   registerCommand: (name: string, description: string, handler: (args: string) => Promise<void> | void) => void;
   /** Wrap an already-registered command's handler. Name is normalized
    *  (leading `/` optional). */
@@ -124,21 +130,6 @@ export interface CommandSugar {
       args: string,
     ) => Promise<void> | void,
   ) => () => void;
-}
-
-// ── Extension-facing context ─────────────────────────────────────
-
-/**
- * What extension `activate()` functions receive. Substrate (`CoreContext`)
- * + extension-author sugar (slash commands) + host surfaces, which are
- * **optional** because hosts attach them on activation: under headless
- * backends `ctx.shell` is undefined; under bridge backends `ctx.agent`
- * may be undefined too. Extensions guard with `ctx.shell?.foo()` /
- * `if (!ctx.agent) return;`, or type their parameter as the narrower
- * `AgentContext` / `ShellContext` to declare host requirements (those
- * variants make the surface non-optional).
- */
-export type ExtensionContext = CoreContext & CommandSugar & {
   agent?: AgentSurface;
   shell?: ShellSurface;
 };
@@ -157,9 +148,3 @@ export type ShellConfig = CoreConfig & ShellConfigSurface;
  *  `AgentConfig`, `ShellConfig`) are for code that cares about which
  *  host owns which fields. */
 export type AppConfig = CoreConfig & import("../agent/host-types.js").AgentConfigSurface & ShellConfigSurface;
-
-/** Extension that requires *both* hosts attached — agent and shell.
- *  Use this when an extension touches both surfaces and is fine being
- *  unloaded under headless or no-agent backends. Avoids the `?.` guard
- *  burden that comes with the optional surfaces on `ExtensionContext`. */
-export type FullExtensionContext = import("../agent/host-types.js").AgentContext & ShellContext;

@@ -22,7 +22,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execSync, spawn } from "node:child_process";
-import type { FullExtensionContext, RenderSurface, RemoteSession } from "agent-sh/types";
+import type { AgentContext, ShellContext, RenderSurface, RemoteSession } from "agent-sh/types";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -142,7 +142,7 @@ interface PaneState {
 
 // ── Extension ───────────────────────────────────────────────────
 
-export default function activate(ctx: FullExtensionContext): void {
+export default function activate(ctx: AgentContext & ShellContext): void {
   const { bus, registerCommand } = ctx;
   const { registerInstruction } = ctx.agent;
   const { createRemoteSession } = ctx.shell;

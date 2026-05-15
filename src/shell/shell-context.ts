@@ -71,12 +71,8 @@ export default function activate(ctx: ExtensionContext): void {
   // Override core's process.cwd() default with the PTY-tracked value.
   ctx.advise("cwd", () => currentCwd);
 
-  // shell-context runs as part of registerShellHandlers, which fires
-  // *before* the agent host attaches `ctx.agent`. So we advise the
-  // underlying `query-context:build` handler directly rather than going
-  // through `ctx.agent.registerContextProducer` sugar — the handler is
-  // defined in core with an empty default, so this works before (and
-  // without) any agent backend.
+  // Advises the core handler directly: shell-context loads before the
+  // agent host attaches `ctx.agent`, so the sugar isn't available yet.
   ctx.advise("query-context:build", (next) => {
     const base = next() as string;
     const part = (() => {
