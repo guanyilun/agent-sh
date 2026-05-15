@@ -198,7 +198,7 @@ function onSubagentSpawn(id: string, ctx: ExtensionContext): void {
   const surface = createPanelSurface(panel);
 
   // This subagent's output goes to its own panel
-  const restore = ctx.compositor.redirect(`agent:sub:${id}`, surface);
+  const restore = ctx.shell.compositor.redirect(`agent:sub:${id}`, surface);
 
   panel.open();
   // When done, restore routing
@@ -244,7 +244,7 @@ The renderer doesn't know whether it's writing to stdout or a panel. The composi
 For most extensions that route output to a different surface, use `createRemoteSession()` instead of manual compositor redirects. It bundles compositor routing, shell lifecycle advisors, and chrome suppression into one call:
 
 ```typescript
-const session = ctx.createRemoteSession({
+const session = ctx.shell.createRemoteSession({
   surface: panelSurface,
   suppressQueryBox: true,   // session has own input
 });

@@ -85,7 +85,7 @@ The agent backend is a bus-driven component that registers via `agent:register-b
 
 The default backend is **ash**, loaded as a built-in extension (`src/extensions/agent-backend.ts`). It resolves LLM providers from settings, creates an `LlmClient`, builds the mode list for runtime model switching, and creates an `AgentLoop` that uses the `openai` SDK to call any OpenAI-compatible API. See [The Built-in Agent: ash](agent.md) for the full guide.
 
-The agent-backend extension registers an `llm:invoke` handler that backs the `ctx.llm` facade on `ExtensionContext`, so any extension can call `ctx.llm.ask(...)` or `ctx.llm.session(...)` without knowing which backend is active. Backends with no LLM leave `ctx.llm.available` false.
+The agent-backend extension registers an `llm:invoke` handler that backs the `ctx.llm` facade on `ExtensionContext`, so any extension can call `ctx.agent.llm.ask(...)` or `ctx.agent.llm.session(...)` without knowing which backend is active. Backends with no LLM leave `ctx.agent.llm.available` false.
 
 ### Extension Backends
 

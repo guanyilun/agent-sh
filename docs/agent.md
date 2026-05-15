@@ -57,7 +57,7 @@ Per-turn signals live in two symmetric handlers, both empty by default:
 - **`query-context:build`** — fires once at user-query start. Output is wrapped in `<query_context>` and frozen into the user message, so it persists in conversation history. Shell context is the canonical example (`<cwd>` always, `<shell_events>` when there is fresh activity); other "what happened between turns" signals (notifications, calendar/inbox deltas) go here too.
 - **`dynamic-context:build`** — fires on every LLM call (each tool-loop iteration). Output is wrapped in `<dynamic_context>` and ephemerally prepended to the trailing message at request time, so the cacheable prefix stays byte-stable. Use for "current state" signals: in-flight subagents, threshold warnings, active mode markers.
 
-Extensions populate either via `ctx.registerContextProducer(name, fn, { mode: "per-query" | "per-request" })`. When no producer contributes, no envelope tag is emitted at all — vanilla sessions send exactly `[system, ...history]`.
+Extensions populate either via `ctx.agent.registerContextProducer(name, fn, { mode: "per-query" | "per-request" })`. When no producer contributes, no envelope tag is emitted at all — vanilla sessions send exactly `[system, ...history]`.
 
 ## Project Conventions
 
@@ -154,7 +154,7 @@ The loop continues until the LLM returns a response with no tool calls. There's 
 ### Permission gating
 
 The kernel has no opinion on permission. By default every tool runs (yolo
-mode). Gating extensions register tool advisors via `ctx.adviseTool(name, ...)`
+mode). Gating extensions register tool advisors via `ctx.agent.adviseTool(name, ...)`
 to interpose a confirmation prompt, audit log, or policy check before calling
 `next(args, onChunk, ctx)`. See `examples/extensions/interactive-prompts.ts`
 for a reference implementation that gates `bash`, `pwsh`, `write_file`, and
@@ -387,6 +387,6 @@ To swap the backend itself (e.g. to `claude-code` or `pi`), use `/backend <name>
 
 ## Extension Tools
 
-Extensions can register custom tools via `ctx.registerTool()`. These appear alongside built-in tools and follow the same `ToolDefinition` interface. Only works with the built-in `ash` backend — bridge backends manage their own tools.
+Extensions can register custom tools via `ctx.agent.registerTool()`. These appear alongside built-in tools and follow the same `ToolDefinition` interface. Only works with the built-in `ash` backend — bridge backends manage their own tools.
 
 See [Extensions: ExtensionContext API](extensions.md#extensioncontext-api) for the interface and [Extensions: Custom Agent Backends](extensions.md#custom-agent-backends) for writing backend extensions.

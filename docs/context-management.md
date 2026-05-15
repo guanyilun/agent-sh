@@ -44,7 +44,7 @@ The two streams merge at one point: when the user submits a new query, the curre
 
 Each exchange (a shell command + output) gets a sequential `id` as it's captured. The shell-context extension keeps an internal `lastSeq` cursor — the highest id it has already sent to the model.
 
-Shell context is registered as a per-query context producer (`ctx.registerContextProducer("shell-context", …, { mode: "per-query" })`):
+Shell context is registered as a per-query context producer (`ctx.agent.registerContextProducer("shell-context", …, { mode: "per-query" })`):
 
 1. The producer always emits `<cwd>...</cwd>` with the live PTY-tracked cwd, so every user message anchors where the agent is right now (immune to compaction confusion over historical cwds).
 2. If there are exchanges with id > `lastSeq`, it appends `<shell_events>...</shell_events>` with the deltas; the cursor then advances to the new high-water mark.
