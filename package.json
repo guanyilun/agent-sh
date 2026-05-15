@@ -87,8 +87,8 @@
       "default": "./dist/agent/nuclear-form.js"
     },
     "./executor": {
-      "types": "./dist/executor.d.ts",
-      "default": "./dist/executor.js"
+      "types": "./dist/utils/executor.d.ts",
+      "default": "./dist/utils/executor.js"
     }
   },
   "files": [
