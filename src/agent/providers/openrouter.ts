@@ -5,7 +5,7 @@
  */
 import type { ExtensionContext } from "../../core/types.js";
 import { getSettings } from "../../core/settings.js";
-import { resolveApiKey } from "../../auth/keys.js";
+import { resolveApiKey } from "../../cli/auth/keys.js";
 
 const BASE_URL = "https://openrouter.ai/api/v1";
 

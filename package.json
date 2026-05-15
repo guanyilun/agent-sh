@@ -6,7 +6,7 @@
   "main": "dist/core/index.js",
   "types": "dist/core/index.d.ts",
   "bin": {
-    "agent-sh": "dist/index.js"
+    "agent-sh": "dist/cli/index.js"
   },
   "exports": {
     ".": {
@@ -98,9 +98,9 @@
     "examples/extensions/*/index.js"
   ],
   "scripts": {
-    "dev": "tsx src/index.ts",
+    "dev": "tsx src/cli/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node dist/cli/index.js",
     "prepare": "test -d dist || npm run build"
   },
   "keywords": [

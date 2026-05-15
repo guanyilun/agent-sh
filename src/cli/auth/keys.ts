@@ -1,7 +1,7 @@
 // Resolution order: settings.json → keys.json → env var.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CONFIG_DIR, getSettings, expandEnvVars } from "../core/settings.js";
+import { CONFIG_DIR, getSettings, expandEnvVars } from "../../core/settings.js";
 
 export const KEYS_PATH = path.join(CONFIG_DIR, "keys.json");
 

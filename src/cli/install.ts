@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { CONFIG_DIR, getSettings } from "./core/settings.js";
+import { CONFIG_DIR, getSettings } from "../core/settings.js";
 
 // Kept in sync with extension-loader.ts SCRIPT_EXTS.
 const SCRIPT_EXTS = [".js", ".mjs", ".ts", ".tsx", ".mts"];

@@ -10,7 +10,7 @@
  * specially from `src/index.ts` rather than through this manifest.
  */
 import type { ExtensionContext } from "../core/types.js";
-import { resolveApiKey } from "../auth/keys.js";
+import { resolveApiKey } from "../cli/auth/keys.js";
 
 type ActivateFn = (ctx: ExtensionContext) => void;
 

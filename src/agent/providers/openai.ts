@@ -4,7 +4,7 @@
  * floors at "minimal"; gpt-5.1+ accepts "none" as documented full off.
  */
 import type { ExtensionContext } from "../../core/types.js";
-import { resolveApiKey } from "../../auth/keys.js";
+import { resolveApiKey } from "../../cli/auth/keys.js";
 
 const CLOUD_MODELS = [
   { id: "gpt-5", reasoning: true },
