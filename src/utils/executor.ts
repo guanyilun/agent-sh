@@ -1,6 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { stripAnsi } from "./utils/ansi.js";
+import { stripAnsi } from "./ansi.js";
 
 // Node reports a missing cwd as `spawn <binary> ENOENT` — disambiguate.
 function explainSpawnError(err: NodeJS.ErrnoException, cwd: string): string {

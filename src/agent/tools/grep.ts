@@ -1,4 +1,4 @@
-import { executeArgv } from "../../executor.js";
+import { executeArgv } from "../../utils/executor.js";
 import { resolveRgPath } from "../../utils/ripgrep-path.js";
 import type { ToolDefinition } from "../types.js";
 import { expandHome } from "./expand-home.js";

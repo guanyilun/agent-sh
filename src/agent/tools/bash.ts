@@ -1,4 +1,4 @@
-import { executeCommand, killSession } from "../../executor.js";
+import { executeCommand, killSession } from "../../utils/executor.js";
 import type { EventBus } from "../../core/event-bus.js";
 import type { ToolDefinition } from "../types.js";
 
