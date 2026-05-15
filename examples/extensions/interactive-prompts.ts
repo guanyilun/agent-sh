@@ -1,10 +1,9 @@
 /**
  * Interactive permission prompts extension.
  *
- * Adds permission gates for tool calls and file writes.
- * Without this extension, agent-sh runs in yolo mode (auto-approve).
- *
- * Uses the interactive UI primitive for compositor-aware, themed rendering.
+ * Gates the four built-in side-effect tools (bash, pwsh, write_file,
+ * edit_file) via tool advisors. Without this extension, agent-sh runs in
+ * yolo mode — tools execute without confirmation.
  *
  * Usage:
  *   agent-sh -e ./examples/extensions/interactive-prompts.ts
@@ -12,19 +11,22 @@
  *   # Or copy to ~/.agent-sh/extensions/ for permanent use:
  *   cp examples/extensions/interactive-prompts.ts ~/.agent-sh/extensions/
  */
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { renderDiff } from "agent-sh/utils/diff-renderer.js";
 import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
 import { palette as p } from "agent-sh/utils/palette.js";
+import { computeDiff, computeEditDiff, computeInputDiff, type DiffResult } from "agent-sh/utils/diff.js";
 import type { ExtensionContext } from "agent-sh/types";
 import type { ToolUI } from "agent-sh/agent/types.js";
+
+const GATED_TOOLS = ["bash", "pwsh", "write_file", "edit_file"] as const;
 
 export default function activate(ctx: ExtensionContext) {
   let autoApproveWrites = false;
 
-  // Advise the TUI diff renderer to add permission prompt framing.
-  // This replaces the default plain diff box with one that has a warning
-  // border and key hints, so only one diff box is shown (not two).
-  ctx.advise("tui:render-diff", (next, filePath: string, diff: any, width: number) => {
+  // Frame pre-execute diff previews as a permission prompt.
+  ctx.advise("tui:render-diff", (_next, filePath: string, diff: DiffResult, width: number) => {
     const boxW = Math.min(84, width);
     const contentW = boxW - 4;
     const MAX_DISPLAY = 25;
@@ -54,74 +56,91 @@ export default function activate(ctx: ExtensionContext) {
     });
   });
 
-  const { bus } = ctx;
+  for (const name of GATED_TOOLS) {
+    ctx.adviseTool(name, async (next, args, onChunk, toolCtx) => {
+      const ui = toolCtx?.ui;
+      if (!ui) return next(args, onChunk, toolCtx);
 
-  bus.onPipeAsync("permission:request", async (payload) => {
-    const ui = payload.ui as ToolUI | undefined;
-    if (!ui) return payload;
+      const isFileWrite = name === "write_file" || name === "edit_file";
+      let diffPreRendered = false;
 
-    switch (payload.kind) {
-      case "tool-call":
-        return handleToolCall(payload, ui);
-      case "file-write": {
-        if (autoApproveWrites) {
-          return { ...payload, decision: { outcome: "approved" } };
+      ctx.bus.emit("shell:stdout-show", {});
+      try {
+        if (isFileWrite) {
+          if (autoApproveWrites) {
+            // Skip prompt; tool's own post-execute diff renders as usual.
+            return next(args, onChunk, toolCtx);
+          }
+          await renderPreviewDiff(ctx, name, args);
+          diffPreRendered = true;
+
+          const answer = await promptWrite(ui);
+          if (answer === "reject") {
+            return { content: "Permission denied by user.", exitCode: 1, isError: true };
+          }
+          if (answer === "approve_all") autoApproveWrites = true;
+        } else {
+          const answer = await promptCommand(ui, name, args);
+          if (answer === "deny") {
+            return { content: "Permission denied by user.", exitCode: 1, isError: true };
+          }
         }
-        const result = await handleFileWrite(payload, ui);
-        if ((result.decision as any).autoApprove) {
-          autoApproveWrites = true;
-        }
-        return result;
+      } finally {
+        ctx.bus.emit("shell:stdout-hide", {});
       }
-      default:
-        return payload;
-    }
-  });
-}
 
-async function handleToolCall(payload: any, ui: ToolUI) {
-  const options = payload.metadata.options;
-
-  const answer = await ui.custom<"approve" | "approve_all" | "deny">({
-    render(width) {
-      const boxW = Math.min(84, width);
-      return renderBoxFrame(
-        [`${p.bold}⚠ ${payload.title}${p.reset}`],
-        {
-          width: boxW,
-          style: "rounded",
-          borderColor: p.warning,
-          title: "Permission required",
-          footer: [`  ${p.dim}[y]es / [n]o / [a]llow all${p.reset}`],
-        },
-      );
-    },
-    handleInput(data, done) {
-      const ch = data.toLowerCase();
-      if (ch === "y") done("approve");
-      else if (ch === "a") done("approve_all");
-      else if (ch === "n" || ch === "\x1b") done("deny");
-    },
-  });
-
-  if (answer === "approve" || answer === "approve_all") {
-    const kind = answer === "approve_all" ? "allow_always" : "allow_once";
-    const option = options?.find((o: any) => o.kind === kind)
-      ?? options?.find((o: any) => o.kind === "allow_once" || o.kind === "allow_always");
-    if (option) {
-      return { ...payload, decision: { outcome: "selected", optionId: option.optionId } };
-    }
-    return { ...payload, decision: { outcome: "approved" } };
+      const result = await next(args, onChunk, toolCtx);
+      if (diffPreRendered && result.display?.body?.kind === "diff") {
+        // Strip the redundant post-execute diff body since we already showed it.
+        return { ...result, display: { ...result.display, body: undefined } };
+      }
+      return result;
+    });
   }
-  return { ...payload, decision: { outcome: "cancelled" } };
 }
 
-async function handleFileWrite(payload: any, ui: ToolUI) {
-  const answer = await ui.custom<"approve" | "approve_all" | "reject">({
+async function renderPreviewDiff(
+  ctx: ExtensionContext,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<void> {
+  const rawPath = args.path;
+  if (typeof rawPath !== "string") return;
+  const absPath = path.resolve(process.cwd(), rawPath);
+
+  let diff: DiffResult | undefined;
+  if (toolName === "edit_file" && typeof args.old_text === "string" && typeof args.new_text === "string") {
+    const normalizedOld = (args.old_text as string).replace(/\r\n/g, "\n");
+    const normalizedNew = (args.new_text as string).replace(/\r\n/g, "\n");
+    try {
+      const oldFileContent = await fs.readFile(absPath, "utf-8");
+      diff = computeEditDiff(
+        oldFileContent, normalizedOld, normalizedNew,
+        args.replace_all === true,
+      );
+    } catch {
+      diff = computeInputDiff(normalizedOld, normalizedNew);
+    }
+  } else if (toolName === "write_file" && typeof args.content === "string") {
+    let oldContent: string | null = null;
+    try { oldContent = await fs.readFile(absPath, "utf-8"); } catch { /* new file */ }
+    diff = computeDiff(oldContent, args.content as string);
+  }
+  if (!diff || diff.isIdentical) return;
+
+  const cwd = process.cwd();
+  const home = process.env.HOME ?? "";
+  let displayPath = absPath;
+  if (absPath.startsWith(cwd + "/")) displayPath = absPath.slice(cwd.length + 1);
+  else if (home && absPath.startsWith(home + "/")) displayPath = "~/" + absPath.slice(home.length + 1);
+
+  ctx.call("tui:show-diff", displayPath, diff);
+}
+
+async function promptWrite(ui: ToolUI): Promise<"approve" | "approve_all" | "reject"> {
+  return ui.custom<"approve" | "approve_all" | "reject">({
     render(width) {
       const boxW = Math.min(84, width);
-      // Just show the prompt actions — the diff itself was already rendered
-      // by our advise on "tui:render-diff".
       return renderBoxFrame([], {
         width: boxW,
         style: "rounded",
@@ -136,12 +155,38 @@ async function handleFileWrite(payload: any, ui: ToolUI) {
       else if (ch === "n" || ch === "\x1b") done("reject");
     },
   });
+}
 
-  if (answer === "approve") {
-    return { ...payload, decision: { outcome: "approved" } };
-  }
-  if (answer === "approve_all") {
-    return { ...payload, decision: { outcome: "approved", autoApprove: true } };
-  }
-  return { ...payload, decision: { outcome: "cancelled" } };
+async function promptCommand(
+  ui: ToolUI,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<"approve" | "deny"> {
+  const command = typeof args.command === "string" ? args.command : "";
+  const description = typeof args.description === "string" ? args.description : "";
+  const title = description ? `${toolName}: ${description}` : toolName;
+  const body = command
+    ? `${p.bold}${title}${p.reset}\n${p.dim}${truncate(command, 200)}${p.reset}`
+    : `${p.bold}${title}${p.reset}`;
+  return ui.custom<"approve" | "deny">({
+    render(width) {
+      const boxW = Math.min(84, width);
+      return renderBoxFrame(body.split("\n"), {
+        width: boxW,
+        style: "rounded",
+        borderColor: p.warning,
+        title: "Permission required",
+        footer: [`  ${p.dim}[y]es / [n]o${p.reset}`],
+      });
+    },
+    handleInput(data, done) {
+      const ch = data.toLowerCase();
+      if (ch === "y") done("approve");
+      else if (ch === "n" || ch === "\x1b") done("deny");
+    },
+  });
+}
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 1) + "…";
 }

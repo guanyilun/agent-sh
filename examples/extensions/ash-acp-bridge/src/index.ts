@@ -412,16 +412,6 @@ function wireEvents(core: AgentShellCore): void {
     }
   });
 
-  // Permission gating — auto-approve all tool calls.
-  // agent-sh's built-in tools handle their own safety; the ACP layer
-  // doesn't add a second permission gate. If you want to bridge
-  // permissions to agent-shell's UI, replace this with the
-  // requestPermission() flow.
-  bus.onPipeAsync("permission:request", async (payload) => {
-    payload.decision = { outcome: "approved" };
-    return payload;
-  });
-
   // Surface ui:error to stderr — extension load failures are otherwise silent.
   bus.on("ui:error", ({ message }) => {
     process.stderr.write(`[ash-acp-bridge] ${message}\n`);

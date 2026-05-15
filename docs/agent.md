@@ -143,9 +143,7 @@ LLM response
   ├─ Text only → done, emit response
   └─ Tool calls → for each tool call:
        ├─ Look up tool in registry
-       ├─ Permission check (if tool.requiresPermission)
-       │    └─ Emits permission:request async pipe → extensions decide
-       ├─ Execute tool → get result (content + exitCode)
+       ├─ Execute via the `tool:<name>` handler chain (advisors can wrap)
        ├─ Emit tool events (tool-started, tool-output-chunk, tool-completed)
        ├─ Add tool result to conversation
        └─ After all tools: call LLM again with updated conversation
@@ -155,23 +153,12 @@ The loop continues until the LLM returns a response with no tool calls. There's 
 
 ### Permission gating
 
-Some tools require permission before executing. The agent emits a `permission:request` event through the async pipe, and extensions can approve or deny:
-
-```typescript
-const result = await bus.emitPipeAsync("permission:request", {
-  kind: "tool-call",
-  title: toolName,
-  metadata: { args },
-  decision: { outcome: "approved" },  // default: auto-approve (yolo mode)
-});
-if (result.decision.outcome !== "approved") {
-  // return "Permission denied" as tool result — LLM sees this and adapts
-}
-```
-
-In yolo mode (the default), everything is auto-approved. Load the `interactive-prompts` extension to add confirmation prompts.
-
-Tools that require permission: **bash**, **write_file**, **edit_file** (anything that executes code or modifies files).
+The kernel has no opinion on permission. By default every tool runs (yolo
+mode). Gating extensions register tool advisors via `ctx.adviseTool(name, ...)`
+to interpose a confirmation prompt, audit log, or policy check before calling
+`next(args, onChunk, ctx)`. See `examples/extensions/interactive-prompts.ts`
+for a reference implementation that gates `bash`, `pwsh`, `write_file`, and
+`edit_file`.
 
 ## Built-in Tools
 
@@ -185,17 +172,17 @@ Extensions can add tools that cross the shell↔agent boundary via `shell:exec-r
 
 ### All tools
 
-| Tool | Purpose | Permission | Modifies files |
-|---|---|---|---|
-| `bash` | Run commands in isolated subprocess | Yes | Yes |
-| `read_file` | Read file contents (line-numbered, with offset/limit) | No | No |
-| `write_file` | Create or overwrite a file | Yes | Yes |
-| `edit_file` | Find-and-replace in a file (old_text → new_text) | Yes | Yes |
-| `grep` | Search file contents with regex (via ripgrep) | No | No |
-| `glob` | Find files by name pattern | No | No |
-| `ls` | List directory contents (with timestamps and sizes) | No | No |
-| `list_skills` | List available skills (name, description, path) | No | No |
-| `conversation_recall` | Browse/search/expand evicted turns from the in-session archive and `~/.agent-sh/history` | No | No |
+| Tool | Purpose | Side effects |
+|---|---|---|
+| `bash` | Run commands in isolated subprocess | Yes |
+| `read_file` | Read file contents (line-numbered, with offset/limit) | No |
+| `write_file` | Create or overwrite a file | Yes |
+| `edit_file` | Find-and-replace in a file (old_text → new_text) | Yes |
+| `grep` | Search file contents with regex (via ripgrep) | No |
+| `glob` | Find files by name pattern | No |
+| `ls` | List directory contents (with timestamps and sizes) | No |
+| `list_skills` | List available skills (name, description, path) | No |
+| `conversation_recall` | Browse/search/expand evicted turns from the in-session archive and `~/.agent-sh/history` | No |
 
 **Common pattern**: all file-based tools resolve relative paths from the current working directory, looked up via the `cwd` handler (`ctx.call("cwd")`). The shell-context built-in advises this with the PTY-tracked cwd; without it, tools fall back to `process.cwd()`.
 
@@ -227,7 +214,7 @@ When the LLM requests multiple tool calls in a single response, the agent groups
 
 1. **Batch event** — before execution, the agent emits `agent:tool-batch` with tools grouped by kind (`read`, `search`, `execute`, etc.). The TUI uses this to render group headers with tree-style connectors.
 
-2. **Parallel execution** — read-only tools (no `requiresPermission`, no `modifiesFiles`) run in parallel via `Promise.all`. Permission-requiring tools run sequentially to avoid overlapping permission prompts.
+2. **Parallel execution** — side-effect-free tools (`modifiesFiles` unset) run in parallel via `Promise.all`. Side-effecting tools run sequentially.
 
 3. **Output truncation** — tool results over 16KB (~4K tokens) are head+tail truncated before being added to the conversation, preventing a single tool call from blowing through the context window.
 
@@ -298,8 +285,7 @@ interface ToolDefinition {
     onChunk?: (chunk: string) => void,    // optional streaming callback
   ): Promise<ToolResult>;
 
-  requiresPermission?: boolean;   // gate via permission:request
-  modifiesFiles?: boolean;        // triggers file watcher
+  modifiesFiles?: boolean;        // has side effects (skips caching + parallel execution)
   showOutput?: boolean;           // stream output to TUI (default: true)
 
   // Display hooks (all optional)

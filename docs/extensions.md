@@ -158,19 +158,14 @@ bus.onPipe("autocomplete:request", (payload) => {
 
 ### `onPipeAsync` / `emitPipeAsync` — Async Transform Chain
 
-Same as `onPipe` but listeners can be async. Also notifies regular `on` listeners first (so UI can prepare before async work starts). Use this for transforms that need I/O — permission prompts, shell execution, network calls.
+Same as `onPipe` but listeners can be async. Also notifies regular `on` listeners first (so UI can prepare before async work starts). Use this for transforms that need I/O — shell execution, network calls, context-compaction handlers.
 
 ```typescript
-// Permission system: emit a request, wait for extensions to decide
-const result = await bus.emitPipeAsync("permission:request", {
-  kind: "tool-call", title: toolName, decision: { outcome: "approved" },
-});
-if (result.decision.outcome !== "approved") { /* denied */ }
-
-// Interactive extension: prompt the user asynchronously
-bus.onPipeAsync("permission:request", async (payload) => {
-  const answer = await promptUser(`Allow ${payload.title}?`);
-  return { ...payload, decision: { outcome: answer } };
+// Example: the shell-exec request pipe lets extensions intercept commands
+// the agent wants to run in the user's PTY.
+bus.onPipeAsync("shell:exec-request", async (payload) => {
+  const result = await runInPty(payload.command);
+  return { ...payload, output: result.output, exitCode: result.exitCode };
 });
 ```
 

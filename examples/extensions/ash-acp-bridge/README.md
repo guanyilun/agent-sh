@@ -36,4 +36,7 @@ The adapter translates between ACP methods and agent-sh's event bus:
 - `session/new` → create core, set cwd
 - `session/prompt` → `agent:submit` event
 - `session/update` notifications ← `agent:response-chunk`, `agent:tool-started`, etc.
-- `session/request_permission` ↔ `permission:request` async pipe
+- Permission gating is not bridged — agent-sh runs tools without confirmation
+  unless a gating extension (e.g. interactive-prompts) is also loaded. To
+  surface ACP's `session/request_permission`, register tool advisors here
+  that call back into the ACP client.

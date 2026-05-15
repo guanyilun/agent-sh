@@ -35,10 +35,8 @@ core.bus.on("agent:response-chunk", ({ blocks }) => {
 });
 core.bus.on("agent:processing-done", () => console.log("\n[done]"));
 
-// Handle permissions (auto-approve, or wire to your own UI)
-core.bus.onPipeAsync("permission:request", async (p) => {
-  return { ...p, decision: { approved: true } };
-});
+// Tools run without confirmation by default; to gate them, register tool
+// advisors via ctx.adviseTool (see examples/extensions/interactive-prompts.ts).
 
 // Activate the backend, then send a query
 core.activateBackend();

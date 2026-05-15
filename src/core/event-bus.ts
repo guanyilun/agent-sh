@@ -153,18 +153,6 @@ export interface ShellEvents {
   "tool:interactive-start": Record<string, never>;
   "tool:interactive-end": Record<string, never>;
 
-  // Permission request (async pipe — core emits with safe default, extensions override)
-  // Generic: `kind` discriminates the scenario, `metadata` carries context,
-  // `decision` carries the response. Extensions check `kind` and handle accordingly.
-  "permission:request": {
-    kind: string;
-    title: string;
-    metadata: Record<string, unknown>;
-    /** Interactive UI capability — available when the built-in agent is active. */
-    ui?: unknown;
-    decision: Record<string, unknown>;
-  };
-
   // Slash command registration (extensions → slash-commands)
   "command:register": {
     name: string;
