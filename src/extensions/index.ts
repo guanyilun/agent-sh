@@ -4,7 +4,7 @@
  *   shell-context, tui-renderer → registerShellHandlers (src/shell/)
  *   agent-backend, providers    → activateAgent         (src/agent/)
  */
-import type { ExtensionContext } from "../core/types.js";
+import type { ExtensionContext } from "../shell/host-types.js";
 
 type ActivateFn = (ctx: ExtensionContext) => void;
 

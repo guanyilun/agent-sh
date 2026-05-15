@@ -12,7 +12,7 @@
  *   - agent:thinking-chunk, agent:cancelled, agent:error
  */
 import type { EventBus, ShellEvents } from "../core/event-bus.js";
-import type { AgentMode } from "../core/types.js";
+import type { AgentMode } from "./host-types.js";
 import type { LlmClient } from "../utils/llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";

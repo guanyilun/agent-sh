@@ -3,7 +3,7 @@
  * built-in extensions manifest) because PTY + stdin raw mode ownership is
  * order-critical.
  */
-import type { ExtensionContext } from "../core/types.js";
+import type { ExtensionContext } from "./host-types.js";
 import { Shell } from "./shell.js";
 import { StdoutSurface } from "../utils/compositor.js";
 import { TerminalBuffer } from "../utils/terminal-buffer.js";

@@ -4,7 +4,7 @@
  * to enabled. The hook always attaches; provider registration via env
  * is opt-in alongside any settings.json entry.
  */
-import type { ExtensionContext } from "../../core/types.js";
+import type { ExtensionContext } from "../../shell/host-types.js";
 import { resolveApiKey } from "../../cli/auth/keys.js";
 
 const BASE_URL = "https://api.deepseek.com";

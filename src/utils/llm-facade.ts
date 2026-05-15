@@ -3,7 +3,7 @@
  * active backend. No handler → `available` is false and calls reject.
  */
 import type { HandlerRegistry } from "./handler-registry.js";
-import type { LlmInterface, LlmMessage, LlmSession } from "../core/types.js";
+import type { LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
 
 export function createLlmFacade(handlers: HandlerRegistry): LlmInterface {
   const invoke = (messages: LlmMessage[], maxTokens?: number, model?: string, reasoningEffort?: string): Promise<string> => {

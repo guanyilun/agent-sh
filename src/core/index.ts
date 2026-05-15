@@ -18,7 +18,7 @@
  *   const response = await core.query("hello");
  */
 import { EventBus, type ContentBlock } from "./event-bus.js";
-import type { AgentShellConfig, ExtensionContext, RemoteSessionOptions, RemoteSession } from "./types.js";
+import type { AgentShellConfig, ExtensionContext, RemoteSessionOptions, RemoteSession } from "../shell/host-types.js";
 import { createLlmFacade } from "../utils/llm-facade.js";
 import { setPalette } from "../utils/palette.js";
 import * as streamTransform from "../utils/stream-transform.js";
@@ -33,7 +33,9 @@ import { CONFIG_DIR } from "./settings.js";
 // Re-export types that library consumers need
 export { EventBus } from "./event-bus.js";
 export type { ShellEvents } from "./event-bus.js";
-export type { AgentShellConfig, ExtensionContext, LlmInterface, LlmMessage, LlmSession } from "./types.js";
+export type { CoreContext, CoreConfig } from "./types.js";
+export type { AgentContext, AgentConfig, AgentSurface, AgentConfigSurface, AgentMode, LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
+export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, ExtensionContext, AgentShellConfig } from "../shell/host-types.js";
 export { palette, setPalette, resetPalette } from "../utils/palette.js";
 export type { ColorPalette } from "../utils/palette.js";
 export type { AgentBackend, ToolDefinition } from "../agent/types.js";

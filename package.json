@@ -19,8 +19,8 @@
     },
     "./utils/*": "./dist/utils/*",
     "./types": {
-      "types": "./dist/core/types.d.ts",
-      "default": "./dist/core/types.js"
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
     },
     "./settings": {
       "types": "./dist/core/settings.d.ts",

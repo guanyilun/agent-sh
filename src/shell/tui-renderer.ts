@@ -27,7 +27,7 @@ import { renderDiff } from "../utils/diff-renderer.js";
 import { renderBoxFrame } from "../utils/box-frame.js";
 import type { DiffResult } from "../utils/diff.js";
 import { getSettings } from "../core/settings.js";
-import type { ExtensionContext } from "../core/types.js";
+import type { ExtensionContext } from "./host-types.js";
 import type { ToolResultDisplay, ToolResultBody } from "../agent/types.js";
 import type { RenderSurface } from "../utils/compositor.js";
 

@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ExtensionContext } from "./types.js";
+import type { ExtensionContext } from "../shell/host-types.js";
 import type { EventBus } from "./event-bus.js";
 import { CONFIG_DIR, getSettings } from "./settings.js";
 

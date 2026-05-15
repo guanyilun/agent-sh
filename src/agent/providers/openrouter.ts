@@ -3,7 +3,7 @@
  * Registers curated defaults synchronously so the first query works, then
  * fetches the full catalog to populate /model autocomplete.
  */
-import type { ExtensionContext } from "../../core/types.js";
+import type { ExtensionContext } from "../../shell/host-types.js";
 import { getSettings } from "../../core/settings.js";
 import { resolveApiKey } from "../../cli/auth/keys.js";
 

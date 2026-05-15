@@ -13,7 +13,7 @@ import { suggestBridgeFor } from "./install.js";
 import { anyProviderConfigured } from "./auth/keys.js";
 import { PACKAGE_VERSION } from "../utils/package-version.js";
 import { clearOpost } from "../utils/tty.js";
-import type { AgentShellConfig } from "../core/types.js";
+import type { AgentShellConfig } from "../shell/host-types.js";
 
 /**
  * Capture the user's full shell environment.
