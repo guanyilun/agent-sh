@@ -12,6 +12,9 @@ export interface ProviderAuthInfo {
   envVar?: string;
   /** True for entries declared in settings.json (vs. a built-in). */
   custom?: boolean;
+  /** True for ids only present in keys.json — likely owned by an extension
+   *  that registers a provider at runtime. */
+  unattached?: boolean;
 }
 
 export const KNOWN_PROVIDERS: ProviderAuthInfo[] = [
@@ -20,7 +23,8 @@ export const KNOWN_PROVIDERS: ProviderAuthInfo[] = [
   { id: "deepseek",   label: "DeepSeek",   envVar: "DEEPSEEK_API_KEY" },
 ];
 
-/** Built-ins merged with user-declared providers from settings.json. */
+/** Built-ins merged with settings-declared providers, plus any ids that only
+ *  appear in keys.json (likely registered by an extension at runtime). */
 export function listAllProviders(): ProviderAuthInfo[] {
   const out: ProviderAuthInfo[] = [...KNOWN_PROVIDERS];
   const seen = new Set(out.map((p) => p.id));
@@ -30,11 +34,23 @@ export function listAllProviders(): ProviderAuthInfo[] {
     out.push({ id, label: id, custom: true });
     seen.add(id);
   }
+  for (const id of Object.keys(loadKeysFile())) {
+    if (seen.has(id)) continue;
+    out.push({ id, label: id, unattached: true });
+    seen.add(id);
+  }
   return out;
 }
 
+/** Resolve an id against known + settings entries only. Returns null for
+ *  unattached or unknown ids — callers decide whether to accept them. */
 export function findProvider(id: string): ProviderAuthInfo | null {
-  return listAllProviders().find((p) => p.id === id.toLowerCase()) ?? null;
+  const lower = id.toLowerCase();
+  const known = KNOWN_PROVIDERS.find((p) => p.id === lower);
+  if (known) return known;
+  const settings = getSettings().providers ?? {};
+  if (lower in settings) return { id: lower, label: lower, custom: true };
+  return null;
 }
 
 export type KeySource = "settings" | "keys-file" | "env" | "none";

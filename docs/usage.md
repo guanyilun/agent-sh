@@ -66,6 +66,8 @@ Any provider you declare under `providers` in `settings.json` is also accepted b
 agent-sh auth login my-llama   # prompts for the key, saves to keys.json
 ```
 
+`auth login <id>` also accepts ids it doesn't recognize (with a warning). This lets extensions that register their own provider at runtime tell users to run `agent-sh auth login <their-id>` — the key sits in `keys.json` until the extension loads and claims it. Such entries appear in `auth list` tagged `unattached`.
+
 `install` accepts a bundled-extension name (see `agent-sh install` with no argument for the list), a `file:`/`./`/absolute path, or — once implemented — `npm:<pkg>` and `github:<user>/<repo>` specs.
 
 ## Updating

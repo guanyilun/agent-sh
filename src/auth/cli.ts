@@ -50,9 +50,24 @@ function printHelp(): void {
 }
 
 async function runLogin(providerArg: string | undefined): Promise<void> {
-  const provider = providerArg
-    ? findProvider(providerArg)
-    : await pickProvider();
+  let provider: ProviderAuthInfo | null;
+  if (providerArg) {
+    const id = providerArg.toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_\-./:]*$/.test(id)) {
+      console.error(`agent-sh auth: invalid provider id "${providerArg}".`);
+      process.exit(1);
+    }
+    provider = findProviderById(id);
+    if (!provider) {
+      console.error(
+        `${p.warning}Note:${p.reset} no built-in or settings.json provider named "${id}". ` +
+        `Storing the key anyway — it will resolve once an extension or settings.json declares the provider.`,
+      );
+      provider = { id, label: id, unattached: true };
+    }
+  } else {
+    provider = await pickProvider();
+  }
   if (!provider) process.exit(1);
 
   const key = await promptSecret(`Enter ${provider.label} API key: `);
@@ -85,17 +100,15 @@ function runLogout(providerArg: string | undefined): void {
     console.error("Usage: agent-sh auth logout <provider>");
     process.exit(1);
   }
-  const provider = findProvider(providerArg);
-  if (!provider) process.exit(1);
-
+  const id = providerArg.toLowerCase();
   const keys = { ...loadKeysFile() };
-  if (!(provider.id in keys)) {
-    console.log(`agent-sh auth: no stored key for ${provider.label}.`);
+  if (!(id in keys)) {
+    console.log(`agent-sh auth: no stored key for ${id}.`);
     return;
   }
-  delete keys[provider.id];
+  delete keys[id];
   saveKeysFile(keys);
-  console.log(`${p.success}✓${p.reset} Removed ${provider.label} key from ${KEYS_PATH}`);
+  console.log(`${p.success}✓${p.reset} Removed ${id} key from ${KEYS_PATH}`);
 }
 
 function runList(): void {
@@ -105,7 +118,11 @@ function runList(): void {
   for (const info of providers) {
     const resolved = resolveApiKey(info.id);
     const padded = info.id.padEnd(idWidth);
-    const marker = info.custom ? `  ${p.dim}custom${p.reset}` : "";
+    const marker = info.custom
+      ? `  ${p.dim}custom${p.reset}`
+      : info.unattached
+      ? `  ${p.dim}unattached${p.reset}`
+      : "";
     if (resolved.key) {
       console.log(`  ${p.success}●${p.reset} ${padded}  ${p.dim}(${sourceLabel(resolved.source, info)})${p.reset}${marker}`);
     } else {
@@ -114,15 +131,6 @@ function runList(): void {
   }
   const example = providers[0]!.id;
   console.log(`\n${p.muted}Login with:${p.reset} agent-sh auth login <id>   ${p.dim}(e.g. agent-sh auth login ${example})${p.reset}`);
-}
-
-function findProvider(name: string): ProviderAuthInfo | null {
-  const found = findProviderById(name);
-  if (found) return found;
-  const known = listAllProviders().map((p) => p.id).join(", ");
-  console.error(`agent-sh auth: unknown provider "${name}". Known: ${known}`);
-  console.error(`(Declare custom providers under "providers" in settings.json — see \`agent-sh init\`.)`);
-  return null;
 }
 
 async function pickProvider(): Promise<ProviderAuthInfo | null> {
@@ -137,7 +145,11 @@ async function pickProvider(): Promise<ProviderAuthInfo | null> {
     const tag = resolved.key
       ? `${p.dim}(currently from ${sourceLabel(resolved.source, info)})${p.reset}`
       : `${p.dim}(not configured)${p.reset}`;
-    const labelStr = info.custom ? `${p.dim}custom${p.reset}` : `${p.dim}${info.label}${p.reset}`;
+    const labelStr = info.custom
+      ? `${p.dim}custom${p.reset}`
+      : info.unattached
+      ? `${p.dim}unattached${p.reset}`
+      : `${p.dim}${info.label}${p.reset}`;
     console.log(`  ${i + 1}) ${info.id.padEnd(12)} ${labelStr}  ${tag}`);
   });
   const answer = await promptLine("Choice [1]: ");
