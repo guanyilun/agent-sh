@@ -1099,12 +1099,17 @@ export class FloatingPanel {
     this.surface.write("\x1b[?1049l");
 
     if (!this.usedAltScreen) {
-      // Program exited mid-overlay; its reset bytes were eaten by
-      // stdout-hold. Reset modes serialize() doesn't track or the
-      // host stays in vim's modifyOtherKeys mode.
+      // Alt-screen TUI exited mid-overlay; its reset bytes were eaten
+      // by stdout-hold. Re-emit the modes commonly set by full-screen
+      // programs (vim, neovim, emacs -nw, less, htop, tmux, ssh→TUI):
+      // modifyOtherKeys, kitty kbd, bracketed paste, focus reporting,
+      // mouse, DECCKM cursor-key mode, application keypad, cursor
+      // blink. Without this, arrow keys / keypad digits / cursor state
+      // misbehave at the post-overlay shell prompt.
       this.surface.write(
         "\x1b[>4;0m\x1b[<u\x1b[?2004l\x1b[?1004l" +
-        "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l",
+        "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l" +
+        "\x1b[?1l\x1b>\x1b[?12l",
       );
     }
 
