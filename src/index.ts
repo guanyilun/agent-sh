@@ -9,6 +9,8 @@ import { loadExtensions } from "./extension-loader.js";
 import { getSettings } from "./settings.js";
 import { runInit } from "./init.js";
 import { runInstall, runUninstall, runList, suggestBridgeFor } from "./install.js";
+import { runAuth } from "./auth/cli.js";
+import { anyProviderConfigured } from "./auth/keys.js";
 import { PACKAGE_VERSION } from "./utils/package-version.js";
 import { clearOpost } from "./utils/tty.js";
 import type { AgentShellConfig } from "./types.js";
@@ -118,6 +120,9 @@ Usage: agent-sh [options]
        agent-sh install <spec> [--force]  Install an extension (bundled name, file:, npm:, github:)
        agent-sh uninstall <name>          Remove an installed extension
        agent-sh list                      List installed extensions
+       agent-sh auth login [provider]     Store an API key for a built-in provider
+       agent-sh auth logout <provider>    Remove a stored key
+       agent-sh auth list                 Show configured providers
 
 Provider Profiles:
   --provider <name>   Use a provider from ~/.agent-sh/settings.json
@@ -180,6 +185,10 @@ async function main(): Promise<void> {
     runList();
     return;
   }
+  if (rawArgs[0] === "auth") {
+    await runAuth(rawArgs.slice(1));
+    return;
+  }
 
   if (process.env.AGENT_SH) {
     console.error("agent-sh: already running inside an agent-sh session (nested sessions are not supported).");
@@ -215,6 +224,16 @@ async function main(): Promise<void> {
     }
   } catch {
     // Ignore errors, we already have process.env as fallback
+  }
+
+  if (!config.apiKey && !config.provider && !anyProviderConfigured()) {
+    console.error(
+      "\nagent-sh: no LLM provider configured.\n\n" +
+      "  Run `agent-sh auth login` to store an API key, or\n" +
+      "  export OPENAI_API_KEY / OPENROUTER_API_KEY / DEEPSEEK_API_KEY, or\n" +
+      "  run `agent-sh init` for a settings.json template.\n",
+    );
+    process.exit(1);
   }
 
   // ── Core (frontend-agnostic) ──────────────────────────────────

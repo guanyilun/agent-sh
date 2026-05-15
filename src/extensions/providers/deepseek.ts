@@ -5,6 +5,7 @@
  * is opt-in alongside any settings.json entry.
  */
 import type { ExtensionContext } from "../../types.js";
+import { resolveApiKey } from "../../auth/keys.js";
 
 const BASE_URL = "https://api.deepseek.com";
 const DEFAULT_MODELS = [
@@ -21,7 +22,7 @@ function buildReasoningParams(level: string, _model?: string): Record<string, un
 export default function activate(ctx: ExtensionContext): void {
   ctx.providers.configure("deepseek", { reasoningParams: buildReasoningParams });
 
-  const apiKey = process.env.DEEPSEEK_API_KEY;
+  const apiKey = resolveApiKey("deepseek").key;
   if (!apiKey) return;
   ctx.bus.emit("provider:register", {
     id: "deepseek",

@@ -5,6 +5,7 @@
  */
 import type { ExtensionContext } from "../../types.js";
 import { getSettings } from "../../settings.js";
+import { resolveApiKey } from "../../auth/keys.js";
 
 const BASE_URL = "https://openrouter.ai/api/v1";
 
@@ -31,7 +32,7 @@ interface OpenRouterModel {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey = resolveApiKey("openrouter").key;
   if (!apiKey) return;
 
   ctx.providers.configure("openrouter", { reasoningParams: buildReasoningParams });
