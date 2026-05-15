@@ -24,7 +24,7 @@ agent-sh adopts this mental model. The consequences shape everything below:
 
 ### Shell context — "what has the user been doing?"
 
-Captured and owned by the `shell-context` built-in extension (`src/extensions/shell-context.ts`). Tracks user-initiated PTY activity: shell commands the user ran + their outputs.
+Captured and owned by the `shell-context` built-in (`src/shell/shell-context.ts`). Tracks user-initiated PTY activity: shell commands the user ran + their outputs.
 
 Agent tool outputs are **not** here — those live in the conversation stream. The boundary is strict: if the user typed it at the PTY, it goes into shell context; if the agent called a tool, it goes into the conversation.
 
@@ -184,10 +184,10 @@ All settings live in `~/.agent-sh/settings.json`:
 
 | File | Role |
 |---|---|
-| `src/extensions/shell-context.ts` | Built-in: shell exchange capture, spill-to-tempfile on long outputs, `<shell_events>` per-query producer, `cwd` handler advisor |
+| `src/shell/shell-context.ts` | Built-in: shell exchange capture, spill-to-tempfile on long outputs, `<shell_events>` per-query producer, `cwd` handler advisor |
 | `src/utils/shell-output-spill.ts` | Per-pid session dir, cleanup on exit + signals, stale-dir sweep for crashed sessions |
 | `src/agent/conversation-state.ts` | Messages array, eager nucleation, priority-based compaction, in-memory recall archive |
 | `src/agent/nuclear-form.ts` | One-line-summary primitives (nucleate, serialize, priority classification) |
 | `src/agent/history-file.ts` | Append-only `~/.agent-sh/history` with chunked search/tail-read + front-truncation |
 | `src/agent/agent-loop.ts` | Auto-compact trigger, `conversation:compact` advisor chain, registers the `conversation_recall` tool |
-| `src/extensions/slash-commands.ts` | `/compact` and `/context` implementations |
+| `src/agent/index.ts` | `/compact` and `/context` slash commands registered when the ash backend starts |

@@ -286,9 +286,9 @@ The compositor sits between "produce lines" and "display lines". It doesn't affe
 | File | Role |
 |---|---|
 | `src/utils/compositor.ts` | `RenderSurface`, `Compositor`, `DefaultCompositor`, `StdoutSurface` |
-| `src/extensions/tui-renderer.ts` | Main renderer — writes to compositor streams |
-| `examples/extensions/overlay-agent.ts` | Uses `createRemoteSession` to route to floating panel |
+| `src/shell/tui-renderer.ts` | Main renderer — writes to compositor streams |
+| `examples/extensions/overlay-agent.ts` | Uses `ctx.shell.createRemoteSession` to route to floating panel |
 | `src/utils/floating-panel.ts` | Panel screen management and content API |
-| `src/core.ts` | Creates compositor, registers default surfaces, implements `createRemoteSession` |
-| `src/types.ts` | `ExtensionContext.compositor`, `RemoteSession`, `RemoteSessionOptions` |
-| `examples/extensions/tmux-pane.ts` | Tmux side pane — `/split` and `/rsplit` using `createRemoteSession` |
+| `src/shell/index.ts` | Allocates the compositor, registers default surfaces, implements `createRemoteSession` |
+| `src/shell/host-types.ts` | `ShellSurface.compositor`, `RemoteSession`, `RemoteSessionOptions` |
+| `examples/extensions/tmux-pane.ts` | Tmux side pane — `/split` and `/rsplit` using `ctx.shell.createRemoteSession` |
