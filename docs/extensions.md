@@ -60,17 +60,35 @@ For directory-style extensions with declared dependencies, `install` runs `npm i
 
 ## ExtensionContext API
 
-The context is layered: substrate primitives at the top, host-specific surfaces nested under `ctx.agent` and `ctx.shell`. Methods on a nested surface are silent no-ops when the host isn't loaded (e.g. `ctx.shell.compositor` under a headless bridge backend), so extensions can call them defensively without runtime checks.
+The context is layered: substrate primitives + frontend-agnostic sugar at the top, host-specific surfaces nested under `ctx.agent` and `ctx.shell`. Both nested surfaces are **optional** — they're attached by their hosts during activation, and headless backends (ACP server, bridges) may skip a host's activation entirely:
 
-For extensions that only need one surface, type the parameter as `AgentContext` or `ShellContext` instead of `ExtensionContext` — the type system will catch accidental cross-surface use.
+```ts
+type ExtensionContext = CoreContext & CommandSugar & Partial<{
+  agent: AgentSurface;   // attached by agent host
+  shell: ShellSurface;   // attached by shell host
+}>;
+```
 
-### Substrate (top-level)
+That gives extension authors a choice depending on how defensive they want to be:
+
+| Context type | What it guarantees | Use when |
+|---|---|---|
+| `CoreContext` | substrate only | Pure bus / handler extensions; works under any backend |
+| `AgentContext` | substrate + `agent` (required) | Need tools / LLM / instructions; won't load under no-agent bridges |
+| `ShellContext` | substrate + `shell` (required) | Need compositor / palette / transforms; won't load under headless |
+| `FullExtensionContext` | substrate + both (required) | Need both surfaces; lets you skip `?.` guards |
+| `ExtensionContext` | substrate + both (optional) | Defensive code that adapts to whatever's available; requires `?.` guards on `ctx.agent` / `ctx.shell` |
+
+Picking a narrower type makes host requirements explicit. Under a mismatch (extension typed `AgentContext` loaded under a no-agent bridge), accessing `ctx.agent.foo` produces a real `TypeError` instead of a silent no-op — loud, debuggable failure.
+
+### Substrate (top-level — always present)
 
 | Property | Type | Description |
 |---|---|---|
 | `bus` | `EventBus` | Subscribe to events, emit events, register pipe handlers |
 | `instanceId` | `string` | Stable per-instance identifier (4-char hex) |
 | `quit` | `() => void` | Exit agent-sh |
+| `compositor` | `Compositor` | Generic surface-routing primitive — frontends register the default surface for each named render stream during activation, extensions can `redirect()` to capture output. Used by TUI, ACP, web bridges, and headless test harnesses. See [TUI Composition](tui-composition.md) |
 | `getExtensionSettings` | `(namespace, defaults) => T` | Read extension settings from `~/.agent-sh/settings.json` |
 | `getStoragePath` | `(namespace) => string` | Get (and lazily create) a per-extension storage directory under `~/.agent-sh/<namespace>/` |
 | `define` | `(name, fn) => void` | Register a named handler |
@@ -83,7 +101,7 @@ For extensions that only need one surface, type the parameter as `AgentContext` 
 
 ### `ctx.agent` — agent host surface
 
-Available when the built-in agent backend (or any backend that registers the same handlers) is active.
+Attached by the built-in agent backend (or any backend that calls `activateAgent` / wires the same handlers). Bridges that own the agent externally (claude-code, opencode, pi) leave `ctx.agent` undefined.
 
 | Property | Type | Description |
 |---|---|---|
@@ -104,11 +122,10 @@ Available when the built-in agent backend (or any backend that registers the sam
 
 ### `ctx.shell` — shell host surface
 
-Available when the TUI shell frontend is loaded. Under headless backends these methods are silent no-ops.
+Attached by the TUI shell frontend (`registerShellHandlers`). Headless backends leave `ctx.shell` undefined.
 
 | Property | Type | Description |
 |---|---|---|
-| `compositor` | `Compositor` | Routes named render streams to surfaces. See [TUI Composition](tui-composition.md) |
 | `setPalette` | `(overrides) => void` | Override color palette slots for theming |
 | `createBlockTransform` | `(opts) => void` | Register an inline delimiter transform (e.g. `$$...$$`) |
 | `createFencedBlockTransform` | `(opts) => void` | Register a fenced block transform (e.g. ` ```lang...``` `) |
