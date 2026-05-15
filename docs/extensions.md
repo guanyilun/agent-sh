@@ -1,8 +1,10 @@
 # Extensions
 
-An extension is a module that exports a default (or named `activate`) function. It receives an `ExtensionContext` with access to all core services — no package imports needed.
+An extension is a module that exports a default (or named `activate`) function. It receives a context object with access to all core services — no runtime imports needed; you only need the type for TS authoring.
 
 ```typescript
+import type { ExtensionContext } from "agent-sh/types";
+
 export default function activate(ctx: ExtensionContext) {
   const { bus } = ctx;
 
@@ -11,6 +13,8 @@ export default function activate(ctx: ExtensionContext) {
   });
 }
 ```
+
+`ExtensionContext` is the friendly default — host surfaces (`ctx.agent`, `ctx.shell`) are optional and you guard with `?.` when you use them. For more explicit host requirements, type as `AgentContext`, `ShellContext`, or `AgentContext & ShellContext` (see [ExtensionContext API](#extensioncontext-api) below).
 
 ## Loading Extensions
 
@@ -872,8 +876,10 @@ cp examples/extensions/interactive-prompts.ts ~/.agent-sh/extensions/
 agent-sh uses a semantic color palette (~10 base roles). Override any slot via `setPalette()`:
 
 ```typescript
-export default function activate({ setPalette }) {
-  setPalette({
+import type { ShellContext } from "agent-sh/types";
+
+export default function activate(ctx: ShellContext) {
+  ctx.shell.setPalette({
     accent:  "\x1b[38;2;38;139;210m",   // solarized blue
     success: "\x1b[38;2;133;153;0m",     // solarized green
     warning: "\x1b[38;2;181;137;0m",     // solarized yellow
