@@ -10,23 +10,24 @@
  * specially from `src/index.ts` rather than through this manifest.
  */
 import type { ExtensionContext } from "../types.js";
+import { resolveApiKey } from "../auth/keys.js";
 
 type ActivateFn = (ctx: ExtensionContext) => void;
 
 export const BUILTIN_EXTENSIONS: Array<{
   name: string;
   // When present and false, the module isn't imported — keeps provider
-  // built-ins dormant unless their env var is set.
+  // built-ins dormant unless a key is configured.
   when?: () => boolean;
   load: () => Promise<ActivateFn>;
 }> = [
   { name: "shell-context",   load: () => import("./shell-context.js").then(m => m.default) },
   { name: "agent-backend",    load: () => import("./agent-backend.js").then(m => m.default) },
   { name: "openrouter",
-    when: () => !!process.env.OPENROUTER_API_KEY,
+    when: () => !!resolveApiKey("openrouter").key,
     load: () => import("./providers/openrouter.js").then(m => m.default) },
   { name: "openai",
-    when: () => !!process.env.OPENAI_API_KEY && !process.env.OPENAI_BASE_URL,
+    when: () => !!resolveApiKey("openai").key && !process.env.OPENAI_BASE_URL,
     load: () => import("./providers/openai.js").then(m => m.default) },
   { name: "openai-compatible",
     when: () => !!process.env.OPENAI_BASE_URL,

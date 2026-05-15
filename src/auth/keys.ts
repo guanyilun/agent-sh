@@ -1,0 +1,106 @@
+// Resolution order: settings.json → keys.json → env var.
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { CONFIG_DIR, getSettings, expandEnvVars } from "../settings.js";
+
+export const KEYS_PATH = path.join(CONFIG_DIR, "keys.json");
+
+export interface ProviderAuthInfo {
+  id: string;
+  label: string;
+  /** Conventional env var. Absent for user-declared providers. */
+  envVar?: string;
+  /** True for entries declared in settings.json (vs. a built-in). */
+  custom?: boolean;
+}
+
+export const KNOWN_PROVIDERS: ProviderAuthInfo[] = [
+  { id: "openai",     label: "OpenAI",     envVar: "OPENAI_API_KEY" },
+  { id: "openrouter", label: "OpenRouter", envVar: "OPENROUTER_API_KEY" },
+  { id: "deepseek",   label: "DeepSeek",   envVar: "DEEPSEEK_API_KEY" },
+];
+
+/** Built-ins merged with user-declared providers from settings.json. */
+export function listAllProviders(): ProviderAuthInfo[] {
+  const out: ProviderAuthInfo[] = [...KNOWN_PROVIDERS];
+  const seen = new Set(out.map((p) => p.id));
+  const settingsProviders = getSettings().providers ?? {};
+  for (const id of Object.keys(settingsProviders)) {
+    if (seen.has(id)) continue;
+    out.push({ id, label: id, custom: true });
+    seen.add(id);
+  }
+  return out;
+}
+
+export function findProvider(id: string): ProviderAuthInfo | null {
+  return listAllProviders().find((p) => p.id === id.toLowerCase()) ?? null;
+}
+
+export type KeySource = "settings" | "keys-file" | "env" | "none";
+
+export interface ResolvedKey {
+  key: string | null;
+  source: KeySource;
+}
+
+type KeysFile = Record<string, string>;
+
+let cached: KeysFile | null = null;
+
+export function loadKeysFile(): KeysFile {
+  if (cached) return cached;
+  try {
+    const raw = fs.readFileSync(KEYS_PATH, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      cached = parsed as KeysFile;
+    } else {
+      cached = {};
+    }
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      console.error(`[agent-sh] Warning: invalid JSON in ${KEYS_PATH}: ${err.message}`);
+    }
+    cached = {};
+  }
+  return cached;
+}
+
+export function saveKeysFile(keys: KeysFile): void {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  const tmp = `${KEYS_PATH}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(keys, null, 2) + "\n", { mode: 0o600 });
+  fs.renameSync(tmp, KEYS_PATH);
+  try { fs.chmodSync(KEYS_PATH, 0o600); } catch { /* best effort */ }
+  cached = { ...keys };
+}
+
+export function reloadKeysFile(): void {
+  cached = null;
+}
+
+export function resolveApiKey(providerId: string): ResolvedKey {
+  const settingsKey = getSettings().providers?.[providerId]?.apiKey;
+  if (settingsKey) {
+    const expanded = expandEnvVars(settingsKey);
+    if (expanded) return { key: expanded, source: "settings" };
+  }
+
+  const fileKey = loadKeysFile()[providerId];
+  if (fileKey) return { key: fileKey, source: "keys-file" };
+
+  const info = KNOWN_PROVIDERS.find((p) => p.id === providerId);
+  if (info?.envVar) {
+    const envKey = process.env[info.envVar];
+    if (envKey) return { key: envKey, source: "env" };
+  }
+
+  return { key: null, source: "none" };
+}
+
+export function anyProviderConfigured(): boolean {
+  // openai-compatible activates on OPENAI_BASE_URL alone (keyless local servers).
+  if (process.env.OPENAI_BASE_URL) return true;
+  return listAllProviders().some((p) => resolveApiKey(p.id).key);
+}

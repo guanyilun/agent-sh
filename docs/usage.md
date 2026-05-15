@@ -41,6 +41,29 @@ agent-sh install <name>         # install a bundled extension (e.g. agent-sh ins
 agent-sh install ./path/to/ext  # install from a local path
 agent-sh uninstall <name>       # remove an installed extension
 agent-sh list                   # show extensions discovered from ~/.agent-sh/extensions/ and settings.json
+agent-sh auth login [provider]  # store an API key (openai | openrouter | deepseek | any provider declared in settings.json)
+agent-sh auth logout <provider> # remove a stored key
+agent-sh auth list              # show configured providers and their key source
+```
+
+Keys stored via `auth` live in `~/.agent-sh/keys.json` (chmod 0600). Resolution order when launching is `settings.json` → `keys.json` → env var, so explicit configuration always wins over the auth store.
+
+Any provider you declare under `providers` in `settings.json` is also accepted by `auth login <id>`. This lets you keep custom endpoints in version control (id, baseURL, model list) while the key stays in `keys.json` out of the committable file:
+
+```json
+{
+  "providers": {
+    "my-llama": {
+      "baseURL": "http://localhost:8000/v1",
+      "defaultModel": "llama-3.1-70b",
+      "models": ["llama-3.1-70b"]
+    }
+  }
+}
+```
+
+```bash
+agent-sh auth login my-llama   # prompts for the key, saves to keys.json
 ```
 
 `install` accepts a bundled-extension name (see `agent-sh install` with no argument for the list), a `file:`/`./`/absolute path, or — once implemented — `npm:<pkg>` and `github:<user>/<repo>` specs.

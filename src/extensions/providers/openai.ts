@@ -4,6 +4,7 @@
  * floors at "minimal"; gpt-5.1+ accepts "none" as documented full off.
  */
 import type { ExtensionContext } from "../../types.js";
+import { resolveApiKey } from "../../auth/keys.js";
 
 const CLOUD_MODELS = [
   { id: "gpt-5", reasoning: true },
@@ -29,7 +30,7 @@ function buildReasoningParams(level: string, model?: string): Record<string, unk
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = resolveApiKey("openai").key;
   if (!apiKey) return;
   if (process.env.OPENAI_BASE_URL) return; // openai-compatible handles this
 

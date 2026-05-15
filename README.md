@@ -74,6 +74,17 @@ See [Bring your own agent](#bring-your-own-agent) below for full details and the
 
 `ash` is agent-sh's own lightweight agent. It works with any OpenAI-compatible API — pick one of the zero-config paths below, no settings file needed. agent-sh auto-activates a built-in provider when it sees a known key.
 
+**Quickest path** — store a key once via the auth subcommand:
+
+```bash
+agent-sh auth login          # picks a provider interactively
+agent-sh                     # launches with the saved key
+```
+
+Keys are written to `~/.agent-sh/keys.json` (chmod 0600). Resolution order is `settings.json` → `keys.json` → env var, so an env var or settings entry will still win when present. `auth login` also accepts any provider you declare under `providers` in `settings.json` — useful for custom OpenAI-compatible endpoints where the URL is committable but the key shouldn't be.
+
+Or export the env var directly:
+
 **Hosted models via OpenRouter** (300+ models, one key):
 
 ```bash
