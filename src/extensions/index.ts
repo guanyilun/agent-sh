@@ -21,7 +21,7 @@ export const BUILTIN_EXTENSIONS: Array<{
   when?: () => boolean;
   load: () => Promise<ActivateFn>;
 }> = [
-  { name: "shell-context",   load: () => import("./shell-context.js").then(m => m.default) },
+  { name: "shell-context",   load: () => import("../shell/shell-context.js").then(m => m.default) },
   { name: "agent-backend",    load: () => import("./agent-backend.js").then(m => m.default) },
   { name: "openrouter",
     when: () => !!resolveApiKey("openrouter").key,
@@ -34,9 +34,9 @@ export const BUILTIN_EXTENSIONS: Array<{
     load: () => import("./providers/openai-compatible.js").then(m => m.default) },
   { name: "deepseek",
     load: () => import("./providers/deepseek.js").then(m => m.default) },
-  { name: "tui-renderer",     load: () => import("./tui-renderer.js").then(m => m.default) },
+  { name: "tui-renderer",     load: () => import("../shell/tui-renderer.js").then(m => m.default) },
   { name: "slash-commands",    load: () => import("./slash-commands.js").then(m => m.default) },
-  { name: "file-autocomplete", load: () => import("./file-autocomplete.js").then(m => m.default) },
+  { name: "file-autocomplete", load: () => import("../shell/file-autocomplete.js").then(m => m.default) },
 ];
 
 /**
