@@ -150,3 +150,9 @@ export type ShellConfig = CoreConfig & ShellConfigSurface;
  *  `AgentConfig`, `ShellConfig`) are for code that cares about which
  *  host owns which fields. */
 export type AppConfig = CoreConfig & import("../agent/host-types.js").AgentConfigSurface & ShellConfigSurface;
+
+/** Extension that requires *both* hosts attached — agent and shell.
+ *  Use this when an extension touches both surfaces and is fine being
+ *  unloaded under headless or no-agent backends. Avoids the `?.` guard
+ *  burden that comes with the optional surfaces on `ExtensionContext`. */
+export type FullExtensionContext = import("../agent/host-types.js").AgentContext & ShellContext;

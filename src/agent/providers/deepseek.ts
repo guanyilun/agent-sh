@@ -4,7 +4,7 @@
  * to enabled. The hook always attaches; provider registration via env
  * is opt-in alongside any settings.json entry.
  */
-import type { ExtensionContext } from "../../shell/host-types.js";
+import type { AgentContext } from "../host-types.js";
 import { resolveApiKey } from "../../cli/auth/keys.js";
 
 const BASE_URL = "https://api.deepseek.com";
@@ -19,8 +19,8 @@ function buildReasoningParams(level: string, _model?: string): Record<string, un
     : { thinking: { type: "enabled" }, reasoning_effort: level };
 }
 
-export default function activate(ctx: ExtensionContext): void {
-  ctx.agent!.providers.configure("deepseek", { reasoningParams: buildReasoningParams });
+export default function activate(ctx: AgentContext): void {
+  ctx.agent.providers.configure("deepseek", { reasoningParams: buildReasoningParams });
 
   const apiKey = resolveApiKey("deepseek").key;
   if (!apiKey) return;

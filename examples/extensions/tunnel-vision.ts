@@ -30,7 +30,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionContext } from "agent-sh/types";
+import type { AgentContext } from "agent-sh/types";
 
 const BIND_RE = /\x1b\]9996;vt=([^;]+);BIND;([^;]*);([^\x07]*)\x07/;
 const OSC7_RE = /\x1b\]7;file:\/\/[^/]*(\/[^\x07\x1b]*)/;
@@ -137,7 +137,7 @@ function renderInjection(): string {
   return lines.join("\n");
 }
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: AgentContext): void {
   bindingFile = path.join(ctx.getStoragePath("tunnel-vision"), "binding.json");
   loadBinding();
 

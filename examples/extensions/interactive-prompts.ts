@@ -17,12 +17,12 @@ import { renderDiff } from "agent-sh/utils/diff-renderer.js";
 import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
 import { palette as p } from "agent-sh/utils/palette.js";
 import { computeDiff, computeEditDiff, computeInputDiff, type DiffResult } from "agent-sh/utils/diff.js";
-import type { ExtensionContext } from "agent-sh/types";
+import type { AgentContext } from "agent-sh/types";
 import type { ToolUI } from "agent-sh/agent/types.js";
 
 const GATED_TOOLS = ["bash", "pwsh", "write_file", "edit_file"] as const;
 
-export default function activate(ctx: ExtensionContext) {
+export default function activate(ctx: AgentContext) {
   let autoApproveWrites = false;
 
   // Frame pre-execute diff previews as a permission prompt.
@@ -100,7 +100,7 @@ export default function activate(ctx: ExtensionContext) {
 }
 
 async function renderPreviewDiff(
-  ctx: ExtensionContext,
+  ctx: AgentContext,
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<void> {

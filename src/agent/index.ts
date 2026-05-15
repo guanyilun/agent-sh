@@ -9,7 +9,7 @@
  * backend bails silently.
  */
 import type { ExtensionContext } from "../shell/host-types.js";
-import type { AgentMode, AgentSurface } from "../agent/host-types.js";
+import type { AgentContext, AgentMode, AgentSurface } from "../agent/host-types.js";
 import type { AppConfig } from "../shell/host-types.js";
 import { AgentLoop } from "./agent-loop.js";
 import { LlmClient } from "../utils/llm-client.js";
@@ -393,8 +393,11 @@ export { runSubagent, type SubagentOptions } from "./subagent.js";
 /** Activate the ash backend and any provider whose key is configured. */
 export function activateAgent(ctx: ExtensionContext): void {
   agentBackend(ctx);
-  if (resolveApiKey("openrouter").key) activateOpenrouter(ctx);
-  if (resolveApiKey("openai").key && !process.env.OPENAI_BASE_URL) activateOpenai(ctx);
-  if (process.env.OPENAI_BASE_URL) activateOpenaiCompatible(ctx);
-  activateDeepseek(ctx);
+  // Agent surface is attached now — narrow the ctx for providers that
+  // legitimately require it (cast is safe by construction).
+  const agentCtx = ctx as AgentContext;
+  if (resolveApiKey("openrouter").key) activateOpenrouter(agentCtx);
+  if (resolveApiKey("openai").key && !process.env.OPENAI_BASE_URL) activateOpenai(agentCtx);
+  if (process.env.OPENAI_BASE_URL) activateOpenaiCompatible(agentCtx);
+  activateDeepseek(agentCtx);
 }

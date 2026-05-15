@@ -20,7 +20,7 @@
  *   cp examples/extensions/rtk-proxy.ts ~/.agent-sh/extensions/
  */
 import { execSync } from "node:child_process";
-import type { ExtensionContext } from "agent-sh/types";
+import type { AgentContext } from "agent-sh/types";
 
 const DEFAULT_PREFIXES = new Set([
   "git", "gh",
@@ -73,7 +73,7 @@ function rewriteForRtk(cmd: string, prefixes: Set<string>, flag: string): string
   return `RTK_TELEMETRY_DISABLED=1 rtk ${flag}${cmd}`;
 }
 
-export default function activate(ctx: ExtensionContext) {
+export default function activate(ctx: AgentContext) {
   const config = ctx.getExtensionSettings("rtk-proxy", {
     enabled: true,
     ultraCompact: false,
