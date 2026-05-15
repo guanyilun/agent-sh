@@ -1,10 +1,10 @@
-import type { ShellContext } from "agent-sh/types";
+import type { ExtensionContext } from "agent-sh/types";
 import type { MultiSessionStore } from "./multi-session-store.js";
 import type { AgentMessage } from "./session-store.js";
 import type { Capture } from "./capture.js";
 
 export function registerForkCommands(
-  ctx: ShellContext,
+  ctx: ExtensionContext,
   getStore: () => MultiSessionStore,
   openTreePicker: () => Promise<void>,
   rebuildChat: () => Promise<void>,
@@ -53,7 +53,7 @@ export function registerForkCommands(
 }
 
 export function applyBranchMessages(
-  ctx: ShellContext,
+  ctx: ExtensionContext,
   getStore: () => MultiSessionStore,
   capture: Capture,
 ): void {

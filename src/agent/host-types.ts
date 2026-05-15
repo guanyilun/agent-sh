@@ -136,7 +136,10 @@ export interface AgentSurface {
   ) => () => void;
 }
 
-export type AgentContext = CoreContext & AgentSurface;
+/** Substrate + agent surface. Use this when an extension only touches
+ *  agent-side features (tools, instructions, LLM) and doesn't need
+ *  shell rendering. */
+export type AgentContext = CoreContext & { agent: AgentSurface };
 
 // ── Agent-host config surface ────────────────────────────────────
 
@@ -154,3 +157,7 @@ export interface AgentConfigSurface {
 }
 
 export type AgentConfig = CoreConfig & AgentConfigSurface;
+
+// Note: `AgentSurface` lives in this file but only describes the inner
+// shape — extensions access it via `ctx.agent.X` on `ExtensionContext`
+// or `AgentContext`, never as a bare object.

@@ -8,7 +8,7 @@
  * `defaultProvider: "openrouter"` loses to a cold-start race and the
  * backend bails silently.
  */
-import type { ShellContext } from "../shell/host-types.js";
+import type { ExtensionContext } from "../shell/host-types.js";
 import type { AgentMode } from "../agent/host-types.js";
 import type { AppConfig } from "../shell/host-types.js";
 import { AgentLoop } from "./agent-loop.js";
@@ -54,7 +54,7 @@ function mergeCaps(
   return out.size > 0 ? out : undefined;
 }
 
-export default function agentBackend(ctx: ShellContext): void {
+export default function agentBackend(ctx: ExtensionContext): void {
   const { bus } = ctx;
   const config: AppConfig = ctx.call("config:get-shell-config") ?? {};
 
@@ -134,7 +134,7 @@ export default function agentBackend(ctx: ShellContext): void {
     handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list },
     modes,
     initialModeIndex,
-    compositor: ctx.compositor,
+    compositor: ctx.shell.compositor,
     instanceId: ctx.instanceId,
     history: config.history,
   });
@@ -356,7 +356,7 @@ export { ToolRegistry } from "./tool-registry.js";
 export { runSubagent, type SubagentOptions } from "./subagent.js";
 
 /** Activate the ash backend and any provider whose key is configured. */
-export function activateAgent(ctx: ShellContext): void {
+export function activateAgent(ctx: ExtensionContext): void {
   agentBackend(ctx);
   if (resolveApiKey("openrouter").key) activateOpenrouter(ctx);
   if (resolveApiKey("openai").key && !process.env.OPENAI_BASE_URL) activateOpenai(ctx);

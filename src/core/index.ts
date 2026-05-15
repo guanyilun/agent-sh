@@ -18,7 +18,7 @@
  *   const response = await core.query("hello");
  */
 import { EventBus, type ContentBlock } from "./event-bus.js";
-import type { AppConfig, ShellContext, RemoteSessionOptions, RemoteSession } from "../shell/host-types.js";
+import type { AppConfig, ExtensionContext, RemoteSessionOptions, RemoteSession } from "../shell/host-types.js";
 import { createLlmFacade } from "../utils/llm-facade.js";
 import { setPalette } from "../utils/palette.js";
 import * as streamTransform from "../utils/stream-transform.js";
@@ -35,7 +35,7 @@ export { EventBus } from "./event-bus.js";
 export type { ShellEvents, ContentBlock } from "./event-bus.js";
 export type { CoreContext, CoreConfig } from "./types.js";
 export type { AgentContext, AgentConfig, AgentSurface, AgentConfigSurface, AgentMode, LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
-export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, AppConfig } from "../shell/host-types.js";
+export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, CommandSugar, ExtensionContext, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, AppConfig } from "../shell/host-types.js";
 export { palette, setPalette, resetPalette } from "../utils/palette.js";
 export type { ColorPalette } from "../utils/palette.js";
 export type { AgentBackend, ToolDefinition } from "../agent/types.js";
@@ -59,8 +59,8 @@ export interface AgentShellCore {
   cancel(): void;
   /** Convenience: emit agent:append-user-message. */
   appendUserMessage(text: string): void;
-  /** Build a ShellContext for loading extensions against this core. */
-  extensionContext(opts: { quit: () => void }): ShellContext;
+  /** Build an ExtensionContext for loading extensions against this core. */
+  extensionContext(opts: { quit: () => void }): ExtensionContext;
   /** Tear down the agent and clean up. */
   kill(): void;
 }
@@ -198,98 +198,107 @@ export function createCore(config: AppConfig): AgentShellCore {
     },
 
     extensionContext(opts) {
-      const ctx: ShellContext = {
+      const createRemoteSession = (sessOpts: RemoteSessionOptions): RemoteSession => {
+        const { surface } = sessOpts;
+        const cleanups: (() => void)[] = [];
+        let active = true;
+
+        cleanups.push(compositor.redirect("agent", surface));
+        cleanups.push(compositor.redirect("query", surface));
+        cleanups.push(compositor.redirect("status", surface));
+
+        // on-processing-done is intentionally not advised — its scope
+        // cleanup must always run.
+        cleanups.push(handlers.advise("shell:on-processing-start", (next) => active ? undefined : next()));
+        cleanups.push(handlers.advise("shell:on-processing-redraw", (next) => active ? undefined : next()));
+
+        if (sessOpts.suppressBorders !== false) {
+          cleanups.push(handlers.advise("tui:response-border", (next, ...a) => active ? null : next(...a)));
+        }
+        if (sessOpts.suppressQueryBox) {
+          cleanups.push(handlers.advise("tui:render-user-query", (next, ...a) => active ? [] : next(...a)));
+        }
+        if (sessOpts.suppressUsage !== false) {
+          cleanups.push(handlers.advise("tui:render-usage", (next, ...a) => active ? "" : next(...a)));
+        }
+        return {
+          submit(query: string) { bus.emit("agent:submit", { query }); },
+          get surface() { return surface; },
+          get active() { return active; },
+          close() {
+            if (!active) return;
+            active = false;
+            for (const fn of cleanups.reverse()) fn();
+            cleanups.length = 0;
+          },
+        };
+      };
+
+      const ctx: ExtensionContext = {
+        // ── substrate ────────────────────────────────────────
         bus,
         instanceId,
-        llm: createLlmFacade(handlers),
-        providers: {
-          configure: (id, opts) => bus.emit("provider:configure", { id, ...opts }),
-        },
         quit: opts.quit,
-        setPalette,
-        createBlockTransform: (o) => streamTransform.createBlockTransform(bus, o),
-        createFencedBlockTransform: (o) =>
-          streamTransform.createFencedBlockTransform(bus, o),
+        define: (name, fn) => handlers.define(name, fn),
+        advise: (name, wrapper) => handlers.advise(name, wrapper),
+        call: (name, ...args) => handlers.call(name, ...args),
+        list: () => handlers.list(),
+        onDispose: () => {},
         getExtensionSettings: settingsMod.getExtensionSettings,
         getStoragePath: (namespace: string) => {
           const dir = path.join(CONFIG_DIR, namespace);
           fs.mkdirSync(dir, { recursive: true });
           return dir;
         },
+
+        // ── command sugar (frontend-agnostic) ───────────────
         registerCommand: (name, description, handler) =>
           bus.emit("command:register", { name, description, handler }),
-        adviseInputMode: (id, advisor) => handlers.advise(`input-mode:${id}:submit`, advisor as Parameters<typeof handlers.advise>[1]),
         adviseCommand: (name, advisor) => {
           const key = name.startsWith("/") ? name : `/${name}`;
           return handlers.advise(`command:${key}`, advisor as Parameters<typeof handlers.advise>[1]);
         },
-        registerTool: (tool) => bus.emit("agent:register-tool", { tool, extensionName: "" }),
-        unregisterTool: (name) => bus.emit("agent:unregister-tool", { name }),
-        adviseTool: (name, advisor) => handlers.advise(`tool:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
-        adviseToolSchema: (name, advisor) => handlers.advise(`tool:${name}:schema`, advisor as Parameters<typeof handlers.advise>[1]),
-        getTools: () => bus.emitPipe("agent:get-tools", { tools: [] }).tools,
-        registerInstruction: (name, text) => bus.emit("agent:register-instruction", { name, text, extensionName: "" }),
-        removeInstruction: (name) => bus.emit("agent:remove-instruction", { name }),
-        adviseInstruction: (name, advisor) => handlers.advise(`instruction:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
-        registerSkill: (name, description, filePath) => bus.emit("agent:register-skill", { name, description, filePath, extensionName: "" }),
-        removeSkill: (name) => bus.emit("agent:remove-skill", { name }),
-        adviseSkill: (name, advisor) => handlers.advise(`skill:${name}:view`, advisor as Parameters<typeof handlers.advise>[1]),
-        registerContextProducer: (_name, producer, opts) => {
-          const handlerName = opts?.mode === "per-query"
-            ? "query-context:build"
-            : "dynamic-context:build";
-          return handlers.advise(handlerName, (next) => {
-            const base = next() as string;
-            const part = producer();
-            if (!part) return base;
-            const trimmed = part.trim();
-            if (!trimmed) return base;
-            return base ? `${base}\n\n${trimmed}` : trimmed;
-          });
+
+        // ── agent host surface ──────────────────────────────
+        agent: {
+          llm: createLlmFacade(handlers),
+          providers: {
+            configure: (id, configureOpts) => bus.emit("provider:configure", { id, ...configureOpts }),
+          },
+          registerTool: (tool) => bus.emit("agent:register-tool", { tool, extensionName: "" }),
+          unregisterTool: (name) => bus.emit("agent:unregister-tool", { name }),
+          adviseTool: (name, advisor) => handlers.advise(`tool:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
+          adviseToolSchema: (name, advisor) => handlers.advise(`tool:${name}:schema`, advisor as Parameters<typeof handlers.advise>[1]),
+          getTools: () => bus.emitPipe("agent:get-tools", { tools: [] }).tools,
+          registerInstruction: (name, text) => bus.emit("agent:register-instruction", { name, text, extensionName: "" }),
+          removeInstruction: (name) => bus.emit("agent:remove-instruction", { name }),
+          adviseInstruction: (name, advisor) => handlers.advise(`instruction:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
+          registerSkill: (name, description, filePath) => bus.emit("agent:register-skill", { name, description, filePath, extensionName: "" }),
+          removeSkill: (name) => bus.emit("agent:remove-skill", { name }),
+          adviseSkill: (name, advisor) => handlers.advise(`skill:${name}:view`, advisor as Parameters<typeof handlers.advise>[1]),
+          registerContextProducer: (_name, producer, producerOpts) => {
+            const handlerName = producerOpts?.mode === "per-query"
+              ? "query-context:build"
+              : "dynamic-context:build";
+            return handlers.advise(handlerName, (next) => {
+              const base = next() as string;
+              const part = producer();
+              if (!part) return base;
+              const trimmed = part.trim();
+              if (!trimmed) return base;
+              return base ? `${base}\n\n${trimmed}` : trimmed;
+            });
+          },
         },
-        define: (name, fn) => handlers.define(name, fn),
-        advise: (name, wrapper) => handlers.advise(name, wrapper),
-        call: (name, ...args) => handlers.call(name, ...args),
-        list: () => handlers.list(),
-        compositor,
-        onDispose: () => {},
-        createRemoteSession: (opts: RemoteSessionOptions): RemoteSession => {
-          const { surface } = opts;
-          const cleanups: (() => void)[] = [];
-          let active = true;
 
-          // Redirect all render streams
-          cleanups.push(compositor.redirect("agent", surface));
-          cleanups.push(compositor.redirect("query", surface));
-          cleanups.push(compositor.redirect("status", surface));
-
-          // Suppress the host shell's mute lifecycle and post-turn
-          // redraw nudge. on-processing-done is intentionally not advised
-          // — its scope cleanup must always run.
-          cleanups.push(handlers.advise("shell:on-processing-start", (next) => active ? undefined : next()));
-          cleanups.push(handlers.advise("shell:on-processing-redraw", (next) => active ? undefined : next()));
-
-          // Suppress chrome
-          if (opts.suppressBorders !== false) {
-            cleanups.push(handlers.advise("tui:response-border", (next, ...a) => active ? null : next(...a)));
-          }
-          if (opts.suppressQueryBox) {
-            cleanups.push(handlers.advise("tui:render-user-query", (next, ...a) => active ? [] : next(...a)));
-          }
-          if (opts.suppressUsage !== false) {
-            cleanups.push(handlers.advise("tui:render-usage", (next, ...a) => active ? "" : next(...a)));
-          }
-          return {
-            submit(query: string) { bus.emit("agent:submit", { query }); },
-            get surface() { return surface; },
-            get active() { return active; },
-            close() {
-              if (!active) return;
-              active = false;
-              for (const fn of cleanups.reverse()) fn();
-              cleanups.length = 0;
-            },
-          };
+        // ── shell host surface ──────────────────────────────
+        shell: {
+          compositor,
+          setPalette,
+          createBlockTransform: (o) => streamTransform.createBlockTransform(bus, o),
+          createFencedBlockTransform: (o) => streamTransform.createFencedBlockTransform(bus, o),
+          adviseInputMode: (id, advisor) => handlers.advise(`input-mode:${id}:submit`, advisor as Parameters<typeof handlers.advise>[1]),
+          createRemoteSession,
         },
       };
       return ctx;

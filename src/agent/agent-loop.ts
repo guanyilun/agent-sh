@@ -449,7 +449,7 @@ export class AgentLoop implements AgentBackend {
     this.boundPipeListeners = [];
   }
 
-  /** Register a tool (used by extensions via ctx.registerTool). */
+  /** Register a tool (used by extensions via ctx.agent.registerTool). */
   registerTool(tool: ToolDefinition): void {
     this.toolRegistry.register(tool);
   }

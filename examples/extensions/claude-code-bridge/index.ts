@@ -7,11 +7,11 @@
 import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { ShellContext } from "agent-sh/types";
+import type { ExtensionContext } from "agent-sh/types";
 import { computeDiff, type DiffResult } from "agent-sh/utils/diff";
 
 // ── Extension entry point ─────────────────────────────────────────
-export default function activate(ctx: ShellContext): void {
+export default function activate(ctx: ExtensionContext): void {
   const { bus, call } = ctx;
 
   // PTY-tracked cwd from shell-context; falls back when no PTY frontend.

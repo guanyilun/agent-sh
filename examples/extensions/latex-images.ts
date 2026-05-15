@@ -19,7 +19,7 @@ import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ShellContext } from "agent-sh/types";
+import type { ExtensionContext } from "agent-sh/types";
 
 // Settings loaded in activate() via ctx.getExtensionSettings
 let config = { dpi: 300, fgColor: "d4d4d4" };
@@ -98,7 +98,7 @@ function renderEquation(equation: string): Buffer | null {
 
 // ── Extension entry point ────────────────────────────────────────
 
-export default function activate(ctx: ShellContext) {
+export default function activate(ctx: ExtensionContext) {
   const { bus } = ctx;
 
   // Load settings: ~/.agent-sh/settings.json → "latex-images": { dpi, fgColor }
@@ -116,7 +116,7 @@ export default function activate(ctx: ShellContext) {
   }
 
   // Handle inline $$...$$ display math
-  ctx.createBlockTransform({
+  ctx.shell.createBlockTransform({
     open: "$$",
     close: "$$",
     transform(latex) {

@@ -1,5 +1,6 @@
 import type { EventBus } from "../core/event-bus.js";
-import type { AgentConfig, AgentContext } from "../agent/host-types.js";
+import type { CoreConfig, CoreContext } from "../core/types.js";
+import type { AgentSurface } from "../agent/host-types.js";
 import type { ColorPalette } from "../utils/palette.js";
 import type { Compositor, RenderSurface } from "../utils/compositor.js";
 import type { BlockTransformOptions, FencedBlockTransformOptions } from "../utils/stream-transform.js";
@@ -58,12 +59,13 @@ export interface TerminalSession {
   resolve?: (value: void) => void;
 }
 
-// ── Shell-host extension surface ─────────────────────────────────
+// ── Shell-host surface ───────────────────────────────────────────
 
 /**
- * Capabilities the shell host adds on top of AgentContext. Available
- * only when the shell frontend is loaded; headless backends omit these,
- * so extensions that need them should type as ShellContext.
+ * Capabilities the shell host adds to the extension context, exposed
+ * on the nested `ctx.shell` field. Available only when the TUI shell
+ * frontend is loaded; under headless backends these methods are silent
+ * no-ops (bus emits with no listeners).
  */
 export interface ShellSurface {
   /** Routes named render streams ("agent", "query", "status") to surfaces.
@@ -73,13 +75,11 @@ export interface ShellSurface {
   /** Override color palette slots for theming. */
   setPalette: (overrides: Partial<ColorPalette>) => void;
 
-  // ── Stream transform utilities ─────────────────────────────
   /** Register a delimiter-based content transform (e.g. $$...$$ → image). */
   createBlockTransform: (opts: BlockTransformOptions) => void;
   /** Register a fenced block transform (e.g. ```lang...``` → code-block). */
   createFencedBlockTransform: (opts: FencedBlockTransformOptions) => void;
 
-  // ── Input mode registration ───────────────────────────────
   /** Wrap an input mode's `onSubmit`. Lets extensions transform queries
    *  on the way to the agent (logging, redaction, vetoing). The mode
    *  must already be registered via the `input-mode:register` bus event. */
@@ -92,7 +92,25 @@ export interface ShellSurface {
     ) => void,
   ) => () => void;
 
-  // ── Slash command registration ─────────────────────────────
+  /** Create a remote session that routes agent output to a surface and
+   *  optionally accepts queries. Handles compositor routing, shell
+   *  lifecycle advisors, and chrome suppression. */
+  createRemoteSession: (opts: RemoteSessionOptions) => RemoteSession;
+}
+
+/** Substrate + shell surface. Use this when an extension only touches
+ *  shell features (themes, palette, transforms) and doesn't need the
+ *  agent surface. */
+export type ShellContext = CoreContext & { shell: ShellSurface };
+
+// ── Slash-command sugar ──────────────────────────────────────────
+// `registerCommand` / `adviseCommand` are extension-author conveniences
+// over the bus event vocabulary (`command:register`, `command:execute`).
+// They're frontend-agnostic — any consumer (shell input parser, ACP
+// message handler, web API) can dispatch — and live at the top level
+// of `ExtensionContext` rather than nested under a host.
+
+export interface CommandSugar {
   registerCommand: (name: string, description: string, handler: (args: string) => Promise<void> | void) => void;
   /** Wrap an already-registered command's handler. Name is normalized
    *  (leading `/` optional). */
@@ -103,21 +121,20 @@ export interface ShellSurface {
       args: string,
     ) => Promise<void> | void,
   ) => () => void;
-
-  // ── Remote sessions ────────────────────────────────────────
-  /**
-   * Create a remote session that routes agent output to a surface and
-   * optionally accepts queries. Handles all compositor routing, shell
-   * lifecycle advisors, and chrome suppression.
-   *
-   *   const session = ctx.createRemoteSession({ surface });
-   *   session.submit("what's on screen?");
-   *   session.close();  // restores everything
-   */
-  createRemoteSession: (opts: RemoteSessionOptions) => RemoteSession;
 }
 
-export type ShellContext = AgentContext & ShellSurface;
+// ── Extension-facing context ─────────────────────────────────────
+
+/**
+ * What extension `activate()` functions receive. Combines the substrate
+ * (`CoreContext`), extension-author sugar (slash commands), and nested
+ * host surfaces. Methods on `ctx.agent` / `ctx.shell` are silent no-ops
+ * when their host isn't loaded.
+ */
+export type ExtensionContext = CoreContext & CommandSugar & {
+  agent: AgentSurface;
+  shell: ShellSurface;
+};
 
 // ── Shell-host config surface ────────────────────────────────────
 
@@ -126,10 +143,10 @@ export interface ShellConfigSurface {
   shell?: string;
 }
 
-export type ShellConfig = AgentConfig & ShellConfigSurface;
+export type ShellConfig = CoreConfig & ShellConfigSurface;
 
-/** Friendly alias for `ShellConfig` — the full application config blob
- *  passed to `createCore()`. Prefer this in CLI/embedder code; layered
- *  names (`CoreConfig`, `AgentConfig`, `ShellConfig`) are for code that
- *  cares about which host owns which fields. */
-export type AppConfig = ShellConfig;
+/** The full application config — substrate + agent + shell startup options.
+ *  Prefer this in CLI/embedder code; layered names (`CoreConfig`,
+ *  `AgentConfig`, `ShellConfig`) are for code that cares about which
+ *  host owns which fields. */
+export type AppConfig = CoreConfig & import("../agent/host-types.js").AgentConfigSurface & ShellConfigSurface;

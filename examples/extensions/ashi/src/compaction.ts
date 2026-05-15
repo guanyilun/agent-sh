@@ -1,4 +1,4 @@
-import type { ShellContext } from "agent-sh/types";
+import type { ExtensionContext } from "agent-sh/types";
 import type { MultiSessionStore } from "./multi-session-store.js";
 import type { Capture } from "./capture.js";
 import type { AgentMessage, CompactionEntry } from "./session-store.js";
@@ -38,12 +38,12 @@ Produce a Markdown summary using EXACTLY this structure:
 Be concrete. Quote file paths, function names, error strings verbatim when relevant. Do not invent details that aren't in the conversation.`;
 
 export function registerCompaction(
-  ctx: ShellContext,
+  ctx: ExtensionContext,
   getStore: () => MultiSessionStore,
   capture: Capture,
 ): void {
   ctx.advise("conversation:compact", async (next: (...a: unknown[]) => unknown, opts: unknown) => {
-    if (!ctx.llm.available) return next(opts);
+    if (!ctx.agent.llm.available) return next(opts);
 
     await capture.flush();
     const messages = ctx.call("conversation:get-messages") as AgentMessage[] | undefined;
@@ -69,7 +69,7 @@ export function registerCompaction(
 
     let summary: string;
     try {
-      summary = await ctx.llm.ask({
+      summary = await ctx.agent.llm.ask({
         system: SUMMARY_PROMPT,
         query: buildQuery(older, prevSummary),
         maxTokens: 16384,

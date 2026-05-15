@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ShellContext } from "../shell/host-types.js";
+import type { ExtensionContext } from "../shell/host-types.js";
 import type { EventBus } from "./event-bus.js";
 import { CONFIG_DIR, getSettings } from "./settings.js";
 
@@ -45,23 +45,20 @@ async function ensureTsSupport(force = false): Promise<void> {
 type Cleanup = () => void;
 
 /**
- * Wrap a ShellContext to track all registrations (bus.on, bus.onPipe,
- * advise, command:register). Returns the wrapped context and a dispose()
- * function that tears down everything registered through it.
+ * Wrap an ExtensionContext to track all registrations (bus.on, advise,
+ * command:register, plus all agent/shell surface registrars). Returns
+ * the wrapped context and a dispose() that tears down everything
+ * registered through it.
  */
-function createScopedContext(ctx: ShellContext, extensionName: string): { scoped: ShellContext; dispose: () => void } {
+function createScopedContext(ctx: ExtensionContext, extensionName: string): { scoped: ExtensionContext; dispose: () => void } {
   const cleanups: Cleanup[] = [];
   const bus = ctx.bus;
 
   const scopedBus: EventBus = Object.create(bus);
-
-  // Track bus.on registrations
   scopedBus.on = ((event: any, fn: any) => {
     bus.on(event, fn);
     cleanups.push(() => bus.off(event, fn));
   }) as typeof bus.on;
-
-  // Track bus.onPipe registrations
   scopedBus.onPipe = ((event: any, fn: any) => {
     bus.onPipe(event, fn);
     cleanups.push(() => bus.offPipe(event, fn));
@@ -73,66 +70,59 @@ function createScopedContext(ctx: ShellContext, extensionName: string): { scoped
     cleanups.push(unsub);
     return unsub;
   };
+
+  // ── substrate / sugar ──────────────────────────────────────
   const scopedAdvise: typeof ctx.advise = trackUnsub(ctx.advise);
-
-  // Track instruction registrations — extension name captured in scope
-  const scopedRegisterInstruction: typeof ctx.registerInstruction = (name, text) => {
-    bus.emit("agent:register-instruction", { name, text, extensionName });
-    cleanups.push(() => bus.emit("agent:remove-instruction", { name }));
-  };
-
-  // Track skill registrations — extension name captured in scope
-  const scopedRegisterSkill: typeof ctx.registerSkill = (name, description, filePath) => {
-    bus.emit("agent:register-skill", { name, description, filePath, extensionName });
-    cleanups.push(() => bus.emit("agent:remove-skill", { name }));
-  };
-
-  // Track dynamic-context producer registrations
-  const scopedRegisterContextProducer: typeof ctx.registerContextProducer = (name, producer) => {
-    const dispose = ctx.registerContextProducer(name, producer);
-    cleanups.push(dispose);
-    return dispose;
-  };
-
-  // Track tool registrations — extension name captured in scope
-  const scopedRegisterTool: typeof ctx.registerTool = (tool) => {
-    bus.emit("agent:register-tool", { tool, extensionName });
-    cleanups.push(() => bus.emit("agent:unregister-tool", { name: tool.name }));
-  };
-
-  const scopedAdviseTool: typeof ctx.adviseTool = trackUnsub(ctx.adviseTool);
-  const scopedAdviseToolSchema: typeof ctx.adviseToolSchema = trackUnsub(ctx.adviseToolSchema);
-  const scopedAdviseInstruction: typeof ctx.adviseInstruction = trackUnsub(ctx.adviseInstruction);
-  const scopedAdviseSkill: typeof ctx.adviseSkill = trackUnsub(ctx.adviseSkill);
-  const scopedAdviseCommand: typeof ctx.adviseCommand = trackUnsub(ctx.adviseCommand);
-  const scopedAdviseInputMode: typeof ctx.adviseInputMode = trackUnsub(ctx.adviseInputMode);
-
-  // Track slash command registrations — without this, reloading an
-  // extension stacks its commands (old `/status` + new `/status`) in
-  // the slash-commands registry.
+  // Without this, reloading an extension stacks its commands (old + new)
+  // in the slash-commands registry.
   const scopedRegisterCommand: typeof ctx.registerCommand = (name, description, handler) => {
     ctx.registerCommand(name, description, handler);
     cleanups.push(() => bus.emit("command:unregister", { name }));
   };
+  const scopedAdviseCommand: typeof ctx.adviseCommand = trackUnsub(ctx.adviseCommand);
 
-  const scoped: ShellContext = {
+  // ── agent surface ──────────────────────────────────────────
+  const agent = ctx.agent;
+  const scopedAgent: typeof agent = {
+    ...agent,
+    registerTool: (tool) => {
+      bus.emit("agent:register-tool", { tool, extensionName });
+      cleanups.push(() => bus.emit("agent:unregister-tool", { name: tool.name }));
+    },
+    adviseTool: trackUnsub(agent.adviseTool),
+    adviseToolSchema: trackUnsub(agent.adviseToolSchema),
+    registerInstruction: (name, text) => {
+      bus.emit("agent:register-instruction", { name, text, extensionName });
+      cleanups.push(() => bus.emit("agent:remove-instruction", { name }));
+    },
+    adviseInstruction: trackUnsub(agent.adviseInstruction),
+    registerSkill: (name, description, filePath) => {
+      bus.emit("agent:register-skill", { name, description, filePath, extensionName });
+      cleanups.push(() => bus.emit("agent:remove-skill", { name }));
+    },
+    adviseSkill: trackUnsub(agent.adviseSkill),
+    registerContextProducer: (name, producer, opts) => {
+      const dispose = agent.registerContextProducer(name, producer, opts);
+      cleanups.push(dispose);
+      return dispose;
+    },
+  };
+
+  // ── shell surface ──────────────────────────────────────────
+  const shell = ctx.shell;
+  const scopedShell: typeof shell = {
+    ...shell,
+    adviseInputMode: trackUnsub(shell.adviseInputMode),
+  };
+
+  const scoped: ExtensionContext = {
     ...ctx,
     bus: scopedBus,
     advise: scopedAdvise,
-    registerInstruction: scopedRegisterInstruction,
-    removeInstruction: ctx.removeInstruction,
-    registerSkill: scopedRegisterSkill,
-    removeSkill: ctx.removeSkill,
-    registerContextProducer: scopedRegisterContextProducer,
-    registerTool: scopedRegisterTool,
-    unregisterTool: ctx.unregisterTool,
-    adviseTool: scopedAdviseTool,
-    adviseToolSchema: scopedAdviseToolSchema,
-    adviseInstruction: scopedAdviseInstruction,
-    adviseSkill: scopedAdviseSkill,
-    adviseCommand: scopedAdviseCommand,
-    adviseInputMode: scopedAdviseInputMode,
     registerCommand: scopedRegisterCommand,
+    adviseCommand: scopedAdviseCommand,
+    agent: scopedAgent,
+    shell: scopedShell,
     onDispose: (fn: () => void) => { cleanups.push(fn); },
   };
 
@@ -165,7 +155,7 @@ const extensionDisposers = new Map<string, () => void>();
  * Errors are non-fatal — logged via ui:error and skipped.
  */
 export async function loadExtensions(
-  ctx: ShellContext,
+  ctx: ExtensionContext,
   cliExtensions?: string[],
 ): Promise<string[]> {
   const specifiers: string[] = [];
@@ -228,7 +218,7 @@ async function discoverUserExtensions(): Promise<string[]> {
 
 async function loadSpecifiers(
   specifiers: string[],
-  ctx: ShellContext,
+  ctx: ExtensionContext,
   bustCache: boolean,
   userSpecifiers?: string[],
 ): Promise<string[]> {
@@ -289,7 +279,7 @@ async function loadSpecifiers(
  * Reload user extensions (from ~/.agent-sh/extensions/).
  * Tears down old registrations, busts the module cache, and re-activates.
  */
-export async function reloadExtensions(ctx: ShellContext): Promise<string[]> {
+export async function reloadExtensions(ctx: ExtensionContext): Promise<string[]> {
   const specifiers = await discoverUserExtensions();
   return loadSpecifiers(specifiers, ctx, true, specifiers);
 }

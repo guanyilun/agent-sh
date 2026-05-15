@@ -3,7 +3,7 @@
  * built-in extensions manifest) because PTY + stdin raw mode ownership is
  * order-critical.
  */
-import type { ShellContext } from "./host-types.js";
+import type { ExtensionContext } from "./host-types.js";
 import { Shell } from "./shell.js";
 import { StdoutSurface } from "../utils/compositor.js";
 import { TerminalBuffer } from "../utils/terminal-buffer.js";
@@ -33,7 +33,7 @@ export interface ShellHandle {
  * Register shell-owned handlers extensions can `ctx.call`. Must run before
  * `loadExtensions`; the handlers only need the bus, not the PTY.
  */
-export function registerShellHandlers(ctx: ShellContext): void {
+export function registerShellHandlers(ctx: ExtensionContext): void {
   let terminalBufferSingleton: TerminalBuffer | null | undefined;
   ctx.define("terminal-buffer", (): TerminalBuffer | null => {
     if (terminalBufferSingleton !== undefined) return terminalBufferSingleton;
@@ -46,19 +46,19 @@ export function registerShellHandlers(ctx: ShellContext): void {
 
 /**
  * Construct the Shell, wire resize forwarding, and register cleanup with the
- * provided ShellContext. Returns a handle the caller (typically
+ * provided ExtensionContext. Returns a handle the caller (typically
  * `src/cli/index.ts`) uses to drive lifecycle from process-level events.
  */
 export function activateShell(
-  ctx: ShellContext,
+  ctx: ExtensionContext,
   opts: ShellActivateOptions,
 ): ShellHandle {
   // Stdout-as-default is a frontend choice, not a kernel one — a hub or
   // web bridge would point these at its own surfaces.
   const stdoutSurface = new StdoutSurface();
-  ctx.compositor.setDefault("agent", stdoutSurface);
-  ctx.compositor.setDefault("query", stdoutSurface);
-  ctx.compositor.setDefault("status", stdoutSurface);
+  ctx.shell.compositor.setDefault("agent", stdoutSurface);
+  ctx.shell.compositor.setDefault("query", stdoutSurface);
+  ctx.shell.compositor.setDefault("status", stdoutSurface);
 
   const shell = new Shell({
     bus: ctx.bus,

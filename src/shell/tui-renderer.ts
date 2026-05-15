@@ -139,7 +139,8 @@ function createRenderState(): RenderState {
 }
 
 export default function activate(ctx: ShellContext): void {
-  const { bus, define, compositor } = ctx;
+  const { bus, define } = ctx;
+  const { compositor } = ctx.shell;
   const s = createRenderState();
 
   /** Track the shell's cwd so path shortening is relative to where the user actually is. */

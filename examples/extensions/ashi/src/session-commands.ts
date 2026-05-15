@@ -1,4 +1,4 @@
-import type { ShellContext } from "agent-sh/types";
+import type { ExtensionContext } from "agent-sh/types";
 import type { MultiSessionStore, SessionInfo } from "./multi-session-store.js";
 import type { Capture } from "./capture.js";
 import { applyBranchMessages } from "./commands.js";
@@ -9,7 +9,7 @@ export interface SessionCommandsDeps {
 }
 
 export function registerSessionCommands(
-  ctx: ShellContext,
+  ctx: ExtensionContext,
   getStore: () => MultiSessionStore,
   capture: Capture,
   deps: SessionCommandsDeps,
@@ -65,7 +65,7 @@ export function formatSessionRow(s: SessionInfo, isCurrent: boolean): string {
 }
 
 export function resumeSession(
-  ctx: ShellContext,
+  ctx: ExtensionContext,
   getStore: () => MultiSessionStore,
   capture: Capture,
   id: string,

@@ -16,7 +16,7 @@
  *
  * Inspired by: https://github.com/nicobailon/pi-web-access
  */
-import type { ShellContext } from "agent-sh/types";
+import type { ExtensionContext } from "agent-sh/types";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -123,7 +123,7 @@ async function directFetch(url: string, timeout: number): Promise<string> {
 
 // ── Extension entry point ────────────────────────────────────────────
 
-export default function activate(ctx: ShellContext) {
+export default function activate(ctx: ExtensionContext) {
   const config = ctx.getExtensionSettings("web-access", {
     timeout: 30000,
     searchNumResults: 5,
@@ -134,7 +134,7 @@ export default function activate(ctx: ShellContext) {
 
   // ── System instruction ────────────────────────────────────────────
 
-  ctx.registerInstruction(
+  ctx.agent.registerInstruction(
     "You have access to web search and fetching tools. " +
     "Use `web_search` to find information on the web, then `web_fetch` to read specific pages. " +
     "Use `web_fetch` with `raw: true` for JSON APIs or plain text files.",
@@ -142,7 +142,7 @@ export default function activate(ctx: ShellContext) {
 
   // ── Tool: web_search (Exa MCP, free) ────────────────────────────
 
-  ctx.registerTool({
+  ctx.agent.registerTool({
     name: "web_search",
     displayName: "Web Search",
     description:
@@ -178,7 +178,7 @@ export default function activate(ctx: ShellContext) {
 
   // ── Tool: web_fetch ─────────────────────────────────────────────
 
-  ctx.registerTool({
+  ctx.agent.registerTool({
     name: "web_fetch",
     displayName: "Web Fetch",
     description:

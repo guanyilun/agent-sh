@@ -1,5 +1,5 @@
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
-import type { ShellContext } from "agent-sh/types";
+import type { ExtensionContext } from "agent-sh/types";
 import { theme } from "./theme.js";
 import type { ToolCallArgs, ToolCallView } from "./hooks.js";
 
@@ -130,7 +130,7 @@ function genericLabel(args: ToolCallArgs): string {
   return `${bold(args.title)}${detail}`;
 }
 
-export function registerDefaultToolRenderers(ctx: ShellContext): void {
+export function registerDefaultToolRenderers(ctx: ExtensionContext): void {
   const define = (name: string, fn: (args: ToolCallArgs) => ToolCallView): void => {
     ctx.define(`ashi:render-tool-call:${name}`, fn);
   };
