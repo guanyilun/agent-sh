@@ -1,10 +1,11 @@
 import { zshStrategy } from "./zsh.js";
 import { bashStrategy } from "./bash.js";
+import { fishStrategy } from "./fish.js";
 import type { ShellStrategy } from "./types.js";
 
 export type { ShellStrategy, PrepareSpawnOpts, ShellSpawnConfig } from "./types.js";
 
-const STRATEGIES: ShellStrategy[] = [zshStrategy, bashStrategy];
+const STRATEGIES: ShellStrategy[] = [zshStrategy, bashStrategy, fishStrategy];
 
 /** Strategy used when the requested shell isn't recognized. */
 export const FALLBACK_STRATEGY: ShellStrategy = bashStrategy;
