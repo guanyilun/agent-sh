@@ -13,7 +13,7 @@ import { suggestBridgeFor } from "./install.js";
 import { anyProviderConfigured } from "./auth/keys.js";
 import { PACKAGE_VERSION } from "../utils/package-version.js";
 import { clearOpost } from "../utils/tty.js";
-import type { AgentShellConfig } from "../core/types.js";
+import type { AppConfig } from "../shell/host-types.js";
 
 /**
  * Capture the user's full shell environment.
@@ -82,7 +82,7 @@ function mergeShellEnv(baseEnv: Record<string, string>, shellEnv: Record<string,
   return merged;
 }
 
-function parseArgs(argv: string[]): AgentShellConfig {
+function parseArgs(argv: string[]): AppConfig {
   let model: string | undefined;
   let extensions: string[] | undefined;
   let provider: string | undefined;

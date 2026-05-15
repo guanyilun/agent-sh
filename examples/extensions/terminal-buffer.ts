@@ -138,7 +138,7 @@ function diffScreens(before: string, after: string): string {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, registerTool } = ctx;
+  const { bus } = ctx; const { registerTool } = ctx.agent;
   const tb = ctx.call("terminal-buffer");
   if (!tb) return; // @xterm/headless not installed, or shell frontend not loaded
 

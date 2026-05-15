@@ -4,7 +4,7 @@
  * user-shell exchanges) signals. Frontends without a PTY skip this
  * built-in and the agent runs cwd-aware via core's process.cwd() default.
  */
-import type { ExtensionContext } from "../core/types.js";
+import type { ExtensionContext } from "./host-types.js";
 import { getSettings } from "../core/settings.js";
 import { spillOutput } from "../utils/shell-output-spill.js";
 
@@ -71,19 +71,23 @@ export default function activate(ctx: ExtensionContext): void {
   // Override core's process.cwd() default with the PTY-tracked value.
   ctx.advise("cwd", () => currentCwd);
 
-  ctx.registerContextProducer("shell-context", () => {
-    const cwdTag = `<cwd>${currentCwd}</cwd>`;
-
-    const fresh = exchanges.filter(
-      (ex) => ex.id > lastSeq && ex.source !== "agent",
-    );
-    if (fresh.length === 0) return cwdTag;
-    lastSeq = exchanges[exchanges.length - 1]!.id;
-
-    const text = fresh.map(formatExchangeTruncated).filter(Boolean).join("\n");
-    if (!text) return cwdTag;
-    return `${cwdTag}\n<shell_events>\n${text}\n</shell_events>`;
-  }, { mode: "per-query" });
+  // Advises the core handler directly: shell-context loads before the
+  // agent host attaches `ctx.agent`, so the sugar isn't available yet.
+  ctx.advise("query-context:build", (next) => {
+    const base = next() as string;
+    const part = (() => {
+      const cwdTag = `<cwd>${currentCwd}</cwd>`;
+      const fresh = exchanges.filter(
+        (ex) => ex.id > lastSeq && ex.source !== "agent",
+      );
+      if (fresh.length === 0) return cwdTag;
+      lastSeq = exchanges[exchanges.length - 1]!.id;
+      const text = fresh.map(formatExchangeTruncated).filter(Boolean).join("\n");
+      if (!text) return cwdTag;
+      return `${cwdTag}\n<shell_events>\n${text}\n</shell_events>`;
+    })();
+    return base ? `${base}\n\n${part}` : part;
+  });
 
   ctx.define("shell:context-recent", (n: number = 25) => {
     const recent = exchanges.slice(-n);

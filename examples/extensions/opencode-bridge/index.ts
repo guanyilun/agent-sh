@@ -60,7 +60,7 @@ function parseUnifiedDiff(patch: string): DiffResult | null {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, call, compositor } = ctx;
+  const { bus, call } = ctx; const { compositor } = ctx.shell;
 
   const cwd = (): string => {
     const v = call("cwd");

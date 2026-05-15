@@ -15,7 +15,7 @@ export class ToolRegistry {
 
   register(tool: ToolDefinition): void {
     if (this.tools.has(tool.name)) {
-      throw new Error(`Tool "${tool.name}" already registered. Use ctx.adviseTool() to wrap it.`);
+      throw new Error(`Tool "${tool.name}" already registered. Use ctx.agent.adviseTool() to wrap it.`);
     }
     this.tools.set(tool.name, tool);
     this.handlers.define(`tool:${tool.name}`, tool.execute.bind(tool));

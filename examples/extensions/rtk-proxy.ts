@@ -20,7 +20,7 @@
  *   cp examples/extensions/rtk-proxy.ts ~/.agent-sh/extensions/
  */
 import { execSync } from "node:child_process";
-import type { ExtensionContext } from "agent-sh/types";
+import type { AgentContext } from "agent-sh/types";
 
 const DEFAULT_PREFIXES = new Set([
   "git", "gh",
@@ -73,7 +73,7 @@ function rewriteForRtk(cmd: string, prefixes: Set<string>, flag: string): string
   return `RTK_TELEMETRY_DISABLED=1 rtk ${flag}${cmd}`;
 }
 
-export default function activate(ctx: ExtensionContext) {
+export default function activate(ctx: AgentContext) {
   const config = ctx.getExtensionSettings("rtk-proxy", {
     enabled: true,
     ultraCompact: false,
@@ -95,7 +95,7 @@ export default function activate(ctx: ExtensionContext) {
   for (const p of config.excludePrefixes) prefixes.delete(p);
   const flag = config.ultraCompact ? "--ultra-compact " : "";
 
-  ctx.registerInstruction("rtk-proxy",
+  ctx.agent.registerInstruction("rtk-proxy",
     "The rtk-proxy extension transparently rewrites bash commands like " +
     "`git status`, `cargo test`, `pytest` to their rtk-compressed equivalents " +
     "before execution. Output will be condensed (errors/failures first, " +

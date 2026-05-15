@@ -55,7 +55,8 @@ interface QuestionnaireResult {
 
 // ── Extension ────────────────────────────────────────────────────
 
-export default function activate({ registerTool, registerInstruction }: ExtensionContext) {
+export default function activate(ctx: ExtensionContext) {
+  const { registerTool, registerInstruction } = ctx.agent;
   registerInstruction("questionnaire", [
     "# When to use the questionnaire tool",
     "ALWAYS use the `questionnaire` tool instead of asking the user a question in plain text when:",

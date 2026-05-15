@@ -12,7 +12,7 @@
  *   - agent:thinking-chunk, agent:cancelled, agent:error
  */
 import type { EventBus, ShellEvents } from "../core/event-bus.js";
-import type { AgentMode } from "../core/types.js";
+import type { AgentMode } from "./host-types.js";
 import type { LlmClient } from "../utils/llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
@@ -449,7 +449,7 @@ export class AgentLoop implements AgentBackend {
     this.boundPipeListeners = [];
   }
 
-  /** Register a tool (used by extensions via ctx.registerTool). */
+  /** Register a tool (used by extensions via ctx.agent.registerTool). */
   registerTool(tool: ToolDefinition): void {
     this.toolRegistry.register(tool);
   }

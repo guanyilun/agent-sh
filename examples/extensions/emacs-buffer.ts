@@ -187,7 +187,7 @@ function renderSnapshot(snap: EmacsSnapshot): string {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { registerTool } = ctx;
+  const { registerTool } = ctx.agent;
   if (!emacsclientAvailable()) return;
 
   registerTool({

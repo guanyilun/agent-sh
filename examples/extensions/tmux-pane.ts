@@ -22,7 +22,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execSync, spawn } from "node:child_process";
-import type { ExtensionContext, RenderSurface, RemoteSession } from "agent-sh/types";
+import type { AgentContext, ShellContext, RenderSurface, RemoteSession } from "agent-sh/types";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -142,15 +142,17 @@ interface PaneState {
 
 // ── Extension ───────────────────────────────────────────────────
 
-export default function activate(ctx: ExtensionContext): void {
-  const { bus, registerCommand, registerInstruction, createRemoteSession } = ctx;
+export default function activate(ctx: AgentContext & ShellContext): void {
+  const { bus, registerCommand } = ctx;
+  const { registerInstruction } = ctx.agent;
+  const { createRemoteSession } = ctx.shell;
 
   if (!inTmux()) return;
 
   let state: PaneState | null = null;
 
   // Tell the LLM it's running inside an interactive pane session.
-  ctx.registerContextProducer("interactive-session", () =>
+  ctx.agent.registerContextProducer("interactive-session", () =>
     state?.mode === "rsplit" ? "interactive-session: true" : null,
   );
 

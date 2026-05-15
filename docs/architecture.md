@@ -83,9 +83,9 @@ The agent backend is a bus-driven component that registers via `agent:register-b
 
 ### Built-in backend: ash
 
-The default backend is **ash**, loaded as a built-in extension (`src/extensions/agent-backend.ts`). It resolves LLM providers from settings, creates an `LlmClient`, builds the mode list for runtime model switching, and creates an `AgentLoop` that uses the `openai` SDK to call any OpenAI-compatible API. See [The Built-in Agent: ash](agent.md) for the full guide.
+The default backend is **ash**, loaded by the agent host (`src/agent/index.ts`). It resolves LLM providers from settings, creates an `LlmClient`, builds the mode list for runtime model switching, and creates an `AgentLoop` that uses the `openai` SDK to call any OpenAI-compatible API. See [The Built-in Agent: ash](agent.md) for the full guide.
 
-The agent-backend extension registers an `llm:invoke` handler that backs the `ctx.llm` facade on `ExtensionContext`, so any extension can call `ctx.llm.ask(...)` or `ctx.llm.session(...)` without knowing which backend is active. Backends with no LLM leave `ctx.llm.available` false.
+The agent-backend extension registers an `llm:invoke` handler that backs the `ctx.agent.llm` facade, so any extension can call `ctx.agent.llm.ask(...)` or `ctx.agent.llm.session(...)` without knowing which backend is active. Backends with no LLM leave `ctx.agent.llm.available` false.
 
 ### Extension Backends
 
@@ -110,58 +110,56 @@ The extension system provides several composable primitives for customizing agen
 ```
 agent-sh/
 ├── src/
-│   ├── index.ts              # Interactive terminal entry point (CLI args, Shell, extensions)
-│   ├── core.ts               # createCore() — pure kernel (no LLM, no agent)
-│   ├── event-bus.ts          # Typed EventBus: emit/on, emitPipe, emitPipeAsync, emitTransform
-│   ├── settings.ts           # User settings (~/.agent-sh/settings.json)
-│   ├── extension-loader.ts   # Extension loading (-e, settings.json, extensions dir)
-│   ├── executor.ts           # Isolated child process execution (shared by shell + bash tool)
-│   ├── types.ts              # Shared type definitions
+│   ├── core/                 # Substrate kernel — no LLM, no agent, no shell
+│   │   ├── index.ts          # createCore(), backend registry, extensionContext()
+│   │   ├── types.ts          # CoreContext, CoreConfig
+│   │   ├── event-bus.ts      # Typed EventBus: emit/on, emitPipe, emitPipeAsync, emitTransform
+│   │   ├── settings.ts       # User settings (~/.agent-sh/settings.json)
+│   │   └── extension-loader.ts # Extension loading (-e, settings.json, extensions dir)
 │   │
-│   ├── shell/                # Frontend bootstrap (special-cased; not in src/extensions/)
-│   │   ├── index.ts          # activateShell(ctx, opts): owns Shell, compositor stdout defaults, terminal-buffer handler
+│   ├── cli/                  # CLI entry + subcommands (install, init, auth)
+│   │   ├── index.ts          # Interactive terminal entry point
+│   │   ├── subcommands.ts, install.ts, init.ts
+│   │   └── auth/             # Provider API key management
+│   │
+│   ├── shell/                # Shell host — TUI frontend, PTY, compositor, theming
+│   │   ├── index.ts          # registerShellHandlers/activateShell — attaches ctx.shell
+│   │   ├── host-types.ts     # ShellSurface, ShellContext, ExtensionContext, AppConfig
 │   │   ├── shell.ts          # PTY lifecycle + wiring (InputHandler + OutputParser)
+│   │   ├── shell-context.ts  # Shell exchange tracking, cwd advisor, <shell_events>
+│   │   ├── tui-renderer.ts   # Main renderer — writes to compositor streams
 │   │   ├── input-handler.ts  # Keyboard input, agent mode, bus-driven autocomplete
 │   │   ├── output-parser.ts  # OSC parsing, command boundary detection
 │   │   └── tui-input-view.ts # Input rendering + line editor integration
 │   │
-│   ├── agent/                # Agent subsystem (used by agent-backend extension)
+│   ├── agent/                # Agent host — ash backend, providers, tools, skills
+│   │   ├── index.ts          # agentBackend/activateAgent — attaches ctx.agent
+│   │   ├── host-types.ts     # AgentSurface, AgentContext, LlmInterface, AgentMode
 │   │   ├── types.ts          # AgentBackend, ToolDefinition, ToolResult
 │   │   ├── agent-loop.ts     # ash backend (OpenAI-compat API, bus-driven)
+│   │   ├── providers/        # openai, openrouter, deepseek, openai-compatible
 │   │   ├── token-budget.ts   # Shared constants (RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW)
-│   │   ├── tool-registry.ts  # Map-based tool registry
-│   │   ├── tool-protocol.ts  # Tool calling protocol abstraction (api/deferred/inline)
-│   │   ├── conversation-state.ts  # Messages + eager nucleation + three-tier priority compaction + recall
-│   │   ├── nuclear-form.ts   # One-line-summary primitives (nucleate, serialize, priority)
-│   │   ├── history-file.ts   # Persistent JSONL at ~/.agent-sh/history (append-only, concurrent-safe)
-│   │   ├── system-prompt.ts  # System prompt builder
-│   │   ├── skills.ts         # Skill discovery and loading
-│   │   ├── subagent.ts       # Subagent orchestration
-│   │   └── tools/            # Built-in tool implementations
-│   │       ├── bash.ts, read-file.ts, write-file.ts, edit-file.ts
-│   │       ├── grep.ts, glob.ts, ls.ts
-│   │       └── list-skills.ts
+│   │   ├── tool-registry.ts, tool-protocol.ts
+│   │   ├── conversation-state.ts  # Messages + eager nucleation + priority compaction + recall
+│   │   ├── nuclear-form.ts, history-file.ts, system-prompt.ts
+│   │   ├── skills.ts, subagent.ts
+│   │   └── tools/            # Built-in tool implementations (bash, read/write/edit, grep, glob, ls, ...)
 │   │
-│   ├── utils/                # Shared primitives
-│   │   ├── llm-client.ts     # OpenAI SDK wrapper
-│   │   ├── handler-registry.ts # Named function registry (define/advise/call)
-│   │   ├── terminal-buffer.ts  # Headless xterm.js mirror of the terminal
-│   │   ├── floating-panel.ts   # Composited floating overlay with handler-based rendering
-│   │   ├── compositor.ts       # Routes named render streams to surfaces
-│   │   ├── shell-output-spill.ts # Session-tempfile spill for long shell outputs
-│   │   ├── package-version.ts  # PACKAGE_VERSION constant read from package.json
-│   │   ├── palette.ts, ansi.ts, diff.ts, diff-renderer.ts
-│   │   ├── box-frame.ts, tool-display.ts, output-writer.ts
-│   │   ├── stream-transform.ts, markdown.ts, file-watcher.ts
-│   │   ├── line-editor.ts, frame-renderer.ts
-│   │   └── message-utils.ts, tool-interactive.ts
+│   ├── extensions/           # Cross-cutting built-ins (loaded via manifest)
+│   │   ├── index.ts          # Declarative manifest + loader
+│   │   ├── slash-commands.ts # /reload, /quit, command dispatch
+│   │   └── file-autocomplete.ts
 │   │
-│   └── extensions/           # Built-in extensions (loaded via manifest, disableable)
-│       ├── index.ts          # Declarative manifest + loader
-│       ├── shell-context.ts  # Shell exchange tracking, cwd advisor, <shell_events>
-│       ├── agent-backend.ts  # LLM provider resolution + AgentLoop registration
-│       ├── tui-renderer.ts, slash-commands.ts
-│       └── file-autocomplete.ts
+│   └── utils/                # Shared primitives
+│       ├── llm-client.ts, llm-facade.ts
+│       ├── handler-registry.ts # Named function registry (define/advise/call)
+│       ├── compositor.ts       # Routes named render streams to surfaces
+│       ├── terminal-buffer.ts  # Headless xterm.js mirror of the terminal
+│       ├── floating-panel.ts   # Composited floating overlay
+│       ├── executor.ts         # Isolated child process execution
+│       ├── shell-output-spill.ts # Session-tempfile spill for long shell outputs
+│       ├── palette.ts, ansi.ts, diff.ts, diff-renderer.ts
+│       └── (markdown, line-editor, stream-transform, ...)
 │
 ├── examples/                 # Example extensions and agent integrations
 │   └── extensions/

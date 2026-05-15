@@ -3,7 +3,7 @@
  * family: o-series has no off; gpt-5-codex floors at "low"; plain gpt-5
  * floors at "minimal"; gpt-5.1+ accepts "none" as documented full off.
  */
-import type { ExtensionContext } from "../../core/types.js";
+import type { AgentContext } from "../host-types.js";
 import { resolveApiKey } from "../../cli/auth/keys.js";
 
 const CLOUD_MODELS = [
@@ -29,12 +29,12 @@ function buildReasoningParams(level: string, model?: string): Record<string, unk
   return off ? { reasoning_effort: off } : {};
 }
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: AgentContext): void {
   const apiKey = resolveApiKey("openai").key;
   if (!apiKey) return;
   if (process.env.OPENAI_BASE_URL) return; // openai-compatible handles this
 
-  ctx.providers.configure("openai", { reasoningParams: buildReasoningParams });
+  ctx.agent.providers.configure("openai", { reasoningParams: buildReasoningParams });
 
   ctx.bus.emit("provider:register", {
     id: "openai",

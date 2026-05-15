@@ -1,8 +1,10 @@
 # Extensions
 
-An extension is a module that exports a default (or named `activate`) function. It receives an `ExtensionContext` with access to all core services — no package imports needed.
+An extension is a module that exports a default (or named `activate`) function. It receives a context object with access to all core services — no runtime imports needed; you only need the type for TS authoring.
 
 ```typescript
+import type { ExtensionContext } from "agent-sh/types";
+
 export default function activate(ctx: ExtensionContext) {
   const { bus } = ctx;
 
@@ -11,6 +13,8 @@ export default function activate(ctx: ExtensionContext) {
   });
 }
 ```
+
+`ExtensionContext` is the friendly default — host surfaces (`ctx.agent`, `ctx.shell`) are optional and you guard with `?.` when you use them. For more explicit host requirements, type as `AgentContext`, `ShellContext`, or `AgentContext & ShellContext` (see [ExtensionContext API](#extensioncontext-api) below).
 
 ## Loading Extensions
 
@@ -60,31 +64,78 @@ For directory-style extensions with declared dependencies, `install` runs `npm i
 
 ## ExtensionContext API
 
+The context is layered: substrate primitives + slash-command registration at the top, host-specific surfaces nested under `ctx.agent` and `ctx.shell`. Both nested surfaces are **optional** — they're attached by their hosts during activation, and headless backends (ACP server, bridges) may skip a host's activation entirely:
+
+```ts
+type ExtensionContext = CoreContext & {
+  registerCommand: ...;
+  adviseCommand: ...;
+  agent?: AgentSurface;   // attached by agent host
+  shell?: ShellSurface;   // attached by shell host
+};
+```
+
+That gives extension authors a choice depending on how defensive they want to be:
+
+| Context type | What it guarantees | Use when |
+|---|---|---|
+| `CoreContext` | substrate only | Pure bus / handler extensions; works under any backend |
+| `AgentContext` | substrate + `agent` (required) | Need tools / LLM / instructions; won't load under no-agent bridges |
+| `ShellContext` | substrate + `shell` (required) | Need compositor / palette / transforms; won't load under headless |
+| `AgentContext & ShellContext` | substrate + both (required) | Need both surfaces; lets you skip `?.` guards |
+| `ExtensionContext` | substrate + both (optional) | Defensive code that adapts to whatever's available; requires `?.` guards on `ctx.agent` / `ctx.shell` |
+
+Picking a narrower type makes host requirements explicit. Under a mismatch (extension typed `AgentContext` loaded under a no-agent bridge), accessing `ctx.agent.foo` produces a real `TypeError` instead of a silent no-op — loud, debuggable failure.
+
+### Substrate (top-level — always present)
+
 | Property | Type | Description |
 |---|---|---|
 | `bus` | `EventBus` | Subscribe to events, emit events, register pipe handlers |
 | `instanceId` | `string` | Stable per-instance identifier (4-char hex) |
-| `llm` | `LlmInterface` | Backend-agnostic LLM facade — `llm.ask({query, system?, maxTokens?})` for one-shot, `llm.session({system?}).send(msg)` for multi-turn, `llm.available` to check |
 | `quit` | `() => void` | Exit agent-sh |
-| `setPalette` | `(overrides) => void` | Override color palette slots for theming |
-| `createBlockTransform` | `(opts) => void` | Register an inline delimiter transform (e.g. `$$...$$`) |
-| `createFencedBlockTransform` | `(opts) => void` | Register a fenced block transform (e.g. ` ```lang...``` `) |
 | `getExtensionSettings` | `(namespace, defaults) => T` | Read extension settings from `~/.agent-sh/settings.json` |
 | `getStoragePath` | `(namespace) => string` | Get (and lazily create) a per-extension storage directory under `~/.agent-sh/<namespace>/` |
-| `registerTool` | `(tool: ToolDefinition) => void` | Register a tool with the active agent backend. See [Internal Agent: Tool interface](agent.md#tool-interface) |
-| `unregisterTool` | `(name: string) => void` | Remove a previously registered tool |
-| `getTools` | `() => ToolDefinition[]` | Get all registered tools |
-| `registerCommand` | `(name, description, handler) => void` | Register a slash command (e.g. `/mycommand`) |
-| `registerInstruction` | `(name, text) => void` | Inject a named instruction block into the system prompt |
-| `removeInstruction` | `(name) => void` | Remove a named instruction block |
-| `registerSkill` | `(name, description, filePath) => void` | Register a skill — on-demand reference material the agent can invoke |
-| `removeSkill` | `(name) => void` | Remove a registered skill |
-| `registerContextProducer` | `(name, () => string \| null, opts?: { mode? }) => () => void` | Contribute a per-turn signal. `mode: "per-request"` (default) — fires every LLM call, ephemerally wrapped on the trailing message in `<dynamic_context>`. `mode: "per-query"` — fires once per user query, frozen into the user message in `<query_context>`. Return `null` to skip. Returns a dispose fn. |
 | `define` | `(name, fn) => void` | Register a named handler |
 | `advise` | `(name, wrapper) => () => void` | Wrap a named handler (receives `next` + args). Returns an `unadvise()` function. |
 | `call` | `(name, ...args) => any` | Call a named handler |
 | `list` | `() => string[]` | Names of all registered handlers (for diagnostic/introspection use) |
-| `compositor` | `Compositor` | Routes named render streams to surfaces. See [TUI Composition](tui-composition.md) |
+| `onDispose` | `(fn: () => void) => void` | Register a teardown callback fired on `/reload` |
+| `registerCommand` | `(name, description, handler) => void` | Register a slash command (e.g. `/mycommand`). Frontend-agnostic — any consumer (TUI input parser, ACP message handler) can dispatch. |
+| `adviseCommand` | `(name, advisor) => () => void` | Wrap an already-registered command's handler |
+
+### `ctx.agent` — agent host surface
+
+Attached by the built-in agent backend (or any backend that calls `activateAgent` / wires the same handlers). Bridges that own the agent externally (claude-code, opencode, pi) leave `ctx.agent` undefined.
+
+| Property | Type | Description |
+|---|---|---|
+| `llm` | `LlmInterface` | Backend-agnostic LLM facade — `llm.ask({query, system?, maxTokens?})` for one-shot, `llm.session({system?}).send(msg)` for multi-turn, `llm.available` to check |
+| `providers` | `{ configure }` | Configure provider-specific hooks (reasoning params) |
+| `registerTool` | `(tool: ToolDefinition) => void` | Register a tool with the active agent backend. See [Internal Agent: Tool interface](agent.md#tool-interface) |
+| `unregisterTool` | `(name: string) => void` | Remove a previously registered tool |
+| `adviseTool` | `(name, advisor) => () => void` | Wrap a tool's execute function (gating, logging, transforms) |
+| `adviseToolSchema` | `(name, advisor) => () => void` | Wrap a tool's LLM-facing description/parameters |
+| `getTools` | `() => ToolDefinition[]` | Get all registered tools |
+| `registerInstruction` | `(name, text) => void` | Inject a named instruction block into the system prompt |
+| `removeInstruction` | `(name) => void` | Remove a named instruction block |
+| `adviseInstruction` | `(name, advisor) => () => void` | Wrap an instruction's text |
+| `registerSkill` | `(name, description, filePath) => void` | Register a skill — on-demand reference material the agent can invoke |
+| `removeSkill` | `(name) => void` | Remove a registered skill |
+| `adviseSkill` | `(name, advisor) => () => void` | Wrap a skill's LLM-facing view |
+| `registerContextProducer` | `(name, () => string \| null, opts?: { mode? }) => () => void` | Contribute a per-turn signal. `mode: "per-request"` (default) — fires every LLM call, ephemerally wrapped on the trailing message in `<dynamic_context>`. `mode: "per-query"` — fires once per user query, frozen into the user message in `<query_context>`. Return `null` to skip. Returns a dispose fn. |
+
+### `ctx.shell` — shell host surface
+
+Attached by the TUI shell frontend (`registerShellHandlers`). Headless backends leave `ctx.shell` undefined.
+
+| Property | Type | Description |
+|---|---|---|
+| `compositor` | `Compositor` | Routes named render streams to terminal surfaces. Frontends set defaults during activation; extensions can `redirect()` to capture output. See [TUI Composition](tui-composition.md) |
+| `setPalette` | `(overrides) => void` | Override color palette slots for theming |
+| `createBlockTransform` | `(opts) => void` | Register an inline delimiter transform (e.g. `$$...$$`) |
+| `createFencedBlockTransform` | `(opts) => void` | Register a fenced block transform (e.g. ` ```lang...``` `) |
+| `adviseInputMode` | `(id, advisor) => () => void` | Wrap an input mode's `onSubmit` |
 | `createRemoteSession` | `(opts: RemoteSessionOptions) => RemoteSession` | Create a remote session that routes agent output to a surface. See [Remote Sessions](#remote-sessions) |
 
 ## Extension Settings
@@ -372,7 +423,7 @@ The difference between the two bridges is just SDK shape: Claude Code uses an as
 
 ##### Forwarding query context
 
-Extensions register per-query producers via `ctx.registerContextProducer(name, fn, { mode: "per-query" })` — for example, the `shell-context` built-in contributes a `<shell_events>` block of recent shell activity. The kernel exposes the joined producer output through the `query-context:build` handler. Each backend chooses how to surface that data when forwarding a query — there's no kernel-imposed transport.
+Extensions register per-query producers via `ctx.agent.registerContextProducer(name, fn, { mode: "per-query" })` — for example, the `shell-context` built-in contributes a `<shell_events>` block of recent shell activity. The kernel exposes the joined producer output through the `query-context:build` handler. Each backend chooses how to surface that data when forwarding a query — there's no kernel-imposed transport.
 
 For a bridge, the recommended pattern is:
 
@@ -430,8 +481,8 @@ These are registered by the `agent-backend` built-in extension (AgentLoop) and l
 | Handler | Signature | Description |
 |---|---|---|
 | `system-prompt:build` | `() → string` | Assemble the cached system prompt. Advise to append identity blocks, memory files, learned lessons, etc. Rebuilt on cwd change, not every query. |
-| `dynamic-context:build` | `() → string` | Per-request signal block. Fires on every LLM call (including each tool-loop iteration). Output is wrapped in `<dynamic_context>` and ephemerally prepended to the trailing message at request time. Default: `""`. Advisors append; extensions usually go through `ctx.registerContextProducer(name, fn)` instead of advising directly. |
-| `query-context:build` | `() → string` | Per-query signal block. Fires once at user-query start in `handleQuery`. Output is wrapped in `<query_context>` and frozen into the user message. Built-in: an advisor that emits `<shell_events>` from the shell-event cursor. Default: `""`. Reach via `ctx.registerContextProducer(name, fn, { mode: "per-query" })`. |
+| `dynamic-context:build` | `() → string` | Per-request signal block. Fires on every LLM call (including each tool-loop iteration). Output is wrapped in `<dynamic_context>` and ephemerally prepended to the trailing message at request time. Default: `""`. Advisors append; extensions usually go through `ctx.agent.registerContextProducer(name, fn)` instead of advising directly. |
+| `query-context:build` | `() → string` | Per-query signal block. Fires once at user-query start in `handleQuery`. Output is wrapped in `<query_context>` and frozen into the user message. Built-in: an advisor that emits `<shell_events>` from the shell-event cursor. Default: `""`. Reach via `ctx.agent.registerContextProducer(name, fn, { mode: "per-query" })`. |
 | `conversation:prepare` | `(messages[]) → messages[]` | Transform the full message array before it's sent to the LLM. Default: pass through. |
 | `conversation:compact` | `({target, keepRecent, force}) → { before, after, evictedCount } \| null` | Compaction strategy (returns null when nothing is compacted). Default: pins the first turn + the last `keepRecent` turns and evicts the middle by priority × recency. Advise for richer strategies (topic pinning, LLM summarization). |
 | `conversation:get-messages` | `() → messages[]` | Read the current in-memory messages array. Used by compaction advisors to compute a replacement. |
@@ -536,8 +587,8 @@ The pipeline has two layers. **Parsers** turn raw text into blocks (e.g. detecti
 
 | I want to... | Use | Layer |
 |---|---|---|
-| Match inline delimiters (`$$`, `<<`, etc.) | `ctx.createBlockTransform` | Parser — text in, blocks out |
-| Match fenced blocks (` ``` `, `:::`, `~~~`) | `ctx.createFencedBlockTransform` | Parser — text in, blocks out |
+| Match inline delimiters (`$$`, `<<`, etc.) | `ctx.shell.createBlockTransform` | Parser — text in, blocks out |
+| Match fenced blocks (` ``` `, `:::`, `~~~`) | `ctx.shell.createFencedBlockTransform` | Parser — text in, blocks out |
 | Transform blocks others produced | `bus.onPipe("agent:response-chunk", ...)` | Post-transform — blocks in, blocks out |
 
 Parsers only read `text` blocks and pass other block types through. Post-transforms see all block types. This means they compose regardless of registration order — each operates on a disjoint domain.
@@ -547,7 +598,7 @@ Parsers only read `text` blocks and pass other block types through. Post-transfo
 Parsers that detect patterns like `$$...$$` within text. They handle streaming buffering and flush-on-done automatically — you just provide the delimiters and a transform function:
 
 ```typescript
-ctx.createBlockTransform({
+ctx.shell.createBlockTransform({
   open: "$$",
   close: "$$",
   transform(content) {
@@ -565,7 +616,7 @@ Parsers that detect line-delimited fenced blocks. Open/close patterns are regexe
 
 ```typescript
 // :::warning ... ::: admonition blocks
-ctx.createFencedBlockTransform({
+ctx.shell.createFencedBlockTransform({
   open: /^:::(\w+)\s*$/,
   close: /^:::\s*$/,
   transform(match, content) {
@@ -691,7 +742,7 @@ See `src/utils/floating-panel.ts` for the full API, handler hooks, and rendering
 A remote session bundles all the wiring needed to route agent output away from stdout — compositor redirects, shell lifecycle advisors, and chrome suppression — into a single call. Use it when building side panes, web UIs, remote displays, or any extension where agent output should appear somewhere other than the main terminal.
 
 ```typescript
-const session = ctx.createRemoteSession({
+const session = ctx.shell.createRemoteSession({
   surface: mySurface,          // where output goes (RenderSurface)
   suppressQueryBox: true,      // hide query box (session has own input)
 });
@@ -725,11 +776,11 @@ Calling `session.close()` removes all advisors and restores all compositor routi
 
 ```typescript
 // Output-only: queries from main shell, output in side pane
-const session = ctx.createRemoteSession({ surface });
+const session = ctx.shell.createRemoteSession({ surface });
 // session.close() when done
 
 // Interactive: side pane has own input prompt
-const session = ctx.createRemoteSession({
+const session = ctx.shell.createRemoteSession({
   surface,
   suppressQueryBox: true,
 });
@@ -739,7 +790,7 @@ conn.on("data", (d) => session.submit(d.toString().trim()));
 ### Example: overlay agent
 
 ```typescript
-const session = ctx.createRemoteSession({
+const session = ctx.shell.createRemoteSession({
   surface: panelSurface,
   suppressQueryBox: true,
 });
@@ -794,7 +845,7 @@ Extensions can redirect any stream to a different surface (e.g. a floating panel
 
 ```typescript
 // Redirect agent output to a panel
-const restore = ctx.compositor.redirect("agent", panelSurface);
+const restore = ctx.shell.compositor.redirect("agent", panelSurface);
 // ... later ...
 restore(); // back to stdout
 ```
@@ -825,8 +876,10 @@ cp examples/extensions/interactive-prompts.ts ~/.agent-sh/extensions/
 agent-sh uses a semantic color palette (~10 base roles). Override any slot via `setPalette()`:
 
 ```typescript
-export default function activate({ setPalette }) {
-  setPalette({
+import type { ShellContext } from "agent-sh/types";
+
+export default function activate(ctx: ShellContext) {
+  ctx.shell.setPalette({
     accent:  "\x1b[38;2;38;139;210m",   // solarized blue
     success: "\x1b[38;2;133;153;0m",     // solarized green
     warning: "\x1b[38;2;181;137;0m",     // solarized yellow

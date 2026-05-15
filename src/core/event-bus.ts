@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { AgentMode } from "./types.js";
+import type { AgentMode } from "../agent/host-types.js";
 import type { ToolResultDisplay } from "../agent/types.js";
 
 /**
@@ -44,7 +44,7 @@ export interface ShellEvents {
   "agent:append-user-message": { text: string };
 
   // Input mode registration (extensions → InputHandler)
-  "input-mode:register": import("./types.js").InputModeConfig;
+  "input-mode:register": import("../shell/host-types.js").InputModeConfig;
 
   // Agent interaction
   "agent:query": { query: string };

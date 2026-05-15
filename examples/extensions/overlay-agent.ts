@@ -20,7 +20,7 @@
  *   - terminal-buffer.ts → terminal_read / terminal_keys tools
  *   - user-shell.ts      → user_shell tool (run new shell commands)
  */
-import type { ExtensionContext, RemoteSession } from "agent-sh/types";
+import type { AgentContext, ShellContext, RemoteSession } from "agent-sh/types";
 import type { RenderSurface } from "agent-sh/utils/compositor";
 import { FloatingPanel } from "agent-sh/utils/floating-panel";
 import { formatScreenContext, type TerminalBuffer } from "agent-sh/utils/terminal-buffer";
@@ -66,8 +66,10 @@ function createPanelSurface(panel: FloatingPanel): RenderSurface {
   };
 }
 
-export default function activate(ctx: ExtensionContext): void {
-  const { bus, registerInstruction, createRemoteSession } = ctx;
+export default function activate(ctx: AgentContext & ShellContext): void {
+  const { bus } = ctx;
+  const { registerInstruction } = ctx.agent;
+  const { createRemoteSession } = ctx.shell;
   const terminalBuffer: TerminalBuffer | null = ctx.call("terminal-buffer");
 
   const panel = new FloatingPanel(bus, {
@@ -79,13 +81,13 @@ export default function activate(ctx: ExtensionContext): void {
   const panelSurface = createPanelSurface(panel);
   let session: RemoteSession | null = null;
 
-  ctx.registerContextProducer("interactive-session", () =>
+  ctx.agent.registerContextProducer("interactive-session", () =>
     session?.active ? "interactive-session: true" : null,
   );
 
   // Inject the live screen for TUI / REPL programs. At a plain shell prompt
   // `<shell_events>` already covers the visible scrollback — skip to dedupe.
-  ctx.registerContextProducer("terminal-screen", () => {
+  ctx.agent.registerContextProducer("terminal-screen", () => {
     if (!session?.active || !terminalBuffer?.altScreen) return null;
     return formatScreenContext(terminalBuffer.readScreen(), 80);
   });

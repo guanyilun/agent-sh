@@ -190,7 +190,7 @@ class PeerServer {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, registerCommand, registerTool, registerInstruction, define } = ctx;
+  const { bus, registerCommand, define } = ctx; const { registerTool, registerInstruction } = ctx.agent;
   const getCwd = () => ctx.call("cwd") as string;
   const startTime = Date.now();
 

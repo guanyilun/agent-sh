@@ -8,22 +8,22 @@
  * Usage:
  *   agent-sh -e ./examples/extensions/subagents.ts
  */
-import type { ExtensionContext } from "agent-sh/types";
+import type { AgentContext } from "agent-sh/types";
 import { runSubagent } from "agent-sh/agent/subagent";
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: AgentContext): void {
   const { bus, llmClient } = ctx;
   if (!llmClient) return;
 
-  const allToolNames = () => ctx.getTools().map(t => t.name);
+  const allToolNames = () => ctx.agent.getTools().map(t => t.name);
 
-  ctx.registerInstruction("subagent-guide", [
+  ctx.agent.registerInstruction("subagent-guide", [
     "You have a spawn_agent tool for delegating work to a subagent with its own context.",
     "The subagent inherits your session history, so write a short directive (what to do), not a briefing (what happened).",
     "Use it for tasks that need multiple tool calls you don't need to see — research, exploration, independent implementation.",
   ].join("\n"));
 
-  ctx.registerTool({
+  ctx.agent.registerTool({
     name: "spawn_agent",
     description:
       "Spawn a subagent with its own fresh context to handle a focused task. " +
@@ -63,7 +63,7 @@ export default function activate(ctx: ExtensionContext): void {
       const task = args.task as string;
       const toolNames = args.tools as string[] | undefined;
 
-      const allTools = ctx.getTools();
+      const allTools = ctx.agent.getTools();
       // Filter to requested tools, or give all tools (minus spawn_agent to prevent recursion)
       const tools = toolNames
         ? allTools.filter(t => toolNames.includes(t.name))

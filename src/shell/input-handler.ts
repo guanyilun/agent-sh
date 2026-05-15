@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { LineEditor } from "../utils/line-editor.js";
 import { CONFIG_DIR, getSettings } from "../core/settings.js";
 import type { EventBus } from "../core/event-bus.js";
-import type { InputModeConfig } from "../core/types.js";
+import type { InputModeConfig } from "./host-types.js";
 import { TuiInputView } from "./tui-input-view.js";
 
 const HISTORY_FILE = path.join(CONFIG_DIR, "input-history");

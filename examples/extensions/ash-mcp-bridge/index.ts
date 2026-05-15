@@ -105,7 +105,7 @@ async function connectServer(
   const { tools } = await client.listTools();
   for (const tool of tools) {
     const toolName = `mcp_${name}_${tool.name}`;
-    ctx.registerTool({
+    ctx.agent.registerTool({
       name: toolName,
       displayName: tool.name,
       description: `[${name}] ${tool.description ?? ""}`,

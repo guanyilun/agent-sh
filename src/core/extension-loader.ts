@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ExtensionContext } from "./types.js";
+import type { ExtensionContext } from "../shell/host-types.js";
 import type { EventBus } from "./event-bus.js";
 import { CONFIG_DIR, getSettings } from "./settings.js";
 
@@ -28,7 +28,6 @@ let tsxUnregister: (() => Promise<void>) | null = null;
 async function ensureTsSupport(force = false): Promise<void> {
   if (tsRegistered && !force) return;
   try {
-    // Unregister previous loader if reloading
     if (tsxUnregister) {
       try { await tsxUnregister(); } catch { /* ignore stale handle */ }
     }
@@ -45,23 +44,20 @@ async function ensureTsSupport(force = false): Promise<void> {
 type Cleanup = () => void;
 
 /**
- * Wrap an ExtensionContext to track all registrations (bus.on, bus.onPipe,
- * advise, command:register). Returns the wrapped context and a dispose()
- * function that tears down everything registered through it.
+ * Wrap an ExtensionContext to track all registrations (bus.on, advise,
+ * command:register, plus all agent/shell surface registrars). Returns
+ * the wrapped context and a dispose() that tears down everything
+ * registered through it.
  */
 function createScopedContext(ctx: ExtensionContext, extensionName: string): { scoped: ExtensionContext; dispose: () => void } {
   const cleanups: Cleanup[] = [];
   const bus = ctx.bus;
 
   const scopedBus: EventBus = Object.create(bus);
-
-  // Track bus.on registrations
   scopedBus.on = ((event: any, fn: any) => {
     bus.on(event, fn);
     cleanups.push(() => bus.off(event, fn));
   }) as typeof bus.on;
-
-  // Track bus.onPipe registrations
   scopedBus.onPipe = ((event: any, fn: any) => {
     bus.onPipe(event, fn);
     cleanups.push(() => bus.offPipe(event, fn));
@@ -73,66 +69,65 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
     cleanups.push(unsub);
     return unsub;
   };
+
+  // ── substrate / sugar ──────────────────────────────────────
   const scopedAdvise: typeof ctx.advise = trackUnsub(ctx.advise);
-
-  // Track instruction registrations — extension name captured in scope
-  const scopedRegisterInstruction: typeof ctx.registerInstruction = (name, text) => {
-    bus.emit("agent:register-instruction", { name, text, extensionName });
-    cleanups.push(() => bus.emit("agent:remove-instruction", { name }));
-  };
-
-  // Track skill registrations — extension name captured in scope
-  const scopedRegisterSkill: typeof ctx.registerSkill = (name, description, filePath) => {
-    bus.emit("agent:register-skill", { name, description, filePath, extensionName });
-    cleanups.push(() => bus.emit("agent:remove-skill", { name }));
-  };
-
-  // Track dynamic-context producer registrations
-  const scopedRegisterContextProducer: typeof ctx.registerContextProducer = (name, producer) => {
-    const dispose = ctx.registerContextProducer(name, producer);
-    cleanups.push(dispose);
-    return dispose;
-  };
-
-  // Track tool registrations — extension name captured in scope
-  const scopedRegisterTool: typeof ctx.registerTool = (tool) => {
-    bus.emit("agent:register-tool", { tool, extensionName });
-    cleanups.push(() => bus.emit("agent:unregister-tool", { name: tool.name }));
-  };
-
-  const scopedAdviseTool: typeof ctx.adviseTool = trackUnsub(ctx.adviseTool);
-  const scopedAdviseToolSchema: typeof ctx.adviseToolSchema = trackUnsub(ctx.adviseToolSchema);
-  const scopedAdviseInstruction: typeof ctx.adviseInstruction = trackUnsub(ctx.adviseInstruction);
-  const scopedAdviseSkill: typeof ctx.adviseSkill = trackUnsub(ctx.adviseSkill);
-  const scopedAdviseCommand: typeof ctx.adviseCommand = trackUnsub(ctx.adviseCommand);
-  const scopedAdviseInputMode: typeof ctx.adviseInputMode = trackUnsub(ctx.adviseInputMode);
-
-  // Track slash command registrations — without this, reloading an
-  // extension stacks its commands (old `/status` + new `/status`) in
-  // the slash-commands registry.
+  // Without this, reloading an extension stacks its commands (old + new)
+  // in the slash-commands registry.
   const scopedRegisterCommand: typeof ctx.registerCommand = (name, description, handler) => {
     ctx.registerCommand(name, description, handler);
     cleanups.push(() => bus.emit("command:unregister", { name }));
   };
+  const scopedAdviseCommand: typeof ctx.adviseCommand = trackUnsub(ctx.adviseCommand);
+
+  // ── agent surface (optional — bridge backends omit it) ───
+  const agent = ctx.agent;
+  let scopedAgent: typeof agent;
+  if (agent) {
+    scopedAgent = {
+      ...agent,
+      registerTool: (tool) => {
+        bus.emit("agent:register-tool", { tool, extensionName });
+        cleanups.push(() => bus.emit("agent:unregister-tool", { name: tool.name }));
+      },
+      adviseTool: trackUnsub(agent.adviseTool),
+      adviseToolSchema: trackUnsub(agent.adviseToolSchema),
+      registerInstruction: (name, text) => {
+        bus.emit("agent:register-instruction", { name, text, extensionName });
+        cleanups.push(() => bus.emit("agent:remove-instruction", { name }));
+      },
+      adviseInstruction: trackUnsub(agent.adviseInstruction),
+      registerSkill: (name, description, filePath) => {
+        bus.emit("agent:register-skill", { name, description, filePath, extensionName });
+        cleanups.push(() => bus.emit("agent:remove-skill", { name }));
+      },
+      adviseSkill: trackUnsub(agent.adviseSkill),
+      registerContextProducer: (name, producer, opts) => {
+        const dispose = agent.registerContextProducer(name, producer, opts);
+        cleanups.push(dispose);
+        return dispose;
+      },
+    };
+  }
+
+  // ── shell surface (optional — headless backends omit it) ──
+  const shell = ctx.shell;
+  let scopedShell: typeof shell;
+  if (shell) {
+    scopedShell = {
+      ...shell,
+      adviseInputMode: trackUnsub(shell.adviseInputMode),
+    };
+  }
 
   const scoped: ExtensionContext = {
     ...ctx,
     bus: scopedBus,
     advise: scopedAdvise,
-    registerInstruction: scopedRegisterInstruction,
-    removeInstruction: ctx.removeInstruction,
-    registerSkill: scopedRegisterSkill,
-    removeSkill: ctx.removeSkill,
-    registerContextProducer: scopedRegisterContextProducer,
-    registerTool: scopedRegisterTool,
-    unregisterTool: ctx.unregisterTool,
-    adviseTool: scopedAdviseTool,
-    adviseToolSchema: scopedAdviseToolSchema,
-    adviseInstruction: scopedAdviseInstruction,
-    adviseSkill: scopedAdviseSkill,
-    adviseCommand: scopedAdviseCommand,
-    adviseInputMode: scopedAdviseInputMode,
     registerCommand: scopedRegisterCommand,
+    adviseCommand: scopedAdviseCommand,
+    agent: scopedAgent,
+    shell: scopedShell,
     onDispose: (fn: () => void) => { cleanups.push(fn); },
   };
 
@@ -146,7 +141,6 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
   return { scoped, dispose };
 }
 
-// Track disposers for user extensions so reload can tear them down
 const extensionDisposers = new Map<string, () => void>();
 
 
@@ -170,22 +164,18 @@ export async function loadExtensions(
 ): Promise<string[]> {
   const specifiers: string[] = [];
 
-  // 1. CLI -e / --extensions
   if (cliExtensions) {
     specifiers.push(...cliExtensions);
   }
 
-  // 2. settings.json
   const settings = getSettings();
   if (settings.extensions.length > 0) {
     specifiers.push(...settings.extensions);
   }
 
-  // 3. ~/.agent-sh/extensions/ directory
   const userSpecifiers = await discoverUserExtensions();
   specifiers.push(...userSpecifiers);
 
-  // Deduplicate
   const seen = new Set<string>();
   const unique = specifiers.filter((s) => {
     if (seen.has(s)) return false;
@@ -193,8 +183,7 @@ export async function loadExtensions(
     return true;
   });
 
-  // Load each extension (user extensions get scoped contexts for reloadability)
-  const loaded = await loadSpecifiers(unique, ctx, false, userSpecifiers);
+  const loaded = await loadSpecifiers(unique, ctx, false);
   return loaded;
 }
 
@@ -230,9 +219,7 @@ async function loadSpecifiers(
   specifiers: string[],
   ctx: ExtensionContext,
   bustCache: boolean,
-  userSpecifiers?: string[],
 ): Promise<string[]> {
-  const userSet = new Set(userSpecifiers ?? []);
   const loaded: string[] = [];
   for (const specifier of specifiers) {
     try {
@@ -241,7 +228,6 @@ async function loadSpecifiers(
       if (TS_EXTS.some((ext) => importPath.endsWith(ext))) {
         await ensureTsSupport(bustCache);
       }
-      // Append timestamp query to bust Node's module cache on reload
       if (bustCache) {
         const sep = importPath.includes("?") ? "&" : "?";
         importPath += `${sep}t=${Date.now()}`;
@@ -257,23 +243,13 @@ async function loadSpecifiers(
         const base = path.basename(specifier).replace(/\.(ts|js|mjs|mts|tsx)$/, "");
         const name = base === "index" ? path.basename(path.dirname(specifier)) : base;
 
-        // Scoped context so /reload can tear user extensions down.
         // Awaiting activate() lets extensions with async setup (e.g.
         // openrouter fetching its model catalog) finish before we move
         // on; a 10s outer timeout in index.ts guards against hangs.
-        if (userSet.has(specifier)) {
-          // Dispose previous load if reloading
-          extensionDisposers.get(name)?.();
-
-          const { scoped, dispose } = createScopedContext(ctx, name);
-          await activate(scoped);
-          extensionDisposers.set(name, dispose);
-        } else {
-          const { scoped, dispose } = createScopedContext(ctx, name);
-          await activate(scoped);
-          // Non-user extensions aren't reloadable, but track for cleanup on shutdown
-          extensionDisposers.set(name, dispose);
-        }
+        extensionDisposers.get(name)?.();
+        const { scoped, dispose } = createScopedContext(ctx, name);
+        await activate(scoped);
+        extensionDisposers.set(name, dispose);
         loaded.push(name);
       }
     } catch (err) {
@@ -291,7 +267,7 @@ async function loadSpecifiers(
  */
 export async function reloadExtensions(ctx: ExtensionContext): Promise<string[]> {
   const specifiers = await discoverUserExtensions();
-  return loadSpecifiers(specifiers, ctx, true, specifiers);
+  return loadSpecifiers(specifiers, ctx, true);
 }
 
 /**
@@ -329,15 +305,12 @@ async function resolveSpecifier(specifier: string): Promise<string> {
     // Scoped packages ("@scope/pkg") contain "/" but are npm specifiers,
     // so the "@" prefix takes precedence over the "/" heuristic.
     if (specifier.includes("/") && !specifier.startsWith("@")) {
-      // Treat as relative path from cwd
       resolved = path.resolve(process.cwd(), specifier);
     } else {
-      // Bare specifier — npm package (including @scope/pkg)
       return specifier;
     }
   }
 
-  // If it's a directory, find the index file
   try {
     const stat = await fs.stat(resolved);
     if (stat.isDirectory()) {

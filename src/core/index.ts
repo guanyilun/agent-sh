@@ -18,22 +18,19 @@
  *   const response = await core.query("hello");
  */
 import { EventBus, type ContentBlock } from "./event-bus.js";
-import type { AgentShellConfig, ExtensionContext, RemoteSessionOptions, RemoteSession } from "./types.js";
-import { createLlmFacade } from "../utils/llm-facade.js";
-import { setPalette } from "../utils/palette.js";
-import * as streamTransform from "../utils/stream-transform.js";
+import type { AppConfig, ExtensionContext } from "../shell/host-types.js";
 import * as settingsMod from "./settings.js";
 import { HandlerRegistry } from "../utils/handler-registry.js";
 import crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DefaultCompositor } from "../utils/compositor.js";
 import { CONFIG_DIR } from "./settings.js";
 
-// Re-export types that library consumers need
 export { EventBus } from "./event-bus.js";
-export type { ShellEvents } from "./event-bus.js";
-export type { AgentShellConfig, ExtensionContext, LlmInterface, LlmMessage, LlmSession } from "./types.js";
+export type { ShellEvents, ContentBlock } from "./event-bus.js";
+export type { CoreContext, CoreConfig } from "./types.js";
+export type { AgentContext, AgentConfig, AgentSurface, AgentConfigSurface, AgentMode, LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
+export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, ExtensionContext, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, AppConfig } from "../shell/host-types.js";
 export { palette, setPalette, resetPalette } from "../utils/palette.js";
 export type { ColorPalette } from "../utils/palette.js";
 export type { AgentBackend, ToolDefinition } from "../agent/types.js";
@@ -63,7 +60,7 @@ export interface AgentShellCore {
   kill(): void;
 }
 
-export function createCore(config: AgentShellConfig): AgentShellCore {
+export function createCore(config: AppConfig): AgentShellCore {
   const bus = new EventBus();
   const handlers = new HandlerRegistry();
   // 3 bytes = 6 hex chars, ~16M values — ample for per-lineage uniqueness and
@@ -73,9 +70,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
   bus.setSource(instanceId);
   const settings = settingsMod.getSettings();
 
-  // Expose raw CLI config so the agent backend extension can resolve
-  // providers and create the LLM client.
-  handlers.define("config:get-shell-config", () => config);
+  handlers.define("config:get-app-config", () => config);
 
   // Default; shell-context advises with the PTY-tracked cwd when loaded.
   handlers.define("cwd", () => process.cwd());
@@ -135,12 +130,6 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     return { names, active: activeBackendName };
   });
 
-  // ── Compositor ──────────────────────────────────────────────
-  // Generic surface-routing primitive. No defaults here — the active
-  // frontend (src/shell/, a web bridge, headless test harness, etc.)
-  // sets its own surfaces during activation.
-  const compositor = new DefaultCompositor(bus);
-
   return {
     bus,
     handlers,
@@ -196,100 +185,28 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     },
 
     extensionContext(opts) {
-      const ctx: ExtensionContext = {
+      const ctx = {
         bus,
         instanceId,
-        llm: createLlmFacade(handlers),
-        providers: {
-          configure: (id, opts) => bus.emit("provider:configure", { id, ...opts }),
-        },
         quit: opts.quit,
-        setPalette,
-        createBlockTransform: (o) => streamTransform.createBlockTransform(bus, o),
-        createFencedBlockTransform: (o) =>
-          streamTransform.createFencedBlockTransform(bus, o),
+        define: (name: string, fn: (...args: any[]) => any) => handlers.define(name, fn),
+        advise: (name: string, wrapper: (next: (...args: any[]) => any, ...args: any[]) => any) => handlers.advise(name, wrapper),
+        call: (name: string, ...args: any[]) => handlers.call(name, ...args),
+        list: () => handlers.list(),
+        onDispose: () => {},
         getExtensionSettings: settingsMod.getExtensionSettings,
         getStoragePath: (namespace: string) => {
           const dir = path.join(CONFIG_DIR, namespace);
           fs.mkdirSync(dir, { recursive: true });
           return dir;
         },
-        registerCommand: (name, description, handler) =>
+        registerCommand: (name: string, description: string, handler: (args: string) => Promise<void> | void) =>
           bus.emit("command:register", { name, description, handler }),
-        adviseInputMode: (id, advisor) => handlers.advise(`input-mode:${id}:submit`, advisor as Parameters<typeof handlers.advise>[1]),
-        adviseCommand: (name, advisor) => {
+        adviseCommand: (name: string, advisor: (next: (args: string) => Promise<void> | void, args: string) => Promise<void> | void) => {
           const key = name.startsWith("/") ? name : `/${name}`;
           return handlers.advise(`command:${key}`, advisor as Parameters<typeof handlers.advise>[1]);
         },
-        registerTool: (tool) => bus.emit("agent:register-tool", { tool, extensionName: "" }),
-        unregisterTool: (name) => bus.emit("agent:unregister-tool", { name }),
-        adviseTool: (name, advisor) => handlers.advise(`tool:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
-        adviseToolSchema: (name, advisor) => handlers.advise(`tool:${name}:schema`, advisor as Parameters<typeof handlers.advise>[1]),
-        getTools: () => bus.emitPipe("agent:get-tools", { tools: [] }).tools,
-        registerInstruction: (name, text) => bus.emit("agent:register-instruction", { name, text, extensionName: "" }),
-        removeInstruction: (name) => bus.emit("agent:remove-instruction", { name }),
-        adviseInstruction: (name, advisor) => handlers.advise(`instruction:${name}`, advisor as Parameters<typeof handlers.advise>[1]),
-        registerSkill: (name, description, filePath) => bus.emit("agent:register-skill", { name, description, filePath, extensionName: "" }),
-        removeSkill: (name) => bus.emit("agent:remove-skill", { name }),
-        adviseSkill: (name, advisor) => handlers.advise(`skill:${name}:view`, advisor as Parameters<typeof handlers.advise>[1]),
-        registerContextProducer: (_name, producer, opts) => {
-          const handlerName = opts?.mode === "per-query"
-            ? "query-context:build"
-            : "dynamic-context:build";
-          return handlers.advise(handlerName, (next) => {
-            const base = next() as string;
-            const part = producer();
-            if (!part) return base;
-            const trimmed = part.trim();
-            if (!trimmed) return base;
-            return base ? `${base}\n\n${trimmed}` : trimmed;
-          });
-        },
-        define: (name, fn) => handlers.define(name, fn),
-        advise: (name, wrapper) => handlers.advise(name, wrapper),
-        call: (name, ...args) => handlers.call(name, ...args),
-        list: () => handlers.list(),
-        compositor,
-        onDispose: () => {},
-        createRemoteSession: (opts: RemoteSessionOptions): RemoteSession => {
-          const { surface } = opts;
-          const cleanups: (() => void)[] = [];
-          let active = true;
-
-          // Redirect all render streams
-          cleanups.push(compositor.redirect("agent", surface));
-          cleanups.push(compositor.redirect("query", surface));
-          cleanups.push(compositor.redirect("status", surface));
-
-          // Suppress the host shell's mute lifecycle and post-turn
-          // redraw nudge. on-processing-done is intentionally not advised
-          // — its scope cleanup must always run.
-          cleanups.push(handlers.advise("shell:on-processing-start", (next) => active ? undefined : next()));
-          cleanups.push(handlers.advise("shell:on-processing-redraw", (next) => active ? undefined : next()));
-
-          // Suppress chrome
-          if (opts.suppressBorders !== false) {
-            cleanups.push(handlers.advise("tui:response-border", (next, ...a) => active ? null : next(...a)));
-          }
-          if (opts.suppressQueryBox) {
-            cleanups.push(handlers.advise("tui:render-user-query", (next, ...a) => active ? [] : next(...a)));
-          }
-          if (opts.suppressUsage !== false) {
-            cleanups.push(handlers.advise("tui:render-usage", (next, ...a) => active ? "" : next(...a)));
-          }
-          return {
-            submit(query: string) { bus.emit("agent:submit", { query }); },
-            get surface() { return surface; },
-            get active() { return active; },
-            close() {
-              if (!active) return;
-              active = false;
-              for (const fn of cleanups.reverse()) fn();
-              cleanups.length = 0;
-            },
-          };
-        },
-      };
+      } as unknown as ExtensionContext;
       return ctx;
     },
 

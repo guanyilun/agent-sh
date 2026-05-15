@@ -30,7 +30,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionContext } from "agent-sh/types";
+import type { AgentContext } from "agent-sh/types";
 
 const BIND_RE = /\x1b\]9996;vt=([^;]+);BIND;([^;]*);([^\x07]*)\x07/;
 const OSC7_RE = /\x1b\]7;file:\/\/[^/]*(\/[^\x07\x1b]*)/;
@@ -137,7 +137,7 @@ function renderInjection(): string {
   return lines.join("\n");
 }
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: AgentContext): void {
   bindingFile = path.join(ctx.getStoragePath("tunnel-vision"), "binding.json");
   loadBinding();
 
@@ -216,7 +216,7 @@ export default function activate(ctx: ExtensionContext): void {
     ctx.bus.emit("ui:info", { message: `Tunnel-vision binding to ${host} cleared.` });
   });
 
-  ctx.registerInstruction("tunnel-vision",
+  ctx.agent.registerInstruction("tunnel-vision",
 `# Tunnel-vision — driving a remote shell through pty_send
 
 When tunnel-vision is active (you'll see a "Tunnel-vision active" block in
@@ -302,7 +302,7 @@ prompt-wait to capture output.`
     });
   });
 
-  ctx.registerTool({
+  ctx.agent.registerTool({
     name: "pty_send",
     description:
       "Run a command in the user's interactive remote shell session (tunnel-vision). " +
@@ -399,7 +399,7 @@ prompt-wait to capture output.`
     },
   });
 
-  ctx.registerContextProducer("tunnel-vision", () =>
+  ctx.agent.registerContextProducer("tunnel-vision", () =>
     binding ? renderInjection() : null,
   );
 }

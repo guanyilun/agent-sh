@@ -9,10 +9,10 @@
  *   # Or copy to ~/.agent-sh/extensions/ for permanent use:
  *   cp examples/extensions/solarized-theme.ts ~/.agent-sh/extensions/
  */
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 
-export default function activate({ setPalette }: ExtensionContext) {
-  setPalette({
+export default function activate(ctx: ShellContext) {
+  ctx.shell.setPalette({
     accent:  "\x1b[38;2;38;139;210m",   // blue (#268bd2)
     success: "\x1b[38;2;133;153;0m",    // green (#859900)
     warning: "\x1b[38;2;181;137;0m",    // yellow (#b58900)
