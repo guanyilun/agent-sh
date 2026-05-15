@@ -35,7 +35,7 @@ export { EventBus } from "./event-bus.js";
 export type { ShellEvents } from "./event-bus.js";
 export type { CoreContext, CoreConfig } from "./types.js";
 export type { AgentContext, AgentConfig, AgentSurface, AgentConfigSurface, AgentMode, LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
-export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, ExtensionContext, AgentShellConfig } from "../shell/host-types.js";
+export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, ExtensionContext, AgentShellConfig, AppConfig } from "../shell/host-types.js";
 export { palette, setPalette, resetPalette } from "../utils/palette.js";
 export type { ColorPalette } from "../utils/palette.js";
 export type { AgentBackend, ToolDefinition } from "../agent/types.js";

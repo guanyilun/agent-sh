@@ -135,3 +135,9 @@ export type ShellConfig = AgentConfig & ShellConfigSurface;
 
 export type ExtensionContext = ShellContext;
 export type AgentShellConfig = ShellConfig;
+
+/** Friendly alias for `ShellConfig` — the full application config blob
+ *  passed to `createCore()`. Prefer this in CLI/embedder code; layered
+ *  names (`CoreConfig`, `AgentConfig`, `ShellConfig`) are for code that
+ *  cares about which host owns which fields. */
+export type AppConfig = ShellConfig;
