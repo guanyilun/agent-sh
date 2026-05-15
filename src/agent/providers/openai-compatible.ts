@@ -3,9 +3,9 @@
  * Studio, vLLM, llama.cpp, …). No reasoning hook — the right shape depends
  * on which model the server is serving; user extensions can add one.
  */
-import type { ExtensionContext } from "../../shell/host-types.js";
+import type { ShellContext } from "../../shell/host-types.js";
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const baseURL = process.env.OPENAI_BASE_URL;
   if (!baseURL) return;
 

@@ -128,14 +128,6 @@ export interface ShellConfigSurface {
 
 export type ShellConfig = AgentConfig & ShellConfigSurface;
 
-// ── Back-compat aliases ──────────────────────────────────────────
-// The historical `ExtensionContext` was the full shell surface, and
-// `AgentShellConfig` the full shell config. Keep these names so existing
-// internal and external imports continue to resolve.
-
-export type ExtensionContext = ShellContext;
-export type AgentShellConfig = ShellConfig;
-
 /** Friendly alias for `ShellConfig` — the full application config blob
  *  passed to `createCore()`. Prefer this in CLI/embedder code; layered
  *  names (`CoreConfig`, `AgentConfig`, `ShellConfig`) are for code that

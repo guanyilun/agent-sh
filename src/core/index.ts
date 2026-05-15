@@ -18,7 +18,7 @@
  *   const response = await core.query("hello");
  */
 import { EventBus, type ContentBlock } from "./event-bus.js";
-import type { AgentShellConfig, ExtensionContext, RemoteSessionOptions, RemoteSession } from "../shell/host-types.js";
+import type { AppConfig, ShellContext, RemoteSessionOptions, RemoteSession } from "../shell/host-types.js";
 import { createLlmFacade } from "../utils/llm-facade.js";
 import { setPalette } from "../utils/palette.js";
 import * as streamTransform from "../utils/stream-transform.js";
@@ -32,10 +32,10 @@ import { CONFIG_DIR } from "./settings.js";
 
 // Re-export types that library consumers need
 export { EventBus } from "./event-bus.js";
-export type { ShellEvents } from "./event-bus.js";
+export type { ShellEvents, ContentBlock } from "./event-bus.js";
 export type { CoreContext, CoreConfig } from "./types.js";
 export type { AgentContext, AgentConfig, AgentSurface, AgentConfigSurface, AgentMode, LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
-export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, ExtensionContext, AgentShellConfig, AppConfig } from "../shell/host-types.js";
+export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, AppConfig } from "../shell/host-types.js";
 export { palette, setPalette, resetPalette } from "../utils/palette.js";
 export type { ColorPalette } from "../utils/palette.js";
 export type { AgentBackend, ToolDefinition } from "../agent/types.js";
@@ -59,13 +59,13 @@ export interface AgentShellCore {
   cancel(): void;
   /** Convenience: emit agent:append-user-message. */
   appendUserMessage(text: string): void;
-  /** Build an ExtensionContext for loading extensions against this core. */
-  extensionContext(opts: { quit: () => void }): ExtensionContext;
+  /** Build a ShellContext for loading extensions against this core. */
+  extensionContext(opts: { quit: () => void }): ShellContext;
   /** Tear down the agent and clean up. */
   kill(): void;
 }
 
-export function createCore(config: AgentShellConfig): AgentShellCore {
+export function createCore(config: AppConfig): AgentShellCore {
   const bus = new EventBus();
   const handlers = new HandlerRegistry();
   // 3 bytes = 6 hex chars, ~16M values — ample for per-lineage uniqueness and
@@ -198,7 +198,7 @@ export function createCore(config: AgentShellConfig): AgentShellCore {
     },
 
     extensionContext(opts) {
-      const ctx: ExtensionContext = {
+      const ctx: ShellContext = {
         bus,
         instanceId,
         llm: createLlmFacade(handlers),

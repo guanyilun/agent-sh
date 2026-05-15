@@ -20,11 +20,11 @@
  *   # Or add to settings.json:
  *   { "extensions": ["./examples/extensions/ollama.ts"] }
  */
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 
 const ECHO_REASONING_PATTERNS: RegExp[] = [/deepseek/i];
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const apiKey = process.env.OLLAMA_API_KEY;
   const host = apiKey
     ? "https://ollama.com"

@@ -7,7 +7,7 @@
  * Usage:
  *   agent-sh -e ./examples/extensions/questionnaire.ts
  */
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 import type { InteractiveSession, ToolExecutionContext } from "agent-sh/agent/types.js";
 import { palette as p } from "agent-sh/utils/palette.js";
 
@@ -55,7 +55,7 @@ interface QuestionnaireResult {
 
 // ── Extension ────────────────────────────────────────────────────
 
-export default function activate({ registerTool, registerInstruction }: ExtensionContext) {
+export default function activate({ registerTool, registerInstruction }: ShellContext) {
   registerInstruction("questionnaire", [
     "# When to use the questionnaire tool",
     "ALWAYS use the `questionnaire` tool instead of asking the user a question in plain text when:",

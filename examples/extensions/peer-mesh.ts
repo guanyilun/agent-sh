@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 
 interface PeerInfo {
   id: string;
@@ -189,7 +189,7 @@ class PeerServer {
   }
 }
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const { bus, registerCommand, registerTool, registerInstruction, define } = ctx;
   const getCwd = () => ctx.call("cwd") as string;
   const startTime = Date.now();

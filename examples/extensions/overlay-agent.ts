@@ -20,7 +20,7 @@
  *   - terminal-buffer.ts → terminal_read / terminal_keys tools
  *   - user-shell.ts      → user_shell tool (run new shell commands)
  */
-import type { ExtensionContext, RemoteSession } from "agent-sh/types";
+import type { ShellContext, RemoteSession } from "agent-sh/types";
 import type { RenderSurface } from "agent-sh/utils/compositor";
 import { FloatingPanel } from "agent-sh/utils/floating-panel";
 import { formatScreenContext, type TerminalBuffer } from "agent-sh/utils/terminal-buffer";
@@ -66,7 +66,7 @@ function createPanelSurface(panel: FloatingPanel): RenderSurface {
   };
 }
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const { bus, registerInstruction, createRemoteSession } = ctx;
   const terminalBuffer: TerminalBuffer | null = ctx.call("terminal-buffer");
 

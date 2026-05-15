@@ -15,7 +15,7 @@ import {
   createAgentSessionRuntime,
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { diffLines } from "diff";
@@ -115,7 +115,7 @@ function parsePiDiff(raw: unknown): DiffResultRecord | null {
   return { hunks, added, removed, isIdentical: added + removed === 0, isNewFile: !hasOriginal };
 }
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const { bus, call } = ctx;
   const cwd = process.cwd();
 

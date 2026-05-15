@@ -4,9 +4,9 @@
  *   shell-context, tui-renderer → registerShellHandlers (src/shell/)
  *   agent-backend, providers    → activateAgent         (src/agent/)
  */
-import type { ExtensionContext } from "../shell/host-types.js";
+import type { ShellContext } from "../shell/host-types.js";
 
-type ActivateFn = (ctx: ExtensionContext) => void;
+type ActivateFn = (ctx: ShellContext) => void;
 
 export const BUILTIN_EXTENSIONS: Array<{
   name: string;
@@ -21,7 +21,7 @@ export const BUILTIN_EXTENSIONS: Array<{
  * Returns the names of extensions that were loaded.
  */
 export async function loadBuiltinExtensions(
-  ctx: ExtensionContext,
+  ctx: ShellContext,
   disabled: string[] = [],
 ): Promise<string[]> {
   const disabledSet = new Set(disabled);

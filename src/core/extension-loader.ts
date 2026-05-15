@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ExtensionContext } from "../shell/host-types.js";
+import type { ShellContext } from "../shell/host-types.js";
 import type { EventBus } from "./event-bus.js";
 import { CONFIG_DIR, getSettings } from "./settings.js";
 
@@ -45,11 +45,11 @@ async function ensureTsSupport(force = false): Promise<void> {
 type Cleanup = () => void;
 
 /**
- * Wrap an ExtensionContext to track all registrations (bus.on, bus.onPipe,
+ * Wrap a ShellContext to track all registrations (bus.on, bus.onPipe,
  * advise, command:register). Returns the wrapped context and a dispose()
  * function that tears down everything registered through it.
  */
-function createScopedContext(ctx: ExtensionContext, extensionName: string): { scoped: ExtensionContext; dispose: () => void } {
+function createScopedContext(ctx: ShellContext, extensionName: string): { scoped: ShellContext; dispose: () => void } {
   const cleanups: Cleanup[] = [];
   const bus = ctx.bus;
 
@@ -115,7 +115,7 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
     cleanups.push(() => bus.emit("command:unregister", { name }));
   };
 
-  const scoped: ExtensionContext = {
+  const scoped: ShellContext = {
     ...ctx,
     bus: scopedBus,
     advise: scopedAdvise,
@@ -165,7 +165,7 @@ const extensionDisposers = new Map<string, () => void>();
  * Errors are non-fatal — logged via ui:error and skipped.
  */
 export async function loadExtensions(
-  ctx: ExtensionContext,
+  ctx: ShellContext,
   cliExtensions?: string[],
 ): Promise<string[]> {
   const specifiers: string[] = [];
@@ -228,7 +228,7 @@ async function discoverUserExtensions(): Promise<string[]> {
 
 async function loadSpecifiers(
   specifiers: string[],
-  ctx: ExtensionContext,
+  ctx: ShellContext,
   bustCache: boolean,
   userSpecifiers?: string[],
 ): Promise<string[]> {
@@ -289,7 +289,7 @@ async function loadSpecifiers(
  * Reload user extensions (from ~/.agent-sh/extensions/).
  * Tears down old registrations, busts the module cache, and re-activates.
  */
-export async function reloadExtensions(ctx: ExtensionContext): Promise<string[]> {
+export async function reloadExtensions(ctx: ShellContext): Promise<string[]> {
   const specifiers = await discoverUserExtensions();
   return loadSpecifiers(specifiers, ctx, true, specifiers);
 }

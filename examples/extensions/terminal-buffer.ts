@@ -14,7 +14,7 @@
  * Core already loads xterm lazily (for floating-panel compositing), so
  * installing these deps anywhere on the NODE_PATH is enough.
  */
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 
 const NAMED_KEYS: Record<string, string> = {
   RET: "\r", ENTER: "\r", CR: "\r",
@@ -137,7 +137,7 @@ function diffScreens(before: string, after: string): string {
   return changes.join("\n");
 }
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const { bus, registerTool } = ctx;
   const tb = ctx.call("terminal-buffer");
   if (!tb) return; // @xterm/headless not installed, or shell frontend not loaded

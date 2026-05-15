@@ -7,9 +7,9 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionContext } from "../shell/host-types.js";
+import type { ShellContext } from "../shell/host-types.js";
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   ctx.bus.onPipe("autocomplete:request", (payload) => {
     const atPos = payload.buffer.lastIndexOf("@");
     if (atPos < 0 || (atPos > 0 && payload.buffer[atPos - 1] !== " ")) {

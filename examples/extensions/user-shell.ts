@@ -13,10 +13,10 @@
  *   # Or copy to ~/.agent-sh/extensions/ for permanent use:
  *   cp examples/extensions/user-shell.ts ~/.agent-sh/extensions/
  */
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 import type { ToolDefinition } from "agent-sh/agent/types";
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const { bus, registerTool, registerInstruction } = ctx;
   const getCwd = () => ctx.call("cwd") as string;
 
@@ -40,7 +40,7 @@ You have access to user_shell, which runs commands in the user's live shell (PTY
 
 function createUserShellTool(opts: {
   getCwd: () => string;
-  bus: ExtensionContext["bus"];
+  bus: ShellContext["bus"];
 }): ToolDefinition {
   return {
     name: "user_shell",

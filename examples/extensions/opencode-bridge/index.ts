@@ -14,7 +14,7 @@ import {
   type QuestionRequest,
   type QuestionInfo,
 } from "@opencode-ai/sdk/v2";
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 import type { InteractiveSession } from "agent-sh/agent/types";
 import { computeDiff, type DiffResult } from "agent-sh/utils/diff";
 import { createToolUI } from "agent-sh/utils/tool-interactive";
@@ -59,7 +59,7 @@ function parseUnifiedDiff(patch: string): DiffResult | null {
   return { hunks, added, removed, isIdentical: added + removed === 0, isNewFile: false };
 }
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const { bus, call, compositor } = ctx;
 
   const cwd = (): string => {

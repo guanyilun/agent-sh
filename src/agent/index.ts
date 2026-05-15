@@ -8,9 +8,9 @@
  * `defaultProvider: "openrouter"` loses to a cold-start race and the
  * backend bails silently.
  */
-import type { ExtensionContext } from "../shell/host-types.js";
+import type { ShellContext } from "../shell/host-types.js";
 import type { AgentMode } from "../agent/host-types.js";
-import type { AgentShellConfig } from "../shell/host-types.js";
+import type { AppConfig } from "../shell/host-types.js";
 import { AgentLoop } from "./agent-loop.js";
 import { LlmClient } from "../utils/llm-client.js";
 import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../core/settings.js";
@@ -54,9 +54,9 @@ function mergeCaps(
   return out.size > 0 ? out : undefined;
 }
 
-export default function agentBackend(ctx: ExtensionContext): void {
+export default function agentBackend(ctx: ShellContext): void {
   const { bus } = ctx;
-  const config: AgentShellConfig = ctx.call("config:get-shell-config") ?? {};
+  const config: AppConfig = ctx.call("config:get-shell-config") ?? {};
 
   // Immutable settings snapshot; provider:register payloads merge against it.
   const providerRegistry = new Map<string, ResolvedProvider>();
@@ -356,7 +356,7 @@ export { ToolRegistry } from "./tool-registry.js";
 export { runSubagent, type SubagentOptions } from "./subagent.js";
 
 /** Activate the ash backend and any provider whose key is configured. */
-export function activateAgent(ctx: ExtensionContext): void {
+export function activateAgent(ctx: ShellContext): void {
   agentBackend(ctx);
   if (resolveApiKey("openrouter").key) activateOpenrouter(ctx);
   if (resolveApiKey("openai").key && !process.env.OPENAI_BASE_URL) activateOpenai(ctx);

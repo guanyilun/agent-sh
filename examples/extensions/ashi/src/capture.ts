@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 import type { MultiSessionStore } from "./multi-session-store.js";
 import type { AgentMessage } from "./session-store.js";
 
@@ -11,7 +11,7 @@ export interface Capture {
 }
 
 export function registerCapture(
-  ctx: ExtensionContext,
+  ctx: ShellContext,
   getStore: () => MultiSessionStore,
 ): Capture {
   let liveEntryIds: (string | null)[] = [];

@@ -12,7 +12,7 @@ import { loadBuiltinExtensions } from "agent-sh/extensions";
 import { loadExtensions } from "agent-sh/extension-loader";
 import { activateAgent } from "agent-sh/agent";
 import { getSettings } from "agent-sh/settings";
-import type { AgentShellConfig } from "agent-sh/types";
+import type { AppConfig } from "agent-sh/types";
 
 import { mountAshi } from "./frontend.js";
 import { MultiSessionStore } from "./multi-session-store.js";
@@ -25,7 +25,7 @@ import { registerDefaultToolRenderers } from "./default-renderers.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
-function parseArgs(argv: string[]): AgentShellConfig & { extensions?: string[] } {
+function parseArgs(argv: string[]): AppConfig & { extensions?: string[] } {
   let model: string | undefined;
   let apiKey: string | undefined = process.env.OPENAI_API_KEY ?? process.env.OPENROUTER_API_KEY;
   let baseURL: string | undefined = process.env.OPENAI_BASE_URL;

@@ -12,7 +12,7 @@ import {
   getImageDimensions,
   matchesKey,
 } from "@earendil-works/pi-tui";
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 import { editorTheme, selectListTheme, theme } from "./theme.js";
 import {
   AssistantMessage,
@@ -122,7 +122,7 @@ export interface AshiHandle {
 }
 
 export function mountAshi(
-  ctx: ExtensionContext,
+  ctx: ShellContext,
   getStore: () => MultiSessionStore,
   capture: Capture,
 ): AshiHandle {

@@ -8,10 +8,10 @@
  * Usage:
  *   agent-sh -e ./examples/extensions/subagents.ts
  */
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 import { runSubagent } from "agent-sh/agent/subagent";
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const { bus, llmClient } = ctx;
   if (!llmClient) return;
 

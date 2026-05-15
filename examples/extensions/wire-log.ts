@@ -6,9 +6,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const dir = process.env.AGENT_SH_WIRE_DIR
     ?? path.join(os.homedir(), ".agent-sh", "wire");
   fs.mkdirSync(dir, { recursive: true });

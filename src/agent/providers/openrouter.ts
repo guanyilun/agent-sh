@@ -3,7 +3,7 @@
  * Registers curated defaults synchronously so the first query works, then
  * fetches the full catalog to populate /model autocomplete.
  */
-import type { ExtensionContext } from "../../shell/host-types.js";
+import type { ShellContext } from "../../shell/host-types.js";
 import { getSettings } from "../../core/settings.js";
 import { resolveApiKey } from "../../cli/auth/keys.js";
 
@@ -31,7 +31,7 @@ interface OpenRouterModel {
   context_length?: number;
 }
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const apiKey = resolveApiKey("openrouter").key;
   if (!apiKey) return;
 

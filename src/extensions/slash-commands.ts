@@ -11,7 +11,7 @@
  * and check payload.command / payload.commandArgs to add completions for any command.
  */
 import { palette as p } from "../utils/palette.js";
-import type { ExtensionContext } from "../shell/host-types.js";
+import type { ShellContext } from "../shell/host-types.js";
 import { discoverSkills, loadSkillContent, type Skill } from "../agent/skills.js";
 import { reloadExtensions } from "../core/extension-loader.js";
 
@@ -21,7 +21,7 @@ interface SlashCommand {
   handler: (args: string) => Promise<void> | void;
 }
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const { bus } = ctx;
   const commands = new Map<string, SlashCommand>();
 

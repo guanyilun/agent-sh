@@ -18,7 +18,7 @@
  *     }
  *   }
  */
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 
 // Common secret patterns — each matches key=value or key: value formats
 const DEFAULT_PATTERNS = [
@@ -39,7 +39,7 @@ const DEFAULT_PATTERNS = [
   /[a-z+]+:\/\/[^:]+:[^@\s]+@/gi,
 ];
 
-export default function activate(ctx: ExtensionContext) {
+export default function activate(ctx: ShellContext) {
   const { bus } = ctx;
   const config = ctx.getExtensionSettings("secret-guard", {
     extraPatterns: [] as string[],

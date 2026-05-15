@@ -22,7 +22,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execSync, spawn } from "node:child_process";
-import type { ExtensionContext, RenderSurface, RemoteSession } from "agent-sh/types";
+import type { ShellContext, RenderSurface, RemoteSession } from "agent-sh/types";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -142,7 +142,7 @@ interface PaneState {
 
 // ── Extension ───────────────────────────────────────────────────
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const { bus, registerCommand, registerInstruction, createRemoteSession } = ctx;
 
   if (!inTmux()) return;

@@ -3,7 +3,7 @@
  * built-in extensions manifest) because PTY + stdin raw mode ownership is
  * order-critical.
  */
-import type { ExtensionContext } from "./host-types.js";
+import type { ShellContext } from "./host-types.js";
 import { Shell } from "./shell.js";
 import { StdoutSurface } from "../utils/compositor.js";
 import { TerminalBuffer } from "../utils/terminal-buffer.js";
@@ -33,7 +33,7 @@ export interface ShellHandle {
  * Register shell-owned handlers extensions can `ctx.call`. Must run before
  * `loadExtensions`; the handlers only need the bus, not the PTY.
  */
-export function registerShellHandlers(ctx: ExtensionContext): void {
+export function registerShellHandlers(ctx: ShellContext): void {
   let terminalBufferSingleton: TerminalBuffer | null | undefined;
   ctx.define("terminal-buffer", (): TerminalBuffer | null => {
     if (terminalBufferSingleton !== undefined) return terminalBufferSingleton;
@@ -46,11 +46,11 @@ export function registerShellHandlers(ctx: ExtensionContext): void {
 
 /**
  * Construct the Shell, wire resize forwarding, and register cleanup with the
- * provided ExtensionContext. Returns a handle the caller (typically
+ * provided ShellContext. Returns a handle the caller (typically
  * `src/cli/index.ts`) uses to drive lifecycle from process-level events.
  */
 export function activateShell(
-  ctx: ExtensionContext,
+  ctx: ShellContext,
   opts: ShellActivateOptions,
 ): ShellHandle {
   // Stdout-as-default is a frontend choice, not a kernel one — a hub or

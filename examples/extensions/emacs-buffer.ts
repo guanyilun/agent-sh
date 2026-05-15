@@ -35,7 +35,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 
 function emacsclientAvailable(): boolean {
   // `emacsclient -e t` exits 0 only if a server is actually reachable.
@@ -186,7 +186,7 @@ function renderSnapshot(snap: EmacsSnapshot): string {
   return parts.join("\n\n");
 }
 
-export default function activate(ctx: ExtensionContext): void {
+export default function activate(ctx: ShellContext): void {
   const { registerTool } = ctx;
   if (!emacsclientAvailable()) return;
 

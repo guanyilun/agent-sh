@@ -16,7 +16,7 @@
  *
  * Inspired by: https://github.com/nicobailon/pi-web-access
  */
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -123,7 +123,7 @@ async function directFetch(url: string, timeout: number): Promise<string> {
 
 // ── Extension entry point ────────────────────────────────────────────
 
-export default function activate(ctx: ExtensionContext) {
+export default function activate(ctx: ShellContext) {
   const config = ctx.getExtensionSettings("web-access", {
     timeout: 30000,
     searchNumResults: 5,

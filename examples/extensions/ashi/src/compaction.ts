@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 import type { MultiSessionStore } from "./multi-session-store.js";
 import type { Capture } from "./capture.js";
 import type { AgentMessage, CompactionEntry } from "./session-store.js";
@@ -38,7 +38,7 @@ Produce a Markdown summary using EXACTLY this structure:
 Be concrete. Quote file paths, function names, error strings verbatim when relevant. Do not invent details that aren't in the conversation.`;
 
 export function registerCompaction(
-  ctx: ExtensionContext,
+  ctx: ShellContext,
   getStore: () => MultiSessionStore,
   capture: Capture,
 ): void {

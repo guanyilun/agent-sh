@@ -1,5 +1,5 @@
 import type { Component } from "@earendil-works/pi-tui";
-import type { ExtensionContext } from "agent-sh/types";
+import type { ShellContext } from "agent-sh/types";
 import {
   AssistantMessage,
   ThinkingBlock,
@@ -60,7 +60,7 @@ const RESULT_PREFIX = "ashi:render-tool-result:";
 /** Register the default render-* handlers. Per-tool overrides are advised by
  *  name (e.g. `ashi:render-tool-call:bash`); unknown tools fall back to
  *  `:default`. */
-export function registerRenderDefaults(ctx: ExtensionContext): void {
+export function registerRenderDefaults(ctx: ShellContext): void {
   ctx.define("ashi:render-user-message", (args: UserMessageArgs): Component => {
     return new UserMessage(args.text);
   });
@@ -99,7 +99,7 @@ export interface ToolHookResolver {
  *  display mode from ashi.display. Cache the registered-handler set; callers
  *  can `refresh()` after extensions register new tool-specific renderers. */
 export function createToolHookResolver(
-  ctx: ExtensionContext,
+  ctx: ShellContext,
   renderState: () => RenderState,
 ): ToolHookResolver & { refresh: () => void } {
   const config = loadToolDisplayConfig();
