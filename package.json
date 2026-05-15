@@ -3,32 +3,32 @@
   "version": "0.12.27",
   "description": "A shell-first terminal where AI is one keystroke away",
   "type": "module",
-  "main": "dist/core.js",
-  "types": "dist/core.d.ts",
+  "main": "dist/core/index.js",
+  "types": "dist/core/index.d.ts",
   "bin": {
-    "agent-sh": "dist/index.js"
+    "agent-sh": "dist/cli/index.js"
   },
   "exports": {
     ".": {
-      "types": "./dist/core.d.ts",
-      "default": "./dist/core.js"
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
     },
     "./core": {
-      "types": "./dist/core.d.ts",
-      "default": "./dist/core.js"
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
     },
     "./utils/*": "./dist/utils/*",
     "./types": {
-      "types": "./dist/types.d.ts",
-      "default": "./dist/types.js"
+      "types": "./dist/core/types.d.ts",
+      "default": "./dist/core/types.js"
     },
     "./settings": {
-      "types": "./dist/settings.d.ts",
-      "default": "./dist/settings.js"
+      "types": "./dist/core/settings.d.ts",
+      "default": "./dist/core/settings.js"
     },
     "./extension-loader": {
-      "types": "./dist/extension-loader.d.ts",
-      "default": "./dist/extension-loader.js"
+      "types": "./dist/core/extension-loader.d.ts",
+      "default": "./dist/core/extension-loader.js"
     },
     "./extensions": {
       "types": "./dist/extensions/index.d.ts",
@@ -46,6 +46,10 @@
       "types": "./dist/utils/terminal-buffer.d.ts",
       "default": "./dist/utils/terminal-buffer.js"
     },
+    "./agent": {
+      "types": "./dist/agent/index.d.ts",
+      "default": "./dist/agent/index.js"
+    },
     "./agent/types": {
       "types": "./dist/agent/types.d.ts",
       "default": "./dist/agent/types.js"
@@ -59,8 +63,8 @@
       "default": "./dist/agent/agent-loop.js"
     },
     "./event-bus": {
-      "types": "./dist/event-bus.d.ts",
-      "default": "./dist/event-bus.js"
+      "types": "./dist/core/event-bus.d.ts",
+      "default": "./dist/core/event-bus.js"
     },
     "./utils/compositor": {
       "types": "./dist/utils/compositor.d.ts",
@@ -98,9 +102,9 @@
     "examples/extensions/*/index.js"
   ],
   "scripts": {
-    "dev": "tsx src/index.ts",
+    "dev": "tsx src/cli/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node dist/cli/index.js",
     "prepare": "test -d dist || npm run build"
   },
   "keywords": [

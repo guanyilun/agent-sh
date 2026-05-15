@@ -1,10 +1,10 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as pty from "node-pty";
-import type { EventBus } from "../event-bus.js";
+import type { EventBus } from "../core/event-bus.js";
 import { InputHandler, type InputContext } from "./input-handler.js";
 import { OutputParser } from "./output-parser.js";
-import { getSettings } from "../settings.js";
+import { getSettings } from "../core/settings.js";
 import { clearOpost } from "../utils/tty.js";
 import {
   pickStrategy,

@@ -3,8 +3,8 @@
  * family: o-series has no off; gpt-5-codex floors at "low"; plain gpt-5
  * floors at "minimal"; gpt-5.1+ accepts "none" as documented full off.
  */
-import type { ExtensionContext } from "../../types.js";
-import { resolveApiKey } from "../../auth/keys.js";
+import type { ExtensionContext } from "../../core/types.js";
+import { resolveApiKey } from "../../cli/auth/keys.js";
 
 const CLOUD_MODELS = [
   { id: "gpt-5", reasoning: true },

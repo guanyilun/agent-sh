@@ -9,7 +9,7 @@ import * as fs from "node:fs/promises";
 import * as fss from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-import { CONFIG_DIR, getSettings } from "../settings.js";
+import { CONFIG_DIR, getSettings } from "../core/settings.js";
 import {
   type NuclearEntry,
   serializeEntry,

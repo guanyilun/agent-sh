@@ -1,5 +1,5 @@
 import * as readline from "node:readline";
-import { palette as p } from "../utils/palette.js";
+import { palette as p } from "../../utils/palette.js";
 import {
   KNOWN_PROVIDERS,
   KEYS_PATH,

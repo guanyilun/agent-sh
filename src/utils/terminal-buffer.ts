@@ -17,7 +17,7 @@
 import { createRequire } from "module";
 import type { Terminal, IBuffer } from "@xterm/headless";
 import type { SerializeAddon } from "@xterm/addon-serialize";
-import type { EventBus } from "../event-bus.js";
+import type { EventBus } from "../core/event-bus.js";
 
 const require = createRequire(import.meta.url);
 

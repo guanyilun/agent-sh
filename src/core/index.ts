@@ -6,9 +6,9 @@
  * subscribing to bus events. Shell-specific tracking lives in the
  * shell-context built-in extension.
  *
- * Agent backends are loaded as extensions and register themselves via
- * the agent:register-backend bus event. The built-in "ash" backend is
- * loaded from src/extensions/agent-backend.ts.
+ * Agent backends register themselves via the agent:register-backend bus
+ * event. The built-in "ash" backend lives in src/agent/ and is activated
+ * by hosts via activateAgent().
  *
  * Usage:
  *   import { createCore } from "agent-sh";
@@ -19,29 +19,29 @@
  */
 import { EventBus, type ContentBlock } from "./event-bus.js";
 import type { AgentShellConfig, ExtensionContext, RemoteSessionOptions, RemoteSession } from "./types.js";
-import { createLlmFacade } from "./utils/llm-facade.js";
-import { setPalette } from "./utils/palette.js";
-import * as streamTransform from "./utils/stream-transform.js";
+import { createLlmFacade } from "../utils/llm-facade.js";
+import { setPalette } from "../utils/palette.js";
+import * as streamTransform from "../utils/stream-transform.js";
 import * as settingsMod from "./settings.js";
-import { HandlerRegistry } from "./utils/handler-registry.js";
+import { HandlerRegistry } from "../utils/handler-registry.js";
 import crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DefaultCompositor } from "./utils/compositor.js";
+import { DefaultCompositor } from "../utils/compositor.js";
 import { CONFIG_DIR } from "./settings.js";
 
 // Re-export types that library consumers need
 export { EventBus } from "./event-bus.js";
 export type { ShellEvents } from "./event-bus.js";
 export type { AgentShellConfig, ExtensionContext, LlmInterface, LlmMessage, LlmSession } from "./types.js";
-export { palette, setPalette, resetPalette } from "./utils/palette.js";
-export type { ColorPalette } from "./utils/palette.js";
-export type { AgentBackend, ToolDefinition } from "./agent/types.js";
-export { runSubagent, type SubagentOptions } from "./agent/subagent.js";
-export { LlmClient } from "./utils/llm-client.js";
-export { HistoryFile, InMemoryHistory, NoopHistory, type HistoryAdapter } from "./agent/history-file.js";
-export type { NuclearEntry } from "./agent/nuclear-form.js";
-export { compileSearchRegex, matchEntry, formatNuclearLine } from "./agent/nuclear-form.js";
+export { palette, setPalette, resetPalette } from "../utils/palette.js";
+export type { ColorPalette } from "../utils/palette.js";
+export type { AgentBackend, ToolDefinition } from "../agent/types.js";
+export { runSubagent, type SubagentOptions } from "../agent/subagent.js";
+export { LlmClient } from "../utils/llm-client.js";
+export { HistoryFile, InMemoryHistory, NoopHistory, type HistoryAdapter } from "../agent/history-file.js";
+export type { NuclearEntry } from "../agent/nuclear-form.js";
+export { compileSearchRegex, matchEntry, formatNuclearLine } from "../agent/nuclear-form.js";
 
 export interface AgentShellCore {
   bus: EventBus;

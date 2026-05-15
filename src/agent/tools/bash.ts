@@ -1,5 +1,5 @@
 import { executeCommand, killSession } from "../../executor.js";
-import type { EventBus } from "../../event-bus.js";
+import type { EventBus } from "../../core/event-bus.js";
 import type { ToolDefinition } from "../types.js";
 
 export function createBashTool(opts: {

@@ -11,8 +11,8 @@
  *     agent:tool-completed, agent:tool-output
  *   - agent:thinking-chunk, agent:cancelled, agent:error
  */
-import type { EventBus, ShellEvents } from "../event-bus.js";
-import type { AgentMode } from "../types.js";
+import type { EventBus, ShellEvents } from "../core/event-bus.js";
+import type { AgentMode } from "../core/types.js";
 import type { LlmClient } from "../utils/llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
@@ -33,7 +33,7 @@ import { createToolUI } from "../utils/tool-interactive.js";
 import { RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW } from "./token-budget.js";
 import { PACKAGE_VERSION } from "../utils/package-version.js";
 import { wrapTrailingWithDynamicContext } from "../utils/message-utils.js";
-import { getSettings, updateSettings } from "../settings.js";
+import { getSettings, updateSettings } from "../core/settings.js";
 import { createToolProtocol, type ToolProtocol, type PendingToolCall as ProtocolPendingToolCall, type ToolResult as ProtocolToolResult } from "./tool-protocol.js";
 
 // Core tool factories

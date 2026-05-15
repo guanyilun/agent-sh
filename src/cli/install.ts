@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { CONFIG_DIR, getSettings } from "./settings.js";
+import { CONFIG_DIR, getSettings } from "../core/settings.js";
 
 // Kept in sync with extension-loader.ts SCRIPT_EXTS.
 const SCRIPT_EXTS = [".js", ".mjs", ".ts", ".tsx", ".mts"];
@@ -11,7 +11,7 @@ function hasIndexFile(dir: string): boolean {
   return SCRIPT_EXTS.some((ext) => fs.existsSync(path.join(dir, `index${ext}`)));
 }
 
-const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../");
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../");
 const BUNDLED_DIR = path.join(PACKAGE_ROOT, "examples/extensions");
 const EXT_DIR = path.join(CONFIG_DIR, "extensions");
 

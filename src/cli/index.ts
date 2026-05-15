@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { activateShell, registerShellHandlers, type ShellHandle } from "./shell/index.js";
-import { pickStrategy, FALLBACK_STRATEGY } from "./shell/strategies/index.js";
-import { createCore } from "./core.js";
-import { palette as p } from "./utils/palette.js";
-import { loadBuiltinExtensions } from "./extensions/index.js";
-import { loadExtensions } from "./extension-loader.js";
-import { getSettings } from "./settings.js";
-import { runInit } from "./init.js";
-import { runInstall, runUninstall, runList, suggestBridgeFor } from "./install.js";
-import { runAuth } from "./auth/cli.js";
+import { activateShell, registerShellHandlers, type ShellHandle } from "../shell/index.js";
+import { pickStrategy, FALLBACK_STRATEGY } from "../shell/strategies/index.js";
+import { activateAgent } from "../agent/index.js";
+import { createCore } from "../core/index.js";
+import { palette as p } from "../utils/palette.js";
+import { loadBuiltinExtensions } from "../extensions/index.js";
+import { loadExtensions } from "../core/extension-loader.js";
+import { getSettings } from "../core/settings.js";
+import { dispatchSubcommand } from "./subcommands.js";
+import { suggestBridgeFor } from "./install.js";
 import { anyProviderConfigured } from "./auth/keys.js";
-import { PACKAGE_VERSION } from "./utils/package-version.js";
-import { clearOpost } from "./utils/tty.js";
-import type { AgentShellConfig } from "./types.js";
+import { PACKAGE_VERSION } from "../utils/package-version.js";
+import { clearOpost } from "../utils/tty.js";
+import type { AgentShellConfig } from "../core/types.js";
 
 /**
  * Capture the user's full shell environment.
@@ -167,28 +167,8 @@ Inside the shell:
 }
 
 async function main(): Promise<void> {
-  // Subcommands — handled before the shell-launch path.
   const rawArgs = process.argv.slice(2);
-  if (rawArgs[0] === "init") {
-    runInit({ force: rawArgs.includes("--force") });
-    return;
-  }
-  if (rawArgs[0] === "install") {
-    await runInstall(rawArgs[1] ?? "", { force: rawArgs.includes("--force") });
-    return;
-  }
-  if (rawArgs[0] === "uninstall") {
-    await runUninstall(rawArgs[1] ?? "");
-    return;
-  }
-  if (rawArgs[0] === "list") {
-    runList();
-    return;
-  }
-  if (rawArgs[0] === "auth") {
-    await runAuth(rawArgs.slice(1));
-    return;
-  }
+  if (await dispatchSubcommand(rawArgs)) return;
 
   if (process.env.AGENT_SH) {
     console.error("agent-sh: already running inside an agent-sh session (nested sessions are not supported).");
@@ -270,6 +250,7 @@ async function main(): Promise<void> {
 
   // Before loadExtensions: extensions look up shell handlers at activation.
   registerShellHandlers(extCtx);
+  activateAgent(extCtx);
 
   // Load before spawning the shell so PS1 lands below the banner.
   await loadBuiltinExtensions(extCtx, getSettings().disabledBuiltins);

@@ -11,9 +11,9 @@
  * and check payload.command / payload.commandArgs to add completions for any command.
  */
 import { palette as p } from "../utils/palette.js";
-import type { ExtensionContext } from "../types.js";
+import type { ExtensionContext } from "../core/types.js";
 import { discoverSkills, loadSkillContent, type Skill } from "../agent/skills.js";
-import { reloadExtensions } from "../extension-loader.js";
+import { reloadExtensions } from "../core/extension-loader.js";
 
 interface SlashCommand {
   name: string;

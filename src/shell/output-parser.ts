@@ -1,4 +1,4 @@
-import type { EventBus } from "../event-bus.js";
+import type { EventBus } from "../core/event-bus.js";
 import { stripAnsi } from "../utils/ansi.js";
 
 // Self-emitted form: \e]<num>;id=<own>;<body>\a — only this is honored.

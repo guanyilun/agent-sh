@@ -1,4 +1,4 @@
-import type { EventBus } from "../event-bus.js";
+import type { EventBus } from "../core/event-bus.js";
 
 /**
  * Minimal agent backend interface — bus-driven.

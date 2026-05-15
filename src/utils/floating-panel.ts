@@ -35,7 +35,7 @@ import { wrapLine } from "./markdown.js";
 import { LineEditor } from "./line-editor.js";
 import { TerminalBuffer } from "./terminal-buffer.js";
 import { HandlerRegistry } from "./handler-registry.js";
-import type { EventBus } from "../event-bus.js";
+import type { EventBus } from "../core/event-bus.js";
 import type { BorderStyle } from "./box-frame.js";
 import { StdoutSurface, type RenderSurface } from "./compositor.js";
 

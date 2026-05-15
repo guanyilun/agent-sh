@@ -3,9 +3,9 @@
  * Registers curated defaults synchronously so the first query works, then
  * fetches the full catalog to populate /model autocomplete.
  */
-import type { ExtensionContext } from "../../types.js";
-import { getSettings } from "../../settings.js";
-import { resolveApiKey } from "../../auth/keys.js";
+import type { ExtensionContext } from "../../core/types.js";
+import { getSettings } from "../../core/settings.js";
+import { resolveApiKey } from "../../cli/auth/keys.js";
 
 const BASE_URL = "https://openrouter.ai/api/v1";
 

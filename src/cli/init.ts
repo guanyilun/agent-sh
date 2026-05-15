@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CONFIG_DIR } from "./settings.js";
+import { CONFIG_DIR } from "../core/settings.js";
 const EXTENSIONS_DIR = path.join(CONFIG_DIR, "extensions");
 const SETTINGS_PATH = path.join(CONFIG_DIR, "settings.json");
 const EXAMPLE_PATH = path.join(CONFIG_DIR, "settings.example.json");
