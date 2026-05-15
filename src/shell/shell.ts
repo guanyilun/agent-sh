@@ -372,7 +372,7 @@ export class Shell implements InputContext {
     this.bus.onPipeAsync("shell:exec-request", async (payload) => {
       const visible = this.acquireUnmute("exec-request");
       this.skipNextLine();
-      process.stdout.write("\n");
+      process.stdout.write("\r\n");
       this.bus.emit("shell:agent-exec-start", {});
 
       try {

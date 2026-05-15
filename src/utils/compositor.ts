@@ -71,7 +71,8 @@ export const nullSurface: RenderSurface = {
 export class StdoutSurface implements RenderSurface {
   write(text: string): void {
     if (process.stdout.writable) {
-      try { process.stdout.write(text); } catch { /* ignore */ }
+      // OPOST is cleared on the TTY; add CR to lone \n so we don't staircase.
+      try { process.stdout.write(text.replace(/(?<!\r)\n/g, "\r\n")); } catch { /* ignore */ }
     }
   }
   writeLine(line: string): void {
