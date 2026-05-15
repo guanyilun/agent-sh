@@ -15,7 +15,7 @@ export function formatSkillsBlock(skills: Skill[]): string {
     + skills.map(s => `- **${s.name}**: ${s.description}\n  Path: ${s.filePath}`).join("\n\n");
 }
 
-import { CONFIG_DIR } from "../settings.js";
+import { CONFIG_DIR } from "../core/settings.js";
 const GLOBAL_AGENTS_MD = path.join(CONFIG_DIR, "AGENTS.md");
 
 // ── File caches ─────────────────────────────────────────────────────

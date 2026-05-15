@@ -13,7 +13,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { CONFIG_DIR, getSettings } from "../settings.js";
+import { CONFIG_DIR, getSettings } from "../core/settings.js";
 
 export interface Skill {
   name: string;

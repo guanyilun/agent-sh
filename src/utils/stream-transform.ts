@@ -4,7 +4,7 @@
  * Handles the boilerplate of buffering across chunk boundaries,
  * pattern matching, and flush-on-done coordination.
  */
-import type { EventBus, ContentBlock } from "../event-bus.js";
+import type { EventBus, ContentBlock } from "../core/event-bus.js";
 
 export interface BlockTransformOptions {
   /** Opening delimiter (e.g. "$$") */

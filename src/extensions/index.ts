@@ -9,7 +9,7 @@
  * That module exposes its own `activate(ctx, opts)` entry point, loaded
  * specially from `src/index.ts` rather than through this manifest.
  */
-import type { ExtensionContext } from "../types.js";
+import type { ExtensionContext } from "../core/types.js";
 import { resolveApiKey } from "../auth/keys.js";
 
 type ActivateFn = (ctx: ExtensionContext) => void;

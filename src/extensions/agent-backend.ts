@@ -10,11 +10,11 @@
  * `defaultProvider: "openrouter"` loses to a cold-start race and the
  * backend bails silently.
  */
-import type { ExtensionContext } from "../types.js";
-import type { AgentMode, AgentShellConfig } from "../types.js";
+import type { ExtensionContext } from "../core/types.js";
+import type { AgentMode, AgentShellConfig } from "../core/types.js";
 import { AgentLoop } from "../agent/agent-loop.js";
 import { LlmClient } from "../utils/llm-client.js";
-import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../settings.js";
+import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../core/settings.js";
 import { PACKAGE_VERSION } from "../utils/package-version.js";
 import { discoverSkills } from "../agent/skills.js";
 

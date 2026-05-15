@@ -27,7 +27,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import type { EventBus } from "../event-bus.js";
+import type { EventBus } from "../core/event-bus.js";
 
 /**
  * A surface accepts rendered output.  Stdout is a surface.

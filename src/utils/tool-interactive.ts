@@ -6,7 +6,7 @@
  * handles surface writing, input interception, shell pause/unpause,
  * and cleanup.
  */
-import type { EventBus } from "../event-bus.js";
+import type { EventBus } from "../core/event-bus.js";
 import type { RenderSurface } from "./compositor.js";
 import type { InteractiveSession, ToolUI } from "../agent/types.js";
 

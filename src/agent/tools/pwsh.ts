@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { executeArgv, killSession } from "../../executor.js";
-import type { EventBus } from "../../event-bus.js";
+import type { EventBus } from "../../core/event-bus.js";
 import type { ToolDefinition } from "../types.js";
 
 let cachedPwshPath: string | null | undefined;

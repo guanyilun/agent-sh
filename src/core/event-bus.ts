@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { AgentMode } from "./types.js";
-import type { ToolResultDisplay } from "./agent/types.js";
+import type { ToolResultDisplay } from "../agent/types.js";
 
 /**
  * Typed event map — every event has a known payload shape.
@@ -329,9 +329,9 @@ export interface ShellEvents {
   };
 
   // Tool/instruction registration (extension → active agent backend)
-  "agent:register-tool": { tool: import("./agent/types.js").ToolDefinition; extensionName?: string };
+  "agent:register-tool": { tool: import("../agent/types.js").ToolDefinition; extensionName?: string };
   "agent:unregister-tool": { name: string };
-  "agent:get-tools": { tools: import("./agent/types.js").ToolDefinition[] };
+  "agent:get-tools": { tools: import("../agent/types.js").ToolDefinition[] };
   "agent:register-instruction": { name: string; text: string; extensionName: string };
   "agent:remove-instruction": { name: string };
   "agent:register-skill": { name: string; description: string; filePath: string; extensionName: string };

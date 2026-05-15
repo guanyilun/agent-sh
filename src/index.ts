@@ -2,18 +2,18 @@
 import { spawn } from "node:child_process";
 import { activateShell, registerShellHandlers, type ShellHandle } from "./shell/index.js";
 import { pickStrategy, FALLBACK_STRATEGY } from "./shell/strategies/index.js";
-import { createCore } from "./core.js";
+import { createCore } from "./core/index.js";
 import { palette as p } from "./utils/palette.js";
 import { loadBuiltinExtensions } from "./extensions/index.js";
-import { loadExtensions } from "./extension-loader.js";
-import { getSettings } from "./settings.js";
+import { loadExtensions } from "./core/extension-loader.js";
+import { getSettings } from "./core/settings.js";
 import { runInit } from "./init.js";
 import { runInstall, runUninstall, runList, suggestBridgeFor } from "./install.js";
 import { runAuth } from "./auth/cli.js";
 import { anyProviderConfigured } from "./auth/keys.js";
 import { PACKAGE_VERSION } from "./utils/package-version.js";
 import { clearOpost } from "./utils/tty.js";
-import type { AgentShellConfig } from "./types.js";
+import type { AgentShellConfig } from "./core/types.js";
 
 /**
  * Capture the user's full shell environment.

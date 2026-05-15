@@ -1,19 +1,19 @@
 import type { EventBus, ContentBlock } from "./event-bus.js";
-import type { ColorPalette } from "./utils/palette.js";
-import type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
-import type { SkillView, ToolDefinition, ToolSchemaView } from "./agent/types.js";
-import type { Compositor } from "./utils/compositor.js";
-import type { HistoryAdapter } from "./agent/history-file.js";
+import type { ColorPalette } from "../utils/palette.js";
+import type { BlockTransformOptions, FencedBlockTransformOptions } from "../utils/stream-transform.js";
+import type { SkillView, ToolDefinition, ToolSchemaView } from "../agent/types.js";
+import type { Compositor } from "../utils/compositor.js";
+import type { HistoryAdapter } from "../agent/history-file.js";
 
 export type { ContentBlock } from "./event-bus.js";
-export type { BlockTransformOptions, FencedBlockTransformOptions } from "./utils/stream-transform.js";
-export type { RenderSurface } from "./utils/compositor.js";
+export type { BlockTransformOptions, FencedBlockTransformOptions } from "../utils/stream-transform.js";
+export type { RenderSurface } from "../utils/compositor.js";
 
 // ── Remote sessions ──────────────────────────────────────────────
 
 export interface RemoteSessionOptions {
   /** The surface to render agent output to. */
-  surface: import("./utils/compositor.js").RenderSurface;
+  surface: import("../utils/compositor.js").RenderSurface;
   /** Suppress response borders (default: true). */
   suppressBorders?: boolean;
   /** Suppress user query box (default: false).
@@ -28,7 +28,7 @@ export interface RemoteSession {
   /** Submit a query to the agent from this session. */
   submit(query: string): void;
   /** The surface this session renders to. */
-  readonly surface: import("./utils/compositor.js").RenderSurface;
+  readonly surface: import("../utils/compositor.js").RenderSurface;
   /** Whether this session is currently active. */
   readonly active: boolean;
   /** Tear down — restores all routing and advisors. */
@@ -183,7 +183,7 @@ export interface ExtensionContext {
       next: ToolDefinition["execute"],
       args: Record<string, unknown>,
       onChunk?: (chunk: string) => void,
-      ctx?: import("./agent/types.js").ToolExecutionContext,
+      ctx?: import("../agent/types.js").ToolExecutionContext,
     ) => ReturnType<ToolDefinition["execute"]>,
   ) => () => void;
   /** Tool name is frozen (dispatch key). If an advisor adds a parameter,

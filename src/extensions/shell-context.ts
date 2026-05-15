@@ -4,8 +4,8 @@
  * user-shell exchanges) signals. Frontends without a PTY skip this
  * built-in and the agent runs cwd-aware via core's process.cwd() default.
  */
-import type { ExtensionContext } from "../types.js";
-import { getSettings } from "../settings.js";
+import type { ExtensionContext } from "../core/types.js";
+import { getSettings } from "../core/settings.js";
 import { spillOutput } from "../utils/shell-output-spill.js";
 
 interface ShellExchange {
