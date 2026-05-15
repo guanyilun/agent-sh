@@ -43,9 +43,9 @@ npm run build      # produces dist/
 npm link           # exposes `agent-sh` globally
 ```
 
-Requires Node.js 18+. Currently supports **bash** and **zsh**; other shells (fish, nushell, etc.) are not yet wired up.
+Requires Node.js 18+. Supports **bash**, **zsh**, and **fish**; other shells (nushell, etc.) are not yet wired up.
 
-**Windows:** the interactive shell layer is bash/zsh-only. Run agent-sh inside **WSL** for the full experience. Native Windows (cmd.exe / PowerShell) is not supported as the host shell, though headless / library / ACP-bridge usage may work — file an issue if you hit a gap.
+**Windows:** the interactive shell layer is bash/zsh/fish-only. Run agent-sh inside **WSL** for the full experience. Native Windows (cmd.exe / PowerShell) is not supported as the host shell, though headless / library / ACP-bridge usage may work — file an issue if you hit a gap.
 
 Tip — add a shell alias:
 
