@@ -22,19 +22,52 @@ export interface Skill {
   baseDir: string;
 }
 
-/** Parse YAML frontmatter from a SKILL.md file. */
+/** Parse YAML frontmatter from a SKILL.md file. Supports inline scalars
+ *  and block scalars (`>`, `>-`, `|`, `|-`) for multi-line descriptions. */
 function parseFrontmatter(content: string): { meta: Record<string, string>; body: string } | null {
   const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
   if (!match) return null;
 
   const meta: Record<string, string> = {};
-  for (const line of match[1].split("\n")) {
+  const lines = match[1].split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!;
+    const indent = line.length - line.trimStart().length;
     const colon = line.indexOf(":");
-    if (colon > 0) {
-      const key = line.slice(0, colon).trim();
-      const value = line.slice(colon + 1).trim();
-      meta[key] = value;
+    if (colon <= 0 || indent > 0) { i++; continue; }
+    const key = line.slice(0, colon).trim();
+    const rawValue = line.slice(colon + 1).trim();
+    const blockStyle = rawValue.match(/^([>|])([+-]?)\s*$/);
+    if (!blockStyle) {
+      meta[key] = rawValue;
+      i++;
+      continue;
     }
+    const folded = blockStyle[1] === ">";
+    const chomp = blockStyle[2];
+    const body: string[] = [];
+    let blockIndent = -1;
+    let j = i + 1;
+    while (j < lines.length) {
+      const next = lines[j]!;
+      if (next.trim() === "") { body.push(""); j++; continue; }
+      const ind = next.length - next.trimStart().length;
+      if (blockIndent === -1) blockIndent = ind;
+      if (ind < blockIndent) break;
+      body.push(next.slice(blockIndent));
+      j++;
+    }
+    let end = body.length;
+    if (chomp !== "+") {
+      while (end > 0 && body[end - 1] === "") end--;
+      if (chomp !== "-" && end < body.length) end++;
+    }
+    const kept = body.slice(0, end);
+    meta[key] = folded
+      ? kept.join(" ").replace(/\s+/g, " ").trim()
+      : kept.join("\n");
+    i = j;
   }
 
   return { meta, body: match[2] };
