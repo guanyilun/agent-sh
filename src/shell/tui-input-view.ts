@@ -4,7 +4,7 @@
  * ANSI redraw. The controller drives it via a small VM shape.
  */
 
-import { visibleLen } from "../utils/ansi.js";
+import { visibleLen, truncateToWidth } from "../utils/ansi.js";
 import { palette as p } from "../utils/palette.js";
 import type { RenderSurface } from "../utils/compositor.js";
 import { StdoutSurface } from "../utils/compositor.js";
@@ -171,17 +171,28 @@ export class TuiInputView {
   drawAutocomplete(vm: AutocompleteVM): void {
     if (vm.items.length === 0) return;
     this.autoFrame(() => {
+      // Truncate descriptions so each row fits one physical line — a wrapped
+      // row makes autocompleteLines undercount, clearAutocomplete leaves a
+      // residual row, and the next drawPrompt redraws below the original
+      // prompt (staircase).
+      const termW = this.surface.columns;
       const lines: string[] = [];
       for (let i = 0; i < vm.items.length; i++) {
         const item = vm.items[i]!;
+        const nameW = Math.max(12, visibleLen(item.name));
+        const overhead = 5 + nameW;
+        const descBudget = Math.max(1, termW - overhead);
+        const desc = visibleLen(item.description) > descBudget
+          ? truncateToWidth(item.description, descBudget)
+          : item.description;
         const selected = i === vm.selected;
         if (selected) {
           lines.push(
-            `  \x1b[7m ${p.accent}${item.name.padEnd(12)}${p.reset}\x1b[7m ${item.description} ${p.reset}`
+            `  \x1b[7m ${p.accent}${item.name.padEnd(12)}${p.reset}\x1b[7m ${desc} ${p.reset}`
           );
         } else {
           lines.push(
-            `   ${p.muted}${item.name.padEnd(12)} ${item.description}${p.reset}`
+            `   ${p.muted}${item.name.padEnd(12)} ${desc}${p.reset}`
           );
         }
       }
