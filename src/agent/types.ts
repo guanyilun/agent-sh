@@ -123,4 +123,9 @@ export interface ToolDefinition {
    * Extensions can further override via bus.onPipe("agent:tool-completed", ...).
    */
   formatResult?: (args: Record<string, unknown>, result: ToolResult) => ToolResultDisplay;
+
+  /** Override the agent-loop's per-tool-result truncation cap (default 16 KB).
+   *  Use for tools that bundle multiple operations and legitimately produce
+   *  larger output (interpreter substrates etc.). */
+  maxResultBytes?: number;
 }
