@@ -61,7 +61,6 @@ export class AssistantMessage extends Container {
 
 export class ThinkingBlock extends Container {
   private md: Markdown;
-  private placeholder: Text;
   private buffer = "";
   private hidden = false;
   private mdTheme: MarkdownTheme;
@@ -71,7 +70,6 @@ export class ThinkingBlock extends Container {
     this.md = new Markdown("", 1, 0, mdTheme, {
       color: (t) => theme.italic(theme.fg("thinkingText", t)),
     });
-    this.placeholder = new Text(theme.italic(theme.fg("thinkingText", "Thinking…")), 1, 0);
     this.addChild(new Spacer(1));
     this.addChild(this.md);
   }
@@ -87,15 +85,12 @@ export class ThinkingBlock extends Container {
     if (hidden === this.hidden) return;
     this.hidden = hidden;
     this.clear();
+    if (hidden) return;
     this.addChild(new Spacer(1));
-    if (hidden) {
-      this.addChild(this.placeholder);
-    } else {
-      this.md = new Markdown(this.buffer, 1, 0, this.mdTheme, {
-        color: (t) => theme.italic(theme.fg("thinkingText", t)),
-      });
-      this.addChild(this.md);
-    }
+    this.md = new Markdown(this.buffer, 1, 0, this.mdTheme, {
+      color: (t) => theme.italic(theme.fg("thinkingText", t)),
+    });
+    this.addChild(this.md);
   }
 }
 

@@ -186,7 +186,7 @@ export function mountAshi(
   let lastToolResult: ToolResultView | null = null;
   let loader: Loader | null = null;
   let processing = false;
-  let hideThinking = false;
+  let hideThinking = true;
 
   const renderState = (): { state: Record<string, unknown>; invalidate: () => void } => ({
     state: {},
