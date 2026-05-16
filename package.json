@@ -1,6 +1,6 @@
 {
   "name": "agent-sh",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "A shell-first terminal where AI is one keystroke away",
   "type": "module",
   "main": "dist/core/index.js",
@@ -89,6 +89,18 @@
     "./executor": {
       "types": "./dist/utils/executor.d.ts",
       "default": "./dist/utils/executor.js"
+    },
+    "./cli/install": {
+      "types": "./dist/cli/install.d.ts",
+      "default": "./dist/cli/install.js"
+    },
+    "./cli/init": {
+      "types": "./dist/cli/init.d.ts",
+      "default": "./dist/cli/init.js"
+    },
+    "./cli/auth": {
+      "types": "./dist/cli/auth/cli.d.ts",
+      "default": "./dist/cli/auth/cli.js"
     }
   },
   "files": [

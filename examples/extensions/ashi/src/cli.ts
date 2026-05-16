@@ -54,8 +54,58 @@ function parseArgs(argv: string[]): AppConfig & { extensions?: string[] } {
   return { shell: "/bin/sh", model, apiKey, baseURL, provider, backend, extensions };
 }
 
+const MANAGEMENT_HELP = `ashi — ash backend, pi-tui frontend
+
+Management:
+  ashi install <name> [--force]   Install an extension
+  ashi uninstall <name>           Remove an installed extension
+  ashi list                       List installed extensions
+  ashi auth login [provider]      Store an API key
+  ashi auth logout <provider>     Remove a stored key
+  ashi auth list                  Show configured providers
+  ashi init [--force]             Scaffold ~/.agent-sh/ (settings, AGENTS.md)
+
+Launch (default):
+  ashi [--provider <name>] [--model <id>] [--api-key <key>] [--base-url <url>]
+       [--backend <name>] [-e <ext>[,<ext>...]]
+
+Reads ~/.agent-sh/settings.json for providers and defaults.`;
+
 async function main(): Promise<void> {
-  const config = parseArgs(process.argv.slice(2));
+  const rawArgs = process.argv.slice(2);
+  const sub = rawArgs[0];
+  const rest = rawArgs.slice(1);
+
+  if (sub === "install" || sub === "uninstall" || sub === "list") {
+    const { runInstall, runUninstall, runList } = await import("agent-sh/cli/install");
+    if (sub === "install") await runInstall(rest[0] ?? "", { force: rest.includes("--force") });
+    else if (sub === "uninstall") await runUninstall(rest[0] ?? "");
+    else runList();
+    process.exit(0);
+  }
+  if (sub === "auth") {
+    const { runAuth } = await import("agent-sh/cli/auth");
+    await runAuth(rest);
+    process.exit(0);
+  }
+  if (sub === "init") {
+    const { runInit } = await import("agent-sh/cli/init");
+    runInit({ force: rest.includes("--force") });
+    process.exit(0);
+  }
+  if (sub === "--help" || sub === "-h") {
+    process.stdout.write(MANAGEMENT_HELP + "\n");
+    process.exit(0);
+  }
+  if (sub && !sub.startsWith("-")) {
+    process.stderr.write(`ashi: unknown subcommand "${sub}".\n`);
+    process.stderr.write("Available: install, uninstall, list, auth, init\n");
+    process.stderr.write("Run `ashi --help` for details.\n");
+    process.exit(1);
+  }
+
+  // ── Pi-tui frontend
+  const config = parseArgs(rawArgs);
 
   if (!process.stdin.isTTY) {
     process.stderr.write("ashi requires a TTY for interactive rendering.\n");
