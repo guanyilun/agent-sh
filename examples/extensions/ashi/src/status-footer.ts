@@ -34,7 +34,7 @@ export class StatusFooter extends Container {
     const parts: string[] = [];
     if (model) {
       const tail = provider ? theme.fg("muted", `@${provider}`) : "";
-      const think = thinking ? theme.fg("muted", ` • ${thinking}`) : "";
+      const think = thinking ? theme.fg("muted", ` [${thinking}]`) : "";
       parts.push(`${theme.fg("accent", model)}${tail ? " " + tail : ""}${think}`);
     } else if (provider) {
       parts.push(theme.fg("muted", `@${provider}`));

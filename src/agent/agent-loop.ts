@@ -352,7 +352,6 @@ export class AgentLoop implements AgentBackend {
         return;
       }
       this.thinkingLevel = level;
-      this.bus.emit("ui:info", { message: `Thinking: ${level}` });
       this.bus.emit("config:changed", {});
     });
     onPipe("config:get-thinking", () => {
