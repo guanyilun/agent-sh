@@ -66,8 +66,10 @@ export function createReadFileTool(
       try {
         const stat = await fs.stat(absPath);
 
-        // Deduplication: if the file hasn't changed and same range, return stub
-        if (cache) {
+        // Deduplication: if the file hasn't changed and same range, return stub.
+        // bypass_cache lets in-process callers consume content as a value
+        // rather than a tool_result, where the dedup stub would be meaningless.
+        if (cache && !args.bypass_cache) {
           const prev = cache.get(absPath);
           if (
             prev &&
@@ -112,8 +114,9 @@ export function createReadFileTool(
           ? `\n[${lines.length - end} more lines, use offset=${end + 1} to continue]`
           : "";
 
-        // Update cache on successful read
-        if (cache) {
+        // Skip cache write for in-process callers — they shouldn't poison
+        // the LLM-facing dedup state.
+        if (cache && !args.bypass_cache) {
           cache.set(absPath, {
             mtimeMs: stat.mtimeMs,
             offset: reqOffset,
