@@ -10,6 +10,7 @@ interface StatusFields {
   leaf?: number;
   tokens?: number;
   compactions?: number;
+  thinking?: string;
 }
 
 export class StatusFooter extends Container {
@@ -28,12 +29,13 @@ export class StatusFooter extends Container {
   }
 
   private repaint(): void {
-    const { model, provider, contextWindow, cwd, branch, leaf, tokens, compactions } = this.fields;
+    const { model, provider, contextWindow, cwd, branch, leaf, tokens, compactions, thinking } = this.fields;
     const sep = theme.fg("dim", " | ");
     const parts: string[] = [];
     if (model) {
       const tail = provider ? theme.fg("muted", `@${provider}`) : "";
-      parts.push(`${theme.fg("accent", model)}${tail ? " " + tail : ""}`);
+      const think = thinking ? theme.fg("muted", ` • ${thinking}`) : "";
+      parts.push(`${theme.fg("accent", model)}${tail ? " " + tail : ""}${think}`);
     } else if (provider) {
       parts.push(theme.fg("muted", `@${provider}`));
     }

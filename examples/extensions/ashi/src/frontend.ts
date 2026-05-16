@@ -161,6 +161,12 @@ export function mountAshi(
   const refreshBranch = (): void => {
     statusFooter.update({ branch: currentGitBranch(cwd) });
   };
+  const refreshThinking = (): void => {
+    const { level, supported } = bus.emitPipe("config:get-thinking", {
+      level: "off", levels: [] as string[], supported: true,
+    });
+    statusFooter.update({ thinking: supported ? level : undefined });
+  };
 
   tui.addChild(chat);
   tui.addChild(footerSlot);
@@ -556,6 +562,12 @@ export function mountAshi(
       provider: info.provider,
       contextWindow: info.contextWindow,
     });
+    refreshThinking();
+    tui.requestRender();
+  });
+
+  bus.on("config:changed", () => {
+    refreshThinking();
     tui.requestRender();
   });
 
@@ -679,6 +691,16 @@ export function mountAshi(
     }
     if (matchesKey(data, "ctrl+t")) {
       toggleThinking();
+      return { consume: true };
+    }
+    if (matchesKey(data, "shift+tab")) {
+      const { level, levels, supported } = bus.emitPipe("config:get-thinking", {
+        level: "off", levels: [] as string[], supported: true,
+      });
+      if (supported && levels.length > 0) {
+        const next = levels[(levels.indexOf(level) + 1) % levels.length];
+        bus.emit("config:set-thinking", { level: next });
+      }
       return { consume: true };
     }
     if (matchesKey(data, "ctrl+o")) {
