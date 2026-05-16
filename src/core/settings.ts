@@ -104,6 +104,13 @@ export interface Settings {
    *   "inline" — tools described as text.
    */
   toolMode?: "api" | "deferred" | "deferred-lookup" | "inline";
+  /**
+   * Extra tool names treated as "core" in deferred / deferred-lookup mode —
+   * always sent with full schema instead of requiring an explicit load_tool
+   * call. Useful when an extension registers a substrate tool that should
+   * have first-class footing alongside the kernel built-ins.
+   */
+  coreTools?: string[];
   /** Additional directories to scan for skills (supports ~ expansion). */
   skillPaths?: string[];
   /**
@@ -143,6 +150,7 @@ const DEFAULTS: Required<Settings> = {
   defaultProvider: undefined as unknown as string,
   defaultBackend: "ash",
   toolMode: "api" as "api" | "deferred" | "deferred-lookup" | "inline",
+  coreTools: [],
   shellTruncateThreshold: 20,
   shellHeadLines: 10,
   shellTailLines: 10,
