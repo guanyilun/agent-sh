@@ -391,7 +391,6 @@ export default function activate(ctx: ExtensionContext): void {
         return;
       }
       session.setThinkingLevel(level);
-      bus.emit("ui:info", { message: `Thinking: ${level}` });
       bus.emit("config:changed", {});
     };
 
