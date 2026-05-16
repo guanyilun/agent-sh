@@ -11,6 +11,8 @@ import {
   type SelectItem,
   getImageDimensions,
   matchesKey,
+  isKeyRelease,
+  isKeyRepeat,
 } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
 import { editorTheme, selectListTheme, theme } from "./theme.js";
@@ -658,11 +660,11 @@ export function mountAshi(
       }
     };
     walk(chat);
-    bus.emit("ui:info", { message: `thinking: ${hideThinking ? "hidden" : "visible"}` });
     tui.requestRender();
   };
 
   tui.addInputListener((data) => {
+    if (isKeyRelease(data) || isKeyRepeat(data)) return;
     if (matchesKey(data, "escape") && processing) {
       bus.emit("agent:cancel-request", {});
       return { consume: true };
