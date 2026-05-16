@@ -1312,9 +1312,11 @@ export class AgentLoop implements AgentBackend {
 
         const tool = this.toolRegistry.get(tc.name);
         if (!tool) {
+          const available = this.toolRegistry.all().map((t) => t.name).join(", ");
           collectedResults.push({
             callId: tc.id, toolName: tc.name,
-            content: `Unknown tool "${tc.name}"`, isError: true,
+            content: `Unknown tool "${tc.name}". Available tools: ${available}`,
+            isError: true,
           });
           return;
         }
