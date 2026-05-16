@@ -126,6 +126,9 @@ export function renderToolCall(
       if (raw && typeof raw === "object") {
         if (typeof raw.command === "string") {
           detail = `$ ${raw.command}`;
+        } else if (typeof raw.source === "string") {
+          const firstLine = raw.source.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+          detail = firstLine.length > 80 ? firstLine.slice(0, 77) + "…" : firstLine;
         } else if (typeof raw.pattern === "string") {
           // grep/glob — show the search pattern
           const target = typeof raw.path === "string" ? ` ${shortenPath(raw.path, cwd)}` : "";

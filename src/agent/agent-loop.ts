@@ -1094,6 +1094,7 @@ export class AgentLoop implements AgentBackend {
         toolCallId: id,
         kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
         displayDetail: tool.formatCall?.(args),
+        sourceLanguage: display.sourceLanguage,
         batchIndex: ctx.batchIndex, batchTotal: ctx.batchTotal,
       });
       this.bus.emit("agent:tool-call", { tool: name, args });
@@ -1345,6 +1346,7 @@ export class AgentLoop implements AgentBackend {
               toolCallId: tc.id,
               kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
               displayDetail: tool.formatCall?.(args),
+              sourceLanguage: display.sourceLanguage,
               batchIndex, batchTotal: batchTotal > 1 ? batchTotal : undefined,
             });
             this.bus.emit("agent:tool-call", { tool: tc.name, args });

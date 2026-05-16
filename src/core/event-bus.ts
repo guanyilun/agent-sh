@@ -132,6 +132,8 @@ export interface ShellEvents {
     rawInput?: unknown;
     /** Pre-formatted display detail from tool's formatCall(). */
     displayDetail?: string;
+    /** highlight.js-style identifier for syntax-highlighting `rawInput.source`. */
+    sourceLanguage?: string;
     batchIndex?: number;
     batchTotal?: number;
   };
