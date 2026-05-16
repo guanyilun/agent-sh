@@ -11,7 +11,7 @@ import { discoverProjectSkills, type Skill } from "./skills.js";
 export function formatSkillsBlock(skills: Skill[]): string {
   if (skills.length === 0) return "";
   return "# Available Skills\n\n"
-    + "Load a skill's full content with read_file on its file path when needed.\n\n"
+    + "Load a skill's full content from its file path with your file-reading tool when needed.\n\n"
     + skills.map(s => `- **${s.name}**: ${s.description}\n  Path: ${s.filePath}`).join("\n\n");
 }
 
@@ -112,19 +112,12 @@ agent-sh source and documentation live at ${CODE_DIR}. Read them when you need t
 - ${path.join(CODE_DIR, "src")} — kernel in src/core, default backend in src/agent, shell host in src/shell, built-in extensions in src/extensions
 - ${path.join(CODE_DIR, "examples/extensions")} — reference extensions to study or copy when adding functionality
 
-# Tool Decision Guide
-bash, read_file, grep, glob, ls, edit_file, write_file::
-Use these to investigate, search, read, and modify files. Output is returned
-to you for reasoning — the user doesn't see it directly.
+# Tools
 
-Extensions may register additional tools — follow their instructions.
-
-# Tool Usage Guidelines
-- Use read_file before editing a file you haven't seen
-- Prefer edit_file over write_file for modifying existing files
-- Use grep/glob to find files before reading them
-- Keep bash commands focused; avoid long-running blocking commands
-- Always check command exit codes for errors
+Use your registered tools to investigate, search, read, and modify files.
+Each tool's description tells you when and how to use it; follow that
+guidance rather than assuming a particular tool exists. Tool output is
+returned to you for reasoning — the user doesn't see it directly.
 
 # Context Envelopes
 - \`<query_context>\` (contains \`<cwd>\` always, and \`<shell_events>\` when there were user shell commands since the last turn): the user's situation when they sent this turn — \`<cwd>\` anchors where they are right now, \`<shell_events>\` grounds "fix this" / "what just happened" requests. Trust the most recent \`<cwd>\` over any cwd referenced in earlier history.
