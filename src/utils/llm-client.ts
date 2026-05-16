@@ -6,7 +6,12 @@
  * (command suggestions, completions).
  */
 import OpenAI from "openai";
-import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions.js";
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+  ChatCompletionCreateParamsStreaming,
+  ChatCompletionCreateParamsNonStreaming,
+} from "openai/resources/chat/completions.js";
 
 export type { ChatCompletionMessageParam, ChatCompletionTool };
 
@@ -51,59 +56,45 @@ export class LlmClient {
     this.model = newConfig.model;
   }
 
-  /**
-   * Create a streaming chat completion.
-   * Returns an async iterable of chunks.
-   */
-  stream(opts: {
-    messages: ChatCompletionMessageParam[];
-    tools?: ChatCompletionTool[];
-    model?: string;
-    max_tokens?: number;
-    /** Reasoning effort: "off" | "low" | "medium" | "high". Provider-dependent;
-     *  "off" matches agent-loop's thinkingLevel and omits the field. */
-    reasoning_effort?: string;
-    signal?: AbortSignal;
-  }) {
-    const sendEffort = opts.reasoning_effort && opts.reasoning_effort !== "off";
+  stream(opts: StreamOpts) {
+    const { signal, messages, tools, model, max_tokens, ...rest } = opts;
     const body = {
-      model: opts.model ?? this.model,
-      messages: opts.messages,
-      tools: opts.tools?.length ? opts.tools : undefined,
-      max_tokens: opts.max_tokens ?? 65536,
+      ...rest,
+      model: model ?? this.model,
+      messages,
+      tools: tools?.length ? tools : undefined,
+      max_tokens: max_tokens ?? 65536,
       stream: true as const,
       stream_options: { include_usage: true },
-      ...(sendEffort
-        ? { reasoning_effort: opts.reasoning_effort as "low" | "medium" | "high" }
-        : {}),
     };
-    return this.client.chat.completions.create(
-      body,
-      { signal: opts.signal },
-    );
+    return this.client.chat.completions.create(body as ChatCompletionCreateParamsStreaming, { signal });
   }
 
-  /**
-   * Single-shot completion (no streaming) — for fast-path features.
-   * Returns the text content of the first choice.
-   */
-  async complete(opts: {
-    messages: ChatCompletionMessageParam[];
-    model?: string;
-    max_tokens?: number;
-    /** Reasoning effort: "off" | "low" | "medium" | "high". Provider-dependent;
-     *  "off" matches agent-loop's thinkingLevel and omits the field. */
-    reasoning_effort?: string;
-  }): Promise<string> {
-    const sendEffort = opts.reasoning_effort && opts.reasoning_effort !== "off";
-    const response = await this.client.chat.completions.create({
-      model: opts.model ?? this.model,
-      messages: opts.messages,
-      max_tokens: opts.max_tokens ?? 1024,
-      ...(sendEffort
-        ? { reasoning_effort: opts.reasoning_effort as "low" | "medium" | "high" }
-        : {}),
-    });
+  async complete(opts: CompleteOpts): Promise<string> {
+    const { messages, model, max_tokens, ...rest } = opts;
+    const body = {
+      ...rest,
+      model: model ?? this.model,
+      messages,
+      max_tokens: max_tokens ?? 1024,
+    };
+    const response = await this.client.chat.completions.create(body as ChatCompletionCreateParamsNonStreaming);
     return response.choices[0]?.message?.content ?? "";
   }
 }
+
+/** Known fields are typed; extras are forwarded verbatim to the SDK so
+ *  provider hooks can ship non-standard params (thinking, reasoning, …). */
+export type StreamOpts = {
+  messages: ChatCompletionMessageParam[];
+  tools?: ChatCompletionTool[];
+  model?: string;
+  max_tokens?: number;
+  signal?: AbortSignal;
+} & Record<string, unknown>;
+
+export type CompleteOpts = {
+  messages: ChatCompletionMessageParam[];
+  model?: string;
+  max_tokens?: number;
+} & Record<string, unknown>;

@@ -140,11 +140,12 @@ export default function agentBackend(ctx: ExtensionContext): void {
   const llmClient = new LlmClient({ apiKey: "not-configured", model: "not-configured" });
   ctx.define("llm:get-client", () => llmClient);
   ctx.define("llm:invoke", (messages: { role: string; content: string }[], opts?: { maxTokens?: number; model?: string; reasoningEffort?: string }) => {
+    const effort = opts?.reasoningEffort;
     return llmClient.complete({
       messages: messages as Parameters<typeof llmClient.complete>[0]["messages"],
       max_tokens: opts?.maxTokens,
       model: opts?.model,
-      reasoning_effort: opts?.reasoningEffort,
+      ...(effort && effort !== "off" ? { reasoning_effort: effort } : {}),
     });
   });
 
