@@ -44,6 +44,9 @@ export interface ToolDisplayInfo {
   /** Custom icon character for TUI display (e.g., "◆", "⌕"). When set, the TUI shows
    *  icon + detail only. When absent, the tool name is shown alongside the detail. */
   icon?: string;
+  /** highlight.js-style language identifier ("scheme", "python", …) for
+   *  renderers that syntax-highlight tool source. Omit for plain text. */
+  sourceLanguage?: string;
 }
 
 /** Interactive UI session — imperative control over rendering + input. */
@@ -123,4 +126,9 @@ export interface ToolDefinition {
    * Extensions can further override via bus.onPipe("agent:tool-completed", ...).
    */
   formatResult?: (args: Record<string, unknown>, result: ToolResult) => ToolResultDisplay;
+
+  /** Override the agent-loop's per-tool-result truncation cap (default 16 KB).
+   *  Use for tools that bundle multiple operations and legitimately produce
+   *  larger output (interpreter substrates etc.). */
+  maxResultBytes?: number;
 }

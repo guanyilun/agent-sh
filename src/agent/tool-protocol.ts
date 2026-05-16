@@ -714,11 +714,16 @@ const CORE_TOOLS = [
   "bash", "read_file", "write_file", "edit_file",
   "grep", "glob", "ls",
   "list_skills",
+  "conversation_recall",
 ];
 
-export function createToolProtocol(mode: "api" | "inline" | "deferred" | "deferred-lookup"): ToolProtocol {
+export function createToolProtocol(
+  mode: "api" | "inline" | "deferred" | "deferred-lookup",
+  extraCore: string[] = [],
+): ToolProtocol {
+  const core = extraCore.length === 0 ? CORE_TOOLS : [...CORE_TOOLS, ...extraCore];
   if (mode === "inline") return new InlineToolProtocol();
-  if (mode === "deferred") return new DeferredToolProtocol(CORE_TOOLS);
-  if (mode === "deferred-lookup") return new DeferredLookupProtocol(CORE_TOOLS);
+  if (mode === "deferred") return new DeferredToolProtocol(core);
+  if (mode === "deferred-lookup") return new DeferredLookupProtocol(core);
   return new ApiToolProtocol();
 }

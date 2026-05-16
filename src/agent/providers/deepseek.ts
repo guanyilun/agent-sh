@@ -9,8 +9,8 @@ import { resolveApiKey } from "../../cli/auth/keys.js";
 
 const BASE_URL = "https://api.deepseek.com";
 const DEFAULT_MODELS = [
-  { id: "deepseek-v4-flash", reasoning: true, echoReasoning: true },
-  { id: "deepseek-v4-pro", reasoning: true, echoReasoning: true },
+  { id: "deepseek-v4-flash", reasoning: true, echoReasoning: true, contextWindow: 1_000_000 },
+  { id: "deepseek-v4-pro", reasoning: true, echoReasoning: true, contextWindow: 1_000_000 },
 ];
 
 function buildReasoningParams(level: string, _model?: string): Record<string, unknown> {

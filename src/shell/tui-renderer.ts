@@ -770,6 +770,10 @@ export default function activate(ctx: ExtensionContext): void {
     const raw = extra.rawInput as Record<string, unknown> | undefined;
     if (!raw) return "";
     if (typeof raw.command === "string") return `$ ${raw.command}`;
+    if (typeof raw.source === "string") {
+      const firstLine = raw.source.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+      return firstLine.length > 80 ? firstLine.slice(0, 77) + "…" : firstLine;
+    }
     if (typeof raw.pattern === "string") return raw.pattern;
     if (typeof raw.path === "string") {
       const home = process.env.HOME;

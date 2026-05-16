@@ -162,7 +162,10 @@ export class AgentLoop implements AgentBackend {
     this.currentModeIndex = config.initialModeIndex ?? 0;
 
     // Tool protocol — controls how tools are presented to the LLM
-    this.toolProtocol = createToolProtocol(getSettings().toolMode ?? "api");
+    this.toolProtocol = createToolProtocol(
+      getSettings().toolMode ?? "api",
+      getSettings().coreTools ?? [],
+    );
 
     // Register core tools
     this.registerCoreTools();
@@ -1091,6 +1094,7 @@ export class AgentLoop implements AgentBackend {
         toolCallId: id,
         kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
         displayDetail: tool.formatCall?.(args),
+        sourceLanguage: display.sourceLanguage,
         batchIndex: ctx.batchIndex, batchTotal: ctx.batchTotal,
       });
       this.bus.emit("agent:tool-call", { tool: name, args });
@@ -1308,9 +1312,11 @@ export class AgentLoop implements AgentBackend {
 
         const tool = this.toolRegistry.get(tc.name);
         if (!tool) {
+          const available = this.toolRegistry.all().map((t) => t.name).join(", ");
           collectedResults.push({
             callId: tc.id, toolName: tc.name,
-            content: `Unknown tool "${tc.name}"`, isError: true,
+            content: `Unknown tool "${tc.name}". Available tools: ${available}`,
+            isError: true,
           });
           return;
         }
@@ -1342,6 +1348,7 @@ export class AgentLoop implements AgentBackend {
               toolCallId: tc.id,
               kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
               displayDetail: tool.formatCall?.(args),
+              sourceLanguage: display.sourceLanguage,
               batchIndex, batchTotal: batchTotal > 1 ? batchTotal : undefined,
             });
             this.bus.emit("agent:tool-call", { tool: tc.name, args });
@@ -1376,9 +1383,9 @@ export class AgentLoop implements AgentBackend {
             signal },
         );
 
-        // Truncate large outputs to avoid blowing context
+        // Truncate large outputs to avoid blowing context.
         let content = result.content;
-        const maxBytes = 16_384; // ~4k tokens
+        const maxBytes = tool.maxResultBytes ?? 16_384; // ~4k tokens
         if (content.length > maxBytes) {
           const headBytes = Math.floor(maxBytes * 0.6);
           const tailBytes = maxBytes - headBytes;
