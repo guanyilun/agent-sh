@@ -334,7 +334,6 @@ export function mountAshi(
       if (found.kind === "group") {
         found.group.recordCompletion(id, 0, summary);
       } else {
-        if (text) found.pair.result.appendChunk(text);
         found.pair.result.finalize({ exitCode: 0, summary });
         found.pair.call.setStatus({ exitCode: 0, elapsedMs: 0, summary });
       }
