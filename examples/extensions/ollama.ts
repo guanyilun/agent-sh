@@ -37,6 +37,10 @@ export default function activate(ctx: ExtensionContext): void {
   const headers: Record<string, string> = {};
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
+  ctx.agent.providers.configure(id, {
+    reasoningParams: (level) => ({ reasoning_effort: level === "off" ? "none" : level }),
+  });
+
   ctx.bus.emit("provider:register", { id, apiKey: sdkKey, baseURL, models: [] });
 
   fetchCatalog(host, headers).then((models) => {
