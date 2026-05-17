@@ -98,7 +98,8 @@ export class ToolResultBody extends Container {
   private outputText: Text;
   private bodyText: Text;
   private outputBuffer = "";
-  private diffLines: string[] = [];
+  private diffRenderer: ((width: number) => string[]) | null = null;
+  private lastDiffWidth = -1;
   private mode: ToolResultMode;
   private previewLines: number;
   private finalized = false;
@@ -120,8 +121,9 @@ export class ToolResultBody extends Container {
     this.repaint();
   }
 
-  setDiff(lines: string[]): void {
-    this.diffLines = lines;
+  setDiffRenderer(fn: (width: number) => string[]): void {
+    this.diffRenderer = fn;
+    this.lastDiffWidth = -1;
     this.repaint();
   }
 
@@ -136,12 +138,23 @@ export class ToolResultBody extends Container {
     this.repaint();
   }
 
+  override render(width: number): string[] {
+    if (this.diffRenderer && width !== this.lastDiffWidth) {
+      this.lastDiffWidth = width;
+      const showDiff = this.expanded || this.mode === "preview";
+      this.bodyText.setText(showDiff ? this.diffRenderer(width).join("\n") : "");
+    }
+    return super.render(width);
+  }
+
   private repaint(): void {
-    // Hide the framed diff in hidden/summary modes — the stats already live
-    // on the call line so showing it again is noise.
-    const hasDiff = this.diffLines.length > 0;
+    const hasDiff = this.diffRenderer !== null;
     const showDiff = hasDiff && (this.expanded || this.mode === "preview");
-    this.bodyText.setText(showDiff ? this.diffLines.join("\n") : "");
+    if (showDiff && this.lastDiffWidth >= 0 && this.diffRenderer) {
+      this.bodyText.setText(this.diffRenderer(this.lastDiffWidth).join("\n"));
+    } else if (!showDiff) {
+      this.bodyText.setText("");
+    }
 
     // When a diff exists, the textual output ("Edited /path (+12 -3)") just
     // restates the call line — suppress its line-count hint to keep edits quiet.

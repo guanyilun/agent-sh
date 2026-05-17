@@ -45,11 +45,13 @@ export interface ToolCallView extends Component {
 }
 
 /** Mutated by ashi as output streams in and when the tool completes.
- *  setDiff is optional behavior — renderers may no-op if they don't show diffs.
- *  toggleExpanded flips the view's internal expansion state (Ctrl+O). */
+ *  setDiffRenderer is optional behavior — renderers may no-op if they don't
+ *  show diffs. The renderer is called on each terminal-width change so diffs
+ *  reflow on resize. toggleExpanded flips the view's internal expansion state
+ *  (Ctrl+O). */
 export interface ToolResultView extends Component {
   appendChunk(chunk: string): void;
-  setDiff(lines: string[]): void;
+  setDiffRenderer(fn: (width: number) => string[]): void;
   finalize(opts: { exitCode: number | null; summary?: string }): void;
   toggleExpanded(): void;
 }

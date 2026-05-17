@@ -503,23 +503,23 @@ export function mountAshi(
     if (body?.kind === "diff") {
       const diff = body.diff as DiffStats & Parameters<typeof renderDiff>[0];
       if (!diff.isIdentical) {
-        const termW = process.stdout.columns ?? 80;
-        const boxW = Math.max(40, termW);
-        const contentW = Math.max(20, boxW - 4);
-        const inner = diff.isNewFile
-          ? renderNewFilePreview(diff, 30)
-          : ((): string[] => {
-              const lines = renderDiff(diff, {
-                width: contentW, filePath: body.filePath, trueColor: true, maxLines: 30,
-              });
-              return lines.length > 1 ? ["", ...lines.slice(1), ""] : lines;
-            })();
-        const framed = renderBoxFrame(inner, {
-          width: boxW,
-          style: "rounded",
-          title: diffFrameTitle(body.filePath, diff),
+        pair.result.setDiffRenderer((width) => {
+          const boxW = Math.max(40, width);
+          const contentW = Math.max(20, boxW - 4);
+          const inner = diff.isNewFile
+            ? renderNewFilePreview(diff, 30)
+            : ((): string[] => {
+                const lines = renderDiff(diff, {
+                  width: contentW, filePath: body.filePath, trueColor: true, maxLines: 30, mode: "unified",
+                });
+                return lines.length > 1 ? ["", ...lines.slice(1), ""] : lines;
+              })();
+          return renderBoxFrame(inner, {
+            width: boxW,
+            style: "rounded",
+            title: diffFrameTitle(body.filePath, diff),
+          });
         });
-        pair.result.setDiff(framed);
       }
     }
     pair.call.setStatus({ exitCode: e.exitCode, elapsedMs: Date.now() - pair.startedAt, summary });
