@@ -1169,14 +1169,15 @@ export class AgentLoop implements AgentBackend {
 
       responseText = await this.executeLoop(signal);
     } catch (e) {
-      if (signal.aborted && signal.reason !== "silent") {
-        this.bus.emit("agent:cancelled", {});
-      } else if (!signal.aborted) {
+      if (!signal.aborted) {
         if (e instanceof Error) console.error("[agent-sh] query failed:\n" + e.stack);
         const msg = this.formatError(e);
         this.bus.emit("agent:error", { message: msg });
       }
     } finally {
+      if (signal.aborted && signal.reason !== "silent") {
+        this.bus.emit("agent:cancelled", {});
+      }
       // Ensure any buffered text in the stream transform pipeline gets
       // flushed as a complete line before response-done closes the box.
       if (responseText && !responseText.endsWith("\n")) {
