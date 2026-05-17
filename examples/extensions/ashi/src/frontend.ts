@@ -45,6 +45,29 @@ import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
 
 interface DiffStats { added: number; removed: number; isNewFile: boolean; isIdentical: boolean }
 
+function buildDiffRenderer(
+  diff: DiffStats & Parameters<typeof renderDiff>[0],
+  filePath: string,
+): (width: number) => string[] {
+  return (width) => {
+    const boxW = Math.max(40, width);
+    const contentW = Math.max(20, boxW - 4);
+    const inner = diff.isNewFile
+      ? renderNewFilePreview(diff, 30)
+      : ((): string[] => {
+          const lines = renderDiff(diff, {
+            width: contentW, filePath, trueColor: true, maxLines: 30, mode: "unified",
+          });
+          return lines.length > 1 ? ["", ...lines.slice(1), ""] : lines;
+        })();
+    return renderBoxFrame(inner, {
+      width: boxW,
+      style: "rounded",
+      title: diffFrameTitle(filePath, diff),
+    });
+  };
+}
+
 function renderNewFilePreview(
   diff: { hunks?: { lines: { type: string; text: string }[] }[] },
   maxLines: number,
@@ -350,6 +373,13 @@ export function mountAshi(
       if (found.kind === "group") {
         found.group.recordCompletion(id, 0, summary);
       } else {
+        const meta = m.meta as { diff?: unknown; filePath?: string } | undefined;
+        if (meta?.diff && typeof meta.filePath === "string") {
+          const diff = meta.diff as DiffStats & Parameters<typeof renderDiff>[0];
+          if (!diff.isIdentical) {
+            found.pair.result.setDiffRenderer(buildDiffRenderer(diff, meta.filePath));
+          }
+        }
         found.pair.result.finalize({ exitCode: 0, summary });
         found.pair.call.setStatus({ exitCode: 0, elapsedMs: 0, summary });
       }
@@ -503,23 +533,7 @@ export function mountAshi(
     if (body?.kind === "diff") {
       const diff = body.diff as DiffStats & Parameters<typeof renderDiff>[0];
       if (!diff.isIdentical) {
-        pair.result.setDiffRenderer((width) => {
-          const boxW = Math.max(40, width);
-          const contentW = Math.max(20, boxW - 4);
-          const inner = diff.isNewFile
-            ? renderNewFilePreview(diff, 30)
-            : ((): string[] => {
-                const lines = renderDiff(diff, {
-                  width: contentW, filePath: body.filePath, trueColor: true, maxLines: 30, mode: "unified",
-                });
-                return lines.length > 1 ? ["", ...lines.slice(1), ""] : lines;
-              })();
-          return renderBoxFrame(inner, {
-            width: boxW,
-            style: "rounded",
-            title: diffFrameTitle(body.filePath, diff),
-          });
-        });
+        pair.result.setDiffRenderer(buildDiffRenderer(diff, body.filePath));
       }
     }
     pair.call.setStatus({ exitCode: e.exitCode, elapsedMs: Date.now() - pair.startedAt, summary });
