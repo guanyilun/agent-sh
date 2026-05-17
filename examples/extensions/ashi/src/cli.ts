@@ -1,11 +1,6 @@
 #!/usr/bin/env node
 /**
- * ashi — agent-sh's ash backend with a pi-tui frontend, no shell.
- *
- * Boots the agent-sh kernel directly, skips the PTY shell and the
- * default streaming tui-renderer, and mounts pi-tui as the sole
- * frontend. Demonstrates that the kernel is frontend-agnostic — same
- * backend, tools, slash commands, providers; different presentation.
+ * ashi — ash (agent-sh's built-in agent) in an interactive TUI.
  */
 import { createCore, NoopHistory } from "agent-sh/core";
 import { loadBuiltinExtensions } from "agent-sh/extensions";
@@ -43,10 +38,7 @@ function parseArgs(argv: string[]): AppConfig & { extensions?: string[] } {
     else if ((a === "-e" || a === "--extensions") && argv[i + 1]) {
       extensions.push(...argv[++i]!.split(",").map(s => s.trim()).filter(Boolean));
     } else if (a === "-h" || a === "--help") {
-      process.stdout.write(`ashi — ash backend, pi-tui frontend\n\n` +
-        `Usage: ashi [--provider <name>] [--model <id>] [--api-key <key>] [--base-url <url>]\n` +
-        `            [--backend <name>] [-e <ext>[,<ext>...]]\n\n` +
-        `Reads ~/.agent-sh/settings.json for providers and defaults.\n`);
+      process.stdout.write(MANAGEMENT_HELP + "\n");
       process.exit(0);
     }
   }
@@ -54,7 +46,7 @@ function parseArgs(argv: string[]): AppConfig & { extensions?: string[] } {
   return { shell: "/bin/sh", model, apiKey, baseURL, provider, backend, extensions };
 }
 
-const MANAGEMENT_HELP = `ashi — ash backend, pi-tui frontend
+const MANAGEMENT_HELP = `ashi — ash (agent-sh's built-in agent) in an interactive TUI
 
 Management:
   ashi install <name> [--force]   Install an extension

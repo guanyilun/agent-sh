@@ -1,7 +1,7 @@
 {
   "name": "@guanyilun/ashi",
   "version": "0.1.0",
-  "description": "Ash with a pi-tui frontend — agent-sh's kernel without the shell, rendered through pi's TUI library",
+  "description": "Ash in an interactive TUI — agent-sh's built-in agent without the shell underneath",
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
