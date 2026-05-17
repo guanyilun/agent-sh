@@ -15,6 +15,16 @@ import type {
 
 export type { ChatCompletionMessageParam, ChatCompletionTool };
 
+export type AgentShMessage = ChatCompletionMessageParam & {
+  meta?: Record<string, unknown>;
+};
+
+function stripMeta(m: ChatCompletionMessageParam): ChatCompletionMessageParam {
+  if (!("meta" in m)) return m;
+  const { meta: _meta, ...rest } = m as ChatCompletionMessageParam & { meta?: unknown };
+  return rest as ChatCompletionMessageParam;
+}
+
 export interface LlmClientConfig {
   apiKey: string;
   baseURL?: string;
@@ -61,7 +71,7 @@ export class LlmClient {
     const body = {
       ...rest,
       model: model ?? this.model,
-      messages,
+      messages: messages.map(stripMeta),
       tools: tools?.length ? tools : undefined,
       max_tokens: max_tokens ?? 65536,
       stream: true as const,
@@ -75,7 +85,7 @@ export class LlmClient {
     const body = {
       ...rest,
       model: model ?? this.model,
-      messages,
+      messages: messages.map(stripMeta),
       max_tokens: max_tokens ?? 1024,
     };
     const response = await this.client.chat.completions.create(body as ChatCompletionCreateParamsNonStreaming);
