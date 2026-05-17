@@ -484,7 +484,6 @@ export function mountAshi(
     }
     const pair = entry.pair;
     const body = e.resultDisplay?.body;
-    const ok = e.exitCode === null || e.exitCode === 0;
     if (body?.kind === "diff") {
       const diff = body.diff as DiffStats & Parameters<typeof renderDiff>[0];
       if (!diff.isIdentical) {
@@ -502,7 +501,6 @@ export function mountAshi(
           width: boxW,
           style: "rounded",
           title: diffFrameTitle(body.filePath, diff),
-          bgColor: theme.bgCode(ok ? "toolSuccessBg" : "toolErrorBg"),
         });
         pair.result.setDiff(framed);
       }
