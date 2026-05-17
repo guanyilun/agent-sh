@@ -369,14 +369,14 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
       }
 
       if (useTrueColor) {
-        out.push(padToWidth(`${p.errorBg}${p.error}- ${no} │ ${preserveBg(removedText, p.errorBg)}${p.reset}`, textWidth));
+        out.push(padToWidth(`${p.errorBg}${p.error}- ${no} │ ${preserveBg(removedText, p.errorBg)}`, textWidth) + p.reset);
       } else {
         out.push(`${p.error}- ${no} │ ${removedText}${p.reset}`);
       }
 
       if (addedText !== null && addedNo !== null) {
         if (useTrueColor) {
-          out.push(padToWidth(`${p.successBg}${p.success}+ ${addedNo} │ ${preserveBg(addedText, p.successBg)}${p.reset}`, textWidth));
+          out.push(padToWidth(`${p.successBg}${p.success}+ ${addedNo} │ ${preserveBg(addedText, p.successBg)}`, textWidth) + p.reset);
         } else {
           out.push(`${p.success}+ ${addedNo} │ ${addedText}${p.reset}`);
         }
@@ -389,7 +389,7 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
       const raw = truncateText(line.text, lineTextW);
       const text = lang ? highlightLine(raw, lang) : raw;
       if (useTrueColor) {
-        out.push(padToWidth(`${p.successBg}${p.success}+ ${no} │ ${preserveBg(text, p.successBg)}${p.reset}`, textWidth));
+        out.push(padToWidth(`${p.successBg}${p.success}+ ${no} │ ${preserveBg(text, p.successBg)}`, textWidth) + p.reset);
       } else {
         out.push(`${p.success}+ ${no} │ ${text}${p.reset}`);
       }
@@ -477,8 +477,8 @@ function renderSplitHunk(hunk: DiffHunk, layout: SplitLayout): string[] {
     } else if (row.left.type === "removed") {
       if (useTrueColor) {
         leftCol = padToWidth(
-          `${p.errorBg}${p.error}${leftNo} │ ${preserveBg(leftText, p.errorBg)}${p.reset}`, colWidth,
-        );
+          `${p.errorBg}${p.error}${leftNo} │ ${preserveBg(leftText, p.errorBg)}`, colWidth,
+        ) + p.reset;
       } else {
         leftCol = padToWidth(`${p.error}${leftNo} │ ${leftText}${p.reset}`, colWidth);
       }
@@ -491,8 +491,8 @@ function renderSplitHunk(hunk: DiffHunk, layout: SplitLayout): string[] {
     } else if (row.right.type === "added") {
       if (useTrueColor) {
         rightCol = padToWidth(
-          `${p.successBg}${p.success}${rightNo} │ ${preserveBg(rightText, p.successBg)}${p.reset}`, colWidth,
-        );
+          `${p.successBg}${p.success}${rightNo} │ ${preserveBg(rightText, p.successBg)}`, colWidth,
+        ) + p.reset;
       } else {
         rightCol = padToWidth(`${p.success}${rightNo} │ ${rightText}${p.reset}`, colWidth);
       }

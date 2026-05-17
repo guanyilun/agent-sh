@@ -45,6 +45,45 @@ import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
 
 interface DiffStats { added: number; removed: number; isNewFile: boolean; isIdentical: boolean }
 
+function buildDiffRenderer(
+  diff: DiffStats & Parameters<typeof renderDiff>[0],
+  filePath: string,
+): (width: number) => string[] {
+  return (width) => {
+    const boxW = Math.max(40, width);
+    const contentW = Math.max(20, boxW - 4);
+    const inner = diff.isNewFile
+      ? renderNewFilePreview(diff, 30)
+      : ((): string[] => {
+          const lines = renderDiff(diff, {
+            width: contentW, filePath, trueColor: true, maxLines: 30, mode: "unified",
+          });
+          return lines.length > 1 ? ["", ...lines.slice(1), ""] : lines;
+        })();
+    return renderBoxFrame(inner, {
+      width: boxW,
+      style: "rounded",
+      title: diffFrameTitle(filePath, diff),
+    });
+  };
+}
+
+function renderNewFilePreview(
+  diff: { hunks?: { lines: { type: string; text: string }[] }[] },
+  maxLines: number,
+): string[] {
+  const lines = diff.hunks?.[0]?.lines.filter((l) => l.type === "added") ?? [];
+  const shown = lines.slice(0, maxLines);
+  const overflow = lines.length - shown.length;
+  const noW = String(shown.length).length || 1;
+  const body = shown.map((l, i) => {
+    const no = String(i + 1).padStart(noW);
+    return `${theme.fg("muted", `${no} │`)} ${l.text}`;
+  });
+  if (overflow > 0) body.push(theme.fg("muted", `… ${overflow} more lines`));
+  return ["", ...body, ""];
+}
+
 function diffFrameTitle(filePath: string, diff: DiffStats): string {
   const stats = diff.isNewFile
     ? theme.fg("success", `+${diff.added}`)
@@ -334,7 +373,13 @@ export function mountAshi(
       if (found.kind === "group") {
         found.group.recordCompletion(id, 0, summary);
       } else {
-        if (text) found.pair.result.appendChunk(text);
+        const meta = m.meta as { diff?: unknown; filePath?: string } | undefined;
+        if (meta?.diff && typeof meta.filePath === "string") {
+          const diff = meta.diff as DiffStats & Parameters<typeof renderDiff>[0];
+          if (!diff.isIdentical) {
+            found.pair.result.setDiffRenderer(buildDiffRenderer(diff, meta.filePath));
+          }
+        }
         found.pair.result.finalize({ exitCode: 0, summary });
         found.pair.call.setStatus({ exitCode: 0, elapsedMs: 0, summary });
       }
@@ -485,27 +530,10 @@ export function mountAshi(
     }
     const pair = entry.pair;
     const body = e.resultDisplay?.body;
-    const ok = e.exitCode === null || e.exitCode === 0;
     if (body?.kind === "diff") {
       const diff = body.diff as DiffStats & Parameters<typeof renderDiff>[0];
       if (!diff.isIdentical) {
-        const termW = process.stdout.columns ?? 80;
-        const boxW = Math.max(40, termW);
-        const contentW = Math.max(20, boxW - 4);
-        const diffLines = renderDiff(diff, {
-          width: contentW,
-          filePath: body.filePath,
-          trueColor: true,
-          maxLines: 30,
-        });
-        const inner = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
-        const framed = renderBoxFrame(inner, {
-          width: boxW,
-          style: "rounded",
-          title: diffFrameTitle(body.filePath, diff),
-          bgColor: theme.bgCode(ok ? "toolSuccessBg" : "toolErrorBg"),
-        });
-        pair.result.setDiff(framed);
+        pair.result.setDiffRenderer(buildDiffRenderer(diff, body.filePath));
       }
     }
     pair.call.setStatus({ exitCode: e.exitCode, elapsedMs: Date.now() - pair.startedAt, summary });

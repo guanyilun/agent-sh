@@ -15,11 +15,27 @@ export function registerCapture(
   getStore: () => MultiSessionStore,
 ): Capture {
   let liveEntryIds: (string | null)[] = [];
+  const diffMeta = new Map<string, { diff: unknown; filePath: string }>();
+
+  ctx.bus.on("agent:tool-completed", (e) => {
+    const id = e.toolCallId;
+    const body = e.resultDisplay?.body;
+    if (id && body?.kind === "diff") {
+      diffMeta.set(id, { diff: body.diff, filePath: body.filePath });
+    }
+  });
+
+  const enrich = (m: AgentMessage): AgentMessage => {
+    if (m.role !== "tool" || !m.tool_call_id) return m;
+    const meta = diffMeta.get(m.tool_call_id);
+    if (!meta) return m;
+    return { ...m, meta: { ...m.meta, diff: meta.diff, filePath: meta.filePath } };
+  };
 
   const flush = async (): Promise<void> => {
     const messages = ctx.call("conversation:get-messages") as AgentMessage[] | undefined;
     if (!messages || messages.length <= liveEntryIds.length) return;
-    const newMessages = messages.slice(liveEntryIds.length);
+    const newMessages = messages.slice(liveEntryIds.length).map(enrich);
     const newIds = await getStore().current().appendMessages(newMessages);
     liveEntryIds = [...liveEntryIds, ...newIds];
   };

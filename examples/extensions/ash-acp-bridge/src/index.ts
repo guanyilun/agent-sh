@@ -11,7 +11,7 @@
  * In agent-shell (Emacs):
  *   (setq agent-shell-agentsh-acp-command '("agent-sh-acp"))
  */
-import { createCore, type AgentShellCore } from "agent-sh";
+import { createCore, NoopHistory, type AgentShellCore } from "agent-sh";
 import { loadExtensions } from "agent-sh/extension-loader";
 import { loadBuiltinExtensions } from "agent-sh/extensions";
 import { activateAgent } from "agent-sh/agent";
@@ -483,6 +483,7 @@ async function handleSessionNew(id: number | string, params: Record<string, unkn
     core = createCore({
       model: cliArgs.model,
       provider: cliArgs.provider,
+      history: new NoopHistory(),
     });
     wireEvents(core);
 

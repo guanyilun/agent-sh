@@ -14,6 +14,7 @@ export interface AgentMessage {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
+  meta?: Record<string, unknown>;
 }
 
 export interface SessionHeaderEntry {
