@@ -160,9 +160,6 @@ function normalizeBin(pkg: PackageJson): Record<string, string> {
 
 function maybeNpmBuild(target: string, pkg: PackageJson): void {
   if (!pkg.scripts?.build) return;
-  const binPaths = Object.values(normalizeBin(pkg)).map((p) => path.join(target, p));
-  if (binPaths.length === 0) return;
-  if (binPaths.every((p) => fs.existsSync(p))) return;
   console.log(`Running npm run build in ${target}...`);
   const result = spawnSync("npm", ["run", "build"], { cwd: target, stdio: "inherit" });
   if (result.status !== 0) {
