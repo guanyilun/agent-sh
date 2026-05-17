@@ -495,7 +495,7 @@ export function mountAshi(
         const diffLines = renderDiff(diff, {
           width: contentW,
           filePath: body.filePath,
-          trueColor: true,
+          trueColor: false,
           maxLines: 30,
         });
         const inner = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
