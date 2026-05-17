@@ -45,6 +45,22 @@ import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
 
 interface DiffStats { added: number; removed: number; isNewFile: boolean; isIdentical: boolean }
 
+function renderNewFilePreview(
+  diff: { hunks?: { lines: { type: string; text: string }[] }[] },
+  maxLines: number,
+): string[] {
+  const lines = diff.hunks?.[0]?.lines.filter((l) => l.type === "added") ?? [];
+  const shown = lines.slice(0, maxLines);
+  const overflow = lines.length - shown.length;
+  const noW = String(shown.length).length || 1;
+  const body = shown.map((l, i) => {
+    const no = String(i + 1).padStart(noW);
+    return `${theme.fg("muted", `${no} │`)} ${l.text}`;
+  });
+  if (overflow > 0) body.push(theme.fg("muted", `… ${overflow} more lines`));
+  return ["", ...body, ""];
+}
+
 function diffFrameTitle(filePath: string, diff: DiffStats): string {
   const stats = diff.isNewFile
     ? theme.fg("success", `+${diff.added}`)
@@ -490,13 +506,14 @@ export function mountAshi(
         const termW = process.stdout.columns ?? 80;
         const boxW = Math.max(40, termW);
         const contentW = Math.max(20, boxW - 4);
-        const diffLines = renderDiff(diff, {
-          width: contentW,
-          filePath: body.filePath,
-          trueColor: false,
-          maxLines: 30,
-        });
-        const inner = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
+        const inner = diff.isNewFile
+          ? renderNewFilePreview(diff, 30)
+          : ((): string[] => {
+              const lines = renderDiff(diff, {
+                width: contentW, filePath: body.filePath, trueColor: true, maxLines: 30,
+              });
+              return lines.length > 1 ? ["", ...lines.slice(1), ""] : lines;
+            })();
         const framed = renderBoxFrame(inner, {
           width: boxW,
           style: "rounded",
