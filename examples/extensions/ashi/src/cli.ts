@@ -145,7 +145,7 @@ async function main(): Promise<void> {
   registerDefaultToolRenderers(ctx);
 
   ctx.advise("conversation:format-prior-history", () => null);
-  ctx.advise("system-prompt:build", (base) => `${base}\n\n<cwd>${process.cwd()}</cwd>`);
+  ctx.advise("system-prompt:build", (next) => `${next()}\n\n<cwd>${process.cwd()}</cwd>`);
 
   const handle = mountAshi(ctx, getStore, capture);
   stopFrontend = handle.stop;
