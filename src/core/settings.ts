@@ -62,6 +62,8 @@ export interface Settings {
   defaultProvider?: string;
   /** Preferred agent backend (extension name, e.g. "pi", "claude-code"). */
   defaultBackend?: string;
+  /** Default thinking/reasoning effort level for new sessions ("off"|"low"|"medium"|"high"). */
+  thinkingLevel?: string;
 
   // ── Shell output spill ────────────────────────────────────
   /** Shell output lines before spill-to-tempfile kicks in. */
@@ -149,6 +151,7 @@ const DEFAULTS: Required<Settings> = {
   providers: {},
   defaultProvider: undefined as unknown as string,
   defaultBackend: "ash",
+  thinkingLevel: undefined as unknown as string,
   toolMode: "api" as "api" | "deferred" | "deferred-lookup" | "inline",
   coreTools: [],
   shellTruncateThreshold: 20,

@@ -134,7 +134,7 @@ export class AgentLoop implements AgentBackend {
   private bus: EventBus;
   private llmClient: LlmClient;
   private handlers: HandlerFunctions;
-  private thinkingLevel = "off";
+  private thinkingLevel: string = getSettings().thinkingLevel ?? "off";
   private compositor: Compositor | null = null;
   private toolProtocol: ToolProtocol;
   private instanceId: string;
@@ -352,6 +352,7 @@ export class AgentLoop implements AgentBackend {
         return;
       }
       this.thinkingLevel = level;
+      updateSettings({ thinkingLevel: level });
       this.bus.emit("config:changed", {});
     });
     onPipe("config:get-thinking", () => {
