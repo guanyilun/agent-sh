@@ -1,7 +1,21 @@
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
 import { theme } from "./theme.js";
+import { GROUP_ICONS } from "./components.js";
 import type { ToolCallArgs, ToolCallView } from "./hooks.js";
+
+const TOOL_ICON: Record<string, string> = {
+  read_file: GROUP_ICONS.read!,
+  read: GROUP_ICONS.read!,
+  ls: GROUP_ICONS.read!,
+  grep: GROUP_ICONS.search!,
+  glob: GROUP_ICONS.search!,
+};
+
+function iconPrefix(name: string): string {
+  const icon = TOOL_ICON[name];
+  return icon ? `${theme.fg("warning", icon)} ` : "";
+}
 
 interface StatusOpts { exitCode: number | null; elapsedMs: number; summary?: string }
 
@@ -92,7 +106,7 @@ function readLabel(args: ToolCallArgs): string {
     const to = limit !== undefined ? from + limit - 1 : undefined;
     range = theme.fg("warning", to ? `:${from}-${to}` : `:${from}`);
   }
-  return `${bold("read")} ${accent(path ? relativize(path) : "…")}${range}`;
+  return `${iconPrefix("read")}${bold("read")} ${accent(path ? relativize(path) : "…")}${range}`;
 }
 
 function grepLabel(args: ToolCallArgs): string {
@@ -103,20 +117,20 @@ function grepLabel(args: ToolCallArgs): string {
   const limit = num(r.limit);
   const extras = [glob ? `(${glob})` : "", limit !== undefined ? `limit ${limit}` : ""].filter(Boolean).join(" ");
   const tail = extras ? muted(` ${extras}`) : "";
-  return `${bold("grep")} ${accent(`/${pattern}/`)} ${muted(`in ${scope}`)}${tail}`;
+  return `${iconPrefix("grep")}${bold("grep")} ${accent(`/${pattern}/`)} ${muted(`in ${scope}`)}${tail}`;
 }
 
 function globLabel(args: ToolCallArgs): string {
   const r = parseRaw(args.rawInput);
   const pattern = str(r.pattern) ?? "…";
   const scope = relativize(str(r.path) ?? ".");
-  return `${bold("glob")} ${accent(pattern)} ${muted(`in ${scope}`)}`;
+  return `${iconPrefix("glob")}${bold("glob")} ${accent(pattern)} ${muted(`in ${scope}`)}`;
 }
 
 function lsLabel(args: ToolCallArgs): string {
   const r = parseRaw(args.rawInput);
   const p = str(r.path) ?? ".";
-  return `${bold("ls")} ${accent(relativize(p))}`;
+  return `${iconPrefix("ls")}${bold("ls")} ${accent(relativize(p))}`;
 }
 
 function pathOnlyLabel(name: string, args: ToolCallArgs): string {

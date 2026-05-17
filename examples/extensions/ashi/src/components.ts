@@ -190,7 +190,7 @@ function lineCountHint(buffer: string, exitCode: number | null | undefined): str
   return `${arrow}${theme.fg("muted", label)}`;
 }
 
-const GROUP_ICONS: Record<string, string> = { read: "◆", search: "⌕" };
+export const GROUP_ICONS: Record<string, string> = { read: "◆", search: "⌕" };
 
 interface GroupChild {
   name: string;
