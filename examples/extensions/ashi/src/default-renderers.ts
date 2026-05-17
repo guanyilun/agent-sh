@@ -10,6 +10,10 @@ const TOOL_ICON: Record<string, string> = {
   ls: GROUP_ICONS.read!,
   grep: GROUP_ICONS.search!,
   glob: GROUP_ICONS.search!,
+  edit: "✎",
+  edit_file: "✎",
+  write: "✎",
+  write_file: "✎",
 };
 
 function iconPrefix(name: string): string {
@@ -136,7 +140,7 @@ function lsLabel(args: ToolCallArgs): string {
 function pathOnlyLabel(name: string, args: ToolCallArgs): string {
   const r = parseRaw(args.rawInput);
   const path = str(r.file_path) ?? str(r.path);
-  return `${bold(name)} ${accent(path ? relativize(path) : "…")}`;
+  return `${iconPrefix(name)}${bold(name)} ${accent(path ? relativize(path) : "…")}`;
 }
 
 function genericLabel(args: ToolCallArgs): string {
