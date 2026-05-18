@@ -17,8 +17,8 @@ const TOOL_ICON: Record<string, string> = {
 };
 
 function iconPrefix(name: string): string {
-  const icon = TOOL_ICON[name];
-  return icon ? `${theme.fg("warning", icon)} ` : "";
+  const icon = TOOL_ICON[name] ?? "⚙";
+  return `${theme.fg("warning", icon)} `;
 }
 
 interface StatusOpts { exitCode: number | null; elapsedMs: number; summary?: string }
