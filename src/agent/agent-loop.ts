@@ -1259,12 +1259,15 @@ export class AgentLoop implements AgentBackend {
 
       fullResponseText += text;
 
-      // Record the assistant message via protocol
-      this.toolProtocol.recordAssistant(this.conversation, text, toolCalls, extras);
-      this.bus.emit("conversation:message-appended", {
-        role: "assistant",
-        content: text,
-      });
+      if (text || toolCalls.length > 0) {
+        this.toolProtocol.recordAssistant(this.conversation, text, toolCalls, extras);
+        this.bus.emit("conversation:message-appended", {
+          role: "assistant",
+          content: text,
+        });
+      }
+
+      if (signal.aborted) break;
 
       // No tool calls → agent is done
       if (toolCalls.length === 0) {
@@ -1716,6 +1719,7 @@ export class AgentLoop implements AgentBackend {
 
     const stream = await this.llmClient.stream({ ...requestParams, signal });
 
+    try {
     for await (const chunk of stream) {
       if (signal.aborted) break;
       this.bus.emit("llm:chunk", { chunk });
@@ -1794,6 +1798,10 @@ export class AgentLoop implements AgentBackend {
           }
         }
       }
+    }
+    } catch (e) {
+      // On abort, fall through with whatever was accumulated so far.
+      if (!signal.aborted) throw e;
     }
 
     // Flush any buffered content from the stream filter
