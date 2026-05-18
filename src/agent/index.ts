@@ -31,7 +31,8 @@ function persistedModelFor(providerName: string | undefined): string | undefined
 type ModelCap = { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean };
 
 function defaultReasoningBuilder(level: string): Record<string, unknown> {
-  return level === "off" ? {} : { reasoning_effort: level };
+  if (level === "off") return {};
+  return { reasoning_effort: level === "xhigh" ? "high" : level };
 }
 
 function mergeCaps(
@@ -141,11 +142,12 @@ export default function agentBackend(ctx: ExtensionContext): void {
   ctx.define("llm:get-client", () => llmClient);
   ctx.define("llm:invoke", (messages: { role: string; content: string }[], opts?: { maxTokens?: number; model?: string; reasoningEffort?: string }) => {
     const effort = opts?.reasoningEffort;
+    const clampedEffort = effort === "xhigh" ? "high" : effort;
     return llmClient.complete({
       messages: messages as Parameters<typeof llmClient.complete>[0]["messages"],
       max_tokens: opts?.maxTokens,
       model: opts?.model,
-      ...(effort && effort !== "off" ? { reasoning_effort: effort } : {}),
+      ...(clampedEffort && clampedEffort !== "off" ? { reasoning_effort: clampedEffort } : {}),
     });
   });
 

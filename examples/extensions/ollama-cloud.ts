@@ -12,7 +12,8 @@ const BASE_URL = `${HOST}/v1`;
 const ID = "ollama-cloud";
 
 function buildReasoningParams(level: string, _model?: string): Record<string, unknown> {
-  return { reasoning_effort: level === "off" ? "none" : level };
+  if (level === "off") return { reasoning_effort: "none" };
+  return { reasoning_effort: level === "xhigh" ? "high" : level };
 }
 
 async function fetchModels(apiKey: string) {
