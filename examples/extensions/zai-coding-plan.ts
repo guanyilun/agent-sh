@@ -19,7 +19,8 @@ const DEFAULT_MODELS = [
 
 function buildReasoningParams(level: string, _model?: string): Record<string, unknown> {
   if (level === "off") return { thinking: { type: "disabled" } };
-  return { thinking: { type: "enabled" }, reasoning_effort: level };
+  const effort = level === "xhigh" ? "high" : level;
+  return { thinking: { type: "enabled" }, reasoning_effort: effort };
 }
 
 export default function activate(ctx: AgentContext): void {
