@@ -101,6 +101,10 @@
     "./cli/auth": {
       "types": "./dist/cli/auth/cli.d.ts",
       "default": "./dist/cli/auth/cli.js"
+    },
+    "./auth": {
+      "types": "./dist/cli/auth/keys.d.ts",
+      "default": "./dist/cli/auth/keys.js"
     }
   },
   "files": [
