@@ -1,6 +1,6 @@
 {
   "name": "@guanyilun/ashi",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Ash in an interactive TUI — agent-sh's built-in agent without the shell underneath",
   "type": "module",
   "main": "dist/cli.js",
@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-tui": "^0.74.0",
-    "agent-sh": "^0.13.2",
+    "agent-sh": "^0.13.3",
     "chalk": "^5.5.0",
     "cli-highlight": "^2.1.11"
   },
