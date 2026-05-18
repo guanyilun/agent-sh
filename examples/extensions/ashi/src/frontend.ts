@@ -40,7 +40,7 @@ import { resumeSession } from "./session-commands.js";
 import { applyBranchMessages } from "./commands.js";
 import type { Capture } from "./capture.js";
 import { execSync } from "node:child_process";
-import { renderDiff } from "agent-sh/utils/diff-renderer.js";
+import { renderDiff, detectLanguage, highlightLine } from "agent-sh/utils/diff-renderer.js";
 import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
 
 interface DiffStats { added: number; removed: number; isNewFile: boolean; isIdentical: boolean }
@@ -53,7 +53,7 @@ function buildDiffRenderer(
     const boxW = Math.max(40, width);
     const contentW = Math.max(20, boxW - 4);
     const inner = diff.isNewFile
-      ? renderNewFilePreview(diff, 30)
+      ? renderNewFilePreview(diff, 30, filePath)
       : ((): string[] => {
           const lines = renderDiff(diff, {
             width: contentW, filePath, trueColor: true, maxLines: Number.MAX_SAFE_INTEGER, mode: "unified",
@@ -71,14 +71,16 @@ function buildDiffRenderer(
 function renderNewFilePreview(
   diff: { hunks?: { lines: { type: string; text: string }[] }[] },
   maxLines: number,
+  filePath: string,
 ): string[] {
   const lines = diff.hunks?.[0]?.lines.filter((l) => l.type === "added") ?? [];
   const shown = lines.slice(0, maxLines);
   const overflow = lines.length - shown.length;
   const noW = String(shown.length).length || 1;
+  const lang = detectLanguage(filePath);
   const body = shown.map((l, i) => {
     const no = String(i + 1).padStart(noW);
-    return `${theme.fg("muted", `${no} │`)} ${l.text}`;
+    return `${theme.fg("muted", `${no} │`)} ${highlightLine(l.text, lang)}`;
   });
   if (overflow > 0) body.push(theme.fg("muted", `… ${overflow} more lines`));
   return ["", ...body, ""];

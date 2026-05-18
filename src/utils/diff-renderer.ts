@@ -51,7 +51,7 @@ const EXT_TO_LANG: Record<string, string> = {
   ".vim": "vim", ".dockerfile": "dockerfile",
 };
 
-function detectLanguage(filePath?: string): string | undefined {
+export function detectLanguage(filePath?: string): string | undefined {
   if (!filePath) return undefined;
   const dot = filePath.lastIndexOf(".");
   if (dot === -1) {
@@ -68,7 +68,7 @@ function detectLanguage(filePath?: string): string | undefined {
  * Syntax-highlight a single line of code.
  * Returns the original text if highlighting fails or no language detected.
  */
-function highlightLine(text: string, language?: string): string {
+export function highlightLine(text: string, language?: string): string {
   if (!language || text.trim() === "") return text;
   try {
     // cli-highlight adds a trailing newline; strip it
