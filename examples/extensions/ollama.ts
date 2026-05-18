@@ -1,18 +1,16 @@
 /**
- * Ollama provider extension — local daemon and Ollama Cloud.
+ * Ollama provider extension — local daemon or Ollama Cloud.
  *
- *   OLLAMA_API_KEY  → Ollama Cloud (https://ollama.com)
- *   OLLAMA_HOST     → local host override (default http://localhost:11434)
+ * Cloud auth (any of):
+ *   agent-sh auth login ollama-cloud   # preferred
+ *   OLLAMA_API_KEY=...                 # env fallback
+ *
+ * Local host:
+ *   OLLAMA_HOST (default http://localhost:11434)
  *
  * Catalog comes from /api/tags; per-model context length is fetched
  * from /api/show (model_info["${arch}.context_length"]). Chat goes
  * through the OpenAI-compatible /v1/chat/completions shim.
- *
- * Setup (cloud):
- *   export OLLAMA_API_KEY="your-key"
- *
- * Setup (local):
- *   ollama serve   # default http://localhost:11434
  *
  * Usage:
  *   agent-sh -e ./examples/extensions/ollama.ts
@@ -20,22 +18,23 @@
  *   # Or add to settings.json:
  *   { "extensions": ["./examples/extensions/ollama.ts"] }
  */
-import type { ExtensionContext } from "agent-sh/types";
+import { resolveApiKey } from "agent-sh/auth";
+import type { AgentContext } from "agent-sh/types";
 
 const ECHO_REASONING_PATTERNS: RegExp[] = [/deepseek/i];
 
-export default function activate(ctx: ExtensionContext): void {
-  const apiKey = process.env.OLLAMA_API_KEY;
-  const host = apiKey
+export default function activate(ctx: AgentContext): void {
+  const cloudKey = resolveApiKey("ollama-cloud").key ?? process.env.OLLAMA_API_KEY;
+  const host = cloudKey
     ? "https://ollama.com"
     : (process.env.OLLAMA_HOST ?? "http://localhost:11434").replace(/\/$/, "");
-  const id = apiKey ? "ollama-cloud" : "ollama";
+  const id = cloudKey ? "ollama-cloud" : "ollama";
 
   // OpenAI SDK rejects an empty apiKey; the local daemon ignores the value.
-  const sdkKey = apiKey || "no-key";
+  const sdkKey = cloudKey || "no-key";
   const baseURL = `${host}/v1`;
   const headers: Record<string, string> = {};
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  if (cloudKey) headers.Authorization = `Bearer ${cloudKey}`;
 
   ctx.agent.providers.configure(id, {
     reasoningParams: (level) => {
