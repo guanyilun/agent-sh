@@ -1386,7 +1386,7 @@ export class AgentLoop implements AgentBackend {
 
         // Truncate large outputs to avoid blowing context.
         let content = result.content;
-        const maxBytes = tool.maxResultBytes ?? 16_384; // ~4k tokens
+        const maxBytes = tool.maxResultBytes ?? 100_000; // ~25k tokens
         if (content.length > maxBytes) {
           const headBytes = Math.floor(maxBytes * 0.6);
           const tailBytes = maxBytes - headBytes;
