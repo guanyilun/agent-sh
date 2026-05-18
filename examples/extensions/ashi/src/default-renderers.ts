@@ -145,7 +145,7 @@ function pathOnlyLabel(name: string, args: ToolCallArgs): string {
 
 function genericLabel(args: ToolCallArgs): string {
   const detail = args.displayDetail ? ` ${muted(args.displayDetail)}` : "";
-  return `${bold(args.title)}${detail}`;
+  return `${iconPrefix(args.name)}${bold(args.title)}${detail}`;
 }
 
 export function registerDefaultToolRenderers(ctx: ExtensionContext): void {
