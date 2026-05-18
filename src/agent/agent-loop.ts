@@ -129,7 +129,7 @@ export class AgentLoop implements AgentBackend {
   private lastErrorByTool = new Map<string, string>(); // tool → error summary
   private lastErrorByFile = new Map<string, string>(); // file path → error summary
 
-  private static readonly THINKING_LEVELS = ["off", "low", "medium", "high"];
+  private static readonly THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"];
 
   private bus: EventBus;
   private llmClient: LlmClient;
@@ -593,7 +593,8 @@ export class AgentLoop implements AgentBackend {
     if (mode.supportsReasoningEffort === false) return {};
     if (mode.buildReasoningParams) return mode.buildReasoningParams(this.thinkingLevel);
     if (this.thinkingLevel === "off") return {};
-    return { reasoning_effort: this.thinkingLevel };
+    const effort = this.thinkingLevel === "xhigh" ? "high" : this.thinkingLevel;
+    return { reasoning_effort: effort };
   }
 
 
