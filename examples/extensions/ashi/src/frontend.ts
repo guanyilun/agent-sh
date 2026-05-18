@@ -56,7 +56,7 @@ function buildDiffRenderer(
       ? renderNewFilePreview(diff, 30)
       : ((): string[] => {
           const lines = renderDiff(diff, {
-            width: contentW, filePath, trueColor: true, maxLines: 30, mode: "unified",
+            width: contentW, filePath, trueColor: true, maxLines: Number.MAX_SAFE_INTEGER, mode: "unified",
           });
           return lines.length > 1 ? ["", ...lines.slice(1), ""] : lines;
         })();
