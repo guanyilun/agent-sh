@@ -15,7 +15,6 @@ import { AgentLoop } from "./agent-loop.js";
 import { LlmClient } from "../utils/llm-client.js";
 import { createLlmFacade } from "../utils/llm-facade.js";
 import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../core/settings.js";
-import { PACKAGE_VERSION } from "../utils/package-version.js";
 import { discoverSkills } from "./skills.js";
 import { resolveApiKey } from "../cli/auth/keys.js";
 import activateOpenrouter from "./providers/openrouter.js";
@@ -259,13 +258,6 @@ export default function agentBackend(ctx: ExtensionContext): void {
             });
           },
         });
-        bus.emit("agent:info", {
-          name: "ash",
-          version: PACKAGE_VERSION,
-          model: llmClient.model,
-          provider: modes[initialModeIndex]?.provider,
-          contextWindow: modes[initialModeIndex]?.contextWindow,
-        });
       },
     });
   });
@@ -366,10 +358,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       };
     });
     bus.emit("config:set-modes", { modes: newModes });
-
-    bus.emit("agent:info", { name: "ash", version: PACKAGE_VERSION, model: switchModel, provider: name, contextWindow: p.contextWindow });
     bus.emit("ui:info", { message: `Switched to ${name} (${switchModel})` });
-    bus.emit("config:changed", {});
   });
 
   bus.onPipe("banner:collect", (e) => {
