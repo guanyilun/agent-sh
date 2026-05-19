@@ -99,6 +99,7 @@ export class AgentLoop implements AgentBackend {
   private ctorListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
   private ctorPipeListeners: Array<{ event: string; fn: (...args: any[]) => any }> = [];
   private lastProjectSkillNames = new Set<string>();
+  private lastAgentInfo: { model?: string; provider?: string; contextWindow?: number } | null = null;
 
   // ── Session telemetry — behavioral self-awareness ──────────────
   // Every ash deserves to know what it's been doing. This tracks the
@@ -235,16 +236,7 @@ export class AgentLoop implements AgentBackend {
           message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
         });
       }
-      const active = this.modes[this.currentModeIndex];
-      if (active && active.contextWindow !== prev?.contextWindow) {
-        this.bus.emit("agent:info", {
-          name: "ash",
-          version: PACKAGE_VERSION,
-          model: active.model,
-          provider: active.provider,
-          contextWindow: active.contextWindow,
-        });
-      }
+      this.emitAgentInfoIfChanged();
       this.bus.emit("config:changed", {});
     });
     // Fires before wire() too — agent-backend emits this from
@@ -260,6 +252,7 @@ export class AgentLoop implements AgentBackend {
       } else {
         this.llmClient.model = m.model;
       }
+      this.emitAgentInfoIfChanged();
       this.bus.emit("config:changed", {});
     });
     const getToolsPipe = () => ({ tools: this.getTools() });
@@ -320,7 +313,7 @@ export class AgentLoop implements AgentBackend {
         this.llmClient.model = m.model;
       }
       const label = m.provider ? `${m.provider}: ${m.model}` : m.model;
-      this.bus.emit("agent:info", { name: "ash", version: PACKAGE_VERSION, model: m.model, provider: m.provider, contextWindow: m.contextWindow });
+      this.emitAgentInfoIfChanged();
 
       // Persist as the new default — selection survives restart.
       // Safe even for dynamic providers: agent-backend defers mode
@@ -606,6 +599,23 @@ export class AgentLoop implements AgentBackend {
 
   private get currentMode(): AgentMode {
     return this.modes[this.currentModeIndex];
+  }
+
+  private emitAgentInfoIfChanged(): void {
+    const m = this.modes[this.currentModeIndex];
+    if (!m) return;
+    const prev = this.lastAgentInfo;
+    if (prev && prev.model === m.model && prev.provider === m.provider && prev.contextWindow === m.contextWindow) {
+      return;
+    }
+    this.lastAgentInfo = { model: m.model, provider: m.provider, contextWindow: m.contextWindow };
+    this.bus.emit("agent:info", {
+      name: "ash",
+      version: PACKAGE_VERSION,
+      model: m.model,
+      provider: m.provider,
+      contextWindow: m.contextWindow,
+    });
   }
 
   private get currentModel(): string {
