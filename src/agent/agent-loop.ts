@@ -222,7 +222,13 @@ export class AgentLoop implements AgentBackend {
         const newIdx = this.modes.findIndex(
           (m) => m.model === prev.model && m.provider === prev.provider,
         );
-        if (newIdx !== -1) this.currentModeIndex = newIdx;
+        if (newIdx !== -1) {
+          this.currentModeIndex = newIdx;
+          const next = this.modes[newIdx]!;
+          if (next.providerConfig && next.providerConfig !== prev.providerConfig) {
+            this.llmClient.reconfigure({ ...next.providerConfig, model: next.model });
+          }
+        }
       }
       if (activePreserved && prev) {
         this.bus.emit("ui:info", {

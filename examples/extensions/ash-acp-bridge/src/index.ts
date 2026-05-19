@@ -446,10 +446,13 @@ function getModelsPayload(): Record<string, unknown> | undefined {
   if (!core) return undefined;
   const info = core.bus.emitPipe("config:get-models", { models: [], active: null });
   if (!info.models.length) return undefined;
+  const idFor = (m: { model: string; provider: string }) =>
+    m.provider ? `${m.model}@${m.provider}` : m.model;
+  const current = info.active ?? info.models[0]!;
   return {
-    currentModelId: info.active?.model ?? info.models[0]?.model,
+    currentModelId: idFor(current),
     availableModels: info.models.map((m) => ({
-      modelId: m.model,
+      modelId: idFor(m),
       name: m.provider ? `${m.provider}/${m.model}` : m.model,
       description: m.provider ? `Provider: ${m.provider}` : "",
     })),
