@@ -436,6 +436,8 @@ export class AgentLoop implements AgentBackend {
         this.bus.emit("conversation:message-appended", { role: "system", content: note });
       }
     });
+    this.lastAgentInfo = null;
+    this.emitAgentInfoIfChanged();
   }
 
   /** Unsubscribe from bus events — deactivates this backend. */
