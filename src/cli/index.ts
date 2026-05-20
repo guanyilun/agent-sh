@@ -206,7 +206,8 @@ async function main(): Promise<void> {
     // Ignore errors, we already have process.env as fallback
   }
 
-  if (!config.apiKey && !config.provider && !anyProviderConfigured()) {
+  const selectedBackend = config.backend ?? getSettings().defaultBackend ?? "ash";
+  if (selectedBackend === "ash" && !config.apiKey && !config.provider && !anyProviderConfigured()) {
     console.error(
       "\nagent-sh: no LLM provider configured.\n\n" +
       "  Run `agent-sh auth login` to store an API key, or\n" +
