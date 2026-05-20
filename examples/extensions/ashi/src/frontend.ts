@@ -175,6 +175,7 @@ export function mountAshi(
 
   const chat = new Container();
   const footerSlot = new Container();
+  const queueSlot = new Container();
   const editor = new Editor(tui, editorTheme(), { paddingX: 1 });
   editor.setAutocompleteProvider(new BusAutocompleteProvider(bus));
   editor.onSubmit = (text) => {
@@ -186,6 +187,12 @@ export function mountAshi(
       const name = sp === -1 ? query : query.slice(0, sp);
       const args = sp === -1 ? "" : query.slice(sp + 1).trim();
       bus.emit("command:execute", { name, args });
+      return;
+    }
+    if (processing) {
+      queuedQueries.push(query);
+      renderQueueSlot();
+      tui.requestRender();
       return;
     }
     bus.emit("agent:submit", { query });
@@ -211,6 +218,7 @@ export function mountAshi(
 
   tui.addChild(chat);
   tui.addChild(footerSlot);
+  tui.addChild(queueSlot);
   tui.addChild(editor);
   tui.addChild(statusFooter);
   tui.setFocus(editor);
@@ -227,6 +235,16 @@ export function mountAshi(
   let lastToolResult: ToolResultView | null = null;
   let loader: Loader | null = null;
   let processing = false;
+  const queuedQueries: string[] = [];
+
+  const renderQueueSlot = (): void => {
+    queueSlot.clear();
+    for (const q of queuedQueries) {
+      const oneLine = q.replace(/\s+/g, " ");
+      const preview = oneLine.length > 80 ? oneLine.slice(0, 77) + "…" : oneLine;
+      queueSlot.addChild(new InfoLine(`↳ queued: ${preview}`));
+    }
+  };
   let hideThinking = true;
 
   const renderState = (): { state: Record<string, unknown>; invalidate: () => void } => ({
@@ -552,6 +570,11 @@ export function mountAshi(
     chat.addChild(new Spacer(1));
     refreshFooterStats();
     refreshBranch();
+    const next = queuedQueries.shift();
+    if (next !== undefined) {
+      renderQueueSlot();
+      bus.emit("agent:submit", { query: next });
+    }
     tui.requestRender();
   });
 
@@ -709,6 +732,13 @@ export function mountAshi(
     if (isKeyRelease(data) || isKeyRepeat(data)) return;
     if (matchesKey(data, "escape") && processing) {
       bus.emit("agent:cancel-request", {});
+      return { consume: true };
+    }
+    if (matchesKey(data, "up") && queuedQueries.length > 0 && editor.getText().length === 0) {
+      const last = queuedQueries.pop()!;
+      renderQueueSlot();
+      editor.setText(last);
+      tui.requestRender();
       return { consume: true };
     }
     if (matchesKey(data, "ctrl+c")) {
