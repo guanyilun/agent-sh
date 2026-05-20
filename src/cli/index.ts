@@ -21,6 +21,7 @@ import type { AppConfig } from "../shell/host-types.js";
  * Node.js process doesn't have (e.g. when launched from an IDE).
  */
 async function captureShellEnvAsync(shell: string): Promise<Record<string, string>> {
+  if (process.env.AGENT_SH_SKIP_SHELL_ENV) return {};
   return new Promise((resolve) => {
     let settled = false;
     const done = (result: Record<string, string>): void => {

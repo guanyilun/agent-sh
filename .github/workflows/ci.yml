@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -17,6 +18,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm run build
+      - run: npm test
 
   cross-platform:
     # Manual trigger only. Run from the Actions tab when touching executor.ts,
