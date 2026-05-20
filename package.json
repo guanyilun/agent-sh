@@ -121,6 +121,7 @@
     "dev": "tsx src/cli/index.ts",
     "build": "tsc",
     "start": "node dist/cli/index.js",
+    "test": "npm run build && node --import tsx --test $(find tests -name '*.test.ts' -type f)",
     "prepare": "test -d dist || npm run build"
   },
   "keywords": [
