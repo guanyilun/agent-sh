@@ -635,6 +635,9 @@ export function mountAshi(
 
   // ── Pickers ────────────────────────────────────────────────────
   let pickerOpen = false;
+  let activeSessionPicker: SelectList | null = null;
+  let activeSessionRepopulate: ((keepIndex?: number) => boolean) | null = null;
+  let activeSessionClose: (() => void) | null = null;
 
   const openTreePicker = async (): Promise<void> => {
     if (pickerOpen) return;
@@ -680,38 +683,60 @@ export function mountAshi(
 
   const openSessionPicker = async (): Promise<void> => {
     if (pickerOpen) return;
-    const currentId = getStore().current().id;
-    const list = getStore().listSessions().filter((s) => s.id !== currentId);
-    if (list.length === 0) {
-      bus.emit("ui:info", { message: "no past sessions in this cwd" });
-      return;
-    }
-    const items: SelectItem[] = list.map((s) => ({
-      value: s.id,
-      label: formatSessionRow(s, false),
-    }));
-    const picker = new SelectList(items, 15, selectListTheme());
+
+    const hint = new InfoLine("↑↓ move · enter: resume · d: delete · esc: cancel");
 
     const close = (): void => {
+      if (activeSessionPicker) footerSlot.removeChild(activeSessionPicker);
+      footerSlot.removeChild(hint);
+      activeSessionPicker = null;
+      activeSessionRepopulate = null;
+      activeSessionClose = null;
       pickerOpen = false;
-      footerSlot.removeChild(picker);
       tui.setFocus(editor);
       tui.requestRender();
     };
 
-    picker.onSelect = async (item) => {
-      const id = item.value;
-      close();
-      resumeSession(ctx, getStore, capture, id);
-      bus.emit("ui:info", { message: `resumed session ${id}` });
-      await rebuildChat();
-      refreshFooterStats();
+    const populate = (keepIndex?: number): boolean => {
+      if (activeSessionPicker) footerSlot.removeChild(activeSessionPicker);
+      const currentId = getStore().current().id;
+      const list = getStore().listSessions().filter((s) => s.id !== currentId);
+      if (list.length === 0) {
+        activeSessionPicker = null;
+        return false;
+      }
+      const items: SelectItem[] = list.map((s) => ({
+        value: s.id,
+        label: formatSessionRow(s, false),
+      }));
+      const picker = new SelectList(items, 15, selectListTheme());
+      if (keepIndex !== undefined) {
+        picker.setSelectedIndex(Math.min(keepIndex, items.length - 1));
+      }
+      picker.onSelect = async (item) => {
+        const id = item.value;
+        close();
+        resumeSession(ctx, getStore, capture, id);
+        bus.emit("ui:info", { message: `resumed session ${id}` });
+        await rebuildChat();
+        refreshFooterStats();
+      };
+      picker.onCancel = close;
+      activeSessionPicker = picker;
+      footerSlot.addChild(picker);
+      tui.setFocus(picker);
+      return true;
     };
-    picker.onCancel = close;
 
+    footerSlot.addChild(hint);
+    if (!populate()) {
+      footerSlot.removeChild(hint);
+      bus.emit("ui:info", { message: "no past sessions in this cwd" });
+      return;
+    }
     pickerOpen = true;
-    footerSlot.addChild(picker);
-    tui.setFocus(picker);
+    activeSessionRepopulate = populate;
+    activeSessionClose = close;
     tui.requestRender();
   };
 
@@ -732,6 +757,24 @@ export function mountAshi(
     if (isKeyRelease(data) || isKeyRepeat(data)) return;
     if (matchesKey(data, "escape") && processing) {
       bus.emit("agent:cancel-request", {});
+      return { consume: true };
+    }
+    if (activeSessionPicker && matchesKey(data, "d")) {
+      const selected = activeSessionPicker.getSelectedItem();
+      if (selected) {
+        const currentId = getStore().current().id;
+        const idx = getStore().listSessions()
+          .filter((s) => s.id !== currentId)
+          .findIndex((s) => s.id === selected.value);
+        try {
+          getStore().deleteSession(selected.value);
+        } catch (e) {
+          bus.emit("ui:error", { message: `delete failed: ${(e as Error).message}` });
+          return { consume: true };
+        }
+        if (!activeSessionRepopulate?.(idx)) activeSessionClose?.();
+        tui.requestRender();
+      }
       return { consume: true };
     }
     if (matchesKey(data, "up") && queuedQueries.length > 0 && editor.getText().length === 0) {

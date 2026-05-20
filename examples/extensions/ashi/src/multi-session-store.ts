@@ -81,6 +81,14 @@ export class MultiSessionStore {
     return this.currentStore;
   }
 
+  deleteSession(id: string): void {
+    if (id === this.currentStore.id) throw new Error("cannot delete the active session");
+    const filePath = this.sessionFile(id);
+    for (const p of [filePath, filePath + ".leaf", filePath + ".meta"]) {
+      try { fs.unlinkSync(p); } catch { /* missing siblings are fine */ }
+    }
+  }
+
   listSessions(): SessionInfo[] {
     let names: string[];
     try { names = fs.readdirSync(this.dir); } catch { return []; }
