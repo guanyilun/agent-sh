@@ -104,3 +104,68 @@ test("`agent-sh --help` exits 0 and prints usage", async () => {
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+const BUNDLED_FIXTURE = "secret-guard";
+const BUNDLED_TARGET_FILE = `${BUNDLED_FIXTURE}.ts`;
+
+test("`agent-sh install <bundled-single-file>` copies the file into <HOME>/extensions/", async () => {
+  const home = freshHome();
+  try {
+    const { code, stdout } = await runCli(["install", BUNDLED_FIXTURE], home);
+    assert.equal(code, 0, stdout);
+    assert.ok(
+      existsSync(join(home, "extensions", BUNDLED_TARGET_FILE)),
+      `expected ${BUNDLED_TARGET_FILE} under <home>/extensions/`,
+    );
+    assert.match(stdout, /Installed:/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("`agent-sh install <unknown>` exits 1 and lists available bundled extensions", async () => {
+  const home = freshHome();
+  try {
+    const { code, stderr } = await runCli(["install", "definitely-not-bundled"], home);
+    assert.equal(code, 1);
+    assert.match(stderr, /No bundled extension named/);
+    assert.match(stderr, new RegExp(BUNDLED_FIXTURE));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("`agent-sh install` of an already-installed extension refuses without --force, then succeeds with --force", async () => {
+  const home = freshHome();
+  try {
+    const first = await runCli(["install", BUNDLED_FIXTURE], home);
+    assert.equal(first.code, 0, first.stdout);
+
+    const second = await runCli(["install", BUNDLED_FIXTURE], home);
+    assert.equal(second.code, 1);
+    assert.match(second.stderr, /already exists/);
+
+    const third = await runCli(["install", BUNDLED_FIXTURE, "--force"], home);
+    assert.equal(third.code, 0, third.stdout);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("install then uninstall removes the extension from disk", async () => {
+  const home = freshHome();
+  try {
+    const installed = await runCli(["install", BUNDLED_FIXTURE], home);
+    assert.equal(installed.code, 0, installed.stdout);
+    assert.ok(existsSync(join(home, "extensions", BUNDLED_TARGET_FILE)));
+
+    const removed = await runCli(["uninstall", BUNDLED_TARGET_FILE], home);
+    assert.equal(removed.code, 0, removed.stdout);
+    assert.ok(
+      !existsSync(join(home, "extensions", BUNDLED_TARGET_FILE)),
+      "extension file should be gone after uninstall",
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
