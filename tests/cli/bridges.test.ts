@@ -79,25 +79,29 @@ function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
 }
 
-test("pi-bridge installs and the CLI reaches the banner under --backend pi", { timeout: 120000 }, async () => {
-  const home = freshHome();
-  try {
-    const inst = await runOnce(["install", "pi-bridge"], home, 90000);
-    assert.equal(inst.code, 0, `install failed:\nstdout: ${inst.stdout}\nstderr: ${inst.stderr}`);
+const BRIDGES: Array<{ ext: string; backend: string }> = [
+  { ext: "pi-bridge", backend: "pi" },
+  { ext: "opencode-bridge", backend: "opencode" },
+  { ext: "claude-code-bridge", backend: "claude-code" },
+];
 
-    const launch = await runUntilBanner(["--backend", "pi"], home, 30000);
-    const cleanStdout = stripAnsi(launch.stdout);
-    const cleanStderr = stripAnsi(launch.stderr);
+for (const { ext, backend } of BRIDGES) {
+  test(`${ext} installs and the CLI reaches the banner under --backend ${backend}`, { timeout: 120000 }, async () => {
+    const home = freshHome();
+    try {
+      const inst = await runOnce(["install", ext], home, 90000);
+      assert.equal(inst.code, 0, `install failed:\nstdout: ${inst.stdout}\nstderr: ${inst.stderr}`);
 
-    assert.match(cleanStdout, /Backend:\s+pi/, `banner missing.\nstdout: ${cleanStdout}\nstderr: ${cleanStderr}`);
+      const launch = await runUntilBanner(["--backend", backend], home, 30000);
+      const cleanStdout = stripAnsi(launch.stdout);
+      const cleanStderr = stripAnsi(launch.stderr);
 
-    // Kernel-level smoke: no module-resolution or syntax errors from loading
-    // the extension. We don't assert anything about pi's own auth state —
-    // pi-bridge surfaces that via ui:error, which is its contract, not ours.
-    assert.doesNotMatch(cleanStderr, /Cannot find module/i, cleanStderr);
-    assert.doesNotMatch(cleanStderr, /SyntaxError/, cleanStderr);
-    assert.doesNotMatch(cleanStderr, /UnhandledPromiseRejection/, cleanStderr);
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
-});
+      assert.match(cleanStdout, new RegExp(`Backend:\\s+${backend}`), `banner missing.\nstdout: ${cleanStdout}\nstderr: ${cleanStderr}`);
+      assert.doesNotMatch(cleanStderr, /Cannot find module/i, cleanStderr);
+      assert.doesNotMatch(cleanStderr, /SyntaxError/, cleanStderr);
+      assert.doesNotMatch(cleanStderr, /UnhandledPromiseRejection/, cleanStderr);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+}
