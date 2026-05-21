@@ -25,6 +25,16 @@ import activateOpenrouter from "./providers/openrouter.js";
 import activateOpenai from "./providers/openai.js";
 import activateOpenaiCompatible from "./providers/openai-compatible.js";
 import activateDeepseek from "./providers/deepseek.js";
+import { findBash } from "../utils/executor.js";
+import { createBashTool } from "./tools/bash.js";
+import { createPwshTool } from "./tools/pwsh.js";
+import { createReadFileTool, type FileReadCache } from "./tools/read-file.js";
+import { createWriteFileTool } from "./tools/write-file.js";
+import { createEditFileTool } from "./tools/edit-file.js";
+import { createGrepTool } from "./tools/grep.js";
+import { createGlobTool } from "./tools/glob.js";
+import { createLsTool } from "./tools/ls.js";
+import { createListSkillsTool } from "./tools/list-skills.js";
 
 function persistedModelFor(providerName: string | undefined): string | undefined {
   if (!providerName) return undefined;
@@ -217,6 +227,36 @@ export default function agentBackend(ctx: ExtensionContext): void {
     },
   };
   (ctx as { agent?: AgentSurface }).agent = agentSurface;
+
+  // Stateless core tools register at agentBackend activate — before any
+  // extension loads — so extensions that look them up at activate time
+  // (e.g. scheme.ts binding bash into its runtime) see them. Stateful
+  // tools like conversation_recall live in AgentLoop because they need
+  // its per-session conversation state.
+  const fileReadCache: FileReadCache = new Map();
+  // AgentLoop invalidates entries on compaction + write-tool side effects.
+  ctx.define("agent:file-read-cache", () => fileReadCache);
+  const getCwd = () => ctx.call("cwd") as string;
+  const getEnv = () => {
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v !== undefined) env[k] = v;
+    }
+    return env;
+  };
+  if (findBash() !== null) {
+    agentSurface.registerTool(createBashTool({ getCwd, getEnv, bus }));
+  }
+  if (process.platform === "win32") {
+    agentSurface.registerTool(createPwshTool({ getCwd, getEnv, bus }));
+  }
+  agentSurface.registerTool(createReadFileTool(getCwd, fileReadCache));
+  agentSurface.registerTool(createWriteFileTool(getCwd));
+  agentSurface.registerTool(createEditFileTool(getCwd));
+  agentSurface.registerTool(createGrepTool(getCwd));
+  agentSurface.registerTool(createGlobTool(getCwd));
+  agentSurface.registerTool(createLsTool(getCwd));
+  agentSurface.registerTool(createListSkillsTool(getCwd));
 
   // Cache of resolved providers — settings-overlaid registrations
   // keyed by id. Rebuilt on every agent:providers:changed.

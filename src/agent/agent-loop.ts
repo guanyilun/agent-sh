@@ -32,18 +32,8 @@ import { wrapTrailingWithDynamicContext } from "../utils/message-utils.js";
 import { getSettings, updateSettings } from "../core/settings.js";
 import { createToolProtocol, type ToolProtocol, type PendingToolCall as ProtocolPendingToolCall, type ToolResult as ProtocolToolResult } from "./tool-protocol.js";
 
-// Core tool factories
-import { createBashTool } from "./tools/bash.js";
-import { createPwshTool } from "./tools/pwsh.js";
-import { findBash } from "../utils/executor.js";
-import { createReadFileTool, type FileReadCache } from "./tools/read-file.js";
-import { createWriteFileTool } from "./tools/write-file.js";
-import { createEditFileTool } from "./tools/edit-file.js";
-import { createGrepTool } from "./tools/grep.js";
-import { createGlobTool } from "./tools/glob.js";
-import { createLsTool } from "./tools/ls.js";
-import { createListSkillsTool } from "./tools/list-skills.js";
 import { discoverGlobalSkills, discoverProjectSkills } from "./skills.js";
+import type { FileReadCache } from "./tools/read-file.js";
 
 type PendingToolCall = ProtocolPendingToolCall;
 
@@ -93,7 +83,7 @@ export class AgentLoop implements AgentBackend {
   private toolRegistry: ToolRegistry;
   private history: HistoryAdapter;
   private conversation: ConversationState;
-  private fileReadCache: FileReadCache = new Map();
+  private fileReadCache: FileReadCache;
   /** Active mode. Catalog navigation pulls fresh via `agent:get-modes`. */
   private activeMode: AgentMode;
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
@@ -146,6 +136,7 @@ export class AgentLoop implements AgentBackend {
     this.compositor = config.compositor ?? null;
     this.instanceId = config.instanceId ?? "unknown";
     this.toolRegistry = new ToolRegistry(this.handlers);
+    this.fileReadCache = this.handlers.call("agent:file-read-cache") as FileReadCache;
 
     // Shell-history-shaped log. Default writes go through the advisable
     // `history:append` handler registered below; extensions swap the
@@ -679,28 +670,9 @@ export class AgentLoop implements AgentBackend {
   }
 
   private registerCoreTools(): void {
-    const getCwd = () => this.handlers.call("cwd") as string;
-    const getEnv = () => {
-      const env: Record<string, string> = {};
-      for (const [k, v] of Object.entries(process.env)) {
-        if (v !== undefined) env[k] = v;
-      }
-      return env;
-    };
-
-    if (findBash() !== null) {
-      this.toolRegistry.register(createBashTool({ getCwd, getEnv, bus: this.bus }));
-    }
-    if (process.platform === "win32") {
-      this.toolRegistry.register(createPwshTool({ getCwd, getEnv, bus: this.bus }));
-    }
-    this.toolRegistry.register(createReadFileTool(getCwd, this.fileReadCache));
-    this.toolRegistry.register(createWriteFileTool(getCwd));
-    this.toolRegistry.register(createEditFileTool(getCwd));
-    this.toolRegistry.register(createGrepTool(getCwd));
-    this.toolRegistry.register(createGlobTool(getCwd));
-    this.toolRegistry.register(createLsTool(getCwd));
-    this.toolRegistry.register(createListSkillsTool(getCwd));
+    // Stateless core tools (bash, read_file, …) register at agentBackend
+    // activate time so they're visible to extensions at load. Only the
+    // session-stateful conversation_recall lives here.
 
     // conversation_recall — browse/search/expand evicted turns from
     // the in-session archive and the persistent history file.
