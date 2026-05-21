@@ -14,6 +14,8 @@ import type { AppConfig } from "../shell/host-types.js";
 import { AgentLoop } from "./agent-loop.js";
 import { LlmClient } from "../utils/llm-client.js";
 import { createLlmFacade } from "../utils/llm-facade.js";
+import type { ToolDefinition, ToolSchemaView } from "./types.js";
+import { registerReadOnlyTool, unregisterReadOnlyTool } from "./nuclear-form.js";
 import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../core/settings.js";
 import { discoverSkills } from "./skills.js";
 import { resolveApiKey } from "../cli/auth/keys.js";
@@ -59,21 +61,95 @@ export default function agentBackend(ctx: ExtensionContext): void {
   const { bus } = ctx;
   const config: AppConfig = ctx.call("config:get-app-config") ?? {};
 
+  // Pull-composition for capability registration. Each register* call
+  // installs an onPipe contributor on the canonical pipe AND defines
+  // the per-name handler so advisors can attach. The active backend
+  // (ash) pulls the union via emitPipe whenever it needs the current
+  // set. No accumulator state lives in any backend — contributors are
+  // the source of truth, recomputed on each pull.
+  type ToolContributor = (acc: { tools: ToolDefinition[] }) => { tools: ToolDefinition[] };
+  type InstructionContributor = (acc: { instructions: Array<{ name: string; text: string }> }) => { instructions: Array<{ name: string; text: string }> };
+  type SkillContributor = (acc: { skills: Array<{ name: string; description: string; filePath: string }> }) => { skills: Array<{ name: string; description: string; filePath: string }> };
+
+  const toolContribs = new Map<string, ToolContributor>();
+  const instructionContribs = new Map<string, InstructionContributor>();
+  const skillContribs = new Map<string, SkillContributor>();
+
   const agentSurface: AgentSurface = {
     llm: createLlmFacade({ list: ctx.list, call: ctx.call }),
     providers: {
       configure: (id, configureOpts) => bus.emit("provider:configure", { id, ...configureOpts }),
     },
-    registerTool: (tool) => bus.emit("agent:register-tool", { tool, extensionName: "" }),
-    unregisterTool: (name) => bus.emit("agent:unregister-tool", { name }),
+    registerTool: (tool) => {
+      if (toolContribs.has(tool.name)) {
+        throw new Error(`Tool "${tool.name}" already registered. Use ctx.agent.adviseTool() to wrap it.`);
+      }
+      ctx.define(`tool:${tool.name}`, tool.execute.bind(tool));
+      ctx.define(`tool:${tool.name}:schema`, (): ToolSchemaView => ({
+        description: tool.description,
+        parameters: tool.input_schema,
+      }));
+      if (tool.readOnly) registerReadOnlyTool(tool.name);
+      else unregisterReadOnlyTool(tool.name);
+      const contrib: ToolContributor = (acc) => {
+        // Pull the (possibly advised) schema at contribution time so
+        // adviseToolSchema reflects in the pipe answer.
+        const view = ctx.call(`tool:${tool.name}:schema`) as ToolSchemaView;
+        acc.tools.push({ ...tool, description: view.description, input_schema: view.parameters });
+        return acc;
+      };
+      toolContribs.set(tool.name, contrib);
+      bus.onPipe("agent:tools", contrib);
+    },
+    unregisterTool: (name) => {
+      const contrib = toolContribs.get(name);
+      if (!contrib) return;
+      bus.offPipe("agent:tools", contrib);
+      toolContribs.delete(name);
+      unregisterReadOnlyTool(name);
+      // Handler entries (tool:NAME, tool:NAME:schema) intentionally
+      // retained so external advisors survive a reload of the owner.
+    },
     adviseTool: (name, advisor) => ctx.advise(`tool:${name}`, advisor as Parameters<typeof ctx.advise>[1]),
     adviseToolSchema: (name, advisor) => ctx.advise(`tool:${name}:schema`, advisor as Parameters<typeof ctx.advise>[1]),
-    getTools: () => bus.emitPipe("agent:get-tools", { tools: [] }).tools,
-    registerInstruction: (name, text) => bus.emit("agent:register-instruction", { name, text, extensionName: "" }),
-    removeInstruction: (name) => bus.emit("agent:remove-instruction", { name }),
+    getTools: () => bus.emitPipe("agent:tools", { tools: [] }).tools,
+    registerInstruction: (name, text) => {
+      const existing = instructionContribs.get(name);
+      if (existing) bus.offPipe("agent:instructions", existing);
+      ctx.define(`instruction:${name}`, () => text);
+      const contrib: InstructionContributor = (acc) => {
+        const current = ctx.call(`instruction:${name}`) as string;
+        acc.instructions.push({ name, text: current });
+        return acc;
+      };
+      instructionContribs.set(name, contrib);
+      bus.onPipe("agent:instructions", contrib);
+    },
+    removeInstruction: (name) => {
+      const contrib = instructionContribs.get(name);
+      if (!contrib) return;
+      bus.offPipe("agent:instructions", contrib);
+      instructionContribs.delete(name);
+    },
     adviseInstruction: (name, advisor) => ctx.advise(`instruction:${name}`, advisor as Parameters<typeof ctx.advise>[1]),
-    registerSkill: (name, description, filePath) => bus.emit("agent:register-skill", { name, description, filePath, extensionName: "" }),
-    removeSkill: (name) => bus.emit("agent:remove-skill", { name }),
+    registerSkill: (name, description, filePath) => {
+      const existing = skillContribs.get(name);
+      if (existing) bus.offPipe("agent:skills", existing);
+      ctx.define(`skill:${name}:view`, () => ({ description, filePath }));
+      const contrib: SkillContributor = (acc) => {
+        const view = ctx.call(`skill:${name}:view`) as { description: string; filePath: string };
+        acc.skills.push({ name, description: view.description, filePath: view.filePath });
+        return acc;
+      };
+      skillContribs.set(name, contrib);
+      bus.onPipe("agent:skills", contrib);
+    },
+    removeSkill: (name) => {
+      const contrib = skillContribs.get(name);
+      if (!contrib) return;
+      bus.offPipe("agent:skills", contrib);
+      skillContribs.delete(name);
+    },
     adviseSkill: (name, advisor) => ctx.advise(`skill:${name}:view`, advisor as Parameters<typeof ctx.advise>[1]),
     registerContextProducer: (_name, producer, producerOpts) => {
       const handlerName = producerOpts?.mode === "per-query"

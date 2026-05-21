@@ -81,25 +81,29 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
   const scopedAdviseCommand: typeof ctx.adviseCommand = trackUnsub(ctx.adviseCommand);
 
   // ── agent surface (optional — bridge backends omit it) ───
+  // registerTool/Instruction/Skill now install onPipe contributors
+  // directly on the bus (see src/agent/index.ts agentSurface) — no
+  // intermediate bus emit. Track cleanup via the agentSurface's
+  // existing unregister methods.
   const agent = ctx.agent;
   let scopedAgent: typeof agent;
   if (agent) {
     scopedAgent = {
       ...agent,
       registerTool: (tool) => {
-        bus.emit("agent:register-tool", { tool, extensionName });
-        cleanups.push(() => bus.emit("agent:unregister-tool", { name: tool.name }));
+        agent.registerTool(tool);
+        cleanups.push(() => agent.unregisterTool(tool.name));
       },
       adviseTool: trackUnsub(agent.adviseTool),
       adviseToolSchema: trackUnsub(agent.adviseToolSchema),
       registerInstruction: (name, text) => {
-        bus.emit("agent:register-instruction", { name, text, extensionName });
-        cleanups.push(() => bus.emit("agent:remove-instruction", { name }));
+        agent.registerInstruction(name, text);
+        cleanups.push(() => agent.removeInstruction(name));
       },
       adviseInstruction: trackUnsub(agent.adviseInstruction),
       registerSkill: (name, description, filePath) => {
-        bus.emit("agent:register-skill", { name, description, filePath, extensionName });
-        cleanups.push(() => bus.emit("agent:remove-skill", { name }));
+        agent.registerSkill(name, description, filePath);
+        cleanups.push(() => agent.removeSkill(name));
       },
       adviseSkill: trackUnsub(agent.adviseSkill),
       registerContextProducer: (name, producer, opts) => {

@@ -177,25 +177,15 @@ export class AgentLoop implements AgentBackend {
     // Register handlers — extensions can advise these
     this.registerHandlers();
 
-    // Subscribe to bus-based tool/instruction registration from extensions.
-    // These must be in the constructor (not wire()) because extensions call
-    // registerTool() during activate(), before activateBackend() calls wire().
+    // Tools/instructions/skills come from ctx.agent.registerTool/etc.,
+    // which install onPipe contributors directly on the bus. AgentLoop
+    // reads via emitPipe("agent:tools", ...) and friends. No ctor
+    // subscriptions needed — extension registration is independent of
+    // AgentLoop's lifecycle.
     const onCtor = <K extends keyof ShellEvents>(event: K, fn: (payload: ShellEvents[K]) => void) => {
       this.bus.on(event, fn);
       this.ctorListeners.push({ event, fn });
     };
-    onCtor("agent:register-tool", ({ tool, extensionName }) => {
-      this.registerTool(tool);
-      if (extensionName) this.toolExtensions.set(tool.name, extensionName);
-    });
-    onCtor("agent:unregister-tool", ({ name }) => {
-      this.unregisterTool(name);
-      this.toolExtensions.delete(name);
-    });
-    onCtor("agent:register-instruction", ({ name, text, extensionName }) => this.registerInstruction(name, text, extensionName));
-    onCtor("agent:remove-instruction", ({ name }) => this.removeInstruction(name));
-    onCtor("agent:register-skill", ({ name, description, filePath, extensionName }) => this.registerSkill(name, description, filePath, extensionName));
-    onCtor("agent:remove-skill", ({ name }) => this.removeSkill(name));
     // Provider registration from user extensions (e.g. openrouter.ts) fires
     // during extension activation, which happens before wire(). Subscribe
     // here in the ctor so late-registered modes aren't dropped.
@@ -254,9 +244,6 @@ export class AgentLoop implements AgentBackend {
       this.notifyIdentityChanged();
       this.bus.emit("config:changed", {});
     });
-    const getToolsPipe = () => ({ tools: this.getTools() });
-    this.bus.onPipe("agent:get-tools", getToolsPipe);
-    this.ctorPipeListeners.push({ event: "agent:get-tools", fn: getToolsPipe });
   }
 
   /** Subscribe to bus events — activates this backend. */
@@ -282,6 +269,30 @@ export class AgentLoop implements AgentBackend {
       this.bus.onPipeAsync(event, fn as any);
       this.boundPipeListeners.push({ event, fn, async: true });
     };
+
+    // AgentLoop's own builtin contributions to the capability pipes.
+    // Each pulls from internal storage (this.toolRegistry, .instructions,
+    // .skills) so adviseTool/adviseInstruction/adviseSkill on builtin
+    // names still flow through. Lifecycle is wire()↔unwire(), so when
+    // ash isn't the active backend these contributors are absent.
+    onPipe("agent:tools", (acc) => {
+      for (const tool of this.getTools()) acc.tools.push(tool);
+      return acc;
+    });
+    onPipe("agent:instructions", (acc) => {
+      for (const [name] of this.instructions) {
+        const text = this.handlers.call(`instruction:${name}`) as string;
+        acc.instructions.push({ name, text });
+      }
+      return acc;
+    });
+    onPipe("agent:skills", (acc) => {
+      for (const [name] of this.skills) {
+        const view = this.handlers.call(`skill:${name}:view`) as SkillView;
+        acc.skills.push({ name, description: view.description, filePath: view.filePath });
+      }
+      return acc;
+    });
 
     // ash's contributor to the agent:identity pull. Lives only for
     // wire()→unwire() — when ash isn't the active backend this handler
@@ -478,9 +489,14 @@ export class AgentLoop implements AgentBackend {
     this.toolRegistry.unregister(name);
   }
 
-  /** Get all registered tools. */
+  /** Get all registered tools (union of builtins + extension contributions). */
   getTools(): ToolDefinition[] {
-    return this.toolRegistry.all();
+    return this.bus.emitPipe("agent:tools", { tools: [] }).tools;
+  }
+
+  /** Find a tool by name across the full pipe union. */
+  private findTool(name: string): ToolDefinition | undefined {
+    return this.getTools().find((t) => t.name === name);
   }
 
   // ── Extension instructions, skills & tool tracking ──────────────────
@@ -520,69 +536,40 @@ export class AgentLoop implements AgentBackend {
   }
 
   /**
-   * Build the system prompt grouped by extension.
-   *
-   * Each extension gets a unified block:
-   *   ## extension-name
-   *   ### Tools
-   *   ### Skills
-   *   ### Instructions
+   * Build the "Extensions" section of the system prompt. Includes tools,
+   * skills, and instructions contributed by extensions (i.e. anything
+   * registered via ctx.agent.registerTool/Skill/Instruction). AgentLoop's
+   * own builtins are excluded by name — they're documented elsewhere in
+   * the prompt or in the tool API params.
    */
   buildExtensionSections(): string[] {
-    interface ExtensionGroup {
-      tools: Array<{ name: string; description: string }>;
-      skills: Array<{ name: string; description: string; filePath: string }>;
-      instructions: Array<{ text: string }>;
-    }
+    const BUILTIN_TOOLS = new Set([
+      "bash", "read_file", "write_file", "edit_file", "grep", "glob", "ls",
+      "list_skills",
+    ]);
+    const BUILTIN_INSTRUCTIONS = new Set(["recall-guidance"]);
+    const BUILTIN_SKILLS = new Set<string>();
 
-    const groups = new Map<string, ExtensionGroup>();
-    const ensure = (name: string): ExtensionGroup =>
-      groups.get(name) ?? (groups.set(name, { tools: [], skills: [], instructions: [] }).get(name)!);
+    const allTools = this.bus.emitPipe("agent:tools", { tools: [] }).tools;
+    const allInstructions = this.bus.emitPipe("agent:instructions", { instructions: [] }).instructions;
+    const allSkills = this.bus.emitPipe("agent:skills", { skills: [] }).skills;
 
-    // Attribute instructions — read text through the advisor chain
-    for (const [name, { extensionName }] of this.instructions) {
-      const text = this.handlers.call(`instruction:${name}`) as string;
-      ensure(extensionName).instructions.push({ text });
-    }
+    const extTools = this.toolProtocol.mode === "api"
+      ? []
+      : allTools.filter((t) => !BUILTIN_TOOLS.has(t.name));
+    const extInstructions = allInstructions.filter((i) => !BUILTIN_INSTRUCTIONS.has(i.name));
+    const extSkills = allSkills.filter((s) => !BUILTIN_SKILLS.has(s.name));
 
-    // Attribute skills — read description/filePath through the advisor chain
-    for (const [skillName, { extensionName }] of this.skills) {
-      const view = this.handlers.call(`skill:${skillName}:view`) as SkillView;
-      ensure(extensionName).skills.push({ name: skillName, description: view.description, filePath: view.filePath });
-    }
+    if (extTools.length + extInstructions.length + extSkills.length === 0) return [];
 
-    // Attribute tools (skip built-in scratchpad tools).
-    // In "api" mode the full tool schemas are in the API `tools` param,
-    // making the text catalog here pure duplication — skip it. Other
-    // modes (deferred / deferred-lookup / inline) rely on the text
-    // catalog as the discovery surface, so keep it there.
-    const toolModeHasApiSchemas = this.toolProtocol.mode === "api";
-    if (!toolModeHasApiSchemas) {
-      const builtinTools = new Set([
-        "bash", "read_file", "write_file", "edit_file", "grep", "glob", "ls",
-        "list_skills",
-      ]);
-      for (const tool of this.toolRegistry.allView()) {
-        if (builtinTools.has(tool.name)) continue;
-        const extName = this.toolExtensions.get(tool.name);
-        if (!extName) continue;
-        ensure(extName).tools.push({ name: tool.name, description: summarizeDescription(tool.description) });
-      }
-    }
-
-    // Render
-    return [...groups.entries()]
-      .filter(([, g]) => g.tools.length + g.skills.length + g.instructions.length > 0)
-      .map(([name, g]) => {
-        const parts: string[] = [];
-        if (g.tools.length > 0)
-          parts.push("### Tools\n" + g.tools.map(t => `${t.name} — ${t.description}`).join("\n"));
-        if (g.skills.length > 0)
-          parts.push("### Skills\n" + g.skills.map(s => `${s.name}: ${s.description}\n  → ${s.filePath}`).join("\n\n"));
-        if (g.instructions.length > 0)
-          parts.push("### Instructions\n" + g.instructions.map(i => i.text).join("\n\n"));
-        return `## ${name}\n${parts.join("\n\n")}`;
-      });
+    const parts: string[] = [];
+    if (extTools.length > 0)
+      parts.push("### Tools\n" + extTools.map(t => `${t.name} — ${summarizeDescription(t.description)}`).join("\n"));
+    if (extSkills.length > 0)
+      parts.push("### Skills\n" + extSkills.map(s => `${s.name}: ${s.description}\n  → ${s.filePath}`).join("\n\n"));
+    if (extInstructions.length > 0)
+      parts.push("### Instructions\n" + extInstructions.map(i => i.text).join("\n\n"));
+    return [`## Extensions\n${parts.join("\n\n")}`];
   }
 
   kill(): void {
@@ -1302,7 +1289,7 @@ export class AgentLoop implements AgentBackend {
       {
         const groupMap = new Map<string, Array<{ name: string; displayDetail?: string }>>();
         for (const tc of toolCalls) {
-          const tool = this.toolRegistry.get(tc.name);
+          const tool = this.findTool(tc.name);
           const kind = tool?.getDisplayInfo?.((() => { try { return JSON.parse(tc.argumentsJson); } catch { return {}; } })())?.kind ?? "execute";
           let args: Record<string, unknown> = {};
           try { args = JSON.parse(tc.argumentsJson); } catch {}
@@ -1338,9 +1325,9 @@ export class AgentLoop implements AgentBackend {
           }
         } catch { /* not an error payload, continue */ }
 
-        const tool = this.toolRegistry.get(tc.name);
+        const tool = this.findTool(tc.name);
         if (!tool) {
-          const available = this.toolRegistry.all().map((t) => t.name).join(", ");
+          const available = this.getTools().map((t) => t.name).join(", ");
           collectedResults.push({
             callId: tc.id, toolName: tc.name,
             content: `Unknown tool "${tc.name}". Available tools: ${available}`,
@@ -1449,7 +1436,7 @@ export class AgentLoop implements AgentBackend {
       const parallel: PendingToolCall[] = [];
       const sequential: PendingToolCall[] = [];
       for (const tc of toolCalls) {
-        const tool = this.toolRegistry.get(tc.name);
+        const tool = this.findTool(tc.name);
         if (tool && !tool.modifiesFiles) {
           parallel.push(tc);
         } else {
@@ -1712,7 +1699,7 @@ export class AgentLoop implements AgentBackend {
     const pendingToolCalls: PendingToolCall[] = [];
 
     // Tool protocol controls what goes in the API tools param vs dynamic context
-    const toolView = this.toolRegistry.allView();
+    const toolView = this.getTools();
     const apiTools = this.toolProtocol.getApiTools(toolView);
     const toolPrompt = this.toolProtocol.getToolPrompt(toolView);
 
@@ -1728,7 +1715,7 @@ export class AgentLoop implements AgentBackend {
 
     // Stream filter strips tool tags from display (inline mode only)
     const streamFilter = this.toolProtocol.createStreamFilter(
-      this.toolRegistry.all().map((t) => t.name),
+      this.getTools().map((t) => t.name),
     );
 
     const requestParams = {

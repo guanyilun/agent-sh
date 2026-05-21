@@ -47,6 +47,16 @@ declare module "../../core/event-bus.js" {
     // them when to re-pull.
     "agent:identity": { identity: AgentIdentity | null };
     "agent:identity-changed": Record<string, never>;
+
+    // Tool/instruction/skill registration via pull-composition.
+    // Each ctx.agent.registerTool/Instruction/Skill call installs an
+    // onPipe contributor; the active backend (typically ash) pulls
+    // the union via emitPipe whenever it needs the current set.
+    // No accumulator state lives in any backend — contributors are
+    // the source of truth and are recomputed on each pull.
+    "agent:tools": { tools: import("../../agent/types.js").ToolDefinition[] };
+    "agent:instructions": { instructions: Array<{ name: string; text: string }> };
+    "agent:skills": { skills: Array<{ name: string; description: string; filePath: string }> };
   }
 }
 

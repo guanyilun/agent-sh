@@ -1,6 +1,8 @@
 /**
- * ctx.llm facade — delegates to an `llm:invoke` handler registered by the
- * active backend. No handler → `available` is false and calls reject.
+ * ctx.agent.llm facade — delegates to an `llm:invoke` handler defined
+ * by the ash backend. Other backends (claude-code, pi, opencode) bring
+ * their own LLM and do not define this handler; `available` is false
+ * under those backends and calls reject.
  */
 import type { LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
 
@@ -12,7 +14,7 @@ interface HandlerGate {
 export function createLlmFacade(handlers: HandlerGate): LlmInterface {
   const invoke = (messages: LlmMessage[], maxTokens?: number, model?: string, reasoningEffort?: string): Promise<string> => {
     const result = handlers.call("llm:invoke", messages, { maxTokens, model, reasoningEffort });
-    if (result === undefined) return Promise.reject(new Error("ctx.llm: no LLM backend available"));
+    if (result === undefined) return Promise.reject(new Error("ctx.agent.llm: no LLM backend available"));
     return result as Promise<string>;
   };
   return {
