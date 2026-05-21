@@ -234,21 +234,18 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   bus.onPipe("config:get-initial-modes", () => ({ modes, initialModeIndex }));
 
-  // AgentLoop must be constructed *before* user extensions activate,
-  // because its ctor defines handlers (history:append, etc.) that
-  // extensions like superash call synchronously during their own
-  // activate. Advise-before-define works for advisers, but plain calls
-  // would hit a no-op stub.
-  const agentLoop = new AgentLoop({
-    bus,
-    llmClient,
-    handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list },
-    modes,
-    initialModeIndex,
-    compositor: ctx.shell?.compositor,
-    instanceId: ctx.instanceId,
-    history: config.history,
-  });
+  // AgentLoop is constructed lazily — only when ash actually starts
+  // as the active backend. Under non-ash backends (claude-code, pi,
+  // opencode, ...) the loop is never instantiated, so its ctor-time
+  // bus subscriptions and handler definitions don't waste cycles
+  // reacting to provider catalog updates ash will never serve.
+  //
+  // Trade-off: handlers AgentLoop defines (conversation:*, history:*,
+  // system-prompt:build, ...) don't exist until ash starts. Extensions
+  // that need them must call from deferred callbacks, not at activate
+  // time. This is already the case today; ashi etc. only invoke them
+  // from command/event handlers.
+  let agentLoop: AgentLoop | null = null;
 
   let loadedExtensionNames: string[] = [];
 
@@ -307,9 +304,24 @@ export default function agentBackend(ctx: ExtensionContext): void {
         ashActive = false;
         bus.emit("command:unregister", { name: "/compact" });
         bus.emit("command:unregister", { name: "/context" });
-        agentLoop.kill();
+        agentLoop?.kill();
+        agentLoop = null;
       },
       start: async () => {
+        // Lazy construction — AgentLoop's ctor subscribes to bus
+        // events and defines handlers (conversation:*, history:*,
+        // system-prompt:build). Doing it here means none of that
+        // happens under non-ash backends.
+        agentLoop = new AgentLoop({
+          bus,
+          llmClient,
+          handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list },
+          modes,
+          initialModeIndex,
+          compositor: ctx.shell?.compositor,
+          instanceId: ctx.instanceId,
+          history: config.history,
+        });
         agentLoop.wire();
         ashActive = true;
         bus.emit("command:register", {
@@ -389,6 +401,11 @@ export default function agentBackend(ctx: ExtensionContext): void {
         buildReasoningParams: bindReasoning(p.id, m),
       };
     });
+    // Update the closure mode list too — under lazy ash, AgentLoop
+    // may not exist yet to consume config:add-modes; when it does
+    // construct (in start()), it reads from this `modes` variable.
+    // Filter out any stale entries for this provider, then append.
+    modes = [...modes.filter((m) => m.provider !== p.id), ...addModes];
     bus.emit("config:add-modes", { modes: addModes });
 
     // Late-registration reconcile: if this completes the user's persisted
