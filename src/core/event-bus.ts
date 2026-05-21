@@ -1,9 +1,16 @@
 import { EventEmitter } from "node:events";
-import type { AgentMode } from "../agent/host-types.js";
-import type { ToolResultDisplay } from "../agent/types.js";
 
 /**
  * Typed event map — every event has a known payload shape.
+ *
+ * Core defines only cross-cutting transport events (shell, command,
+ * ui, compositor, input). Domain-specific events are owned by their
+ * extensions and merged in via TypeScript declaration merging:
+ *   - agent:*, conversation:*, context:*, config:switch-model,
+ *     config:get-models, config:set-thinking, config:get-thinking,
+ *     tool:interactive-*  → src/extensions/agent-backend/events.ts
+ *   - provider:*, config:switch-provider, config:get-initial-modes,
+ *     config:set-modes, config:add-modes, llm:*  → src/agent/events.ts
  */
 export interface ShellEvents {
   // Shell lifecycle
@@ -38,122 +45,8 @@ export interface ShellEvents {
     cursor: { x: number; y: number };
   };
 
-  // Agent input (frontend → core: user submitted a query or wants to cancel)
-  "agent:submit": { query: string };
-  "agent:cancel-request": { silent?: boolean };
-  "agent:append-user-message": { text: string };
-
   // Input mode registration (extensions → InputHandler)
   "input-mode:register": import("../shell/host-types.js").InputModeConfig;
-
-  // Agent interaction
-  "agent:query": { query: string };
-  "agent:thinking-chunk": { text: string };
-  "agent:response-chunk": { blocks: ContentBlock[] };
-  "agent:response-done": { response: string };
-
-  // Token usage (emitted after each LLM call, when available)
-  "agent:usage": { prompt_tokens: number; completion_tokens: number; total_tokens: number };
-
-  // Wire-level observability for debug/capture extensions. llm:chunk
-  // fires on every streamed chunk — keep listeners cheap.
-  "llm:request": {
-    messages: unknown[];
-    tools?: unknown;
-    model?: string;
-    max_tokens?: number;
-    reasoning_effort?: string;
-  };
-  "llm:chunk": { chunk: unknown };
-
-  // Agent lifecycle
-  "agent:processing-start": Record<string, never>;
-  "agent:processing-done": Record<string, never>;
-  "agent:cancelled": Record<string, never>;
-  "agent:error": { message: string };
-
-  // Tool execution (agent-initiated — surfaced for UI/observability extensions).
-  "agent:tool-call": { tool: string; args: Record<string, unknown> };
-  "agent:tool-output": {
-    tool: string;
-    output: string;
-    exitCode: number | null;
-  };
-
-  // Tool batch — emitted before execution with all tool calls grouped by kind
-  "agent:tool-batch": {
-    groups: Array<{
-      kind: string;
-      tools: Array<{ name: string; displayDetail?: string }>;
-    }>;
-  };
-
-  // Fires once after each tool-call batch's results are recorded. Enables
-  // extensions to track per-batch outcomes (consecutive errors, resolution
-  // patterns, etc.) without polling. Distinct from per-tool `agent:tool-
-  // output` events because batch-level decisions see the whole batch.
-  "agent:tool-batch-complete": {
-    results: Array<{ name: string; isError: boolean; errorSummary?: string }>;
-  };
-
-  // Fires after any message is appended to the conversation (user query,
-  // assistant response, tool result, system note). Lets extensions
-  // persist a derived log, build analytics, or react to turn boundaries
-  // without hooking the LLM loop. For tool results, a minimal bundle
-  // (toolName, args, isError) is included so extensions don't have to
-  // parse the message structure back out to know what ran.
-  "conversation:message-appended": {
-    role: "user" | "assistant" | "tool" | "system";
-    content: string;
-    /** For role="tool": name of the tool whose result this is. */
-    toolName?: string;
-    /** For role="tool": parsed arguments passed to the tool. */
-    toolArgs?: Record<string, unknown>;
-    /** For role="tool": whether the tool errored. */
-    isError?: boolean;
-  };
-
-  // Fires after a compaction completes. Carries generic before/after
-  // token counts so analytics/ui extensions can react. Strategy-specific
-  // fields (evicted topics, etc.) belong on the strategy's own event.
-  "conversation:after-compact": {
-    beforeTokens: number;
-    afterTokens: number;
-    evictedCount: number;
-  };
-
-  // Tool rendering (used by TUI for display — distinct data shape from above)
-  "agent:tool-started": {
-    title: string;
-    toolCallId?: string;
-    kind?: string;
-    icon?: string;
-    locations?: { path: string; line?: number | null }[];
-    rawInput?: unknown;
-    /** Pre-formatted display detail from tool's formatCall(). */
-    displayDetail?: string;
-    /** highlight.js-style identifier for syntax-highlighting `rawInput.source`. */
-    sourceLanguage?: string;
-    batchIndex?: number;
-    batchTotal?: number;
-  };
-  "agent:tool-completed": {
-    toolCallId?: string;
-    exitCode: number | null;
-    rawOutput?: unknown;
-    kind?: string;
-    /** Structured result display — set by formatResult or defaults, overridable via onPipe. */
-    resultDisplay?: ToolResultDisplay;
-  };
-  "agent:tool-output-chunk": { chunk: string };
-
-  // Subagent lifecycle (non-blocking background tasks)
-  "agent:subagent-started": { taskId: string; task: string };
-  "agent:subagent-completed": { taskId: string; task: string; result: string; isError: boolean };
-
-  // Tool interactive UI (tool has taken over rendering + input)
-  "tool:interactive-start": Record<string, never>;
-  "tool:interactive-end": Record<string, never>;
 
   // Slash command registration (extensions → slash-commands)
   "command:register": {
@@ -197,14 +90,6 @@ export interface ShellEvents {
   "shell:stdout-show": Record<string, never>;
   "shell:stdout-hide": Record<string, never>;
 
-  // Terminal interception (sync pipe: extensions can intercept before execution)
-  "agent:terminal-intercept": {
-    command: string;
-    cwd: string;
-    intercepted: boolean;
-    output: string;
-  };
-
   // Prompt redraw (sync pipe: extensions set handled=true to suppress).
   // kind="fresh" — \n to PTY, full precmd cycle, leaves a blank line.
   // kind="redraw" — in-place \e[9999~, no visual noise.
@@ -223,82 +108,11 @@ export interface ShellEvents {
     done: boolean;
   };
 
-  // Session reset (slash command → backend: clear conversation state)
-  "agent:reset-session": Record<string, never>;
-
-  // Manual compaction request (slash command → backend)
-  "agent:compact-request": Record<string, never>;
-
-  // Context stats query (sync pipe: slash command → backend).
-  // Core fields only; extensions can chain onPipe to add more.
-  "context:get-stats": {
-    activeTokens: number;
-    totalTokens: number;
-    budgetTokens: number;
-  };
-
-  "context:snapshot": {
-    messages: unknown[];
-    contextWindow: number;
-    activeTokens: number;
-  };
-
-  // Strategies share one seam so after-compact metrics and cache
-  // invalidation run uniformly across kernel + manual edits.
-  "context:compact": {
-    strategy?:
-      | { kind: "two-tier-pin"; target: number; keepRecent?: number; force?: boolean }
-      | { kind: "rewind"; toIndex: number }
-      | { kind: "replace"; messages: unknown[] };
-    stats?: { before: number; after: number; evictedCount: number };
-  };
-
-
-  // Session mode/config updated (from agent backend)
+  // Cross-cutting "config might have changed, repaint" signal.
   "config:changed": Record<string, never>;
 
-  // Switch to a specific model by name (slash command → backend)
-  "config:switch-model": { model: string };
-  // Query available models (sync pipe — for autocomplete)
-  "config:get-models": { models: { model: string; provider: string }[]; active: { model: string; provider: string } | null };
-  // Set thinking/reasoning effort level (slash command → backend)
-  "config:set-thinking": { level: string };
-  // Query current thinking level (sync pipe — for autocomplete)
-  "config:get-thinking": { level: string; levels: string[]; supported: boolean };
-
-  // Switch provider at runtime (slash command → core)
-  "config:switch-provider": { provider: string };
-
-  // Query initial modes (sync pipe: agent backend extension → core)
-  "config:get-initial-modes": { modes: AgentMode[]; initialModeIndex: number };
-  // Set modes (core → agent loop: after provider switch).
-  // Optional activeIndex honors the persisted default without resetting to 0.
-  "config:set-modes": { modes: AgentMode[]; activeIndex?: number };
-  // Append modes (core → agent loop: after provider register)
-  "config:add-modes": { modes: AgentMode[] };
-
   // Fires after all extensions (built-in + user) have activated.
-  // agent-backend waits on this to resolve settings.defaultProvider
-  // against the full provider registry, including dynamic providers.
   "core:extensions-loaded": { names: string[] };
-
-  // Register a provider at runtime (extensions → core)
-  "provider:register": {
-    id: string;
-    apiKey?: string;
-    baseURL?: string;
-    /** Optional — providers for custom endpoints may not know the catalog
-     *  at registration time. Falls back to models[0] when absent. */
-    defaultModel?: string;
-    models?: (string | { id: string; reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean })[];
-    /** Provider supports the reasoning_effort parameter. Default: true. */
-    supportsReasoningEffort?: boolean;
-  };
-
-  "provider:configure": {
-    id: string;
-    reasoningParams?: (level: string, model?: string) => Record<string, unknown>;
-  };
 
   // Banner section collection (sync pipe: extensions contribute labeled items to startup banner)
   "banner:collect": {
