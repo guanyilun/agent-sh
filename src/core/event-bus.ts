@@ -13,14 +13,6 @@ export interface BusEvents {
   "ui:info": { message: string };
   "ui:error": { message: string };
   "ui:suggestion": { text: string };
-
-  // Banner section collection (sync pipe: extensions contribute
-  // labeled items to startup banner emitted by the CLI).
-  "banner:collect": {
-    sections: Array<{ label: string; items: string[] }>;
-    /** Name of the backend being launched. Extensions should gate per-backend sections on this rather than settings.defaultBackend. */
-    activeBackend?: string;
-  };
 }
 
 // ── Content block types (used by transform pipeline) ────────────

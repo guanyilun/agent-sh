@@ -13,6 +13,20 @@ import { clearOpost } from "../utils/tty.js";
 import { parseArgs } from "./args.js";
 import { captureShellEnvAsync, mergeShellEnv } from "./shell-env.js";
 
+declare module "../core/event-bus.js" {
+  interface BusEvents {
+    /** Startup banner collection (sync pipe). Extensions contribute
+     *  labeled item lists; the CLI renders them between the product
+     *  name and the help hint. */
+    "banner:collect": {
+      sections: Array<{ label: string; items: string[] }>;
+      /** Name of the backend being launched. Extensions should gate
+       *  per-backend sections on this rather than settings.defaultBackend. */
+      activeBackend?: string;
+    };
+  }
+}
+
 async function main(): Promise<void> {
   const rawArgs = process.argv.slice(2);
   if (await dispatchSubcommand(rawArgs)) return;
