@@ -21,12 +21,9 @@ function buildReasoningParams(level: string, _model?: string): Record<string, un
 
 export default function activate(ctx: AgentContext): void {
   ctx.agent.providers.configure("deepseek", { reasoningParams: buildReasoningParams });
-
-  const apiKey = resolveApiKey("deepseek").key;
-  if (!apiKey) return;
   ctx.agent.providers.register({
     id: "deepseek",
-    apiKey,
+    apiKey: resolveApiKey("deepseek").key ?? undefined,
     baseURL: BASE_URL,
     defaultModel: DEFAULT_MODELS[0].id,
     models: DEFAULT_MODELS,

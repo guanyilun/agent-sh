@@ -24,7 +24,8 @@ export const KNOWN_PROVIDERS: ProviderAuthInfo[] = [
 ];
 
 /** Built-ins merged with settings-declared providers, plus any ids that only
- *  appear in keys.json (likely registered by an extension at runtime). */
+ *  appear in keys.json (likely registered by an extension at runtime).
+ *  Cheap synchronous path — does not load extensions. */
 export function listAllProviders(): ProviderAuthInfo[] {
   const out: ProviderAuthInfo[] = [...KNOWN_PROVIDERS];
   const seen = new Set(out.map((p) => p.id));
@@ -39,6 +40,23 @@ export function listAllProviders(): ProviderAuthInfo[] {
     out.push({ id, label: id, unattached: true });
     seen.add(id);
   }
+  return out;
+}
+
+/** Same as listAllProviders but also bootstraps a throwaway core to
+ *  enumerate provider IDs contributed by built-in + user extensions.
+ *  Use from interactive CLI paths (`auth list`, `auth login`). */
+export async function listAllProvidersWithDiscovery(): Promise<ProviderAuthInfo[]> {
+  const out = listAllProviders();
+  const seen = new Set(out.map((p) => p.id));
+  const { discoverExtensionProviders } = await import("./discover.js");
+  try {
+    for (const id of await discoverExtensionProviders()) {
+      if (seen.has(id)) continue;
+      out.push({ id, label: id, custom: true });
+      seen.add(id);
+    }
+  } catch { /* discovery is best-effort */ }
   return out;
 }
 

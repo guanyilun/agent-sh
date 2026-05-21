@@ -40,15 +40,12 @@ function buildReasoningParams(level: string, model?: string): Record<string, unk
 }
 
 export default function activate(ctx: AgentContext): void {
-  const apiKey = resolveApiKey("openai").key;
-  if (!apiKey) return;
   if (process.env.OPENAI_BASE_URL) return; // openai-compatible handles this
 
   ctx.agent.providers.configure("openai", { reasoningParams: buildReasoningParams });
-
   ctx.agent.providers.register({
     id: "openai",
-    apiKey,
+    apiKey: resolveApiKey("openai").key ?? undefined,
     defaultModel: CLOUD_MODELS[0].id,
     models: CLOUD_MODELS,
   });

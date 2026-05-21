@@ -33,17 +33,15 @@ interface OpenRouterModel {
 
 export default function activate(ctx: AgentContext): void {
   const apiKey = resolveApiKey("openrouter").key;
-  if (!apiKey) return;
-
   ctx.agent.providers.configure("openrouter", { reasoningParams: buildReasoningParams });
-
   ctx.agent.providers.register({
     id: "openrouter",
-    apiKey,
+    apiKey: apiKey ?? undefined,
     baseURL: BASE_URL,
     defaultModel: DEFAULT_MODELS[0],
     models: DEFAULT_MODELS,
   });
+  if (!apiKey) return;
 
   fetchModels(apiKey).then((models) => {
     if (models.length === 0) return;

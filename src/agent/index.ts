@@ -21,7 +21,6 @@ import type { ToolDefinition, ToolSchemaView } from "./types.js";
 import { registerReadOnlyTool, unregisterReadOnlyTool } from "./nuclear-form.js";
 import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../core/settings.js";
 import { discoverSkills } from "./skills.js";
-import { resolveApiKey } from "../cli/auth/keys.js";
 import activateOpenrouter from "./providers/openrouter.js";
 import activateOpenai from "./providers/openai.js";
 import activateOpenaiCompatible from "./providers/openai-compatible.js";
@@ -462,12 +461,14 @@ export { AgentLoop } from "./agent-loop.js";
 export { ToolRegistry } from "./tool-registry.js";
 export { runSubagent, type SubagentOptions } from "./subagent.js";
 
-/** Activate the ash backend and any provider whose key is configured. */
+/** Activate the ash backend and every built-in provider. Providers
+ *  register unconditionally so `agent-sh auth list` can enumerate them;
+ *  `buildModes()` skips entries without an apiKey. */
 export function activateAgent(ctx: ExtensionContext): void {
   agentBackend(ctx);
   const agentCtx = ctx as AgentContext;
-  if (resolveApiKey("openrouter").key) activateOpenrouter(agentCtx);
-  if (resolveApiKey("openai").key && !process.env.OPENAI_BASE_URL) activateOpenai(agentCtx);
+  activateOpenrouter(agentCtx);
+  activateOpenai(agentCtx);
   if (process.env.OPENAI_BASE_URL) activateOpenaiCompatible(agentCtx);
   activateDeepseek(agentCtx);
 }
