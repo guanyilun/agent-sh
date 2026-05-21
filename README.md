@@ -72,7 +72,7 @@ See [Bring your own agent](#bring-your-own-agent) below for full details and the
 
 ### Option B: Use the built-in agent (ash)
 
-`ash` is agent-sh's own lightweight agent. It works with any OpenAI-compatible API — pick one of the zero-config paths below, no settings file needed. agent-sh auto-activates a built-in provider when it sees a known key.
+`ash` is agent-sh's own lightweight agent. It works with any OpenAI-compatible API — pick one of the zero-config paths below, no settings file needed. The built-in providers (openrouter, openai, openai-compatible, deepseek) register on startup; ash activates the first one with a usable key.
 
 **Quickest path** — store a key once via the auth subcommand:
 
