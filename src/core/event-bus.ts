@@ -1,17 +1,6 @@
 import { EventEmitter } from "node:events";
 
-/**
- * Typed event map — every event has a known payload shape.
- *
- * Core defines only cross-cutting transport events (shell, command,
- * ui, compositor, input). Domain-specific events are owned by their
- * extensions and merged in via TypeScript declaration merging:
- *   - agent:*, conversation:*, context:*, config:switch-model,
- *     config:get-models, config:set-thinking, config:get-thinking,
- *     tool:interactive-*  → src/extensions/agent-backend/events.ts
- *   - provider:*, config:switch-provider, config:get-initial-modes,
- *     config:set-modes, config:add-modes, llm:*  → src/agent/events.ts
- */
+/** Typed event map — every event has a known payload shape. */
 export interface ShellEvents {
   // Shell lifecycle
   "shell:command-start": { command: string; cwd: string };
