@@ -8,7 +8,7 @@
  * `defaultProvider: "openrouter"` loses to a cold-start race and the
  * backend bails silently.
  */
-import "./events.js"; // augments ShellEvents with ash-owned events
+import "./events.js"; // augments BusEvents with ash-owned events
 import type { ExtensionContext } from "../shell/host-types.js";
 import type { AgentContext, AgentMode, AgentSurface } from "../agent/host-types.js";
 import type { AppConfig } from "../shell/host-types.js";

@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 
 /** Typed event map — every event has a known payload shape. */
-export interface ShellEvents {
+export interface BusEvents {
   // Shell lifecycle
   "shell:command-start": { command: string; cwd: string };
   "shell:command-done": {
@@ -188,25 +188,25 @@ export class EventBus {
   }
 
   /** Subscribe to a fire-and-forget event. */
-  on<K extends keyof ShellEvents>(
+  on<K extends keyof BusEvents>(
     event: K,
-    fn: Listener<ShellEvents[K]>,
+    fn: Listener<BusEvents[K]>,
   ): void {
     this.emitter.on(event, fn);
   }
 
   /** Unsubscribe from a fire-and-forget event. */
-  off<K extends keyof ShellEvents>(
+  off<K extends keyof BusEvents>(
     event: K,
-    fn: Listener<ShellEvents[K]>,
+    fn: Listener<BusEvents[K]>,
   ): void {
     this.emitter.off(event, fn);
   }
 
   /** Emit a fire-and-forget event. */
-  emit<K extends keyof ShellEvents>(
+  emit<K extends keyof BusEvents>(
     event: K,
-    payload: ShellEvents[K],
+    payload: BusEvents[K],
   ): void {
     this.dispatch(event, payload);
   }
@@ -229,11 +229,11 @@ export class EventBus {
    * listeners (renderers). This enables content pipelines where extensions
    * modify data (e.g. render LaTeX → terminal image) before renderers see it.
    */
-  emitTransform<K extends keyof ShellEvents>(
+  emitTransform<K extends keyof BusEvents>(
     event: K,
-    payload: ShellEvents[K],
+    payload: BusEvents[K],
   ): void {
-    let transformed: ShellEvents[K];
+    let transformed: BusEvents[K];
     try {
       transformed = this.emitPipe(event, payload);
     } catch (err) {
@@ -246,9 +246,9 @@ export class EventBus {
   }
 
   /** Register a transform listener for a pipeline event. */
-  onPipe<K extends keyof ShellEvents>(
+  onPipe<K extends keyof BusEvents>(
     event: K,
-    fn: PipeListener<ShellEvents[K]>,
+    fn: PipeListener<BusEvents[K]>,
   ): void {
     let listeners = this.pipeListeners.get(event);
     if (!listeners) {
@@ -259,9 +259,9 @@ export class EventBus {
   }
 
   /** Remove a transform listener from a pipeline event. */
-  offPipe<K extends keyof ShellEvents>(
+  offPipe<K extends keyof BusEvents>(
     event: K,
-    fn: PipeListener<ShellEvents[K]>,
+    fn: PipeListener<BusEvents[K]>,
   ): void {
     const listeners = this.pipeListeners.get(event);
     if (!listeners) return;
@@ -274,10 +274,10 @@ export class EventBus {
    * output of the previous one. Returns the final transformed payload.
    * If no listeners are registered, returns the original payload unchanged.
    */
-  emitPipe<K extends keyof ShellEvents>(
+  emitPipe<K extends keyof BusEvents>(
     event: K,
-    payload: ShellEvents[K],
-  ): ShellEvents[K] {
+    payload: BusEvents[K],
+  ): BusEvents[K] {
     const listeners = this.pipeListeners.get(event);
     if (!listeners) return payload;
     let result = payload;
@@ -297,9 +297,9 @@ export class EventBus {
   }
 
   /** Remove an async transform listener from a pipeline event. */
-  offPipeAsync<K extends keyof ShellEvents>(
+  offPipeAsync<K extends keyof BusEvents>(
     event: K,
-    fn: AsyncPipeListener<ShellEvents[K]>,
+    fn: AsyncPipeListener<BusEvents[K]>,
   ): void {
     const listeners = this.asyncPipeListeners.get(event);
     if (!listeners) return;
@@ -308,9 +308,9 @@ export class EventBus {
   }
 
   /** Register an async transform listener for a pipeline event. */
-  onPipeAsync<K extends keyof ShellEvents>(
+  onPipeAsync<K extends keyof BusEvents>(
     event: K,
-    fn: AsyncPipeListener<ShellEvents[K]>,
+    fn: AsyncPipeListener<BusEvents[K]>,
   ): void {
     let listeners = this.asyncPipeListeners.get(event);
     if (!listeners) {
@@ -329,10 +329,10 @@ export class EventBus {
    * Returns the final transformed payload. If no pipe listeners are registered,
    * returns the original payload unchanged (with safe defaults).
    */
-  async emitPipeAsync<K extends keyof ShellEvents>(
+  async emitPipeAsync<K extends keyof BusEvents>(
     event: K,
-    payload: ShellEvents[K],
-  ): Promise<ShellEvents[K]> {
+    payload: BusEvents[K],
+  ): Promise<BusEvents[K]> {
     // Phase 1: notify (lets renderers prepare for interactive I/O)
     this.dispatch(event, payload);
 

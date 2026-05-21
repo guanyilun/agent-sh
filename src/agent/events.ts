@@ -1,5 +1,5 @@
 /**
- * Augments core's ShellEvents with the events ash owns — provider
+ * Augments core's BusEvents with the events ash owns — provider
  * registry, ash-specific mode/config events, and LLM wire-level
  * observability. Other backends don't have providers or modes, so
  * these don't belong in the generic agent-backend protocol.
@@ -7,7 +7,7 @@
 import type { AgentMode } from "./host-types.js";
 
 declare module "../core/event-bus.js" {
-  interface ShellEvents {
+  interface BusEvents {
     // ── Provider registry (ash-only concept) ──────────────────────
     "provider:register": {
       id: string;

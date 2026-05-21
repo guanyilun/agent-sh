@@ -4,7 +4,7 @@
  * backend (ash, bridges) so backends find the registry already wired
  * when they register themselves via `core:extensions-loaded`.
  */
-import "./events.js"; // augments ShellEvents
+import "./events.js"; // augments BusEvents
 import type { ExtensionContext } from "../../shell/host-types.js";
 import type { BackendRegistration } from "./events.js";
 import * as settingsMod from "../../core/settings.js";

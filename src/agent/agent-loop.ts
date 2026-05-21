@@ -11,7 +11,7 @@
  *     agent:tool-completed, agent:tool-output
  *   - agent:thinking-chunk, agent:cancelled, agent:error
  */
-import type { EventBus, ShellEvents } from "../core/event-bus.js";
+import type { EventBus, BusEvents } from "../core/event-bus.js";
 import type { AgentMode } from "./host-types.js";
 import type { LlmClient } from "./llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
@@ -177,7 +177,7 @@ export class AgentLoop implements AgentBackend {
     // Register handlers — extensions can advise these
     this.registerHandlers();
 
-    const onCtor = <K extends keyof ShellEvents>(event: K, fn: (payload: ShellEvents[K]) => void) => {
+    const onCtor = <K extends keyof BusEvents>(event: K, fn: (payload: BusEvents[K]) => void) => {
       this.bus.on(event, fn);
       this.ctorListeners.push({ event, fn });
     };
@@ -243,23 +243,23 @@ export class AgentLoop implements AgentBackend {
 
   /** Subscribe to bus events — activates this backend. */
   wire(): void {
-    const on = <K extends keyof ShellEvents>(
+    const on = <K extends keyof BusEvents>(
       event: K,
-      fn: (payload: ShellEvents[K]) => void,
+      fn: (payload: BusEvents[K]) => void,
     ) => {
       this.bus.on(event, fn);
       this.boundListeners.push({ event, fn });
     };
-    const onPipe = <K extends keyof ShellEvents>(
+    const onPipe = <K extends keyof BusEvents>(
       event: K,
-      fn: (payload: ShellEvents[K]) => ShellEvents[K] | void,
+      fn: (payload: BusEvents[K]) => BusEvents[K] | void,
     ) => {
       this.bus.onPipe(event, fn as any);
       this.boundPipeListeners.push({ event, fn, async: false });
     };
-    const onPipeAsync = <K extends keyof ShellEvents>(
+    const onPipeAsync = <K extends keyof BusEvents>(
       event: K,
-      fn: (payload: ShellEvents[K]) => Promise<ShellEvents[K] | void>,
+      fn: (payload: BusEvents[K]) => Promise<BusEvents[K] | void>,
     ) => {
       this.bus.onPipeAsync(event, fn as any);
       this.boundPipeListeners.push({ event, fn, async: true });
@@ -606,7 +606,7 @@ export class AgentLoop implements AgentBackend {
     target: number,
     keepRecent?: number,
     force?: boolean,
-    strategy?: ShellEvents["context:compact"]["strategy"],
+    strategy?: BusEvents["context:compact"]["strategy"],
   ): CompactResult | null {
     const stats = this.handlers.call("conversation:compact", {
       target,

@@ -1,5 +1,5 @@
 /**
- * Augments core's ShellEvents with the events agent-backend owns.
+ * Augments core's BusEvents with the events agent-backend owns.
  * Any module consuming these must transitively import this file so
  * the declaration merge is visible.
  */
@@ -23,7 +23,7 @@ export interface BackendRegistration {
 }
 
 declare module "../../core/event-bus.js" {
-  interface ShellEvents {
+  interface BusEvents {
     // ── Registry / lifecycle ──────────────────────────────────────
     "agent:register-backend": BackendRegistration;
     "config:switch-backend": { name: string };
