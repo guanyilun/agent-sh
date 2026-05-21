@@ -106,12 +106,12 @@ Picking a narrower type makes host requirements explicit. Under a mismatch (exte
 
 ### `ctx.agent` — agent host surface
 
-Attached by the built-in agent backend (or any backend that calls `activateAgent` / wires the same handlers). Bridges that own the agent externally (claude-code, opencode, pi) leave `ctx.agent` undefined.
+Attached by `activateAgent(ctx)` (called from `src/cli/index.ts` and from library hosts). `ctx.agent` is present whenever the ash agent host has been activated, regardless of which backend is currently active. Bridges (claude-code, opencode, pi) coexist as alternate backends and still see `ctx.agent`; they simply don't drive AgentLoop.
 
 | Property | Type | Description |
 |---|---|---|
 | `llm` | `LlmInterface` | Backend-agnostic LLM facade — `llm.ask({query, system?, maxTokens?})` for one-shot, `llm.session({system?}).send(msg)` for multi-turn, `llm.available` to check |
-| `providers` | `{ configure }` | Configure provider-specific hooks (reasoning params) |
+| `providers` | `{ register, unregister, configure }` | Register/unregister provider catalogs (id, apiKey, baseURL, defaultModel, models, supportsReasoningEffort, noAuth); `configure` sets provider-specific hooks (reasoning params). See [Providers](#providers) below |
 | `registerTool` | `(tool: ToolDefinition) => void` | Register a tool with the active agent backend. See [Internal Agent: Tool interface](agent.md#tool-interface) |
 | `unregisterTool` | `(name: string) => void` | Remove a previously registered tool |
 | `adviseTool` | `(name, advisor) => () => void` | Wrap a tool's execute function (gating, logging, transforms) |
@@ -237,7 +237,7 @@ This is how agent backends emit response chunks — extensions get a chance to t
 
 ## Custom Agent Backends
 
-An extension can provide an agent backend — the component that receives queries and produces responses. The built-in backend (`agent-backend` extension, which creates AgentLoop) uses an OpenAI-compatible API with tool calling. You can add alternatives: a local model, a proprietary agent service, a deterministic script, or a test stub. All backends — including the built-in one — register via the same `agent:register-backend` mechanism.
+An extension can provide an agent backend — the component that receives queries and produces responses. The built-in `ash` backend (registered from `src/agent/index.ts` via `activateAgent`) uses an OpenAI-compatible API with tool calling and constructs its AgentLoop lazily when `start()` runs. The core owns the backend registry — every backend, including ash, registers by emitting `agent:register-backend`, and `core.activateBackend(name?)` picks one to start. You can add alternatives: a local model, a proprietary agent service, a deterministic script, or a test stub.
 
 ### How it works
 
@@ -327,7 +327,7 @@ Switching deactivates the current backend (`kill()`) and activates the new one (
 
 ### Default backend
 
-By default, the built-in `"ash"` backend activates (registered by the `agent-backend` built-in extension). To make an extension backend the default, set `defaultBackend` in `~/.agent-sh/settings.json`:
+By default, the built-in `"ash"` backend activates (registered from `src/agent/index.ts` via `activateAgent`, which the CLI calls before loading built-ins). To make an extension backend the default, set `defaultBackend` in `~/.agent-sh/settings.json`:
 
 ```json
 {
@@ -346,10 +346,10 @@ agent-sh --backend pi    # launches pi this session, settings unchanged
 
 Unlike `defaultBackend`, the CLI flag is strict: if the named backend isn't registered, agent-sh errors out with a hint pointing at `agent-sh install <bridge>` rather than silently falling back.
 
-To disable the built-in agent entirely (e.g., for bridge-only setups):
+To run a bridge-only setup, set `defaultBackend` to the bridge — ash registers itself but won't activate unless it's chosen:
 ```json
 {
-  "disabledBuiltins": ["agent-backend"],
+  "extensions": ["./my-bridge.ts"],
   "defaultBackend": "claude-code"
 }
 ```
@@ -441,6 +441,40 @@ The wrapping tag is the bridge's call — drop the XML envelope and inline the t
 
 Per-request producers (`mode: "per-request"`) only fire under backends that expose the LLM loop. Bridges that hand off to an external SDK can't fire them, since they don't see iterations — extensions wanting cross-backend reach should prefer `mode: "per-query"`.
 
+## Custom Providers
+
+Providers describe the OpenAI-compatible endpoints the `ash` backend can talk to. The built-ins (openrouter, openai, openai-compatible, deepseek) register from `src/agent/providers/`; extensions can register their own — local daemons, hosted gateways, fine-tuned model catalogs — and they show up under `agent-sh auth list` and `/model`.
+
+```typescript
+import type { AgentContext } from "agent-sh/types";
+
+export default function activate(ctx: AgentContext): void {
+  ctx.agent.providers.register({
+    id: "ollama",
+    baseURL: "http://localhost:11434/v1",
+    defaultModel: "llama3.2",
+    models: ["llama3.2", "qwen2.5-coder"],
+    noAuth: true,
+  });
+}
+```
+
+`ProviderRegistration` fields:
+
+| Field | Description |
+|---|---|
+| `id` | Provider name (used as the key in settings, `auth`, `/model`) |
+| `apiKey` | API key; omit for `noAuth` providers, otherwise resolved via `resolveApiKey(id)` |
+| `baseURL` | OpenAI-compatible base URL |
+| `defaultModel` | Selected by default when this provider is active |
+| `models` | Catalog. Either `string[]` or `Array<{ id, contextWindow?, reasoning?, echoReasoning? }>` for per-model capabilities |
+| `supportsReasoningEffort` | Whether `/thinking` levels apply to this provider |
+| `noAuth` | `true` for local daemons that don't require an API key — appears as "(no auth required)" in `auth list` |
+
+Settings overlay registered providers: `providers.<id>.apiKey/baseURL/defaultModel/models/modelCapabilities` in `~/.agent-sh/settings.json` wins over the extension's payload, so users can pin keys, endpoints, and per-model overrides without touching extension code.
+
+Re-register to refresh (e.g. after fetching a catalog asynchronously); listeners are notified via `agent:providers:changed` and `agent:modes-changed`. To configure provider hooks like custom reasoning-effort encoding, use `ctx.agent.providers.configure(id, { reasoningParams })`.
+
 ## Named Handlers (Advice System)
 
 The event bus transforms *data flowing through events*. Named handlers are different — they let you wrap *function calls*. Think of `define`/`advise`/`call` as a named function registry where any extension can intercept any function.
@@ -476,7 +510,7 @@ Handlers are reserved for **high-power use cases** where multiple independent ex
 
 #### Agent loop handlers
 
-These are registered by the `agent-backend` built-in extension (AgentLoop) and let other extensions shape what the LLM sees and how tools execute. They are only available when the built-in agent is active.
+These are registered by AgentLoop (constructed when the ash backend's `start()` runs) and let other extensions shape what the LLM sees and how tools execute. They are only available when the ash backend is active.
 
 | Handler | Signature | Description |
 |---|---|---|

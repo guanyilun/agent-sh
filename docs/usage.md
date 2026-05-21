@@ -41,9 +41,9 @@ agent-sh install <name>         # install a bundled extension (e.g. agent-sh ins
 agent-sh install ./path/to/ext  # install from a local path
 agent-sh uninstall <name>       # remove an installed extension
 agent-sh list                   # show extensions discovered from ~/.agent-sh/extensions/ and settings.json
-agent-sh auth login [provider]  # store an API key (openai | openrouter | deepseek | any provider declared in settings.json)
+agent-sh auth login [provider]  # store an API key; provider list is discovered from built-ins, settings.json, and any extension that calls ctx.agent.providers.register
 agent-sh auth logout <provider> # remove a stored key
-agent-sh auth list              # show configured providers and their key source
+agent-sh auth list              # show configured providers and their key source ("(no auth required)" for local-daemon providers registered with noAuth: true)
 ```
 
 Keys stored via `auth` live in `~/.agent-sh/keys.json` (chmod 0600). Resolution order when launching is `settings.json` → `keys.json` → env var, so explicit configuration always wins over the auth store.

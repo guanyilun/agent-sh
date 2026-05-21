@@ -13,10 +13,10 @@ export default function activate(ctx: AgentContext): void {
   const apiKey = process.env.OPENAI_API_KEY || "no-key";
   const id = "openai-compatible";
 
-  ctx.bus.emit("provider:register", { id, apiKey, baseURL, models: [] });
+  ctx.agent.providers.register({ id, apiKey, baseURL, models: [] });
   fetchModels(baseURL, apiKey).then((models) => {
     if (models.length === 0) return;
-    ctx.bus.emit("provider:register", {
+    ctx.agent.providers.register({
       id,
       apiKey,
       baseURL,

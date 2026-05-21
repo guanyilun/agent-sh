@@ -15,6 +15,8 @@ export interface ProviderAuthInfo {
   /** True for ids only present in keys.json — likely owned by an extension
    *  that registers a provider at runtime. */
   unattached?: boolean;
+  /** Auth UI shows "no auth required" instead of "not configured". */
+  noAuth?: boolean;
 }
 
 export const KNOWN_PROVIDERS: ProviderAuthInfo[] = [
@@ -23,8 +25,7 @@ export const KNOWN_PROVIDERS: ProviderAuthInfo[] = [
   { id: "deepseek",   label: "DeepSeek",   envVar: "DEEPSEEK_API_KEY" },
 ];
 
-/** Built-ins merged with settings-declared providers, plus any ids that only
- *  appear in keys.json (likely registered by an extension at runtime). */
+/** Built-ins + settings + keys.json. Sync, no extension load. */
 export function listAllProviders(): ProviderAuthInfo[] {
   const out: ProviderAuthInfo[] = [...KNOWN_PROVIDERS];
   const seen = new Set(out.map((p) => p.id));
@@ -39,6 +40,26 @@ export function listAllProviders(): ProviderAuthInfo[] {
     out.push({ id, label: id, unattached: true });
     seen.add(id);
   }
+  return out;
+}
+
+/** Augments listAllProviders with extension-registered ids. */
+export async function listAllProvidersWithDiscovery(): Promise<ProviderAuthInfo[]> {
+  const out = listAllProviders();
+  const byId = new Map(out.map((p) => [p.id, p] as const));
+  const { discoverExtensionProviders } = await import("./discover.js");
+  try {
+    for (const d of await discoverExtensionProviders()) {
+      const existing = byId.get(d.id);
+      if (existing) {
+        if (d.noAuth && !existing.noAuth) existing.noAuth = true;
+        continue;
+      }
+      const entry: ProviderAuthInfo = { id: d.id, label: d.id, custom: true, noAuth: d.noAuth };
+      out.push(entry);
+      byId.set(d.id, entry);
+    }
+  } catch {}
   return out;
 }
 

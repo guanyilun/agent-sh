@@ -10,10 +10,11 @@
  * Argument completion is composable: any extension can onPipe("autocomplete:request")
  * and check payload.command / payload.commandArgs to add completions for any command.
  */
-import { palette as p } from "../utils/palette.js";
-import type { ExtensionContext } from "../shell/host-types.js";
-import { discoverSkills, loadSkillContent, type Skill } from "../agent/skills.js";
-import { reloadExtensions } from "../core/extension-loader.js";
+import "./events.js";
+import { palette as p } from "../../utils/palette.js";
+import type { ExtensionContext } from "../../shell/host-types.js";
+import { discoverSkills, loadSkillContent, type Skill } from "../../agent/skills.js";
+import { reloadExtensions } from "../../core/extension-loader.js";
 
 interface SlashCommand {
   name: string;

@@ -40,6 +40,10 @@ opencode reads its own config from `~/.local/share/opencode/` (auth credentials)
 - opencode authenticated locally — run `opencode auth login` once before using this bridge.
 - Provider env vars (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) as required by opencode for the model you've selected.
 
+## Environment
+
+- `OPENCODE_SDK_PORT` — port for the in-process opencode HTTP server. Defaults to `0` (OS-assigned free port) so a stale standalone opencode on the SDK's default port 4096 can't collide with the bridge. Set explicitly only if you need a deterministic port.
+
 ## What works under opencode
 
 agent-sh's per-query context producers (e.g. `<shell_events>` from `shell-context`) are inlined into opencode's prompt before each query, so opencode sees the user's recent shell activity even though the SDK doesn't subscribe to agent-sh's shell bus directly. The current cwd is part of that context, so opencode knows where the user is even when its tools are anchored elsewhere.

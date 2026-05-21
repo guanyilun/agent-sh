@@ -45,6 +45,18 @@ export interface LlmInterface {
   }): LlmSession;
 }
 
+export interface ProviderRegistration {
+  id: string;
+  apiKey?: string;
+  baseURL?: string;
+  /** Falls back to models[0] when absent. */
+  defaultModel?: string;
+  models?: (string | { id: string; reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean })[];
+  supportsReasoningEffort?: boolean;
+  /** Local daemons etc. — `auth list/login` shows "no auth required". */
+  noAuth?: boolean;
+}
+
 /** A model entry in the cycling list, optionally tied to a provider. */
 export interface AgentMode {
   model: string;
@@ -76,6 +88,9 @@ export interface AgentMode {
 export interface AgentSurface {
   llm: LlmInterface;
   providers: {
+    /** Re-registering the same id replaces the prior contribution. */
+    register: (reg: ProviderRegistration) => () => void;
+    unregister: (id: string) => void;
     configure: (id: string, opts: { reasoningParams?: (level: string, model?: string) => Record<string, unknown> }) => void;
   };
 

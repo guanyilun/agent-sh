@@ -434,10 +434,10 @@ function waitForModelsToSettle(
       timer = setTimeout(done, Math.max(0, Math.min(quietMs, remaining)));
     };
     const done = () => {
-      core.bus.off("config:add-modes", arm);
+      core.bus.off("agent:modes-changed", arm);
       resolve();
     };
-    core.bus.on("config:add-modes", arm);
+    core.bus.on("agent:modes-changed", arm);
     arm();
   });
 }

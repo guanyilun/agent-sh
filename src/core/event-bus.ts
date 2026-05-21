@@ -1,348 +1,30 @@
 import { EventEmitter } from "node:events";
-import type { AgentMode } from "../agent/host-types.js";
-import type { ToolResultDisplay } from "../agent/types.js";
 
-/**
- * Typed event map — every event has a known payload shape.
- */
-export interface ShellEvents {
-  // Shell lifecycle
-  "shell:command-start": { command: string; cwd: string };
-  "shell:command-done": {
-    command: string;
-    output: string;
-    cwd: string;
-    exitCode: number | null;
-  };
-  "shell:cwd-change": { cwd: string };
-  "shell:foreground-busy": { busy: boolean };
-  "shell:agent-exec-start": Record<string, never>;
-  "shell:agent-exec-done": Record<string, never>;
+export interface BackendRegistration {
+  name: string;
+  kill: () => void;
+  start?: () => Promise<void>;
+}
 
-  // Raw PTY output stream (every byte from the shell process).
-  // Extensions can use this to feed a virtual terminal, log, or replay.
-  "shell:pty-data": { raw: string };
+/** Typed event map — every event has a known payload shape. */
+export interface BusEvents {
+  "core:extensions-loaded": { names: string[] };
 
-  // Write raw bytes to the PTY (keystroke injection).
-  // Extensions use this to send keystrokes into the user's live shell.
-  "shell:pty-write": { data: string };
+  /** Cross-cutting "config might have changed, repaint" signal. */
+  "config:changed": Record<string, never>;
 
-  // Resize the PTY (triggers SIGWINCH in the child process).
-  "shell:pty-resize": { cols: number; rows: number };
-
-  // Terminal buffer snapshot (request/response pattern via bus)
-  "shell:buffer-request": Record<string, never>;
-  "shell:buffer-snapshot": {
-    text: string;
-    altScreen: boolean;
-    cursor: { x: number; y: number };
-  };
-
-  // Agent input (frontend → core: user submitted a query or wants to cancel)
-  "agent:submit": { query: string };
-  "agent:cancel-request": { silent?: boolean };
-  "agent:append-user-message": { text: string };
-
-  // Input mode registration (extensions → InputHandler)
-  "input-mode:register": import("../shell/host-types.js").InputModeConfig;
-
-  // Agent interaction
-  "agent:query": { query: string };
-  "agent:thinking-chunk": { text: string };
-  "agent:response-chunk": { blocks: ContentBlock[] };
-  "agent:response-done": { response: string };
-
-  // Token usage (emitted after each LLM call, when available)
-  "agent:usage": { prompt_tokens: number; completion_tokens: number; total_tokens: number };
-
-  // Wire-level observability for debug/capture extensions. llm:chunk
-  // fires on every streamed chunk — keep listeners cheap.
-  "llm:request": {
-    messages: unknown[];
-    tools?: unknown;
-    model?: string;
-    max_tokens?: number;
-    reasoning_effort?: string;
-  };
-  "llm:chunk": { chunk: unknown };
-
-  // Agent lifecycle
-  "agent:processing-start": Record<string, never>;
-  "agent:processing-done": Record<string, never>;
-  "agent:cancelled": Record<string, never>;
-  "agent:error": { message: string };
-
-  // Tool execution (agent-initiated — surfaced for UI/observability extensions).
-  "agent:tool-call": { tool: string; args: Record<string, unknown> };
-  "agent:tool-output": {
-    tool: string;
-    output: string;
-    exitCode: number | null;
-  };
-
-  // Tool batch — emitted before execution with all tool calls grouped by kind
-  "agent:tool-batch": {
-    groups: Array<{
-      kind: string;
-      tools: Array<{ name: string; displayDetail?: string }>;
-    }>;
-  };
-
-  // Fires once after each tool-call batch's results are recorded. Enables
-  // extensions to track per-batch outcomes (consecutive errors, resolution
-  // patterns, etc.) without polling. Distinct from per-tool `agent:tool-
-  // output` events because batch-level decisions see the whole batch.
-  "agent:tool-batch-complete": {
-    results: Array<{ name: string; isError: boolean; errorSummary?: string }>;
-  };
-
-  // Fires after any message is appended to the conversation (user query,
-  // assistant response, tool result, system note). Lets extensions
-  // persist a derived log, build analytics, or react to turn boundaries
-  // without hooking the LLM loop. For tool results, a minimal bundle
-  // (toolName, args, isError) is included so extensions don't have to
-  // parse the message structure back out to know what ran.
-  "conversation:message-appended": {
-    role: "user" | "assistant" | "tool" | "system";
-    content: string;
-    /** For role="tool": name of the tool whose result this is. */
-    toolName?: string;
-    /** For role="tool": parsed arguments passed to the tool. */
-    toolArgs?: Record<string, unknown>;
-    /** For role="tool": whether the tool errored. */
-    isError?: boolean;
-  };
-
-  // Fires after a compaction completes. Carries generic before/after
-  // token counts so analytics/ui extensions can react. Strategy-specific
-  // fields (evicted topics, etc.) belong on the strategy's own event.
-  "conversation:after-compact": {
-    beforeTokens: number;
-    afterTokens: number;
-    evictedCount: number;
-  };
-
-  // Tool rendering (used by TUI for display — distinct data shape from above)
-  "agent:tool-started": {
-    title: string;
-    toolCallId?: string;
-    kind?: string;
-    icon?: string;
-    locations?: { path: string; line?: number | null }[];
-    rawInput?: unknown;
-    /** Pre-formatted display detail from tool's formatCall(). */
-    displayDetail?: string;
-    /** highlight.js-style identifier for syntax-highlighting `rawInput.source`. */
-    sourceLanguage?: string;
-    batchIndex?: number;
-    batchTotal?: number;
-  };
-  "agent:tool-completed": {
-    toolCallId?: string;
-    exitCode: number | null;
-    rawOutput?: unknown;
-    kind?: string;
-    /** Structured result display — set by formatResult or defaults, overridable via onPipe. */
-    resultDisplay?: ToolResultDisplay;
-  };
-  "agent:tool-output-chunk": { chunk: string };
-
-  // Subagent lifecycle (non-blocking background tasks)
-  "agent:subagent-started": { taskId: string; task: string };
-  "agent:subagent-completed": { taskId: string; task: string; result: string; isError: boolean };
-
-  // Tool interactive UI (tool has taken over rendering + input)
-  "tool:interactive-start": Record<string, never>;
-  "tool:interactive-end": Record<string, never>;
-
-  // Slash command registration (extensions → slash-commands)
-  "command:register": {
-    name: string;
-    description: string;
-    handler: (args: string) => Promise<void> | void;
-  };
-  "command:unregister": { name: string };
-
-  // Slash command execution
-  "command:execute": {
-    name: string;
-    args: string;
-  };
-
-  // UI feedback (TUI subscribes to render; silently ignored without TUI)
+  /** Universal UI feedback channel (any frontend may render; silently
+   *  ignored without one). */
   "ui:info": { message: string };
   "ui:error": { message: string };
   "ui:suggestion": { text: string };
 
-  // Compositor surface writes (emitted by DefaultCompositor when bus provided)
-  "compositor:write": { stream: string; text: string };
-
-  // Generic keypress forwarding (control chars not handled by input-handler)
-  "input:keypress": { key: string };
-
-  // Raw input intercept (sync pipe: fired before any input processing).
-  // Extensions set `consumed: true` to swallow input before it reaches the
-  // PTY or mode handler — enables overlay UIs during foreground programs.
-  "input:intercept": { data: string; consumed: boolean };
-
-  // Stdout hold/release (ref-counted). While held, PTY output is not written
-  // to stdout — enables overlay extensions to render without interference.
-  "shell:stdout-hold": Record<string, never>;
-  "shell:stdout-release": Record<string, never>;
-
-
-  // Temporarily force PTY output visible even while agent is processing
-  // (ref-counted). Used by tools like terminal_keys that need the user
-  // to see the foreground program's response to injected keystrokes.
-  "shell:stdout-show": Record<string, never>;
-  "shell:stdout-hide": Record<string, never>;
-
-  // Terminal interception (sync pipe: extensions can intercept before execution)
-  "agent:terminal-intercept": {
-    command: string;
-    cwd: string;
-    intercepted: boolean;
-    output: string;
-  };
-
-  // Prompt redraw (sync pipe: extensions set handled=true to suppress).
-  // kind="fresh" — \n to PTY, full precmd cycle, leaves a blank line.
-  // kind="redraw" — in-place \e[9999~, no visual noise.
-  "shell:redraw-prompt": {
-    cwd: string;
-    kind: "fresh" | "redraw";
-    handled: boolean;
-  };
-
-  // Shell exec (async pipe: extension requests command execution in user's PTY)
-  "shell:exec-request": {
-    command: string;
-    output: string;
-    cwd: string;
-    exitCode: number | null;
-    done: boolean;
-  };
-
-  // Agent info (backend → frontend: connection established, info available)
-  "agent:info": { name: string; version: string; model?: string; provider?: string; contextWindow?: number };
-
-  // Session reset (slash command → backend: clear conversation state)
-  "agent:reset-session": Record<string, never>;
-
-  // Manual compaction request (slash command → backend)
-  "agent:compact-request": Record<string, never>;
-
-  // Context stats query (sync pipe: slash command → backend).
-  // Core fields only; extensions can chain onPipe to add more.
-  "context:get-stats": {
-    activeTokens: number;
-    totalTokens: number;
-    budgetTokens: number;
-  };
-
-  "context:snapshot": {
-    messages: unknown[];
-    contextWindow: number;
-    activeTokens: number;
-  };
-
-  // Strategies share one seam so after-compact metrics and cache
-  // invalidation run uniformly across kernel + manual edits.
-  "context:compact": {
-    strategy?:
-      | { kind: "two-tier-pin"; target: number; keepRecent?: number; force?: boolean }
-      | { kind: "rewind"; toIndex: number }
-      | { kind: "replace"; messages: unknown[] };
-    stats?: { before: number; after: number; evictedCount: number };
-  };
-
-
-  // Extension registers itself as agent backend (extension → core)
-  "agent:register-backend": {
-    name: string;
-    kill: () => void;
-    start?: () => Promise<void>;
-  };
-
-  // Switch agent backend at runtime (slash command → core)
-  "config:switch-backend": { name: string };
-
-  // List registered backends (slash command → core, returns via ui:info)
-  "config:list-backends": Record<string, never>;
-  // Query backend names (sync pipe — for autocomplete)
+  /** Backend registry — core owns these; every backend (ash, bridges)
+   *  emits register, switch/list flow through here too. */
+  "agent:register-backend": BackendRegistration;
   "config:get-backends": { names: string[]; active: string | null };
-
-  // Session mode/config updated (from agent backend)
-  "config:changed": Record<string, never>;
-
-  // Switch to a specific model by name (slash command → backend)
-  "config:switch-model": { model: string };
-  // Query available models (sync pipe — for autocomplete)
-  "config:get-models": { models: { model: string; provider: string }[]; active: { model: string; provider: string } | null };
-  // Set thinking/reasoning effort level (slash command → backend)
-  "config:set-thinking": { level: string };
-  // Query current thinking level (sync pipe — for autocomplete)
-  "config:get-thinking": { level: string; levels: string[]; supported: boolean };
-
-  // Switch provider at runtime (slash command → core)
-  "config:switch-provider": { provider: string };
-
-  // Query initial modes (sync pipe: agent backend extension → core)
-  "config:get-initial-modes": { modes: AgentMode[]; initialModeIndex: number };
-  // Set modes (core → agent loop: after provider switch).
-  // Optional activeIndex honors the persisted default without resetting to 0.
-  "config:set-modes": { modes: AgentMode[]; activeIndex?: number };
-  // Append modes (core → agent loop: after provider register)
-  "config:add-modes": { modes: AgentMode[] };
-
-  // Fires after all extensions (built-in + user) have activated.
-  // agent-backend waits on this to resolve settings.defaultProvider
-  // against the full provider registry, including dynamic providers.
-  "core:extensions-loaded": { names: string[] };
-
-  // Register a provider at runtime (extensions → core)
-  "provider:register": {
-    id: string;
-    apiKey?: string;
-    baseURL?: string;
-    /** Optional — providers for custom endpoints may not know the catalog
-     *  at registration time. Falls back to models[0] when absent. */
-    defaultModel?: string;
-    models?: (string | { id: string; reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean })[];
-    /** Provider supports the reasoning_effort parameter. Default: true. */
-    supportsReasoningEffort?: boolean;
-  };
-
-  "provider:configure": {
-    id: string;
-    reasoningParams?: (level: string, model?: string) => Record<string, unknown>;
-  };
-
-  // Tool/instruction registration (extension → active agent backend)
-  "agent:register-tool": { tool: import("../agent/types.js").ToolDefinition; extensionName?: string };
-  "agent:unregister-tool": { name: string };
-  "agent:get-tools": { tools: import("../agent/types.js").ToolDefinition[] };
-  "agent:register-instruction": { name: string; text: string; extensionName: string };
-  "agent:remove-instruction": { name: string };
-  "agent:register-skill": { name: string; description: string; filePath: string; extensionName: string };
-  "agent:remove-skill": { name: string };
-
-  // Banner section collection (sync pipe: extensions contribute labeled items to startup banner)
-  "banner:collect": {
-    sections: Array<{ label: string; items: string[] }>;
-    /** Name of the backend being launched. Extensions should gate per-backend sections on this rather than settings.defaultBackend. */
-    activeBackend?: string;
-  };
-
-  // Autocomplete (sync pipe: extensions inspect buffer and append items)
-  "autocomplete:request": {
-    buffer: string;
-    /** Parsed slash command name (e.g. "/backend"), or null if not a command. */
-    command: string | null;
-    /** Text after the command name (e.g. "clau" for "/backend clau"), or null. */
-    commandArgs: string | null;
-    items: { name: string; description: string }[];
-  };
+  "config:switch-backend": { name: string };
+  "config:list-backends": Record<string, never>;
 }
 
 // ── Content block types (used by transform pipeline) ────────────
@@ -412,25 +94,25 @@ export class EventBus {
   }
 
   /** Subscribe to a fire-and-forget event. */
-  on<K extends keyof ShellEvents>(
+  on<K extends keyof BusEvents>(
     event: K,
-    fn: Listener<ShellEvents[K]>,
+    fn: Listener<BusEvents[K]>,
   ): void {
     this.emitter.on(event, fn);
   }
 
   /** Unsubscribe from a fire-and-forget event. */
-  off<K extends keyof ShellEvents>(
+  off<K extends keyof BusEvents>(
     event: K,
-    fn: Listener<ShellEvents[K]>,
+    fn: Listener<BusEvents[K]>,
   ): void {
     this.emitter.off(event, fn);
   }
 
   /** Emit a fire-and-forget event. */
-  emit<K extends keyof ShellEvents>(
+  emit<K extends keyof BusEvents>(
     event: K,
-    payload: ShellEvents[K],
+    payload: BusEvents[K],
   ): void {
     this.dispatch(event, payload);
   }
@@ -453,11 +135,11 @@ export class EventBus {
    * listeners (renderers). This enables content pipelines where extensions
    * modify data (e.g. render LaTeX → terminal image) before renderers see it.
    */
-  emitTransform<K extends keyof ShellEvents>(
+  emitTransform<K extends keyof BusEvents>(
     event: K,
-    payload: ShellEvents[K],
+    payload: BusEvents[K],
   ): void {
-    let transformed: ShellEvents[K];
+    let transformed: BusEvents[K];
     try {
       transformed = this.emitPipe(event, payload);
     } catch (err) {
@@ -470,9 +152,9 @@ export class EventBus {
   }
 
   /** Register a transform listener for a pipeline event. */
-  onPipe<K extends keyof ShellEvents>(
+  onPipe<K extends keyof BusEvents>(
     event: K,
-    fn: PipeListener<ShellEvents[K]>,
+    fn: PipeListener<BusEvents[K]>,
   ): void {
     let listeners = this.pipeListeners.get(event);
     if (!listeners) {
@@ -483,9 +165,9 @@ export class EventBus {
   }
 
   /** Remove a transform listener from a pipeline event. */
-  offPipe<K extends keyof ShellEvents>(
+  offPipe<K extends keyof BusEvents>(
     event: K,
-    fn: PipeListener<ShellEvents[K]>,
+    fn: PipeListener<BusEvents[K]>,
   ): void {
     const listeners = this.pipeListeners.get(event);
     if (!listeners) return;
@@ -498,10 +180,10 @@ export class EventBus {
    * output of the previous one. Returns the final transformed payload.
    * If no listeners are registered, returns the original payload unchanged.
    */
-  emitPipe<K extends keyof ShellEvents>(
+  emitPipe<K extends keyof BusEvents>(
     event: K,
-    payload: ShellEvents[K],
-  ): ShellEvents[K] {
+    payload: BusEvents[K],
+  ): BusEvents[K] {
     const listeners = this.pipeListeners.get(event);
     if (!listeners) return payload;
     let result = payload;
@@ -521,9 +203,9 @@ export class EventBus {
   }
 
   /** Remove an async transform listener from a pipeline event. */
-  offPipeAsync<K extends keyof ShellEvents>(
+  offPipeAsync<K extends keyof BusEvents>(
     event: K,
-    fn: AsyncPipeListener<ShellEvents[K]>,
+    fn: AsyncPipeListener<BusEvents[K]>,
   ): void {
     const listeners = this.asyncPipeListeners.get(event);
     if (!listeners) return;
@@ -532,9 +214,9 @@ export class EventBus {
   }
 
   /** Register an async transform listener for a pipeline event. */
-  onPipeAsync<K extends keyof ShellEvents>(
+  onPipeAsync<K extends keyof BusEvents>(
     event: K,
-    fn: AsyncPipeListener<ShellEvents[K]>,
+    fn: AsyncPipeListener<BusEvents[K]>,
   ): void {
     let listeners = this.asyncPipeListeners.get(event);
     if (!listeners) {
@@ -553,10 +235,10 @@ export class EventBus {
    * Returns the final transformed payload. If no pipe listeners are registered,
    * returns the original payload unchanged (with safe defaults).
    */
-  async emitPipeAsync<K extends keyof ShellEvents>(
+  async emitPipeAsync<K extends keyof BusEvents>(
     event: K,
-    payload: ShellEvents[K],
-  ): Promise<ShellEvents[K]> {
+    payload: BusEvents[K],
+  ): Promise<BusEvents[K]> {
     // Phase 1: notify (lets renderers prepare for interactive I/O)
     this.dispatch(event, payload);
 

@@ -1,5 +1,5 @@
 import type { ToolDefinition, ToolResult, ToolSchemaView } from "./types.js";
-import type { ChatCompletionTool } from "../utils/llm-client.js";
+import type { ChatCompletionTool } from "./llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { registerReadOnlyTool, unregisterReadOnlyTool } from "./nuclear-form.js";
 

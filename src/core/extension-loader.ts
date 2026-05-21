@@ -87,19 +87,19 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
     scopedAgent = {
       ...agent,
       registerTool: (tool) => {
-        bus.emit("agent:register-tool", { tool, extensionName });
-        cleanups.push(() => bus.emit("agent:unregister-tool", { name: tool.name }));
+        agent.registerTool(tool);
+        cleanups.push(() => agent.unregisterTool(tool.name));
       },
       adviseTool: trackUnsub(agent.adviseTool),
       adviseToolSchema: trackUnsub(agent.adviseToolSchema),
       registerInstruction: (name, text) => {
-        bus.emit("agent:register-instruction", { name, text, extensionName });
-        cleanups.push(() => bus.emit("agent:remove-instruction", { name }));
+        agent.registerInstruction(name, text);
+        cleanups.push(() => agent.removeInstruction(name));
       },
       adviseInstruction: trackUnsub(agent.adviseInstruction),
       registerSkill: (name, description, filePath) => {
-        bus.emit("agent:register-skill", { name, description, filePath, extensionName });
-        cleanups.push(() => bus.emit("agent:remove-skill", { name }));
+        agent.registerSkill(name, description, filePath);
+        cleanups.push(() => agent.removeSkill(name));
       },
       adviseSkill: trackUnsub(agent.adviseSkill),
       registerContextProducer: (name, producer, opts) => {

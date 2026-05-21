@@ -272,14 +272,13 @@ export default function activate(ctx: ExtensionContext): void {
         }
       });
 
-      const model = session.model;
+      booting = false;
+      const m = session.model;
       bus.emit("agent:info", {
         name: "pi",
         version: "0.66",
-        model: model ? `${model.provider}/${model.id}` : undefined,
+        model: m ? `${m.provider}/${m.id}` : undefined,
       });
-
-      booting = false;
     } catch (err) {
       booting = false;
       bus.emit("ui:error", {

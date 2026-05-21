@@ -6,7 +6,7 @@ import {
   loadKeysFile,
   saveKeysFile,
   resolveApiKey,
-  listAllProviders,
+  listAllProvidersWithDiscovery,
   findProvider as findProviderById,
   type ProviderAuthInfo,
 } from "./keys.js";
@@ -26,7 +26,7 @@ export async function runAuth(args: string[]): Promise<void> {
     return;
   }
   if (sub === "list" || sub === "ls" || sub === "status") {
-    runList();
+    await runList();
     return;
   }
   console.error(`agent-sh auth: unknown subcommand "${sub}"`);
@@ -111,8 +111,8 @@ function runLogout(providerArg: string | undefined): void {
   console.log(`${p.success}✓${p.reset} Removed ${id} key from ${KEYS_PATH}`);
 }
 
-function runList(): void {
-  const providers = listAllProviders();
+async function runList(): Promise<void> {
+  const providers = await listAllProvidersWithDiscovery();
   console.log("Provider key status:\n");
   const idWidth = Math.max(...providers.map((p) => p.id.length));
   for (const info of providers) {
@@ -125,6 +125,8 @@ function runList(): void {
       : "";
     if (resolved.key) {
       console.log(`  ${p.success}●${p.reset} ${padded}  ${p.dim}(${sourceLabel(resolved.source, info)})${p.reset}${marker}`);
+    } else if (info.noAuth) {
+      console.log(`  ${p.success}●${p.reset} ${padded}  ${p.dim}(no auth required)${p.reset}${marker}`);
     } else {
       console.log(`  ${p.muted}○${p.reset} ${padded}  ${p.dim}(not configured)${p.reset}${marker}`);
     }
@@ -138,12 +140,14 @@ async function pickProvider(): Promise<ProviderAuthInfo | null> {
     console.error("agent-sh auth: no provider specified and stdin is not a TTY.");
     return null;
   }
-  const providers = listAllProviders();
+  const providers = await listAllProvidersWithDiscovery();
   console.log("Select a provider:");
   providers.forEach((info, i) => {
     const resolved = resolveApiKey(info.id);
     const tag = resolved.key
       ? `${p.dim}(currently from ${sourceLabel(resolved.source, info)})${p.reset}`
+      : info.noAuth
+      ? `${p.dim}(no auth required)${p.reset}`
       : `${p.dim}(not configured)${p.reset}`;
     const labelStr = info.custom
       ? `${p.dim}custom${p.reset}`

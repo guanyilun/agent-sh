@@ -2,7 +2,7 @@
 
 agent-sh is designed to be backend-agnostic. The agent that drives a query — assembling context, calling an LLM, executing tools in a loop — is a replaceable component. Any extension can register a backend via `agent:register-backend` and become the default via the `defaultBackend` setting or the `/backend` slash command. Bridge backends like `claude-code` and `pi` plug external CLI agents into the same shell and TUI surface.
 
-This document describes **ash**, the built-in backend that ships with agent-sh. It is loaded as a built-in extension (`agent-backend`) when an LLM provider is configured. ash resolves providers from settings and CLI flags, creates an `LlmClient`, and calls any OpenAI-compatible API directly. It manages conversation state and executes tools in a loop until the LLM is done.
+This document describes **ash**, the built-in backend that ships with agent-sh. The agent host (`src/agent/index.ts`) is activated unconditionally via `activateAgent(ctx)` — it attaches the `ctx.agent` surface, registers core tools, and emits `agent:register-backend` to register `ash` with the core's backend registry. ash only *activates* (constructs its `AgentLoop` and starts handling queries) when an LLM provider has both an apiKey and a model resolved, and `activateBackend("ash")` runs. It resolves providers from registered catalogs + settings overlay, configures an `LlmClient`, and calls any OpenAI-compatible API directly. It manages conversation state and executes tools in a loop until the LLM is done.
 
 If you're looking to write your own backend instead of reading how ash works internally, see [Extensions: Custom Agent Backends](extensions.md#custom-agent-backends).
 
@@ -162,7 +162,7 @@ for a reference implementation that gates `bash`, `pwsh`, `write_file`, and
 
 ## Built-in Tools
 
-The agent registers core tools on startup, with additional tools contributed by extensions in `~/.agent-sh/extensions/`.
+Core tools are registered when `activateAgent(ctx)` runs — *before* extensions load. This means extensions can look up or advise tools at their own activate time. Additional tools come from extensions in `~/.agent-sh/extensions/`.
 
 ### bash
 
@@ -286,6 +286,7 @@ interface ToolDefinition {
   ): Promise<ToolResult>;
 
   modifiesFiles?: boolean;        // has side effects (skips caching + parallel execution)
+  readOnly?: boolean;             // safe to run without nuclear-form gating (registry tags accordingly)
   showOutput?: boolean;           // stream output to TUI (default: true)
 
   // Display hooks (all optional)

@@ -2,7 +2,8 @@
  * Cross-cutting built-ins, toggleable via `disabledBuiltins`.
  * Module-owned built-ins activate inline:
  *   shell-context, tui-renderer → registerShellHandlers (src/shell/)
- *   agent-backend, providers    → activateAgent         (src/agent/)
+ *   ash (a specific backend)    → activateAgent         (src/agent/)
+ *   backend registry             → createCore           (src/core/)
  */
 import type { ExtensionContext } from "../shell/host-types.js";
 
@@ -12,7 +13,7 @@ export const BUILTIN_EXTENSIONS: Array<{
   name: string;
   load: () => Promise<ActivateFn>;
 }> = [
-  { name: "slash-commands",    load: () => import("./slash-commands.js").then(m => m.default) },
+  { name: "slash-commands",    load: () => import("./slash-commands/index.js").then(m => m.default) },
   { name: "file-autocomplete", load: () => import("./file-autocomplete.js").then(m => m.default) },
 ];
 

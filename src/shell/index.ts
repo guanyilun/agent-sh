@@ -3,6 +3,7 @@
  * built-in extensions manifest) because PTY + stdin raw mode ownership is
  * order-critical.
  */
+import "./events.js"; // augments BusEvents with shell-owned events
 import type { ExtensionContext, RemoteSession, RemoteSessionOptions, ShellSurface } from "./host-types.js";
 import { Shell } from "./shell.js";
 import { DefaultCompositor, StdoutSurface } from "../utils/compositor.js";

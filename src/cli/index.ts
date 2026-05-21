@@ -13,6 +13,20 @@ import { clearOpost } from "../utils/tty.js";
 import { parseArgs } from "./args.js";
 import { captureShellEnvAsync, mergeShellEnv } from "./shell-env.js";
 
+declare module "../core/event-bus.js" {
+  interface BusEvents {
+    /** Startup banner collection (sync pipe). Extensions contribute
+     *  labeled item lists; the CLI renders them between the product
+     *  name and the help hint. */
+    "banner:collect": {
+      sections: Array<{ label: string; items: string[] }>;
+      /** Name of the backend being launched. Extensions should gate
+       *  per-backend sections on this rather than settings.defaultBackend. */
+      activeBackend?: string;
+    };
+  }
+}
+
 async function main(): Promise<void> {
   const rawArgs = process.argv.slice(2);
   if (await dispatchSubcommand(rawArgs)) return;
@@ -68,9 +82,19 @@ async function main(): Promise<void> {
   const core = createCore(config);
   const { bus } = core;
 
-  // Track agent info from bus events (populated by extension backends)
   let agentInfo: { name: string; version: string; model?: string; provider?: string } | null = null;
-  bus.on("agent:info", (info) => { agentInfo = info; });
+  bus.on("agent:info", (info) => {
+    agentInfo = info;
+    // Redraw so late agent:info emits (opencode-bridge after session.create) reach the prompt.
+    bus.emit("config:changed", {});
+  });
+
+  // tui-renderer subscribes to ui:error inside activateShell, after backend
+  // activation — pipe to stderr until the shell is up so boot failures surface.
+  const bootUiError = (e: { message: string }) => {
+    process.stderr.write(`agent-sh: ${e.message}\n`);
+  };
+  bus.on("ui:error", bootUiError);
 
   // ── Interactive frontend ──────────────────────────────────────
   if (process.env.DEBUG) {
@@ -186,6 +210,7 @@ async function main(): Promise<void> {
       return { info: "" };
     },
   });
+  bus.off("ui:error", bootUiError);
 
   bus.emit("input-mode:register", {
     id: "agent",

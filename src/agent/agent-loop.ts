@@ -11,9 +11,9 @@
  *     agent:tool-completed, agent:tool-output
  *   - agent:thinking-chunk, agent:cancelled, agent:error
  */
-import type { EventBus, ShellEvents } from "../core/event-bus.js";
+import type { EventBus, BusEvents } from "../core/event-bus.js";
 import type { AgentMode } from "./host-types.js";
-import type { LlmClient } from "../utils/llm-client.js";
+import type { LlmClient } from "./llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
 import * as path from "node:path";
@@ -32,18 +32,8 @@ import { wrapTrailingWithDynamicContext } from "../utils/message-utils.js";
 import { getSettings, updateSettings } from "../core/settings.js";
 import { createToolProtocol, type ToolProtocol, type PendingToolCall as ProtocolPendingToolCall, type ToolResult as ProtocolToolResult } from "./tool-protocol.js";
 
-// Core tool factories
-import { createBashTool } from "./tools/bash.js";
-import { createPwshTool } from "./tools/pwsh.js";
-import { findBash } from "../utils/executor.js";
-import { createReadFileTool, type FileReadCache } from "./tools/read-file.js";
-import { createWriteFileTool } from "./tools/write-file.js";
-import { createEditFileTool } from "./tools/edit-file.js";
-import { createGrepTool } from "./tools/grep.js";
-import { createGlobTool } from "./tools/glob.js";
-import { createLsTool } from "./tools/ls.js";
-import { createListSkillsTool } from "./tools/list-skills.js";
 import { discoverGlobalSkills, discoverProjectSkills } from "./skills.js";
+import type { FileReadCache } from "./tools/read-file.js";
 
 type PendingToolCall = ProtocolPendingToolCall;
 
@@ -78,8 +68,7 @@ export interface AgentLoopConfig {
   bus: EventBus;
   llmClient: LlmClient;
   handlers: HandlerFunctions;
-  modes?: AgentMode[];
-  initialModeIndex?: number;
+  initialMode?: AgentMode;
   compositor?: Compositor;
   /** Instance ID from core — ensures history entries match the ID in prompts. */
   instanceId?: string;
@@ -91,15 +80,11 @@ export class AgentLoop implements AgentBackend {
   private toolRegistry: ToolRegistry;
   private history: HistoryAdapter;
   private conversation: ConversationState;
-  private fileReadCache: FileReadCache = new Map();
-  private modes: AgentMode[];
-  private currentModeIndex = 0;
+  private fileReadCache: FileReadCache;
+  private activeMode: AgentMode;
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
   private boundPipeListeners: Array<{ event: string; fn: (...args: any[]) => any; async: boolean }> = [];
-  private ctorListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
-  private ctorPipeListeners: Array<{ event: string; fn: (...args: any[]) => any }> = [];
   private lastProjectSkillNames = new Set<string>();
-  private lastAgentInfo: { model?: string; provider?: string; contextWindow?: number } | null = null;
 
   // ── Session telemetry — behavioral self-awareness ──────────────
   // Every ash deserves to know what it's been doing. This tracks the
@@ -147,6 +132,7 @@ export class AgentLoop implements AgentBackend {
     this.compositor = config.compositor ?? null;
     this.instanceId = config.instanceId ?? "unknown";
     this.toolRegistry = new ToolRegistry(this.handlers);
+    this.fileReadCache = this.handlers.call("agent:file-read-cache") as FileReadCache;
 
     // Shell-history-shaped log. Default writes go through the advisable
     // `history:append` handler registered below; extensions swap the
@@ -155,12 +141,7 @@ export class AgentLoop implements AgentBackend {
     this.history = config.history ?? new HistoryFile({ instanceId: this.instanceId, filePath });
     this.conversation = new ConversationState(this.handlers, this.instanceId);
 
-    // Fall back to a single-mode placeholder if the caller passed an
-    // empty array (agent-backend does this pre-resolution).
-    this.modes = config.modes?.length
-      ? config.modes
-      : [{ model: config.llmClient.model }];
-    this.currentModeIndex = config.initialModeIndex ?? 0;
+    this.activeMode = config.initialMode ?? { model: config.llmClient.model };
 
     // Tool protocol — controls how tools are presented to the LLM
     this.toolProtocol = createToolProtocol(
@@ -178,111 +159,53 @@ export class AgentLoop implements AgentBackend {
     // Register handlers — extensions can advise these
     this.registerHandlers();
 
-    // Subscribe to bus-based tool/instruction registration from extensions.
-    // These must be in the constructor (not wire()) because extensions call
-    // registerTool() during activate(), before activateBackend() calls wire().
-    const onCtor = <K extends keyof ShellEvents>(event: K, fn: (payload: ShellEvents[K]) => void) => {
-      this.bus.on(event, fn);
-      this.ctorListeners.push({ event, fn });
-    };
-    onCtor("agent:register-tool", ({ tool, extensionName }) => {
-      this.registerTool(tool);
-      if (extensionName) this.toolExtensions.set(tool.name, extensionName);
-    });
-    onCtor("agent:unregister-tool", ({ name }) => {
-      this.unregisterTool(name);
-      this.toolExtensions.delete(name);
-    });
-    onCtor("agent:register-instruction", ({ name, text, extensionName }) => this.registerInstruction(name, text, extensionName));
-    onCtor("agent:remove-instruction", ({ name }) => this.removeInstruction(name));
-    onCtor("agent:register-skill", ({ name, description, filePath, extensionName }) => this.registerSkill(name, description, filePath, extensionName));
-    onCtor("agent:remove-skill", ({ name }) => this.removeSkill(name));
-    // Provider registration from user extensions (e.g. openrouter.ts) fires
-    // during extension activation, which happens before wire(). Subscribe
-    // here in the ctor so late-registered modes aren't dropped.
-    onCtor("config:add-modes", ({ modes: extra }) => {
-      const providers = new Set(extra.map((m) => m.provider).filter(Boolean));
-      const prev = this.modes[this.currentModeIndex];
-      // Keep the active mode even if the re-registration drops it (persisted
-      // model missing from a refreshed catalog) — otherwise currentModeIndex
-      // slips to modes[0] and the next stream() call uses a different model
-      // mid-turn.
-      const activePreserved =
-        prev &&
-        prev.provider &&
-        providers.has(prev.provider) &&
-        !extra.some((m) => m.model === prev.model && m.provider === prev.provider);
-      this.modes = [
-        ...this.modes.filter((m) => {
-          if (activePreserved && m === prev) return true;
-          return !m.provider || !providers.has(m.provider);
-        }),
-        ...extra,
-      ];
-      if (prev) {
-        const newIdx = this.modes.findIndex(
-          (m) => m.model === prev.model && m.provider === prev.provider,
-        );
-        if (newIdx !== -1) {
-          this.currentModeIndex = newIdx;
-          const next = this.modes[newIdx]!;
-          if (next.providerConfig && next.providerConfig !== prev.providerConfig) {
-            this.llmClient.reconfigure({ ...next.providerConfig, model: next.model });
-          }
-        }
-      }
-      if (activePreserved && prev) {
-        this.bus.emit("ui:info", {
-          message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
-        });
-      }
-      this.emitAgentInfoIfChanged();
-      this.bus.emit("config:changed", {});
-    });
-    // Fires before wire() too — agent-backend emits this from
-    // `core:extensions-loaded` to replace the placeholder mode list.
-    onCtor("config:set-modes", ({ modes: newModes, activeIndex }) => {
-      this.modes = newModes;
-      const inRange = activeIndex != null && activeIndex >= 0 && activeIndex < newModes.length;
-      this.currentModeIndex = inRange ? activeIndex! : 0;
-      const m = newModes[this.currentModeIndex];
-      if (!m) return;
-      if (m.providerConfig) {
-        this.llmClient.reconfigure({ ...m.providerConfig, model: m.model });
-      } else {
-        this.llmClient.model = m.model;
-      }
-      this.emitAgentInfoIfChanged();
-      this.bus.emit("config:changed", {});
-    });
-    const getToolsPipe = () => ({ tools: this.getTools() });
-    this.bus.onPipe("agent:get-tools", getToolsPipe);
-    this.ctorPipeListeners.push({ event: "agent:get-tools", fn: getToolsPipe });
   }
 
   /** Subscribe to bus events — activates this backend. */
   wire(): void {
-    const on = <K extends keyof ShellEvents>(
+    const on = <K extends keyof BusEvents>(
       event: K,
-      fn: (payload: ShellEvents[K]) => void,
+      fn: (payload: BusEvents[K]) => void,
     ) => {
       this.bus.on(event, fn);
       this.boundListeners.push({ event, fn });
     };
-    const onPipe = <K extends keyof ShellEvents>(
+    const onPipe = <K extends keyof BusEvents>(
       event: K,
-      fn: (payload: ShellEvents[K]) => ShellEvents[K] | void,
+      fn: (payload: BusEvents[K]) => BusEvents[K] | void,
     ) => {
       this.bus.onPipe(event, fn as any);
       this.boundPipeListeners.push({ event, fn, async: false });
     };
-    const onPipeAsync = <K extends keyof ShellEvents>(
+    const onPipeAsync = <K extends keyof BusEvents>(
       event: K,
-      fn: (payload: ShellEvents[K]) => Promise<ShellEvents[K] | void>,
+      fn: (payload: BusEvents[K]) => Promise<BusEvents[K] | void>,
     ) => {
       this.bus.onPipeAsync(event, fn as any);
       this.boundPipeListeners.push({ event, fn, async: true });
     };
+
+    onPipe("agent:tools", (acc) => {
+      // Read internal storage, NOT this.getTools() — that queries the
+      // pipe and would recurse.
+      for (const tool of this.toolRegistry.allView()) acc.tools.push(tool);
+      return acc;
+    });
+    onPipe("agent:instructions", (acc) => {
+      for (const [name] of this.instructions) {
+        const text = this.handlers.call(`instruction:${name}`) as string;
+        acc.instructions.push({ name, text });
+      }
+      return acc;
+    });
+    onPipe("agent:skills", (acc) => {
+      for (const [name] of this.skills) {
+        const view = this.handlers.call(`skill:${name}:view`) as SkillView;
+        acc.skills.push({ name, description: view.description, filePath: view.filePath });
+      }
+      return acc;
+    });
+
 
     on("agent:submit", ({ query }) => {
       this.handleQuery(query).catch(() => {});
@@ -298,31 +221,31 @@ export class AgentLoop implements AgentBackend {
       const atIdx = target.lastIndexOf("@");
       const modelId = atIdx > 0 ? target.slice(0, atIdx) : target;
       const providerHint = atIdx > 0 ? target.slice(atIdx + 1) : undefined;
-      const idx = this.modes.findIndex((m) =>
+      const modes = this.pullModes();
+      const found = modes.find((m) =>
         m.model === modelId && (!providerHint || m.provider === providerHint),
       );
-      if (idx === -1) {
+      if (!found) {
         this.bus.emit("ui:error", { message: `Unknown model: ${target}` });
         return;
       }
-      this.currentModeIndex = idx;
-      const m = this.modes[idx];
-      if (m.providerConfig) {
-        this.llmClient.reconfigure({ ...m.providerConfig, model: m.model });
+      this.activeMode = found;
+      if (found.providerConfig) {
+        this.llmClient.reconfigure({ ...found.providerConfig, model: found.model });
       } else {
-        this.llmClient.model = m.model;
+        this.llmClient.model = found.model;
       }
-      const label = m.provider ? `${m.provider}: ${m.model}` : m.model;
-      this.emitAgentInfoIfChanged();
+      const label = found.provider ? `${found.provider}: ${found.model}` : found.model;
+      this.emitIdentity();
 
       // Persist as the new default — selection survives restart.
       // Safe even for dynamic providers: agent-backend defers mode
       // resolution to `core:extensions-loaded`, so the extension gets
       // to re-register before the persisted default is looked up.
-      if (m.provider) {
+      if (found.provider) {
         updateSettings({
-          defaultProvider: m.provider,
-          providers: { [m.provider]: { defaultModel: m.model } },
+          defaultProvider: found.provider,
+          providers: { [found.provider]: { defaultModel: found.model } },
         });
         this.bus.emit("ui:info", { message: `Model: ${label} (saved as default)` });
       } else {
@@ -330,10 +253,32 @@ export class AgentLoop implements AgentBackend {
       }
       this.bus.emit("config:changed", {});
     });
+    on("agent:modes-changed", () => {
+      const modes = this.pullModes();
+      const prev = this.activeMode;
+      const fresh = modes.find((m) => m.model === prev.model && m.provider === prev.provider);
+      if (fresh) {
+        this.activeMode = fresh;
+        if (fresh.providerConfig && fresh.providerConfig !== prev.providerConfig) {
+          this.llmClient.reconfigure({ ...fresh.providerConfig, model: fresh.model });
+        }
+      } else if (prev.provider) {
+        // Ghost: keep prev active so mid-turn stream() doesn't switch models.
+        this.bus.emit("ui:info", {
+          message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
+        });
+      }
+      this.emitIdentity();
+      this.bus.emit("config:changed", {});
+    });
     onPipe("config:get-models", () => {
-      const models = this.modes.map((m) => ({ model: m.model, provider: m.provider ?? "" }));
-      const cur = this.modes[this.currentModeIndex];
-      const active = cur ? { model: cur.model, provider: cur.provider ?? "" } : null;
+      const modes = this.pullModes();
+      const models = modes.map((m) => ({ model: m.model, provider: m.provider ?? "" }));
+      // Surface a ghost active mode so /model still shows it.
+      if (!modes.some((m) => m.model === this.activeMode.model && m.provider === this.activeMode.provider)) {
+        models.push({ model: this.activeMode.model, provider: this.activeMode.provider ?? "" });
+      }
+      const active = { model: this.activeMode.model, provider: this.activeMode.provider ?? "" };
       return { models, active };
     });
     on("config:set-thinking", ({ level }) => {
@@ -436,8 +381,7 @@ export class AgentLoop implements AgentBackend {
         this.bus.emit("conversation:message-appended", { role: "system", content: note });
       }
     });
-    this.lastAgentInfo = null;
-    this.emitAgentInfoIfChanged();
+    this.emitIdentity();
   }
 
   /** Unsubscribe from bus events — deactivates this backend. */
@@ -463,9 +407,14 @@ export class AgentLoop implements AgentBackend {
     this.toolRegistry.unregister(name);
   }
 
-  /** Get all registered tools. */
+  /** Get all registered tools (union of builtins + extension contributions). */
   getTools(): ToolDefinition[] {
-    return this.toolRegistry.all();
+    return this.bus.emitPipe("agent:tools", { tools: [] }).tools;
+  }
+
+  /** Find a tool by name across the full pipe union. */
+  private findTool(name: string): ToolDefinition | undefined {
+    return this.getTools().find((t) => t.name === name);
   }
 
   // ── Extension instructions, skills & tool tracking ──────────────────
@@ -505,83 +454,45 @@ export class AgentLoop implements AgentBackend {
   }
 
   /**
-   * Build the system prompt grouped by extension.
-   *
-   * Each extension gets a unified block:
-   *   ## extension-name
-   *   ### Tools
-   *   ### Skills
-   *   ### Instructions
+   * Build the "Extensions" section of the system prompt. Includes tools,
+   * skills, and instructions contributed by extensions (i.e. anything
+   * registered via ctx.agent.registerTool/Skill/Instruction). AgentLoop's
+   * own builtins are excluded by name — they're documented elsewhere in
+   * the prompt or in the tool API params.
    */
   buildExtensionSections(): string[] {
-    interface ExtensionGroup {
-      tools: Array<{ name: string; description: string }>;
-      skills: Array<{ name: string; description: string; filePath: string }>;
-      instructions: Array<{ text: string }>;
-    }
+    const BUILTIN_TOOLS = new Set([
+      "bash", "read_file", "write_file", "edit_file", "grep", "glob", "ls",
+      "list_skills",
+    ]);
+    const BUILTIN_INSTRUCTIONS = new Set(["recall-guidance"]);
+    const BUILTIN_SKILLS = new Set<string>();
 
-    const groups = new Map<string, ExtensionGroup>();
-    const ensure = (name: string): ExtensionGroup =>
-      groups.get(name) ?? (groups.set(name, { tools: [], skills: [], instructions: [] }).get(name)!);
+    const allTools = this.bus.emitPipe("agent:tools", { tools: [] }).tools;
+    const allInstructions = this.bus.emitPipe("agent:instructions", { instructions: [] }).instructions;
+    const allSkills = this.bus.emitPipe("agent:skills", { skills: [] }).skills;
 
-    // Attribute instructions — read text through the advisor chain
-    for (const [name, { extensionName }] of this.instructions) {
-      const text = this.handlers.call(`instruction:${name}`) as string;
-      ensure(extensionName).instructions.push({ text });
-    }
+    const extTools = this.toolProtocol.mode === "api"
+      ? []
+      : allTools.filter((t) => !BUILTIN_TOOLS.has(t.name));
+    const extInstructions = allInstructions.filter((i) => !BUILTIN_INSTRUCTIONS.has(i.name));
+    const extSkills = allSkills.filter((s) => !BUILTIN_SKILLS.has(s.name));
 
-    // Attribute skills — read description/filePath through the advisor chain
-    for (const [skillName, { extensionName }] of this.skills) {
-      const view = this.handlers.call(`skill:${skillName}:view`) as SkillView;
-      ensure(extensionName).skills.push({ name: skillName, description: view.description, filePath: view.filePath });
-    }
+    if (extTools.length + extInstructions.length + extSkills.length === 0) return [];
 
-    // Attribute tools (skip built-in scratchpad tools).
-    // In "api" mode the full tool schemas are in the API `tools` param,
-    // making the text catalog here pure duplication — skip it. Other
-    // modes (deferred / deferred-lookup / inline) rely on the text
-    // catalog as the discovery surface, so keep it there.
-    const toolModeHasApiSchemas = this.toolProtocol.mode === "api";
-    if (!toolModeHasApiSchemas) {
-      const builtinTools = new Set([
-        "bash", "read_file", "write_file", "edit_file", "grep", "glob", "ls",
-        "list_skills",
-      ]);
-      for (const tool of this.toolRegistry.allView()) {
-        if (builtinTools.has(tool.name)) continue;
-        const extName = this.toolExtensions.get(tool.name);
-        if (!extName) continue;
-        ensure(extName).tools.push({ name: tool.name, description: summarizeDescription(tool.description) });
-      }
-    }
-
-    // Render
-    return [...groups.entries()]
-      .filter(([, g]) => g.tools.length + g.skills.length + g.instructions.length > 0)
-      .map(([name, g]) => {
-        const parts: string[] = [];
-        if (g.tools.length > 0)
-          parts.push("### Tools\n" + g.tools.map(t => `${t.name} — ${t.description}`).join("\n"));
-        if (g.skills.length > 0)
-          parts.push("### Skills\n" + g.skills.map(s => `${s.name}: ${s.description}\n  → ${s.filePath}`).join("\n\n"));
-        if (g.instructions.length > 0)
-          parts.push("### Instructions\n" + g.instructions.map(i => i.text).join("\n\n"));
-        return `## ${name}\n${parts.join("\n\n")}`;
-      });
+    const parts: string[] = [];
+    if (extTools.length > 0)
+      parts.push("### Tools\n" + extTools.map(t => `${t.name} — ${summarizeDescription(t.description)}`).join("\n"));
+    if (extSkills.length > 0)
+      parts.push("### Skills\n" + extSkills.map(s => `${s.name}: ${s.description}\n  → ${s.filePath}`).join("\n\n"));
+    if (extInstructions.length > 0)
+      parts.push("### Instructions\n" + extInstructions.map(i => i.text).join("\n\n"));
+    return [`## Extensions\n${parts.join("\n\n")}`];
   }
 
   kill(): void {
     this.cancel();
     this.unwire();
-    // Clean up constructor-level bus subscriptions
-    for (const { event, fn } of this.ctorListeners) {
-      this.bus.off(event as any, fn);
-    }
-    this.ctorListeners = [];
-    for (const { event, fn } of this.ctorPipeListeners) {
-      this.bus.offPipe(event as any, fn);
-    }
-    this.ctorPipeListeners = [];
   }
 
   private cancel(): void {
@@ -600,17 +511,19 @@ export class AgentLoop implements AgentBackend {
 
 
   private get currentMode(): AgentMode {
-    return this.modes[this.currentModeIndex];
+    return this.activeMode;
   }
 
-  private emitAgentInfoIfChanged(): void {
-    const m = this.modes[this.currentModeIndex];
-    if (!m) return;
-    const prev = this.lastAgentInfo;
-    if (prev && prev.model === m.model && prev.provider === m.provider && prev.contextWindow === m.contextWindow) {
-      return;
+  private pullModes(): AgentMode[] {
+    try {
+      return (this.handlers.call("agent:get-modes") as AgentMode[]) ?? [];
+    } catch {
+      return [];
     }
-    this.lastAgentInfo = { model: m.model, provider: m.provider, contextWindow: m.contextWindow };
+  }
+
+  private emitIdentity(): void {
+    const m = this.activeMode;
     this.bus.emit("agent:info", {
       name: "ash",
       version: PACKAGE_VERSION,
@@ -621,7 +534,7 @@ export class AgentLoop implements AgentBackend {
   }
 
   private get currentModel(): string {
-    return this.modes[this.currentModeIndex].model;
+    return this.activeMode.model;
   }
 
   /**
@@ -633,7 +546,7 @@ export class AgentLoop implements AgentBackend {
     target: number,
     keepRecent?: number,
     force?: boolean,
-    strategy?: ShellEvents["context:compact"]["strategy"],
+    strategy?: BusEvents["context:compact"]["strategy"],
   ): CompactResult | null {
     const stats = this.handlers.call("conversation:compact", {
       target,
@@ -745,31 +658,8 @@ export class AgentLoop implements AgentBackend {
   }
 
   private registerCoreTools(): void {
-    const getCwd = () => this.handlers.call("cwd") as string;
-    const getEnv = () => {
-      const env: Record<string, string> = {};
-      for (const [k, v] of Object.entries(process.env)) {
-        if (v !== undefined) env[k] = v;
-      }
-      return env;
-    };
-
-    if (findBash() !== null) {
-      this.toolRegistry.register(createBashTool({ getCwd, getEnv, bus: this.bus }));
-    }
-    if (process.platform === "win32") {
-      this.toolRegistry.register(createPwshTool({ getCwd, getEnv, bus: this.bus }));
-    }
-    this.toolRegistry.register(createReadFileTool(getCwd, this.fileReadCache));
-    this.toolRegistry.register(createWriteFileTool(getCwd));
-    this.toolRegistry.register(createEditFileTool(getCwd));
-    this.toolRegistry.register(createGrepTool(getCwd));
-    this.toolRegistry.register(createGlobTool(getCwd));
-    this.toolRegistry.register(createLsTool(getCwd));
-    this.toolRegistry.register(createListSkillsTool(getCwd));
-
-    // conversation_recall — browse/search/expand evicted turns from
-    // the in-session archive and the persistent history file.
+    // Stateless core tools register in agentBackend; conversation_recall
+    // stays here because it needs this.conversation.
     this.toolRegistry.register({
       name: "conversation_recall",
       displayName: "recall",
@@ -1297,7 +1187,7 @@ export class AgentLoop implements AgentBackend {
       {
         const groupMap = new Map<string, Array<{ name: string; displayDetail?: string }>>();
         for (const tc of toolCalls) {
-          const tool = this.toolRegistry.get(tc.name);
+          const tool = this.findTool(tc.name);
           const kind = tool?.getDisplayInfo?.((() => { try { return JSON.parse(tc.argumentsJson); } catch { return {}; } })())?.kind ?? "execute";
           let args: Record<string, unknown> = {};
           try { args = JSON.parse(tc.argumentsJson); } catch {}
@@ -1333,9 +1223,9 @@ export class AgentLoop implements AgentBackend {
           }
         } catch { /* not an error payload, continue */ }
 
-        const tool = this.toolRegistry.get(tc.name);
+        const tool = this.findTool(tc.name);
         if (!tool) {
-          const available = this.toolRegistry.all().map((t) => t.name).join(", ");
+          const available = this.getTools().map((t) => t.name).join(", ");
           collectedResults.push({
             callId: tc.id, toolName: tc.name,
             content: `Unknown tool "${tc.name}". Available tools: ${available}`,
@@ -1444,7 +1334,7 @@ export class AgentLoop implements AgentBackend {
       const parallel: PendingToolCall[] = [];
       const sequential: PendingToolCall[] = [];
       for (const tc of toolCalls) {
-        const tool = this.toolRegistry.get(tc.name);
+        const tool = this.findTool(tc.name);
         if (tool && !tool.modifiesFiles) {
           parallel.push(tc);
         } else {
@@ -1707,7 +1597,7 @@ export class AgentLoop implements AgentBackend {
     const pendingToolCalls: PendingToolCall[] = [];
 
     // Tool protocol controls what goes in the API tools param vs dynamic context
-    const toolView = this.toolRegistry.allView();
+    const toolView = this.getTools();
     const apiTools = this.toolProtocol.getApiTools(toolView);
     const toolPrompt = this.toolProtocol.getToolPrompt(toolView);
 
@@ -1723,7 +1613,7 @@ export class AgentLoop implements AgentBackend {
 
     // Stream filter strips tool tags from display (inline mode only)
     const streamFilter = this.toolProtocol.createStreamFilter(
-      this.toolRegistry.all().map((t) => t.name),
+      this.getTools().map((t) => t.name),
     );
 
     const requestParams = {

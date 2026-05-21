@@ -236,7 +236,6 @@ export default function activate(ctx: ExtensionContext): void {
     });
   });
 
-  // Track backend/model info for display on response border
   let backendInfo: { name: string; model?: string; provider?: string; contextWindow?: number } | null = null;
   bus.on("agent:info", (info) => { backendInfo = info; });
 

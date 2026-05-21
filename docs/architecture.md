@@ -17,9 +17,16 @@ createCore() — pure kernel:
 index.ts — interactive terminal frontend:
   │     Shell             — PTY lifecycle (delegates to InputHandler + OutputParser)
   │
+  ├── Agent host (always activated via activateAgent(ctx) before built-ins load):
+  │     ash backend       — provider resolution, LlmClient, lazy AgentLoop
+  │     core tools        — bash/read/write/edit/grep/glob/ls/list_skills registered at activate time
+  │     built-in providers — openrouter, openai, openai-compatible, deepseek (unconditional)
+  │
+  ├── Backend registry (owned by core; backends register via `agent:register-backend`):
+  │     core.activateBackend() — picks the named/persisted/first backend and calls its start()
+  │
   ├── Built-in extensions (loaded via declarative manifest, individually disableable):
   │     shell-context     — PTY exchange tracking, cwd advisor, <cwd>/<shell_events> producer
-  │     agent-backend     — LLM provider resolution, LlmClient, AgentLoop ("ash" backend)
   │     tui-renderer      — markdown rendering, inline diffs, thinking display, spinner
   │     slash-commands    — /help, /model, /backend, /thinking, /compact, /context, /reload
   │     file-autocomplete — @ file path completion
@@ -83,9 +90,9 @@ The agent backend is a bus-driven component that registers via `agent:register-b
 
 ### Built-in backend: ash
 
-The default backend is **ash**, loaded by the agent host (`src/agent/index.ts`). It resolves LLM providers from settings, creates an `LlmClient`, builds the mode list for runtime model switching, and creates an `AgentLoop` that uses the `openai` SDK to call any OpenAI-compatible API. See [The Built-in Agent: ash](agent.md) for the full guide.
+The default backend is **ash**, registered from the agent host (`src/agent/index.ts`) when `activateAgent(ctx)` runs. It resolves LLM providers from registered catalogs + settings overlay, configures an `LlmClient`, and registers itself with the core's backend registry by emitting `agent:register-backend`. The `AgentLoop` that drives tool calls is constructed lazily — only when ash's `start()` runs (on `activateBackend("ash")`). See [The Built-in Agent: ash](agent.md) for the full guide.
 
-The agent-backend extension registers an `llm:invoke` handler that backs the `ctx.agent.llm` facade, so any extension can call `ctx.agent.llm.ask(...)` or `ctx.agent.llm.session(...)` without knowing which backend is active. Backends with no LLM leave `ctx.agent.llm.available` false.
+The agent host also defines an `llm:invoke` handler that backs the `ctx.agent.llm` facade, so any extension can call `ctx.agent.llm.ask(...)` or `ctx.agent.llm.session(...)` without knowing which backend is active. Backends with no LLM leave `ctx.agent.llm.available` false.
 
 ### Extension Backends
 
@@ -124,6 +131,7 @@ agent-sh/
 │   │
 │   ├── shell/                # Shell host — TUI frontend, PTY, compositor, theming
 │   │   ├── index.ts          # registerShellHandlers/activateShell — attaches ctx.shell
+│   │   ├── events.ts         # BusEvents augmentation (shell:*, input:*, compositor:*, autocomplete:request)
 │   │   ├── host-types.ts     # ShellSurface, ShellContext, ExtensionContext, AppConfig
 │   │   ├── shell.ts          # PTY lifecycle + wiring (InputHandler + OutputParser)
 │   │   ├── shell-context.ts  # Shell exchange tracking, cwd advisor, <shell_events>
@@ -133,10 +141,12 @@ agent-sh/
 │   │   └── tui-input-view.ts # Input rendering + line editor integration
 │   │
 │   ├── agent/                # Agent host — ash backend, providers, tools, skills
-│   │   ├── index.ts          # agentBackend/activateAgent — attaches ctx.agent
-│   │   ├── host-types.ts     # AgentSurface, AgentContext, LlmInterface, AgentMode
+│   │   ├── index.ts          # activateAgent — attaches ctx.agent, registers core tools + ash backend
+│   │   ├── events.ts         # BusEvents augmentation (agent:providers, agent:modes-changed, ...)
+│   │   ├── host-types.ts     # AgentSurface, AgentContext, ProviderRegistration, AgentMode
 │   │   ├── types.ts          # AgentBackend, ToolDefinition, ToolResult
-│   │   ├── agent-loop.ts     # ash backend (OpenAI-compat API, bus-driven)
+│   │   ├── agent-loop.ts     # ash AgentLoop (constructed lazily in start())
+│   │   ├── llm-client.ts, llm-facade.ts  # ash LLM transport + ctx.agent.llm facade
 │   │   ├── providers/        # openai, openrouter, deepseek, openai-compatible
 │   │   ├── token-budget.ts   # Shared constants (RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW)
 │   │   ├── tool-registry.ts, tool-protocol.ts
@@ -147,11 +157,10 @@ agent-sh/
 │   │
 │   ├── extensions/           # Cross-cutting built-ins (loaded via manifest)
 │   │   ├── index.ts          # Declarative manifest + loader
-│   │   ├── slash-commands.ts # /reload, /quit, command dispatch
+│   │   ├── slash-commands/   # /reload, /quit, command dispatch; events.ts ships command:* events
 │   │   └── file-autocomplete.ts
 │   │
 │   └── utils/                # Shared primitives
-│       ├── llm-client.ts, llm-facade.ts
 │       ├── handler-registry.ts # Named function registry (define/advise/call)
 │       ├── compositor.ts       # Routes named render streams to surfaces
 │       ├── terminal-buffer.ts  # Headless xterm.js mirror of the terminal
