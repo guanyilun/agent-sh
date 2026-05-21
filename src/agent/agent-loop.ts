@@ -276,7 +276,10 @@ export class AgentLoop implements AgentBackend {
     // names still flow through. Lifecycle is wire()↔unwire(), so when
     // ash isn't the active backend these contributors are absent.
     onPipe("agent:tools", (acc) => {
-      for (const tool of this.getTools()) acc.tools.push(tool);
+      // Pull from internal storage (NOT this.getTools(), which queries
+      // the pipe — that would recurse). The internal toolRegistry holds
+      // AgentLoop's own builtins (registerCoreTools + protocolTools).
+      for (const tool of this.toolRegistry.allView()) acc.tools.push(tool);
       return acc;
     });
     onPipe("agent:instructions", (acc) => {
