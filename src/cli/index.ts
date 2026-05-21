@@ -170,6 +170,8 @@ async function main(): Promise<void> {
     );
   }
 
+  await core.activateBackend(config.backend);
+
   // 100ms sidesteps macOS SIGTTOU during fg-pgrp handoff.
   await new Promise(resolve => setTimeout(resolve, 100));
   shell = activateShell(extCtx, {
@@ -196,8 +198,6 @@ async function main(): Promise<void> {
     },
     returnToSelf: true,
   });
-
-  core.activateBackend(config.backend);
 
   // ── Terminal lifecycle ────────────────────────────────────────
   process.on("SIGTERM", cleanup);
