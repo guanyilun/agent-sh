@@ -1,22 +1,14 @@
 /**
- * Core kernel — the minimum viable agent-sh.
- *
- * Wires up EventBus + HandlerRegistry. Nothing else. Core knows nothing
- * about agents, backends, identity, tools, LLMs, or anything else
- * substantive — those are all extension concerns.
- *
- * The agent-backend built-in extension (src/extensions/agent-backend/)
- * owns the concept of "backend": registration, switching, identity.
- * Specific backends (ash, claude-code-bridge, ...) register through it.
- *
- * Usage:
- *   import { createCore } from "agent-sh";
- *   const core = createCore({ ... });
- *   core.bus.on("agent:response-chunk", ({ blocks }) => { ... });
- *   // Load built-ins (which include agent-backend), then user
- *   // extensions, then host calls handlers.call("agent-backend:activate").
+ * Core kernel — EventBus + HandlerRegistry + backend registry. Knows
+ * nothing about LLMs, tools, or specific backends; backends (ash,
+ * claude-code-bridge, ...) register through `agent:register-backend`
+ * and core dispatches to whichever is configured as default.
  */
-import { EventBus } from "./event-bus.js";
+import { EventBus, type BackendRegistration } from "./event-bus.js";
+// Side-effect imports so downstream tsc sees module-augmented BusEvents.
+import "../shell/events.js";
+import "../agent/events.js";
+import "../extensions/slash-commands/events.js";
 import type { AppConfig, ExtensionContext } from "../shell/host-types.js";
 import * as settingsMod from "./settings.js";
 import { HandlerRegistry } from "../utils/handler-registry.js";
@@ -26,7 +18,7 @@ import * as path from "node:path";
 import { CONFIG_DIR } from "./settings.js";
 
 export { EventBus } from "./event-bus.js";
-export type { BusEvents, ContentBlock } from "./event-bus.js";
+export type { BusEvents, ContentBlock, BackendRegistration } from "./event-bus.js";
 export type { CoreContext, CoreConfig } from "./types.js";
 export type { AgentContext, AgentConfig, AgentSurface, AgentConfigSurface, AgentMode, LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
 export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, ExtensionContext, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, AppConfig } from "../shell/host-types.js";
@@ -41,37 +33,71 @@ export { compileSearchRegex, matchEntry, formatNuclearLine } from "../agent/nucl
 
 export interface AgentShellCore {
   bus: EventBus;
-  /** Handler registry for define/advise/call. */
   handlers: HandlerRegistry;
   /** Unique id for this agent process; used for shell-marker tagging and lineage tracking. */
   instanceId: string;
-  /** Backward-compat convenience — delegates to the agent-backend extension. */
+  /** Activates a registered backend by name (or persisted default / first registered). */
   activateBackend(override?: string): Promise<void>;
-  /** Build an ExtensionContext for loading extensions against this core. */
   extensionContext(opts: { quit: () => void }): ExtensionContext;
-  /** Tear down the agent and clean up. */
   kill(): void;
 }
 
 export function createCore(config: AppConfig): AgentShellCore {
   const bus = new EventBus();
   const handlers = new HandlerRegistry();
-  // 3 bytes = 6 hex chars, ~16M values — ample for per-lineage uniqueness and
-  // short enough to read/remember. Legacy content may have 16-char iids; any
-  // parsers should accept ≥6 hex chars.
+  // 3 bytes = 6 hex chars; legacy content may have 16-char iids so parsers
+  // should accept ≥6 hex chars.
   const instanceId = crypto.randomBytes(3).toString("hex");
   bus.setSource(instanceId);
   handlers.define("config:get-app-config", () => config);
-
-  // Default; shell-context advises with the PTY-tracked cwd when loaded.
   handlers.define("cwd", () => process.cwd());
 
   // Empty defaults so registerContextProducer can advise regardless of
-  // backend. Each backend chooses whether to consume the strings — ash
-  // wraps them in <dynamic_context>/<query_context>; bridges may pull
-  // query-context:build and splice into the target SDK however they like.
+  // backend. Each backend chooses how to consume the strings.
   handlers.define("dynamic-context:build", () => "");
   handlers.define("query-context:build", () => "");
+
+  const backends = new Map<string, BackendRegistration>();
+  let activeBackendName: string | null = null;
+
+  bus.on("agent:register-backend", (backend) => {
+    backends.set(backend.name, backend);
+  });
+
+  bus.onPipe("config:get-backends", () => ({
+    names: [...backends.keys()],
+    active: activeBackendName,
+  }));
+
+  const activateByName = async (name: string): Promise<boolean> => {
+    const backend = backends.get(name);
+    if (!backend) {
+      bus.emit("ui:error", { message: `Unknown backend: ${name}` });
+      return false;
+    }
+    if (activeBackendName && activeBackendName !== name) {
+      backends.get(activeBackendName)?.kill();
+    }
+    activeBackendName = name;
+    await backend.start?.();
+    return true;
+  };
+
+  bus.on("config:switch-backend", ({ name }) => {
+    activateByName(name).then((ok) => {
+      if (!ok) return;
+      settingsMod.updateSettings({ defaultBackend: name });
+      bus.emit("ui:info", { message: `Backend: ${name} (saved as default)` });
+      bus.emit("config:changed", {});
+    });
+  });
+
+  bus.on("config:list-backends", () => {
+    const list = [...backends.keys()]
+      .map((n) => n === activeBackendName ? `${n} (active)` : n)
+      .join(", ");
+    bus.emit("ui:info", { message: `Backends: ${list || "(none registered)"}` });
+  });
 
   return {
     bus,
@@ -79,7 +105,15 @@ export function createCore(config: AppConfig): AgentShellCore {
     instanceId,
 
     async activateBackend(override?: string) {
-      await handlers.call("agent-backend:activate", override);
+      if (backends.size === 0) {
+        bus.emit("ui:info", { message: "No agent backend registered." });
+        return;
+      }
+      const preferred = override ?? settingsMod.getSettings().defaultBackend;
+      const name = preferred && backends.has(preferred)
+        ? preferred
+        : backends.keys().next().value!;
+      await activateByName(name);
     },
 
     extensionContext(opts) {
@@ -109,8 +143,10 @@ export function createCore(config: AppConfig): AgentShellCore {
     },
 
     kill() {
-      // agent-backend handles backend teardown if it's loaded.
-      try { handlers.call("agent-backend:kill"); } catch { /* not loaded */ }
+      if (activeBackendName) {
+        backends.get(activeBackendName)?.kill();
+        activeBackendName = null;
+      }
     },
   };
 }

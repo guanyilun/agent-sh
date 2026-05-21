@@ -5,7 +5,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createCore } from "../../src/core/index.js";
-import activateAgentBackend from "../../src/extensions/agent-backend/index.js";
 import type { AppConfig } from "../../src/shell/host-types.js";
 
 register(new URL("../fixtures/opencode-sdk-mock-loader.mjs", import.meta.url));
@@ -35,7 +34,6 @@ async function loadBridge(): Promise<LoadedBridge> {
   (ctx as { shell?: unknown }).shell = {
     compositor: { surface: () => null },
   };
-  activateAgentBackend(ctx);
   const mod = await import(`${BRIDGE_URL}?t=${Date.now()}`);
   const activate = (mod.default ?? mod.activate) as (c: typeof ctx) => void;
   activate(ctx);
@@ -70,7 +68,6 @@ test("opencode-bridge emits agent:info after boot", async () => {
   core.bus.on("agent:info", (info) => { infos.push(info); });
   const ctx = core.extensionContext({ quit: () => {} });
   (ctx as { shell?: unknown }).shell = { compositor: { surface: () => null } };
-  activateAgentBackend(ctx);
   stubModule.__reset();
   const mod = await import(`${BRIDGE_URL}?t=${Date.now()}`);
   (mod.default ?? mod.activate)(ctx);

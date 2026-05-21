@@ -1,7 +1,6 @@
 /** Subprocess driver for provider/mode integration tests.
  *  Reads scenario JSON from argv[2], prints captured events as JSON. */
 import { createCore } from "../../src/core/index.js";
-import activateAgentBackend from "../../src/extensions/agent-backend/index.js";
 import agentBackend from "../../src/agent/index.js";
 import type { AppConfig, ExtensionContext } from "../../src/shell/host-types.js";
 import type { AgentMode, AgentSurface, ProviderRegistration } from "../../src/agent/host-types.js";
@@ -37,7 +36,6 @@ async function main() {
   }
 
   const ctx = core.extensionContext({ quit: () => {} });
-  activateAgentBackend(ctx);
   agentBackend(ctx);
   const agent = (ctx as ExtensionContext & { agent: AgentSurface }).agent;
 

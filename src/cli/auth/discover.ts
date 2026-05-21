@@ -1,7 +1,6 @@
 /** Bootstrap a throwaway core to enumerate provider ids extensions
  *  would register, so `auth list` shows ids the user hasn't keyed yet. */
 import { createCore } from "../../core/index.js";
-import activateAgentBackend from "../../extensions/agent-backend/index.js";
 import { activateAgent } from "../../agent/index.js";
 import { loadExtensions } from "../../core/extension-loader.js";
 import { loadBuiltinExtensions } from "../../extensions/index.js";
@@ -21,7 +20,6 @@ export async function discoverExtensionProviders(): Promise<DiscoveredProvider[]
   const core = createCore({} as AppConfig);
   try {
     const ctx = core.extensionContext({ quit: () => {} });
-    activateAgentBackend(ctx);
     activateAgent(ctx);
     await loadBuiltinExtensions(ctx, getSettings().disabledBuiltins);
     await loadExtensions(ctx).catch(() => {});

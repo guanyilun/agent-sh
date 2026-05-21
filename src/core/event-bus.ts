@@ -1,18 +1,30 @@
 import { EventEmitter } from "node:events";
 
+export interface BackendRegistration {
+  name: string;
+  kill: () => void;
+  start?: () => Promise<void>;
+}
+
 /** Typed event map — every event has a known payload shape. */
 export interface BusEvents {
-  // Core lifecycle
   "core:extensions-loaded": { names: string[] };
 
-  // Cross-cutting "config might have changed, repaint" signal.
+  /** Cross-cutting "config might have changed, repaint" signal. */
   "config:changed": Record<string, never>;
 
-  // Universal UI feedback channel (any frontend may render; silently
-  // ignored without one).
+  /** Universal UI feedback channel (any frontend may render; silently
+   *  ignored without one). */
   "ui:info": { message: string };
   "ui:error": { message: string };
   "ui:suggestion": { text: string };
+
+  /** Backend registry — core owns these; every backend (ash, bridges)
+   *  emits register, switch/list flow through here too. */
+  "agent:register-backend": BackendRegistration;
+  "config:get-backends": { names: string[]; active: string | null };
+  "config:switch-backend": { name: string };
+  "config:list-backends": Record<string, never>;
 }
 
 // ── Content block types (used by transform pipeline) ────────────
