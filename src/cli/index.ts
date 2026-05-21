@@ -83,7 +83,14 @@ async function main(): Promise<void> {
   const { bus } = core;
 
   let agentInfo: { name: string; version: string; model?: string; provider?: string } | null = null;
-  bus.on("agent:info", (info) => { agentInfo = info; });
+  bus.on("agent:info", (info) => {
+    agentInfo = info;
+    // Prompt label reads from agentInfo on every drawPrompt; trigger
+    // a redraw so backends that emit agent:info late (e.g. opencode-bridge
+    // after its async session.create) update the prompt without waiting
+    // for the next unrelated config:changed.
+    bus.emit("config:changed", {});
+  });
 
   // ── Interactive frontend ──────────────────────────────────────
   if (process.env.DEBUG) {
