@@ -94,8 +94,8 @@ export function createCore(config: AppConfig): AgentShellCore {
       return false;
     }
 
-    if (activeBackendName) {
-      backends.get(activeBackendName)?.kill();
+    for (const [otherName, otherBackend] of backends) {
+      if (otherName !== name) otherBackend.kill();
     }
 
     await backend.start?.();
