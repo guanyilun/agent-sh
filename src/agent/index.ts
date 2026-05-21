@@ -61,12 +61,6 @@ export default function agentBackend(ctx: ExtensionContext): void {
   const { bus } = ctx;
   const config: AppConfig = ctx.call("config:get-app-config") ?? {};
 
-  // Pull-composition for capability registration. Each register* call
-  // installs an onPipe contributor on the canonical pipe AND defines
-  // the per-name handler so advisors can attach. The active backend
-  // (ash) pulls the union via emitPipe whenever it needs the current
-  // set. No accumulator state lives in any backend — contributors are
-  // the source of truth, recomputed on each pull.
   type ToolContributor = (acc: { tools: ToolDefinition[] }) => { tools: ToolDefinition[] };
   type InstructionContributor = (acc: { instructions: Array<{ name: string; text: string }> }) => { instructions: Array<{ name: string; text: string }> };
   type SkillContributor = (acc: { skills: Array<{ name: string; description: string; filePath: string }> }) => { skills: Array<{ name: string; description: string; filePath: string }> };
@@ -92,8 +86,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       if (tool.readOnly) registerReadOnlyTool(tool.name);
       else unregisterReadOnlyTool(tool.name);
       const contrib: ToolContributor = (acc) => {
-        // Pull the (possibly advised) schema at contribution time so
-        // adviseToolSchema reflects in the pipe answer.
+        // Pull through tool:NAME:schema so adviseToolSchema reflects.
         const view = ctx.call(`tool:${tool.name}:schema`) as ToolSchemaView;
         acc.tools.push({ ...tool, description: view.description, input_schema: view.parameters });
         return acc;
@@ -107,8 +100,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       bus.offPipe("agent:tools", contrib);
       toolContribs.delete(name);
       unregisterReadOnlyTool(name);
-      // Handler entries (tool:NAME, tool:NAME:schema) intentionally
-      // retained so external advisors survive a reload of the owner.
+      // Handler entries retained so external advisors survive a reload.
     },
     adviseTool: (name, advisor) => ctx.advise(`tool:${name}`, advisor as Parameters<typeof ctx.advise>[1]),
     adviseToolSchema: (name, advisor) => ctx.advise(`tool:${name}:schema`, advisor as Parameters<typeof ctx.advise>[1]),
@@ -234,17 +226,10 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   bus.onPipe("config:get-initial-modes", () => ({ modes, initialModeIndex }));
 
-  // AgentLoop is constructed lazily — only when ash actually starts
-  // as the active backend. Under non-ash backends (claude-code, pi,
-  // opencode, ...) the loop is never instantiated, so its ctor-time
-  // bus subscriptions and handler definitions don't waste cycles
-  // reacting to provider catalog updates ash will never serve.
-  //
-  // Trade-off: handlers AgentLoop defines (conversation:*, history:*,
-  // system-prompt:build, ...) don't exist until ash starts. Extensions
-  // that need them must call from deferred callbacks, not at activate
-  // time. This is already the case today; ashi etc. only invoke them
-  // from command/event handlers.
+  // Constructed lazily in start() — handlers AgentLoop defines
+  // (conversation:*, history:*, system-prompt:build) don't exist
+  // until ash starts. Ash-coupled extensions must invoke them from
+  // deferred callbacks, not at activate time.
   let agentLoop: AgentLoop | null = null;
 
   let loadedExtensionNames: string[] = [];
@@ -308,10 +293,6 @@ export default function agentBackend(ctx: ExtensionContext): void {
         agentLoop = null;
       },
       start: async () => {
-        // Lazy construction — AgentLoop's ctor subscribes to bus
-        // events and defines handlers (conversation:*, history:*,
-        // system-prompt:build). Doing it here means none of that
-        // happens under non-ash backends.
         agentLoop = new AgentLoop({
           bus,
           llmClient,
@@ -401,10 +382,8 @@ export default function agentBackend(ctx: ExtensionContext): void {
         buildReasoningParams: bindReasoning(p.id, m),
       };
     });
-    // Update the closure mode list too — under lazy ash, AgentLoop
-    // may not exist yet to consume config:add-modes; when it does
-    // construct (in start()), it reads from this `modes` variable.
-    // Filter out any stale entries for this provider, then append.
+    // Update the closure mode list — AgentLoop's lazy construction
+    // in start() reads from it, and may run after this fires.
     modes = [...modes.filter((m) => m.provider !== p.id), ...addModes];
     bus.emit("config:add-modes", { modes: addModes });
 

@@ -81,10 +81,6 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
   const scopedAdviseCommand: typeof ctx.adviseCommand = trackUnsub(ctx.adviseCommand);
 
   // ── agent surface (optional — bridge backends omit it) ───
-  // registerTool/Instruction/Skill now install onPipe contributors
-  // directly on the bus (see src/agent/index.ts agentSurface) — no
-  // intermediate bus emit. Track cleanup via the agentSurface's
-  // existing unregister methods.
   const agent = ctx.agent;
   let scopedAgent: typeof agent;
   if (agent) {

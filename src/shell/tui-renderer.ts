@@ -236,9 +236,6 @@ export default function activate(ctx: ExtensionContext): void {
     });
   });
 
-  // Track backend/model info for display on response border. Pull
-  // from the agent:identity pipe on the transition poke — see
-  // src/extensions/agent-backend/.
   let backendInfo: { name: string; model?: string; provider?: string; contextWindow?: number } | null = null;
   bus.on("agent:identity-changed", () => {
     backendInfo = bus.emitPipe("agent:identity", { identity: null }).identity;

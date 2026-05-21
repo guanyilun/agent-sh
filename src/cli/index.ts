@@ -68,10 +68,6 @@ async function main(): Promise<void> {
   const core = createCore(config);
   const { bus } = core;
 
-  // agent-backend filters stale agent:info emissions by active backend
-  // and republishes through the agent:identity pipe. Re-pull on the
-  // transition poke so the prompt label tracks backend switches and
-  // model swaps.
   let agentInfo: { name: string; version: string; model?: string; provider?: string } | null = null;
   bus.on("agent:identity-changed", () => {
     agentInfo = bus.emitPipe("agent:identity", { identity: null }).identity;

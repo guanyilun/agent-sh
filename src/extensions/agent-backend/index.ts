@@ -1,23 +1,8 @@
 /**
- * Agent-backend built-in extension.
- *
- * Owns the abstract concept of "agent backend": registration, switching,
- * identity. Specific backends (ash, claude-code-bridge, pi-bridge,
- * opencode-bridge, ...) register themselves through it; they bring
- * their own LLM and tools.
- *
- * Identity is pull-composition: each backend installs an
- * `onPipe("agent:identity", ...)` contributor in its start() and
- * removes it in kill(). Consumers call emitPipe on the transition
- * poke. Inactive backends contribute nothing — stale identity from
- * pre-wire() listeners is structurally impossible because the
- * contributor isn't installed.
- *
- * Core knows nothing about agents. This extension is the home of the
- * `agent:*` event namespace and the backend registry.
- *
- * Loaded as a built-in so backends — which often activate via
- * `core:extensions-loaded` — find the registry already wired.
+ * Owns the abstract concept of "agent backend": registration,
+ * switching, identity. Loaded as a built-in before any specific
+ * backend (ash, bridges) so backends find the registry already wired
+ * when they register themselves via `core:extensions-loaded`.
  */
 import "./events.js"; // augments ShellEvents
 import type { ExtensionContext } from "../../shell/host-types.js";
@@ -71,8 +56,6 @@ export default function activate(ctx: ExtensionContext): void {
     active: activeBackendName,
   }));
 
-  // Hosts call this through the extension API rather than the bus
-  // (one-shot, sync-await activation, not a recurring command).
   ctx.define("agent-backend:activate", async (override?: string) => {
     if (backends.size === 0) return;
     const settings = settingsMod.getSettings();
@@ -87,7 +70,6 @@ export default function activate(ctx: ExtensionContext): void {
     return bus.emitPipe("agent:identity", { identity: null }).identity;
   });
 
-  // Core's kill() calls this on process teardown.
   ctx.define("agent-backend:kill", () => {
     if (activeBackendName) {
       backends.get(activeBackendName)?.kill();

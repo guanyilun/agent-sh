@@ -177,11 +177,6 @@ export class AgentLoop implements AgentBackend {
     // Register handlers — extensions can advise these
     this.registerHandlers();
 
-    // Tools/instructions/skills come from ctx.agent.registerTool/etc.,
-    // which install onPipe contributors directly on the bus. AgentLoop
-    // reads via emitPipe("agent:tools", ...) and friends. No ctor
-    // subscriptions needed — extension registration is independent of
-    // AgentLoop's lifecycle.
     const onCtor = <K extends keyof ShellEvents>(event: K, fn: (payload: ShellEvents[K]) => void) => {
       this.bus.on(event, fn);
       this.ctorListeners.push({ event, fn });
@@ -270,15 +265,9 @@ export class AgentLoop implements AgentBackend {
       this.boundPipeListeners.push({ event, fn, async: true });
     };
 
-    // AgentLoop's own builtin contributions to the capability pipes.
-    // Each pulls from internal storage (this.toolRegistry, .instructions,
-    // .skills) so adviseTool/adviseInstruction/adviseSkill on builtin
-    // names still flow through. Lifecycle is wire()↔unwire(), so when
-    // ash isn't the active backend these contributors are absent.
     onPipe("agent:tools", (acc) => {
-      // Pull from internal storage (NOT this.getTools(), which queries
-      // the pipe — that would recurse). The internal toolRegistry holds
-      // AgentLoop's own builtins (registerCoreTools + protocolTools).
+      // Read internal storage, NOT this.getTools() — that queries the
+      // pipe and would recurse.
       for (const tool of this.toolRegistry.allView()) acc.tools.push(tool);
       return acc;
     });
@@ -297,10 +286,6 @@ export class AgentLoop implements AgentBackend {
       return acc;
     });
 
-    // ash's contributor to the agent:identity pull. Lives only for
-    // wire()→unwire() — when ash isn't the active backend this handler
-    // isn't installed, so the pipe returns whatever the active backend
-    // contributes (or null). No name-based filtering needed.
     onPipe("agent:identity", (acc) => {
       const m = this.modes[this.currentModeIndex];
       if (!m) return acc;
@@ -608,9 +593,6 @@ export class AgentLoop implements AgentBackend {
     return this.modes[this.currentModeIndex];
   }
 
-  // Notify consumers that the identity pipe answer may have changed.
-  // The wire()-time onPipe handler is the source of truth; this is the
-  // transition poke. Safe to over-emit; consumers can dedup if needed.
   private notifyIdentityChanged(): void {
     this.bus.emit("agent:identity-changed", {});
   }
