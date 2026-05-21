@@ -414,7 +414,7 @@ export function mountAshi(
     batchGroups.clear();
     lastToolResult = null;
     chat.clear();
-    const branch = getStore().current().getBranch();
+    const branch = await getStore().current().getBranch();
     const toolMap = new Map<string, ReplayEntry>();
     for (const e of branch) replayEntry(e, toolMap);
     // Match the trailing gap that processing-done adds in live turns, so the
@@ -636,12 +636,12 @@ export function mountAshi(
   // ── Pickers ────────────────────────────────────────────────────
   let pickerOpen = false;
   let activeSessionPicker: SelectList | null = null;
-  let activeSessionRepopulate: ((keepIndex?: number) => boolean) | null = null;
+  let activeSessionRepopulate: ((keepIndex?: number) => Promise<boolean>) | null = null;
   let activeSessionClose: (() => void) | null = null;
 
   const openTreePicker = async (): Promise<void> => {
     if (pickerOpen) return;
-    const branch = getStore().current().getBranch();
+    const branch = await getStore().current().getBranch();
     if (branch.length <= 1) {
       bus.emit("ui:info", { message: "tree: nothing to rewind to yet" });
       return;
@@ -668,7 +668,7 @@ export function mountAshi(
       close();
       if (id === activeId) return;
       getStore().current().setActiveLeaf(id);
-      applyBranchMessages(ctx, getStore, capture);
+      await applyBranchMessages(ctx, getStore, capture);
       bus.emit("ui:info", { message: `fork: rewound to ${id.slice(0, 6)}` });
       await rebuildChat();
       refreshFooterStats();
@@ -697,10 +697,10 @@ export function mountAshi(
       tui.requestRender();
     };
 
-    const populate = (keepIndex?: number): boolean => {
+    const populate = async (keepIndex?: number): Promise<boolean> => {
       if (activeSessionPicker) footerSlot.removeChild(activeSessionPicker);
       const currentId = getStore().current().id;
-      const list = getStore().listSessions().filter((s) => s.id !== currentId);
+      const list = (await getStore().listSessions()).filter((s) => s.id !== currentId);
       if (list.length === 0) {
         activeSessionPicker = null;
         return false;
@@ -729,7 +729,7 @@ export function mountAshi(
     };
 
     footerSlot.addChild(hint);
-    if (!populate()) {
+    if (!(await populate())) {
       footerSlot.removeChild(hint);
       bus.emit("ui:info", { message: "no past sessions in this cwd" });
       return;
@@ -762,18 +762,21 @@ export function mountAshi(
     if (activeSessionPicker && matchesKey(data, "d")) {
       const selected = activeSessionPicker.getSelectedItem();
       if (selected) {
-        const currentId = getStore().current().id;
-        const idx = getStore().listSessions()
-          .filter((s) => s.id !== currentId)
-          .findIndex((s) => s.id === selected.value);
-        try {
-          getStore().deleteSession(selected.value);
-        } catch (e) {
-          bus.emit("ui:error", { message: `delete failed: ${(e as Error).message}` });
-          return { consume: true };
-        }
-        if (!activeSessionRepopulate?.(idx)) activeSessionClose?.();
-        tui.requestRender();
+        (async () => {
+          const currentId = getStore().current().id;
+          const list = await getStore().listSessions();
+          const idx = list
+            .filter((s) => s.id !== currentId)
+            .findIndex((s) => s.id === selected.value);
+          try {
+            getStore().deleteSession(selected.value);
+          } catch (e) {
+            bus.emit("ui:error", { message: `delete failed: ${(e as Error).message}` });
+            return;
+          }
+          if (!(await activeSessionRepopulate?.(idx))) activeSessionClose?.();
+          tui.requestRender();
+        })();
       }
       return { consume: true };
     }

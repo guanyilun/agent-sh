@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-import { SessionStore, type AgentMessage } from "./session-store.js";
+import { SessionStore } from "./session-store.js";
 
 export interface SessionInfo {
   id: string;
@@ -24,47 +24,7 @@ export class MultiSessionStore {
     this.dir = dir;
     this.cwd = cwd;
     fs.mkdirSync(dir, { recursive: true });
-    this.migrateLegacy();
     this.currentStore = this.createFreshSession();
-  }
-
-  /** One-time import from the previous storage format (sessions stored as
-   *  directories with tree.jsonl + snapshots/). Each old session is replayed
-   *  from its most recent snapshot into a new flat `.jsonl` file, then the
-   *  source directory is renamed `.migrated-<id>/` so the import is idempotent. */
-  private migrateLegacy(): void {
-    let names: string[];
-    try { names = fs.readdirSync(this.dir); } catch { return; }
-    for (const name of names) {
-      if (name.startsWith(".migrated-")) continue;
-      const full = path.join(this.dir, name);
-      let stat: fs.Stats;
-      try { stat = fs.statSync(full); } catch { continue; }
-      if (!stat.isDirectory()) continue;
-      const snapshotsDir = path.join(full, "snapshots");
-      const leafFile = path.join(full, "active-leaf");
-      let leaf: string;
-      try { leaf = fs.readFileSync(leafFile, "utf-8").trim(); } catch { continue; }
-      let messages: AgentMessage[];
-      try {
-        const raw = fs.readFileSync(path.join(snapshotsDir, `${leaf}.json`), "utf-8");
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) continue;
-        messages = parsed as AgentMessage[];
-      } catch { continue; }
-      let createdAt = 0;
-      let displayName: string | undefined;
-      try {
-        const m = JSON.parse(fs.readFileSync(path.join(full, "meta.json"), "utf-8"));
-        if (typeof m?.createdAt === "number") createdAt = m.createdAt;
-        if (typeof m?.name === "string") displayName = m.name;
-      } catch { /* no meta */ }
-      const newFile = path.join(this.dir, `${name}.jsonl`);
-      try {
-        writeImportedSession(newFile, name, this.cwd, messages, createdAt, displayName);
-        fs.renameSync(full, path.join(this.dir, `.migrated-${name}`));
-      } catch { /* leave the original directory alone if anything failed */ }
-    }
   }
 
   current(): SessionStore { return this.currentStore; }
@@ -89,7 +49,7 @@ export class MultiSessionStore {
     }
   }
 
-  listSessions(): SessionInfo[] {
+  async listSessions(): Promise<SessionInfo[]> {
     let names: string[];
     try { names = fs.readdirSync(this.dir); } catch { return []; }
     const result: SessionInfo[] = [];
@@ -105,8 +65,8 @@ export class MultiSessionStore {
           filePath,
           createdAt: meta.createdAt,
           name: meta.name,
-          preview: store.getPreview(),
-          entryCount: store.getAllEntries().length,
+          preview: await store.getPreview(),
+          entryCount: store.entryCount(),
         });
       } catch { /* skip unreadable */ }
     }
@@ -131,24 +91,3 @@ function newSessionFileId(): string {
   return `${ts}_${suffix}`;
 }
 
-function writeImportedSession(
-  newFile: string,
-  id: string,
-  cwd: string,
-  messages: AgentMessage[],
-  createdAt: number,
-  name?: string,
-): void {
-  const ts = createdAt || Date.now();
-  const header = { type: "session", id, parentId: null, timestamp: ts, cwd, version: 1 };
-  const lines: string[] = [JSON.stringify(header)];
-  let parent: string = id;
-  for (const m of messages) {
-    const entryId = crypto.randomBytes(4).toString("hex");
-    lines.push(JSON.stringify({ type: "message", id: entryId, parentId: parent, timestamp: ts, message: m }));
-    parent = entryId;
-  }
-  fs.writeFileSync(newFile, lines.join("\n") + "\n");
-  fs.writeFileSync(newFile + ".leaf", parent);
-  fs.writeFileSync(newFile + ".meta", JSON.stringify({ createdAt: ts, ...(name ? { name } : {}) }));
-}

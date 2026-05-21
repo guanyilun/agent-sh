@@ -2,7 +2,7 @@
 /**
  * ashi — ash (agent-sh's built-in agent) in an interactive TUI.
  */
-import { createCore, NoopHistory } from "agent-sh/core";
+import { createCore } from "agent-sh/core";
 import { loadBuiltinExtensions } from "agent-sh/extensions";
 import { loadExtensions } from "agent-sh/extension-loader";
 import { activateAgent } from "agent-sh/agent";
@@ -22,7 +22,7 @@ import * as path from "node:path";
 
 function parseArgs(argv: string[]): AppConfig & { extensions?: string[] } {
   let model: string | undefined;
-  let apiKey: string | undefined = process.env.OPENAI_API_KEY ?? process.env.OPENROUTER_API_KEY;
+  let apiKey: string | undefined;
   let baseURL: string | undefined = process.env.OPENAI_BASE_URL;
   let provider: string | undefined;
   let backend: string | undefined;
@@ -110,7 +110,7 @@ async function main(): Promise<void> {
   const store = new MultiSessionStore(sessionsDir, cwd);
   const getStore = (): MultiSessionStore => store;
 
-  const core = createCore({ ...config, history: new NoopHistory() });
+  const core = createCore(config);
 
   let stopFrontend: (() => void) | null = null;
 
@@ -144,7 +144,6 @@ async function main(): Promise<void> {
   registerRenderDefaults(ctx);
   registerDefaultToolRenderers(ctx);
 
-  ctx.advise("conversation:format-prior-history", () => null);
   ctx.advise("system-prompt:build", (next) => `${next()}\n\n<cwd>${process.cwd()}</cwd>`);
 
   const handle = mountAshi(ctx, getStore, capture);

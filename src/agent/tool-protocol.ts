@@ -11,7 +11,7 @@
  */
 import type { ChatCompletionTool } from "./llm-client.js";
 import type { ToolDefinition } from "./types.js";
-import type { ConversationState } from "./conversation-state.js";
+import type { InMemoryLiveView } from "./live-view.js";
 
 export interface PendingToolCall {
   id: string;
@@ -52,14 +52,14 @@ export interface ToolProtocol {
 
   /** Record the assistant turn in conversation state. */
   recordAssistant(
-    conv: ConversationState,
+    conv: InMemoryLiveView,
     text: string,
     toolCalls: PendingToolCall[],
     extras?: Record<string, unknown>,
   ): void;
 
   /** Record all tool results for a batch as conversation messages. */
-  recordResults(conv: ConversationState, results: ToolResult[]): void;
+  recordResults(conv: InMemoryLiveView, results: ToolResult[]): void;
 
   /** Create a stream filter for stripping tool calls from display. null = pass-through. */
   createStreamFilter(toolNames: string[]): StreamFilter | null;
@@ -105,7 +105,7 @@ export class ApiToolProtocol implements ToolProtocol {
   }
 
   recordAssistant(
-    conv: ConversationState,
+    conv: InMemoryLiveView,
     text: string,
     toolCalls: PendingToolCall[],
     extras?: Record<string, unknown>,
@@ -119,7 +119,7 @@ export class ApiToolProtocol implements ToolProtocol {
     conv.addAssistantMessage(text || null, calls, extras);
   }
 
-  recordResults(conv: ConversationState, results: ToolResult[]): void {
+  recordResults(conv: InMemoryLiveView, results: ToolResult[]): void {
     for (const r of results) {
       const content = r.isError ? `Error: ${r.content}` : r.content;
       conv.addToolResult(r.callId, content, r.isError);
@@ -196,7 +196,7 @@ export class InlineToolProtocol implements ToolProtocol {
   }
 
   recordAssistant(
-    conv: ConversationState,
+    conv: InMemoryLiveView,
     text: string,
     _toolCalls: PendingToolCall[],
     extras?: Record<string, unknown>,
@@ -204,7 +204,7 @@ export class InlineToolProtocol implements ToolProtocol {
     conv.addAssistantMessage(text || null, undefined, extras);
   }
 
-  recordResults(conv: ConversationState, results: ToolResult[]): void {
+  recordResults(conv: InMemoryLiveView, results: ToolResult[]): void {
     if (results.length === 0) return;
     const parts = results.map((r) => {
       const status = r.isError ? "error" : "ok";
@@ -481,7 +481,7 @@ export class DeferredToolProtocol implements ToolProtocol {
   }
 
   recordAssistant(
-    conv: ConversationState,
+    conv: InMemoryLiveView,
     text: string,
     toolCalls: PendingToolCall[],
     extras?: Record<string, unknown>,
@@ -495,7 +495,7 @@ export class DeferredToolProtocol implements ToolProtocol {
     conv.addAssistantMessage(text || null, calls, extras);
   }
 
-  recordResults(conv: ConversationState, results: ToolResult[]): void {
+  recordResults(conv: InMemoryLiveView, results: ToolResult[]): void {
     for (const r of results) {
       const content = r.isError ? `Error: ${r.content}` : r.content;
       conv.addToolResult(r.callId, content, r.isError);
@@ -595,7 +595,7 @@ export class DeferredLookupProtocol implements ToolProtocol {
   }
 
   recordAssistant(
-    conv: ConversationState,
+    conv: InMemoryLiveView,
     text: string,
     toolCalls: PendingToolCall[],
     extras?: Record<string, unknown>,
@@ -609,7 +609,7 @@ export class DeferredLookupProtocol implements ToolProtocol {
     conv.addAssistantMessage(text || null, calls, extras);
   }
 
-  recordResults(conv: ConversationState, results: ToolResult[]): void {
+  recordResults(conv: InMemoryLiveView, results: ToolResult[]): void {
     for (const r of results) {
       const content = r.isError ? `Error: ${r.content}` : r.content;
       conv.addToolResult(r.callId, content, r.isError);

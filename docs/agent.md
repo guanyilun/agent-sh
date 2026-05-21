@@ -35,9 +35,9 @@ Every query draws on two distinct streams of context:
 The two streams don't overlap: agent tool outputs live only in the conversation, and shell context tracks only user-initiated activity. When either stream grows large, ash has escape hatches rather than silent truncation:
 
 - **Long shell outputs** are spilled to tempfiles (`<tmpdir>/agent-sh-<pid>/<id>.out`) at capture time. The LLM sees a head+tail stub with the path and recovers the full output via plain `read_file`.
-- **Older conversation turns** are nucleated into one-line summaries and appended to `~/.agent-sh/history` — a persistent, cross-session archive. The `conversation_recall` tool browses, searches, and expands entries from both the in-session archive and the history file.
+- **Older conversation turns** are summarized and appended to a durable `Store` owned by the `summary-strategy` built-in extension (default path: `~/.agent-sh/summary-strategy/history.jsonl`). The `conversation_recall` tool browses, searches, and expands entries from that store.
 
-Compaction is pluggable: the `conversation:compact` handler is advisable, so extensions can install richer strategies without changing the recall surface. See [Context Management](context-management.md) for the full design.
+Compaction is pluggable: the `conversation:compact` handler is advisable, so extensions can install richer strategies without changing the recall surface. See [History Substrate](history-substrate.md) for the underlying `Store` / `LiveView` primitives, and [Context Management](context-management.md) for how compaction is wired.
 
 ## System Prompt
 
@@ -182,7 +182,7 @@ Extensions can add tools that cross the shell↔agent boundary via `shell:exec-r
 | `glob` | Find files by name pattern | No |
 | `ls` | List directory contents (with timestamps and sizes) | No |
 | `list_skills` | List available skills (name, description, path) | No |
-| `conversation_recall` | Browse/search/expand evicted turns from the in-session archive and `~/.agent-sh/history` | No |
+| `conversation_recall` | Browse/search/expand evicted turns from the `summary-strategy` Store | No |
 
 **Common pattern**: all file-based tools resolve relative paths from the current working directory, looked up via the `cwd` handler (`ctx.call("cwd")`). The shell-context built-in advises this with the PTY-tracked cwd; without it, tools fall back to `process.cwd()`.
 
@@ -349,7 +349,7 @@ This array grows with every turn. To prevent context overflow, ash auto-compacts
 
 Before each LLM call, ash estimates the total prompt tokens. If it's over the threshold, it invokes the `conversation:compact` handler to free space, then proceeds. If the API still returns a context-overflow error, ash compacts more aggressively and retries once; if compaction frees nothing, it aborts rather than looping.
 
-The default compaction strategy evicts older turns into the nuclear archive and leaves a bridge note; `conversation_recall` can bring them back on demand. See [Context Management](context-management.md#conversation-compaction) for the three-tier design and how to swap the strategy.
+The default compaction strategy (the `summary-strategy` built-in extension) evicts older turns into its `Store` as one-line summaries and leaves a bridge block in the live view; `conversation_recall` can bring them back on demand. See [Context Management](context-management.md#conversation-compaction) for the wiring and [History Substrate](history-substrate.md) for the underlying primitives.
 
 The user can also trigger compaction manually with `/compact`.
 

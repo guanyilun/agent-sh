@@ -150,8 +150,13 @@ agent-sh/
 │   │   ├── providers/        # openai, openrouter, deepseek, openai-compatible
 │   │   ├── token-budget.ts   # Shared constants (RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW)
 │   │   ├── tool-registry.ts, tool-protocol.ts
-│   │   ├── conversation-state.ts  # Messages + eager nucleation + priority compaction + recall
-│   │   ├── nuclear-form.ts, history-file.ts, system-prompt.ts
+│   │   ├── live-view.ts      # In-memory prompt being assembled this turn (formerly ConversationState)
+│   │   ├── store.ts          # Store / TreeStore primitives + FileStore / SharedFileStore impls
+│   │   ├── store-registry.ts # Named Store registry (registerStore / store(name))
+│   │   ├── entry-format.ts   # Display line for synthetic summary blocks and conversation_recall
+│   │   ├── nuclear-form.ts, system-prompt.ts
+│   │   ├── extensions/       # Agent-bound built-in extensions
+│   │   │   └── summary-strategy/  # Default capture + two-tier-pin compactor + recall:* handlers
 │   │   ├── skills.ts, subagent.ts
 │   │   └── tools/            # Built-in tool implementations (bash, read/write/edit, grep, glob, ls, ...)
 │   │

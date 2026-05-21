@@ -1,6 +1,7 @@
 /**
  * Mode resolution is deferred to `core:extensions-loaded` so a persisted
- * `defaultProvider: "openrouter"` doesn't lose to a cold-start race.
+ * `defaultProvider: "openrouter"` doesn't lose to a cold-start race
+ * with async catalog fetches.
  */
 import "./events.js";
 import type { ExtensionContext } from "../shell/host-types.js";
@@ -11,6 +12,8 @@ import { LlmClient } from "./llm-client.js";
 import { createLlmFacade } from "./llm-facade.js";
 import type { ToolDefinition, ToolSchemaView } from "./types.js";
 import { registerReadOnlyTool, unregisterReadOnlyTool } from "./nuclear-form.js";
+import { StoreRegistry } from "./store-registry.js";
+import type { LiveView } from "./live-view.js";
 import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../core/settings.js";
 import { discoverSkills } from "./skills.js";
 import activateOpenrouter from "./providers/openrouter.js";
@@ -105,6 +108,12 @@ export default function agentBackend(ctx: ExtensionContext): void {
     return hook ? (level: string) => hook(level, model) : defaultReasoningBuilder;
   };
 
+  // liveView reads through this forward-ref so /reload reconstructions
+  // (which build a new AgentLoop) stay visible, and so the surface
+  // is null-safe before ash's lazy start() runs.
+  let agentLoopRef: AgentLoop | undefined;
+  const storeRegistry = new StoreRegistry();
+
   const agentSurface: AgentSurface = {
     llm: createLlmFacade({ list: ctx.list, call: ctx.call }),
     providers: {
@@ -157,6 +166,11 @@ export default function agentBackend(ctx: ExtensionContext): void {
       unregisterReadOnlyTool(name);
       // Handlers retained so external advisors survive a reload.
     },
+    get liveView(): LiveView | null {
+      return agentLoopRef?.getConversation() ?? null;
+    },
+    store: (name) => storeRegistry.get(name),
+    registerStore: (name, s) => storeRegistry.register(name, s),
     adviseTool: (name, advisor) => ctx.advise(`tool:${name}`, advisor as Parameters<typeof ctx.advise>[1]),
     adviseToolSchema: (name, advisor) => ctx.advise(`tool:${name}:schema`, advisor as Parameters<typeof ctx.advise>[1]),
     getTools: () => bus.emitPipe("agent:tools", { tools: [] }).tools,
@@ -385,6 +399,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
         bus.emit("command:unregister", { name: "/context" });
         agentLoop?.kill();
         agentLoop = null;
+        agentLoopRef = undefined;
       },
       start: async () => {
         agentLoop = new AgentLoop({
@@ -394,8 +409,8 @@ export default function agentBackend(ctx: ExtensionContext): void {
           initialMode,
           compositor: ctx.shell?.compositor,
           instanceId: ctx.instanceId,
-          history: config.history,
         });
+        agentLoopRef = agentLoop;
         agentLoop.wire();
         ashActive = true;
         bus.emit("command:register", {
@@ -465,7 +480,8 @@ export { ToolRegistry } from "./tool-registry.js";
 export { runSubagent, type SubagentOptions } from "./subagent.js";
 
 /** Built-in providers register unconditionally so `auth list` can
- *  enumerate them; buildModes() skips entries without an apiKey. */
+ *  enumerate them; buildModes() skips entries without an apiKey.
+ *  The summary-strategy extension is opt-in — hosts activate it separately. */
 export function activateAgent(ctx: ExtensionContext): void {
   agentBackend(ctx);
   const agentCtx = ctx as AgentContext;

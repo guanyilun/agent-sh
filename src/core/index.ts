@@ -27,9 +27,10 @@ export type { ColorPalette } from "../utils/palette.js";
 export type { AgentBackend, ToolDefinition } from "../agent/types.js";
 export { runSubagent, type SubagentOptions } from "../agent/subagent.js";
 export { LlmClient } from "../agent/llm-client.js";
-export { HistoryFile, InMemoryHistory, NoopHistory, type HistoryAdapter } from "../agent/history-file.js";
-export type { NuclearEntry } from "../agent/nuclear-form.js";
-export { compileSearchRegex, matchEntry, formatNuclearLine } from "../agent/nuclear-form.js";
+export { InMemoryStore, NoopStore, FileStore, SharedFileStore, newEntryId, isTreeStore } from "../agent/store.js";
+export type { Store, TreeStore, Entry } from "../agent/store.js";
+export type { LiveView } from "../agent/live-view.js";
+export { StoreRegistry } from "../agent/store-registry.js";
 
 export interface AgentShellCore {
   bus: EventBus;

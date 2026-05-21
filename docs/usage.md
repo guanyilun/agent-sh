@@ -256,8 +256,6 @@ Switching mid-conversation preserves your conversation state — only the LLM en
 | `shellTruncateThreshold` | `20` | Shell output lines before spill-to-tempfile |
 | `shellHeadLines` / `shellTailLines` | `10` / `10` | Lines kept from start/end when output is spilled |
 | `autoCompactThreshold` | `0.5` | Fraction of the model's context window at which conversation auto-compacts |
-| `historyMaxBytes` | `104857600` | Max size of `~/.agent-sh/history` before front-truncation (100MB) |
-| `historyStartupEntries` | `100` | Prior history entries injected as `[Prior session history]` preamble on launch |
 | `maxCommandOutputLines` | `3` | Max tool output lines shown inline in TUI |
 | `readOutputMaxLines` | `10` | Max read tool output lines shown inline (0 = hidden) |
 | `diffMaxLines` | `Infinity` | Max diff lines rendered in the TUI. Defaults to no limit |

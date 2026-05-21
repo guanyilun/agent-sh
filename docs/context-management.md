@@ -32,7 +32,7 @@ Frontends without a PTY (e.g. agent-sh-hub) simply don't load this extension —
 
 ### Conversation — "what has the agent been working on?"
 
-Owned by `ConversationState`. This is the OpenAI-shaped messages array (`user` / `assistant` / `tool`) the LLM actually sees. Contains:
+The in-memory prompt being assembled this turn lives in a `LiveView` (`src/agent/live-view.ts`). This is the OpenAI-shaped messages array (`user` / `assistant` / `tool`) the LLM actually sees. Contains:
 
 - User messages (queries the user sent to the agent)
 - Assistant messages (the LLM's replies)
@@ -75,43 +75,35 @@ The session directory is removed on process exit (including `SIGINT` / `SIGTERM`
 
 ## Conversation compaction
 
-Unlike shell context — which is a per-query delta and stays small — the conversation grows every turn. Without an active strategy it would eventually blow past the model's window. agent-sh uses a three-tier scheme designed to feel like shell history.
+Unlike shell context — which is a per-query delta and stays small — the conversation grows every turn. Without an active strategy it would eventually blow past the model's window. agent-sh splits this into a thin **kernel trigger** plus a swappable **strategy**, built on the [history substrate](history-substrate.md): `LiveView` (the in-memory prompt) and a named `Store` (durable append-only log).
 
-### Tier 1 — eager nucleation
+### The substrate, in one paragraph
 
-As soon as any message is added to the conversation, it's *nucleated*: a one-line summary is computed immediately (via the advisable `conversation:nucleate-{user,agent,tool}` handlers) and appended to `~/.agent-sh/history` through the `history:append` handler.
+The kernel owns the `LiveView` and the `conversation:message-appended` event. A *strategy* — a built-in or user extension — subscribes to the event to capture entries into a `Store` it registered, and advises `conversation:compact` to mutate the `LiveView` when the kernel decides space is needed. The substrate API (`Store.append`, `findById`, `readRecent`, `search`) is append-only; strategies cannot delete history, only add to it. Bulk retention (front-truncation by size cap) is a property of the concrete `Store` implementation, not the API. See [History Substrate](history-substrate.md) for the full design.
 
-#### The history file on disk
+### Kernel role — the auto-compact trigger
 
-`~/.agent-sh/history` is a JSONL log — one serialized `NuclearEntry` per line, with fields like `seq`, `iid` (instance id), `role`, `sum` (one-line summary), and optional `body` (full content, roughly 4000 chars max). Each running agent-sh instance gets a random two-byte instance id that tags its entries for provenance.
+Before each LLM call, the kernel estimates prompt tokens (`conversation:estimate-prompt-tokens`) against `autoCompactThreshold × (contextWindow − responseReserve)`. If over budget — or if `/compact` is invoked, or the API returns a context-overflow error — it fires the `conversation:compact` handler. The kernel does not know how compaction works; it only knows when to ask.
 
-- **Concurrency-safe.** Each line is short enough that POSIX `O_APPEND` writes are atomic, so multiple agent-sh instances can share one file without a lock. Only truncation (which rewrites the whole file) takes a lock — `~/.agent-sh/history.lock` via `O_EXCL`, with a 10-second stale-lock timeout to recover from crashes.
-- **Read-only tool results are filtered at write time.** Entries tagged read-only (`read_file`, `grep`, `glob`, `ls`) never touch disk — the agent can re-run those tools if needed. The reader applies the same filter defensively.
-- **Front-truncation.** After each append, the file is checked against `historyMaxBytes` (default 100MB). If it's 150%+ over the limit, the oldest lines are dropped and the remainder rewritten atomically via a temp-file + `rename`. The 150% overshoot prevents frequent rewrites.
-- **Reverse-chunked reads.** Search, `readRecent`, and `findBySeq` stream the file backward in 1MB chunks, stitching lines across chunk boundaries at the byte level so UTF-8 codepoints never split. Search caps at a 20MB scan budget to bound cost on large files.
+### Default strategy — the `summary-strategy` built-in extension
 
-The `history:*` handlers (`append`, `search`, `find-by-seq`, `read-recent`) are all advisable, so extensions can swap the backend (e.g. SQLite, remote store) without changing nucleation.
+Lives at `src/agent/extensions/summary-strategy/`. Two pieces:
 
-### Tier 2 — active context
+**Capture (Tier 1)** — subscribes to `conversation:message-appended` and, for each new message, computes a one-line summary plus an optional capped body and `append`s it to its `Store`. The Store registers under the name `"summary"`; on-disk it's a `SharedFileStore` (multi-writer JSONL with `O_APPEND` atomic writes and lock-based front-truncation) at `~/.agent-sh/summary-strategy/history.jsonl`. The matching full message is also written to the Store with `{ ephemeral: true }` under `kind: "recall-cache"` — kept in memory only, recoverable during the session, gone after restart. Read-only tool results (`read_file`, `grep`, `glob`, `ls`) skip the durable summary because the agent can just re-run the tool.
 
-The in-memory conversation holds three things at once:
+**Compact (Tier 2)** — when the kernel fires `conversation:compact`, the advisor:
 
-- Full messages for each live turn (verbatim)
-- A rolling in-context "nuclear block" (the one-liners) that gives the agent high-level orientation
-- An in-memory recall archive keyed by sequence id, so evicted content stays searchable within the session
+1. Pins the first turn verbatim (earliest user intent usually matters)
+2. Pins the last few turns verbatim (the live focus)
+3. Slims the next slice of recent turns (drops read-only tool calls, caps long bodies)
+4. Scores the remaining middle by *priority × recency* and evicts lowest-priority first
+5. Evicted turns collapse into a single synthetic `[Conversation history — use conversation_recall to expand any entry]` block built from `Store.readRecent()`
 
-### Tier 3 — compaction
+Each evicted message links to its summary entry via `meta.entryId`. That id is what `conversation_recall { action: "expand", turn_id }` looks up.
 
-The kernel watches estimated prompt size against `autoCompactThreshold × (contextWindow − responseReserve)`. When that threshold is crossed (or `/compact` is invoked explicitly, or the API returns a context-overflow error), it fires the `conversation:compact` handler.
+### Recall
 
-Built-in strategy:
-
-1. Keep the first turn verbatim (earliest user intent usually matters)
-2. Keep the last `keepRecent` turns verbatim (the live focus)
-3. Score the remaining middle turns by *priority × recency* and evict lowest-priority first
-4. Evicted turns collapse in place to their one-line nuclear summaries
-
-On startup, the most recent `historyStartupEntries` entries from `~/.agent-sh/history` are injected as a `[Prior session history]` preamble — so context carries across restarts the way shell history does.
+The `recall:search` / `recall:expand` / `recall:browse` handlers are registered by the `summary-strategy` extension and read from its `Store`. The `conversation_recall` tool is a thin wrapper over them. To swap the recall backend, replace the extension (or advise the recall handlers).
 
 ### Token accounting
 
@@ -126,7 +118,7 @@ People often conflate shell output truncation and conversation compaction. They'
 | **Stream** | Shell context (`<shell_events>` deltas) | Conversation messages array |
 | **When** | Once, at the moment each exchange is captured | On threshold crossing, `/compact`, or overflow retry |
 | **State change** | Permanent: `ex.output` becomes head+tail+path | Permanent: evicted turns collapse to one-liners |
-| **Full-text location** | Tempfile on disk | In-memory archive + `~/.agent-sh/history` |
+| **Full-text location** | Tempfile on disk | Ephemeral recall cache in memory + summaries in `~/.agent-sh/summary-strategy/history.jsonl` |
 | **Recovery tool** | `read_file` on the spill path | `conversation_recall` |
 
 They fire independently. An exchange with a huge output spills as soon as it's captured; conversation compaction may not trigger until many turns later, for unrelated reasons.
@@ -141,22 +133,23 @@ There's no dedicated shell-recall tool: the spill file is just a normal file. Th
 
 ### Conversation — `conversation_recall` tool
 
-Registered by the built-in agent:
+Registered by the built-in agent; delegates to handlers owned by the `summary-strategy` extension:
 
-- `conversation_recall {"action": "browse"}` — list in-context nuclear entries + the 25 most recent history-file entries
-- `conversation_recall {"action": "search", "query": "..."}` — regex search across the in-session archive and the history file (both one-line summaries and full bodies)
-- `conversation_recall {"action": "expand", "turn_id": 42}` — full content of a specific turn
+- `conversation_recall {"action": "browse"}` — list recent summary entries from the Store
+- `conversation_recall {"action": "search", "query": "..."}` — regex search across summary lines + bodies
+- `conversation_recall {"action": "expand", "turn_id": "..."}` — full content of a specific entry (uses the `#<id>` token shown in the synthetic summary block)
 
-Extensions that install a custom compaction strategy can reuse `conversation_recall` or advise it with their own semantics.
+Extensions that install a custom compaction strategy can reuse `conversation_recall` (via its underlying `recall:*` handlers) or advise it with their own semantics.
 
 ## Extension hooks
 
 | Handler / event | Purpose |
 |---|---|
-| `conversation:compact` *(advisable handler)* | Install a custom compaction strategy. Read the messages array via `conversation:get-messages`, compute a replacement, install it via `conversation:replace-messages`, return `{ before, after, evictedCount }`. |
-| `conversation:message-appended` *(event)* | Fires every time a message is added (user/assistant/tool). Use it to build rolling indexes, summarize in the background, or feed external memory systems. |
+| `conversation:compact` *(advisable handler)* | Install a custom compaction strategy. Read/mutate the live prompt via `ctx.agent.liveView`, append durable summaries to a `Store`, return `{ before, after, evictedCount }`. |
+| `conversation:message-appended` *(event)* | Fires every time a message is added (user/assistant/tool). Capture-style strategies subscribe here to mirror entries into their `Store`. |
+| `recall:search` / `recall:expand` / `recall:browse` *(handlers)* | Registered by `summary-strategy`; advise to add filtering, indexing, or alternate stores. |
 
-Common override patterns: LLM-summarized compaction (summarize evicted turns before eviction), topic pinning (preserve turns matching pinned keywords), alternate persistence backends (SQLite, vector store, remote service).
+Common override patterns: LLM-summarized compaction (summarize evicted turns before eviction), topic pinning (preserve turns matching pinned keywords), alternate persistence backends (SQLite, vector store, remote service). A strategy can also register its own named `Store` via `ctx.agent.registerStore("...", store)` if it needs a separate log (e.g. per-session full-fidelity transcripts).
 
 ## Slash commands
 
@@ -177,8 +170,20 @@ All settings live in `~/.agent-sh/settings.json`:
 | `shellHeadLines` | 10 | Lines kept from the top when an output is spilled |
 | `shellTailLines` | 10 | Lines kept from the bottom when an output is spilled |
 | `autoCompactThreshold` | 0.5 | Fraction of available context window that triggers auto-compact |
-| `historyMaxBytes` | 104857600 | Max size of `~/.agent-sh/history` before front-truncation (100MB) |
-| `historyStartupEntries` | 100 | Prior history entries injected as `[Prior session history]` on startup |
+
+The `summary-strategy` extension reads its own namespaced settings:
+
+```json
+{
+  "summary-strategy": {
+    "maxBytes": 209715200,
+    "prefetchEntries": 50
+  }
+}
+```
+
+- `maxBytes` — front-truncation threshold for the summary log on disk. When unset, the `SharedFileStore` default applies. Truncation fires at 150 % of the cap and rewrites the file atomically (oldest entries first).
+- `prefetchEntries` — number of recent summary entries to prepend to the live view at activate as a `[Prior session history …]` block. Default `50`; set to `0` for clean-start sessions. Hosts that own their own per-session model (e.g. ashi) typically don't activate this extension at all and so are unaffected.
 
 ## Key files
 
@@ -186,8 +191,11 @@ All settings live in `~/.agent-sh/settings.json`:
 |---|---|
 | `src/shell/shell-context.ts` | Built-in: shell exchange capture, spill-to-tempfile on long outputs, `<shell_events>` per-query producer, `cwd` handler advisor |
 | `src/utils/shell-output-spill.ts` | Per-pid session dir, cleanup on exit + signals, stale-dir sweep for crashed sessions |
-| `src/agent/conversation-state.ts` | Messages array, eager nucleation, priority-based compaction, in-memory recall archive |
-| `src/agent/nuclear-form.ts` | One-line-summary primitives (nucleate, serialize, priority classification) |
-| `src/agent/history-file.ts` | Append-only `~/.agent-sh/history` with chunked search/tail-read + front-truncation |
+| `src/agent/live-view.ts` | `LiveView` — in-memory prompt being assembled this turn (formerly `ConversationState`) |
+| `src/agent/store.ts` | `Store` / `TreeStore` interfaces + `FileStore` (single-writer) / `SharedFileStore` (multi-writer) impls |
+| `src/agent/store-registry.ts` | Named `Store` registry exposed as `ctx.agent.store(name)` / `registerStore(name, s)` |
+| `src/agent/entry-format.ts` | Display line for synthetic summary blocks and `conversation_recall` output |
+| `src/agent/nuclear-form.ts` | One-line-summary primitives (nucleate, priority classification) |
+| `src/agent/extensions/summary-strategy/` | Default strategy: capture on `message-appended`, two-tier-pin compact, `recall:*` handlers |
 | `src/agent/agent-loop.ts` | Auto-compact trigger, `conversation:compact` advisor chain, registers the `conversation_recall` tool |
 | `src/agent/index.ts` | `/compact` and `/context` slash commands registered when the ash backend starts |

@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
 import * as crypto from "node:crypto";
+import { FileStore, type Entry } from "agent-sh/core";
 
 export interface ToolCall {
   id?: string;
@@ -55,142 +54,127 @@ export function newEntryId(): string {
   return crypto.randomBytes(4).toString("hex");
 }
 
-/** One session = one JSONL file (entries) + sidecar files for leaf & meta.
- *  Tree is implicit via parentId pointers; entries kept in memory after load. */
+function toSessionEntry(e: Entry): SessionEntry {
+  const p = e.payload as Record<string, unknown>;
+  if (e.kind === "session") {
+    return {
+      type: "session", id: e.id, parentId: null, timestamp: e.ts,
+      cwd: p.cwd as string, version: 1,
+    };
+  }
+  if (e.kind === "compaction") {
+    return {
+      type: "compaction", id: e.id, parentId: e.parentId!, timestamp: e.ts,
+      summary: p.summary as string,
+      firstKeptId: p.firstKeptId as string,
+      tokensBefore: p.tokensBefore as number,
+    };
+  }
+  return {
+    type: "message", id: e.id, parentId: e.parentId!, timestamp: e.ts,
+    message: p.message as AgentMessage,
+  };
+}
+
+/** One FileStore per session + a `.meta` sidecar for display name
+ *  and createdAt. */
 export class SessionStore {
-  private entriesPath: string;
-  private leafPath: string;
+  private store: FileStore;
   private metaPath: string;
-  private entries = new Map<string, SessionEntry>();
-  private rootId = "";
-  private activeLeaf = "";
   private meta: SessionMeta;
-  private pendingHeader: SessionHeaderEntry | null = null;
   readonly id: string;
 
   constructor(filePath: string, opts?: { create?: { cwd: string; sessionId: string } }) {
-    this.entriesPath = filePath;
-    this.leafPath = filePath + ".leaf";
     this.metaPath = filePath + ".meta";
-    this.meta = { createdAt: 0 };
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-
     if (opts?.create) {
-      this.id = opts.create.sessionId;
-      const header: SessionHeaderEntry = {
-        type: "session",
+      const headerEntry: Entry = {
         id: opts.create.sessionId,
-        parentId: null,
-        timestamp: Date.now(),
-        cwd: opts.create.cwd,
-        version: 1,
+        ts: Date.now(),
+        kind: "session",
+        payload: { cwd: opts.create.cwd, version: 1 },
       };
-      this.entries.set(header.id, header);
-      this.rootId = header.id;
-      this.activeLeaf = header.id;
-      this.meta = { createdAt: header.timestamp };
-      this.pendingHeader = header;
+      this.store = new FileStore({ filePath, root: headerEntry });
+      this.id = opts.create.sessionId;
+      this.meta = { createdAt: headerEntry.ts };
+      this.persistMeta();
     } else {
-      this.id = "";
-      this.load();
-      if (!this.rootId) throw new Error(`session file lacks a session header: ${filePath}`);
-      this.id = this.rootId;
+      this.store = new FileStore({ filePath });
+      const rootId = this.store.getRootId();
+      if (!rootId) throw new Error(`session file lacks a session header: ${filePath}`);
+      this.id = rootId;
+      try {
+        this.meta = JSON.parse(fs.readFileSync(this.metaPath, "utf-8")) as SessionMeta;
+      } catch { this.meta = { createdAt: 0 }; }
     }
   }
 
-  private flushHeader(): void {
-    if (!this.pendingHeader) return;
-    const headerLine = JSON.stringify(this.pendingHeader) + "\n";
-    this.pendingHeader = null;
-    fs.writeFileSync(this.entriesPath, headerLine);
-    this.persistMeta();
-    this.persistLeaf();
+  getActiveLeaf(): string { return this.store.getLeaf(); }
+  setActiveLeaf(id: string): void { this.store.setLeaf(id); }
+  getRootId(): string { return this.id; }
+
+  async getEntry(id: string): Promise<SessionEntry | undefined> {
+    const e = await this.store.findById(id);
+    return e ? toSessionEntry(e) : undefined;
   }
 
-  getActiveLeaf(): string { return this.activeLeaf; }
-  setActiveLeaf(id: string): void {
-    if (!this.entries.has(id)) throw new Error(`unknown entry: ${id}`);
-    this.activeLeaf = id;
-    this.persistLeaf();
+  async getAllEntries(): Promise<SessionEntry[]> {
+    const entries = await this.store.readRecent();
+    return entries.map(toSessionEntry);
   }
-  getRootId(): string { return this.rootId; }
-  getEntry(id: string): SessionEntry | undefined { return this.entries.get(id); }
-  getAllEntries(): SessionEntry[] {
-    return [...this.entries.values()];
-  }
+
+  entryCount(): number { return this.store.size(); }
+
   getMeta(): SessionMeta { return { ...this.meta }; }
   setName(name: string): void {
     this.meta.name = name;
     this.persistMeta();
   }
 
-  /** Append messages as a chain of MessageEntry, each parented at the
-   *  previously appended id (starting from current leaf). Returns the new
-   *  entry ids in order. */
+  /** Append messages as a chain starting from the active leaf.
+   *  Returns the new ids in order. */
   async appendMessages(messages: AgentMessage[]): Promise<string[]> {
     if (messages.length === 0) return [];
-    this.flushHeader();
-    let parent = this.activeLeaf;
-    const lines: string[] = [];
+    let parent = this.store.getLeaf();
+    const entries: Entry[] = [];
     const newIds: string[] = [];
     for (const m of messages) {
-      const e: MessageEntry = {
-        type: "message",
-        id: newEntryId(),
-        parentId: parent,
-        timestamp: Date.now(),
-        message: m,
-      };
-      this.entries.set(e.id, e);
-      lines.push(JSON.stringify(e));
-      newIds.push(e.id);
-      parent = e.id;
+      const id = newEntryId();
+      entries.push({
+        id, parentId: parent, ts: Date.now(),
+        kind: "message", payload: { message: m },
+      });
+      newIds.push(id);
+      parent = id;
     }
-    this.activeLeaf = parent;
-    await fsp.appendFile(this.entriesPath, lines.join("\n") + "\n");
-    this.persistLeaf();
+    await this.store.append(entries);
+    this.store.setLeaf(parent);
     return newIds;
   }
 
   async appendCompaction(summary: string, firstKeptId: string, tokensBefore: number): Promise<string> {
-    if (!this.entries.has(firstKeptId)) throw new Error(`firstKeptId unknown: ${firstKeptId}`);
-    this.flushHeader();
-    const e: CompactionEntry = {
-      type: "compaction",
-      id: newEntryId(),
-      parentId: this.activeLeaf,
-      timestamp: Date.now(),
-      summary,
-      firstKeptId,
-      tokensBefore,
-    };
-    this.entries.set(e.id, e);
-    this.activeLeaf = e.id;
-    await fsp.appendFile(this.entriesPath, JSON.stringify(e) + "\n");
-    this.persistLeaf();
-    return e.id;
-  }
-
-  /** Walk parent pointers from a leaf back to the root. Returns oldest-first. */
-  getBranch(leafId: string = this.activeLeaf): SessionEntry[] {
-    const out: SessionEntry[] = [];
-    const seen = new Set<string>();
-    let cur: string | null = leafId;
-    while (cur && !seen.has(cur)) {
-      seen.add(cur);
-      const e = this.entries.get(cur);
-      if (!e) break;
-      out.push(e);
-      cur = e.parentId;
+    if (!(await this.store.findById(firstKeptId))) {
+      throw new Error(`firstKeptId unknown: ${firstKeptId}`);
     }
-    return out.reverse();
+    const id = newEntryId();
+    const entry: Entry = {
+      id, parentId: this.store.getLeaf(), ts: Date.now(),
+      kind: "compaction",
+      payload: { summary, firstKeptId, tokensBefore },
+    };
+    await this.store.append([entry]);
+    this.store.setLeaf(id);
+    return id;
   }
 
-  /** Reconstruct the live message array for the active leaf, honoring the
-   *  latest compaction on the branch (summary + kept tail). Mirrors pi's
-   *  buildSessionContext. */
-  buildMessages(leafId: string = this.activeLeaf): AgentMessage[] {
-    const branch = this.getBranch(leafId);
+  async getBranch(leafId: string = this.store.getLeaf()): Promise<SessionEntry[]> {
+    const branch = await this.store.getBranch(leafId);
+    return branch.map(toSessionEntry);
+  }
+
+  /** Materialize messages for `leafId`, honoring the latest compaction
+   *  on the branch (synthetic summary + kept tail). */
+  async buildMessages(leafId: string = this.store.getLeaf()): Promise<AgentMessage[]> {
+    const branch = await this.getBranch(leafId);
     let compactionIdx = -1;
     for (let i = branch.length - 1; i >= 0; i--) {
       if (branch[i]!.type === "compaction") { compactionIdx = i; break; }
@@ -214,52 +198,19 @@ export class SessionStore {
     return out;
   }
 
-  /** A short, human-friendly preview for picker rows. Uses the first user
-   *  message's text when available, else the session id. */
-  getPreview(): string {
-    for (const e of this.entries.values()) {
-      if (e.type === "message" && e.message.role === "user") {
-        const txt = typeof e.message.content === "string" ? e.message.content : "";
-        if (txt) return txt.slice(0, 80);
-      }
+  async getPreview(): Promise<string> {
+    const entries = await this.store.readRecent();
+    for (const e of entries) {
+      if (e.kind !== "message") continue;
+      const msg = (e.payload as { message: AgentMessage }).message;
+      if (msg.role !== "user") continue;
+      const txt = typeof msg.content === "string" ? msg.content : "";
+      if (txt) return txt.slice(0, 80);
     }
     return "(empty)";
   }
 
-  private load(): void {
-    try {
-      this.meta = JSON.parse(fs.readFileSync(this.metaPath, "utf-8")) as SessionMeta;
-    } catch { this.meta = { createdAt: 0 }; }
-    let raw: string;
-    try { raw = fs.readFileSync(this.entriesPath, "utf-8"); }
-    catch { return; }
-    for (const line of raw.split("\n")) {
-      if (!line) continue;
-      try {
-        const e = JSON.parse(line) as SessionEntry;
-        if (!e.id) continue;
-        this.entries.set(e.id, e);
-        if (e.type === "session") this.rootId = e.id;
-      } catch { /* skip malformed */ }
-    }
-    try {
-      this.activeLeaf = fs.readFileSync(this.leafPath, "utf-8").trim();
-      if (!this.entries.has(this.activeLeaf)) this.activeLeaf = this.rootId;
-    } catch { this.activeLeaf = this.lastEntryId(); }
-  }
-
-  private lastEntryId(): string {
-    let lastId = this.rootId;
-    for (const e of this.entries.values()) lastId = e.id;
-    return lastId;
-  }
-
-  private persistLeaf(): void {
-    if (this.pendingHeader) return;
-    fs.writeFileSync(this.leafPath, this.activeLeaf);
-  }
   private persistMeta(): void {
-    if (this.pendingHeader) return;
     fs.writeFileSync(this.metaPath, JSON.stringify(this.meta));
   }
 }

@@ -1,5 +1,4 @@
 import type { CoreConfig, CoreContext } from "../core/types.js";
-import type { HistoryAdapter } from "./history-file.js";
 import type { SkillView, ToolDefinition, ToolExecutionContext, ToolSchemaView } from "./types.js";
 
 // ── LLM port ─────────────────────────────────────────────────────
@@ -94,6 +93,14 @@ export interface AgentSurface {
     configure: (id: string, opts: { reasoningParams?: (level: string, model?: string) => Record<string, unknown> }) => void;
   };
 
+  /** Null until ash's `start()` runs — bridges and library-mode-without-ash
+   *  see no live view. Consumers should null-check. */
+  liveView: import("./live-view.js").LiveView | null;
+  /** Throws if no Store is registered under that name. */
+  store: (name: string) => import("./store.js").Store;
+  /** Throws on duplicate name. */
+  registerStore: (name: string, store: import("./store.js").Store) => void;
+
   // ── Tool registration ────────────────────────────────────────
   registerTool: (tool: ToolDefinition) => void;
   unregisterTool: (name: string) => void;
@@ -167,8 +174,6 @@ export interface AgentConfigSurface {
   provider?: string;
   /** Default model id. */
   model?: string;
-  /** Conversation history backend. Defaults to the on-disk HistoryFile. */
-  history?: HistoryAdapter;
 }
 
 export type AgentConfig = CoreConfig & AgentConfigSurface;

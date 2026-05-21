@@ -22,7 +22,6 @@ export function registerSessionCommands(
 
   ctx.registerCommand("new", "Start a fresh session (discards in-memory context)", async () => {
     const s = getStore().newSession();
-    ctx.call("conversation:reset-for-session", 1);
     ctx.call("conversation:replace-messages", []);
     capture.resetTo([]);
     await deps.rebuildChat();
@@ -40,7 +39,7 @@ export function registerSessionCommands(
   });
 
   ctx.registerCommand("sessions", "List past sessions in this cwd (text dump)", async () => {
-    const list = getStore().listSessions();
+    const list = await getStore().listSessions();
     if (list.length === 0) {
       bus.emit("ui:info", { message: "sessions: none" });
       return;
@@ -64,13 +63,12 @@ export function formatSessionRow(s: SessionInfo, isCurrent: boolean): string {
   return `${marker} ${when}  ${label}  (${s.entryCount})`;
 }
 
-export function resumeSession(
+export async function resumeSession(
   ctx: ExtensionContext,
   getStore: () => MultiSessionStore,
   capture: Capture,
   id: string,
-): void {
+): Promise<void> {
   getStore().openSession(id);
-  ctx.call("conversation:reset-for-session", 1);
-  applyBranchMessages(ctx, getStore, capture);
+  await applyBranchMessages(ctx, getStore, capture);
 }

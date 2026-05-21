@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { activateShell, registerShellHandlers, type ShellHandle } from "../shell/index.js";
 import { activateAgent } from "../agent/index.js";
+import activateSummaryStrategy from "../agent/extensions/summary-strategy/index.js";
 import { createCore } from "../core/index.js";
 import { palette as p } from "../utils/palette.js";
 import { loadBuiltinExtensions } from "../extensions/index.js";
@@ -123,6 +124,7 @@ async function main(): Promise<void> {
   // Before loadExtensions: extensions look up shell handlers at activation.
   registerShellHandlers(extCtx);
   activateAgent(extCtx);
+  activateSummaryStrategy(extCtx as Parameters<typeof activateSummaryStrategy>[0]);
 
   // Load before spawning the shell so PS1 lands below the banner.
   await loadBuiltinExtensions(extCtx, getSettings().disabledBuiltins);

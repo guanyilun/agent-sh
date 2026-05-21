@@ -124,6 +124,9 @@ Attached by `activateAgent(ctx)` (called from `src/cli/index.ts` and from librar
 | `removeSkill` | `(name) => void` | Remove a registered skill |
 | `adviseSkill` | `(name, advisor) => () => void` | Wrap a skill's LLM-facing view |
 | `registerContextProducer` | `(name, () => string \| null, opts?: { mode? }) => () => void` | Contribute a per-turn signal. `mode: "per-request"` (default) — fires every LLM call, ephemerally wrapped on the trailing message in `<dynamic_context>`. `mode: "per-query"` — fires once per user query, frozen into the user message in `<query_context>`. Return `null` to skip. Returns a dispose fn. |
+| `liveView` | `LiveView` | In-memory prompt being assembled this turn. Strategies read it via `get()`, mutate it via `replace(msgs)`. See [History Substrate](history-substrate.md). |
+| `store` | `(name) => Store` | Look up a named `Store` (durable append-only log). Throws if not registered. |
+| `registerStore` | `(name, Store) => void` | Register a named `Store`. Throws on duplicate. The `summary-strategy` built-in registers `"summary"`; extensions may add their own (e.g. per-session full-fidelity transcripts). |
 
 ### `ctx.shell` — shell host surface
 
@@ -524,9 +527,7 @@ These are registered by AgentLoop (constructed when the ash backend's `start()` 
 | `conversation:estimate-tokens` | `() → number` | Local chars/4 estimate of the conversation size. |
 | `conversation:estimate-prompt-tokens` | `() → number` | API-grounded estimate (last `prompt_tokens` + local delta since). Used by the auto-compact trigger. |
 | `conversation:inject-note` | `(text) → void` | Inject a `role:"user"` note mid-loop — how extensions deliver async results (subagent output, peer messages) into the next iteration. |
-| `conversation:nucleate-user` / `-agent` / `-tool` | `(msg) → NuclearEntry` | Turn a message into its one-line summary. Advise to extract extra metadata (e.g. `[why: ...]` annotations). |
-| `conversation:format-prior-history` | `(entries) → string` | Render prior-session history into a preamble. Advise for session-grouped output. |
-| `history:append` / `:search` / `:find-by-seq` / `:read-recent` | — | Shell-history-style persistent log at `~/.agent-sh/history`. Advise to add indexing, filtering, or external stores. |
+| `recall:search` / `recall:expand` / `recall:browse` | `(query) / (id) / (limit?) → string` | Registered by the `summary-strategy` built-in extension and backed by its `Store`. The `conversation_recall` tool wraps these. Advise (or replace the extension) to swap the recall backend. |
 | `tool:execute` | `(ctx) → ToolResult` | Wrap the full tool lifecycle: permission → execute → emit events. |
 
 **`dynamic-context:build`** — Each advisor appends its own context. Multiple extensions compose independently:

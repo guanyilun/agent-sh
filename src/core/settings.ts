@@ -73,18 +73,6 @@ export interface Settings {
   /** Lines kept from end of spilled shell output. */
   shellTailLines?: number;
 
-  // ── History ──────────────────────────────────────────────
-  /** Max history file size in bytes (default: 102400 = 100KB). */
-  historyMaxBytes?: number;
-  /** Number of prior history entries to load on startup (default: 50). */
-  historyStartupEntries?: number;
-  /**
-   * Override the history file path. Defaults to `~/.agent-sh/history`.
-   * The `AGENT_SH_HISTORY_FILE` env var takes precedence over this setting.
-   * Use a per-project path to keep sessions isolated (e.g. embedding apps
-   * that boot agent-sh as a library against a specific working tree).
-   */
-  historyFilePath?: string;
   /** Auto-compact threshold as fraction of conversation budget (0-1, default 0.5). */
   autoCompactThreshold?: number;
 
@@ -157,9 +145,6 @@ const DEFAULTS: Required<Settings> = {
   shellTruncateThreshold: 20,
   shellHeadLines: 10,
   shellTailLines: 10,
-  historyMaxBytes: 104857600, // 100MB — history is only accessed via search/expand, never loaded wholesale
-  historyStartupEntries: 100,
-  historyFilePath: undefined as unknown as string,
   autoCompactThreshold: 0.5,
   maxCommandOutputLines: 3,
   readOutputMaxLines: 10,

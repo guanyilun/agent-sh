@@ -18,7 +18,7 @@ export function registerForkCommands(
       await openTreePicker();
       return;
     }
-    const branch = getStore().current().getBranch();
+    const branch = await getStore().current().getBranch();
     const matches = branch.filter((e) => e.id.startsWith(arg));
     if (matches.length === 0) {
       bus.emit("ui:error", { message: `fork: no entry matches "${arg}"` });
@@ -30,13 +30,13 @@ export function registerForkCommands(
     }
     const target = matches[0]!;
     getStore().current().setActiveLeaf(target.id);
-    applyBranchMessages(ctx, getStore, capture);
+    await applyBranchMessages(ctx, getStore, capture);
     bus.emit("ui:info", { message: `fork: rewound to ${target.id}` });
     await rebuildChat();
   });
 
   ctx.registerCommand("branch", "Show the active branch (root → leaf)", async () => {
-    const branch = getStore().current().getBranch();
+    const branch = await getStore().current().getBranch();
     if (branch.length === 0) {
       bus.emit("ui:info", { message: "branch: empty" });
       return;
@@ -52,15 +52,15 @@ export function registerForkCommands(
   });
 }
 
-export function applyBranchMessages(
+export async function applyBranchMessages(
   ctx: ExtensionContext,
   getStore: () => MultiSessionStore,
   capture: Capture,
-): void {
+): Promise<void> {
   const store = getStore().current();
-  ctx.call("conversation:replace-messages", store.buildMessages());
+  ctx.call("conversation:replace-messages", await store.buildMessages());
 
-  const branch = store.getBranch();
+  const branch = await store.getBranch();
   let compaction: { firstKeptId: string } | null = null;
   for (let i = branch.length - 1; i >= 0; i--) {
     if (branch[i]!.type === "compaction") {

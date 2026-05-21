@@ -62,7 +62,7 @@ export function registerCompaction(
     const older = messages.slice(0, cutIdx);
     const kept = messages.slice(cutIdx);
 
-    const branch = getStore().current().getBranch();
+    const branch = await getStore().current().getBranch();
     const prevCompaction = [...branch].reverse().find((e) => e.type === "compaction") as CompactionEntry | undefined;
     const prevSummary = prevCompaction?.summary;
 
