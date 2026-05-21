@@ -237,9 +237,7 @@ export default function activate(ctx: ExtensionContext): void {
   });
 
   let backendInfo: { name: string; model?: string; provider?: string; contextWindow?: number } | null = null;
-  bus.on("agent:identity-changed", () => {
-    backendInfo = bus.emitPipe("agent:identity", { identity: null }).identity;
-  });
+  bus.on("agent:info", (info) => { backendInfo = info; });
 
   // ── Register fenced block transform (code blocks → ContentBlock) ──
   // Nobody is special — tui-renderer uses the same primitive as any extension.

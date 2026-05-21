@@ -51,12 +51,20 @@ test("pi-bridge registers backend 'pi' after activate", async () => {
   assert.equal(active, "pi");
 });
 
-test("pi-bridge contributes identity (with model) via agent:identity pipe after boot", async () => {
-  const { bus } = await loadBridge();
-  const { identity } = bus.emitPipe("agent:identity", { identity: null });
-  assert.ok(identity, "expected identity contributor installed");
-  assert.equal(identity!.name, "pi");
-  assert.equal(identity!.model, "stub/stub-model");
+test("pi-bridge surfaces model info via agent:info after boot", async () => {
+  const infos: Array<{ name: string; model?: string }> = [];
+  const core = createCore({} as AppConfig);
+  core.bus.on("agent:info", (info) => { infos.push(info); });
+  const ctx = core.extensionContext({ quit: () => {} });
+  activateAgentBackend(ctx);
+  stubModule.__reset();
+  const mod = await import(`${BRIDGE_URL}?t=${Date.now()}`);
+  (mod.default ?? mod.activate)(ctx);
+  await core.activateBackend("pi");
+
+  assert.equal(infos.length, 1);
+  assert.equal(infos[0]!.name, "pi");
+  assert.equal(infos[0]!.model, "stub/stub-model");
 });
 
 test("agent:submit forwards the query to session.prompt", async () => {

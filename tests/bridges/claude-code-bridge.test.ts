@@ -57,12 +57,20 @@ test("claude-code-bridge registers backend 'claude-code' after activate", async 
   assert.equal(active, "claude-code");
 });
 
-test("claude-code-bridge contributes identity via agent:identity pipe after boot", async () => {
-  const { bus } = await loadBridge();
-  const { identity } = bus.emitPipe("agent:identity", { identity: null });
-  assert.ok(identity, "expected identity contributor installed");
-  assert.equal(identity!.name, "claude-code");
-  assert.equal(identity!.version, "1.0");
+test("claude-code-bridge emits agent:info after boot", async () => {
+  const infos: Array<{ name: string; version?: string }> = [];
+  const core = createCore({} as AppConfig);
+  core.bus.on("agent:info", (info) => { infos.push(info); });
+  const ctx = core.extensionContext({ quit: () => {} });
+  activateAgentBackend(ctx);
+  stubModule.__reset();
+  const mod = await import(`${BRIDGE_URL}?t=${Date.now()}`);
+  (mod.default ?? mod.activate)(ctx);
+  await core.activateBackend("claude-code");
+
+  assert.equal(infos.length, 1);
+  assert.equal(infos[0]!.name, "claude-code");
+  assert.equal(infos[0]!.version, "1.0");
 });
 
 test("agent:submit calls query() with the user prompt and standard options", async () => {

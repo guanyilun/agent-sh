@@ -6,7 +6,7 @@
  */
 import "./events.js"; // augments ShellEvents
 import type { ExtensionContext } from "../../shell/host-types.js";
-import type { BackendRegistration, AgentIdentity } from "./events.js";
+import type { BackendRegistration } from "./events.js";
 import * as settingsMod from "../../core/settings.js";
 
 export default function activate(ctx: ExtensionContext): void {
@@ -26,7 +26,6 @@ export default function activate(ctx: ExtensionContext): void {
     }
     activeBackendName = name;
     await backend.start?.();
-    bus.emit("agent:identity-changed", {});
     return true;
   };
 
@@ -64,10 +63,6 @@ export default function activate(ctx: ExtensionContext): void {
       ? preferred
       : backends.keys().next().value!;
     await activateByName(name);
-  });
-
-  ctx.define("agent-backend:identity", (): AgentIdentity | null => {
-    return bus.emitPipe("agent:identity", { identity: null }).identity;
   });
 
   ctx.define("agent-backend:kill", () => {

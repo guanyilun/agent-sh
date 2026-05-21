@@ -609,12 +609,11 @@ export function mountAshi(
     tui.requestRender();
   });
 
-  bus.on("agent:identity-changed", () => {
-    const info = bus.emitPipe("agent:identity", { identity: null }).identity;
+  bus.on("agent:info", (info) => {
     statusFooter.update({
-      model: info?.model,
-      provider: info?.provider,
-      contextWindow: info?.contextWindow,
+      model: info.model,
+      provider: info.provider,
+      contextWindow: info.contextWindow,
     });
     refreshThinking();
     tui.requestRender();

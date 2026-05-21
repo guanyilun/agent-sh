@@ -220,7 +220,7 @@ export class AgentLoop implements AgentBackend {
           message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
         });
       }
-      this.notifyIdentityChanged();
+      this.emitIdentity();
       this.bus.emit("config:changed", {});
     });
     // Fires before wire() too — agent-backend emits this from
@@ -236,7 +236,7 @@ export class AgentLoop implements AgentBackend {
       } else {
         this.llmClient.model = m.model;
       }
-      this.notifyIdentityChanged();
+      this.emitIdentity();
       this.bus.emit("config:changed", {});
     });
   }
@@ -286,18 +286,6 @@ export class AgentLoop implements AgentBackend {
       return acc;
     });
 
-    onPipe("agent:identity", (acc) => {
-      const m = this.modes[this.currentModeIndex];
-      if (!m) return acc;
-      acc.identity = {
-        name: "ash",
-        version: PACKAGE_VERSION,
-        model: m.model,
-        provider: m.provider,
-        contextWindow: m.contextWindow,
-      };
-      return acc;
-    });
 
     on("agent:submit", ({ query }) => {
       this.handleQuery(query).catch(() => {});
@@ -328,7 +316,7 @@ export class AgentLoop implements AgentBackend {
         this.llmClient.model = m.model;
       }
       const label = m.provider ? `${m.provider}: ${m.model}` : m.model;
-      this.notifyIdentityChanged();
+      this.emitIdentity();
 
       // Persist as the new default — selection survives restart.
       // Safe even for dynamic providers: agent-backend defers mode
@@ -451,7 +439,7 @@ export class AgentLoop implements AgentBackend {
         this.bus.emit("conversation:message-appended", { role: "system", content: note });
       }
     });
-    this.notifyIdentityChanged();
+    this.emitIdentity();
   }
 
   /** Unsubscribe from bus events — deactivates this backend. */
@@ -593,8 +581,16 @@ export class AgentLoop implements AgentBackend {
     return this.modes[this.currentModeIndex];
   }
 
-  private notifyIdentityChanged(): void {
-    this.bus.emit("agent:identity-changed", {});
+  private emitIdentity(): void {
+    const m = this.modes[this.currentModeIndex];
+    if (!m) return;
+    this.bus.emit("agent:info", {
+      name: "ash",
+      version: PACKAGE_VERSION,
+      model: m.model,
+      provider: m.provider,
+      contextWindow: m.contextWindow,
+    });
   }
 
   private get currentModel(): string {

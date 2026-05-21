@@ -30,9 +30,8 @@ declare module "../../core/event-bus.js" {
     "config:list-backends": Record<string, never>;
     "config:get-backends": { names: string[]; active: string | null };
 
-    // ── Identity (pull-composition) ───────────────────────────────
-    "agent:identity": { identity: AgentIdentity | null };
-    "agent:identity-changed": Record<string, never>;
+    // ── Identity (active backend emits on start + on changes) ────
+    "agent:info": AgentIdentity;
 
     // ── Capability registration (pull-composition) ────────────────
     "agent:tools": { tools: import("../../agent/types.js").ToolDefinition[] };

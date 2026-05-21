@@ -64,11 +64,20 @@ test("opencode-bridge registers backend 'opencode' after activate", async () => 
   assert.equal(active, "opencode");
 });
 
-test("opencode-bridge contributes identity via agent:identity pipe after boot", async () => {
-  const { bus } = await loadBridge();
-  const { identity } = bus.emitPipe("agent:identity", { identity: null });
-  assert.ok(identity, "expected identity contributor installed");
-  assert.equal(identity!.name, "opencode");
+test("opencode-bridge emits agent:info after boot", async () => {
+  const infos: Array<{ name: string; version?: string }> = [];
+  const core = createCore({} as AppConfig);
+  core.bus.on("agent:info", (info) => { infos.push(info); });
+  const ctx = core.extensionContext({ quit: () => {} });
+  (ctx as { shell?: unknown }).shell = { compositor: { surface: () => null } };
+  activateAgentBackend(ctx);
+  stubModule.__reset();
+  const mod = await import(`${BRIDGE_URL}?t=${Date.now()}`);
+  (mod.default ?? mod.activate)(ctx);
+  await core.activateBackend("opencode");
+
+  assert.equal(infos.length, 1);
+  assert.equal(infos[0]!.name, "opencode");
 });
 
 test("agent:submit forwards the query to client.session.prompt", async () => {

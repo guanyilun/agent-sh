@@ -69,9 +69,7 @@ async function main(): Promise<void> {
   const { bus } = core;
 
   let agentInfo: { name: string; version: string; model?: string; provider?: string } | null = null;
-  bus.on("agent:identity-changed", () => {
-    agentInfo = bus.emitPipe("agent:identity", { identity: null }).identity;
-  });
+  bus.on("agent:info", (info) => { agentInfo = info; });
 
   // ── Interactive frontend ──────────────────────────────────────
   if (process.env.DEBUG) {
