@@ -68,9 +68,14 @@ async function main(): Promise<void> {
   const core = createCore(config);
   const { bus } = core;
 
-  // Track agent info from bus events (populated by extension backends)
+  // agent-backend filters stale agent:info emissions by active backend
+  // and republishes through the agent:identity pipe. Re-pull on the
+  // transition poke so the prompt label tracks backend switches and
+  // model swaps.
   let agentInfo: { name: string; version: string; model?: string; provider?: string } | null = null;
-  bus.on("agent:info", (info) => { agentInfo = info; });
+  bus.on("agent:identity-changed", () => {
+    agentInfo = bus.emitPipe("agent:identity", { identity: null }).identity;
+  });
 
   // ── Interactive frontend ──────────────────────────────────────
   if (process.env.DEBUG) {

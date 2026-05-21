@@ -223,9 +223,6 @@ export interface ShellEvents {
     done: boolean;
   };
 
-  // Agent info (backend → frontend: connection established, info available)
-  "agent:info": { name: string; version: string; model?: string; provider?: string; contextWindow?: number };
-
   // Session reset (slash command → backend: clear conversation state)
   "agent:reset-session": Record<string, never>;
 
@@ -256,21 +253,6 @@ export interface ShellEvents {
     stats?: { before: number; after: number; evictedCount: number };
   };
 
-
-  // Extension registers itself as agent backend (extension → core)
-  "agent:register-backend": {
-    name: string;
-    kill: () => void;
-    start?: () => Promise<void>;
-  };
-
-  // Switch agent backend at runtime (slash command → core)
-  "config:switch-backend": { name: string };
-
-  // List registered backends (slash command → core, returns via ui:info)
-  "config:list-backends": Record<string, never>;
-  // Query backend names (sync pipe — for autocomplete)
-  "config:get-backends": { names: string[]; active: string | null };
 
   // Session mode/config updated (from agent backend)
   "config:changed": Record<string, never>;
