@@ -92,6 +92,17 @@ async function main(): Promise<void> {
     bus.emit("config:changed", {});
   });
 
+  // ── Boot-window ui:* fallback ────────────────────────────────
+  // tui-renderer subscribes to ui:error/ui:info inside activateShell,
+  // which runs after backend activation. Without this, a bridge whose
+  // start() emits ui:error (e.g. opencode-bridge when its server fails
+  // to launch) crashes silently — the event has no subscriber. Pipe to
+  // stderr until the shell is up, then detach.
+  const bootUiError = (e: { message: string }) => {
+    process.stderr.write(`agent-sh: ${e.message}\n`);
+  };
+  bus.on("ui:error", bootUiError);
+
   // ── Interactive frontend ──────────────────────────────────────
   if (process.env.DEBUG) {
     console.error('[agent-sh] Setting up interactive frontend...');
@@ -206,6 +217,7 @@ async function main(): Promise<void> {
       return { info: "" };
     },
   });
+  bus.off("ui:error", bootUiError);
 
   bus.emit("input-mode:register", {
     id: "agent",
