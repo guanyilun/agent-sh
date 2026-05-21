@@ -10,7 +10,7 @@
  * Used by the subagent extension to delegate tasks from the main agent.
  */
 import type { EventBus } from "../core/event-bus.js";
-import type { LlmClient } from "../utils/llm-client.js";
+import type { LlmClient } from "./llm-client.js";
 import type { ToolDefinition } from "./types.js";
 import { ConversationState } from "./conversation-state.js";
 import { normalizeToolArgs } from "./normalize-args.js";

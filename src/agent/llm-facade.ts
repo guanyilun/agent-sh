@@ -4,7 +4,7 @@
  * their own LLM and do not define this handler; `available` is false
  * under those backends and calls reject.
  */
-import type { LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
+import type { LlmInterface, LlmMessage, LlmSession } from "./host-types.js";
 
 interface HandlerGate {
   list: () => string[];

@@ -137,6 +137,7 @@ agent-sh/
 │   │   ├── host-types.ts     # AgentSurface, AgentContext, LlmInterface, AgentMode
 │   │   ├── types.ts          # AgentBackend, ToolDefinition, ToolResult
 │   │   ├── agent-loop.ts     # ash backend (OpenAI-compat API, bus-driven)
+│   │   ├── llm-client.ts, llm-facade.ts  # ash LLM transport + ctx.agent.llm facade
 │   │   ├── providers/        # openai, openrouter, deepseek, openai-compatible
 │   │   ├── token-budget.ts   # Shared constants (RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW)
 │   │   ├── tool-registry.ts, tool-protocol.ts
@@ -151,7 +152,6 @@ agent-sh/
 │   │   └── file-autocomplete.ts
 │   │
 │   └── utils/                # Shared primitives
-│       ├── llm-client.ts, llm-facade.ts
 │       ├── handler-registry.ts # Named function registry (define/advise/call)
 │       ├── compositor.ts       # Routes named render streams to surfaces
 │       ├── terminal-buffer.ts  # Headless xterm.js mirror of the terminal

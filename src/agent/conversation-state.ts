@@ -1,4 +1,4 @@
-import type { ChatCompletionMessageParam } from "../utils/llm-client.js";
+import type { ChatCompletionMessageParam } from "./llm-client.js";
 import {
   type NuclearEntry,
   toNuclearEntries,

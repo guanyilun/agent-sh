@@ -9,7 +9,7 @@
  * The agent loop uses this interface uniformly so the rest of the code
  * doesn't need to know which mode is active.
  */
-import type { ChatCompletionTool } from "../utils/llm-client.js";
+import type { ChatCompletionTool } from "./llm-client.js";
 import type { ToolDefinition } from "./types.js";
 import type { ConversationState } from "./conversation-state.js";
 

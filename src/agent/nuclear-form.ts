@@ -7,7 +7,7 @@
  *
  * Nuclear entries are the currency of Tier 2 and Tier 3.
  */
-import type { ChatCompletionMessageParam } from "../utils/llm-client.js";
+import type { ChatCompletionMessageParam } from "./llm-client.js";
 
 // ── Types ─────────────────────────────────────────────────────────
 
