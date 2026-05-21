@@ -452,7 +452,6 @@ export default function activate(ctx: ExtensionContext): void {
     },
     kill: () => {
       unwireListeners();
-      bus.offPipe("agent:info", identityContributor);
       streamAbort?.abort();
       serverAbort?.abort();
       runtime?.server.close();
