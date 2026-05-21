@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createCore } from "../../src/core/index.js";
+import activateAgentBackend from "../../src/extensions/agent-backend/index.js";
 import type { AppConfig } from "../../src/shell/host-types.js";
 
 register(new URL("../fixtures/opencode-sdk-mock-loader.mjs", import.meta.url));
@@ -34,6 +35,7 @@ async function loadBridge(): Promise<LoadedBridge> {
   (ctx as { shell?: unknown }).shell = {
     compositor: { surface: () => null },
   };
+  activateAgentBackend(ctx);
   const mod = await import(`${BRIDGE_URL}?t=${Date.now()}`);
   const activate = (mod.default ?? mod.activate) as (c: typeof ctx) => void;
   activate(ctx);
@@ -62,19 +64,11 @@ test("opencode-bridge registers backend 'opencode' after activate", async () => 
   assert.equal(active, "opencode");
 });
 
-test("opencode-bridge emits agent:info after boot", async () => {
-  const infos: Array<{ name: string; version?: string }> = [];
-  const core = createCore({} as AppConfig);
-  core.bus.on("agent:info", (info) => { infos.push(info); });
-  const ctx = core.extensionContext({ quit: () => {} });
-  (ctx as { shell?: unknown }).shell = { compositor: { surface: () => null } };
-  stubModule.__reset();
-  const mod = await import(`${BRIDGE_URL}?t=${Date.now()}`);
-  (mod.default ?? mod.activate)(ctx);
-  await core.activateBackend("opencode");
-
-  assert.equal(infos.length, 1);
-  assert.equal(infos[0]!.name, "opencode");
+test("opencode-bridge contributes identity via agent:identity pipe after boot", async () => {
+  const { bus } = await loadBridge();
+  const { identity } = bus.emitPipe("agent:identity", { identity: null });
+  assert.ok(identity, "expected identity contributor installed");
+  assert.equal(identity!.name, "opencode");
 });
 
 test("agent:submit forwards the query to client.session.prompt", async () => {

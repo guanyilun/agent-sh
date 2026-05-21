@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createCore } from "../../src/core/index.js";
+import activateAgentBackend from "../../src/extensions/agent-backend/index.js";
 import type { AppConfig } from "../../src/shell/host-types.js";
 
 register(new URL("../fixtures/claude-sdk-mock-loader.mjs", import.meta.url));
@@ -35,6 +36,7 @@ async function loadBridge(): Promise<LoadedBridge> {
   stubModule.__reset();
   const core = createCore({} as AppConfig);
   const ctx = core.extensionContext({ quit: () => {} });
+  activateAgentBackend(ctx);
   const mod = await import(`${BRIDGE_URL}?t=${Date.now()}`);
   const activate = (mod.default ?? mod.activate) as (c: typeof ctx) => void;
   activate(ctx);
@@ -55,19 +57,12 @@ test("claude-code-bridge registers backend 'claude-code' after activate", async 
   assert.equal(active, "claude-code");
 });
 
-test("claude-code-bridge emits agent:info after boot", async () => {
-  const infos: Array<{ name: string; version?: string }> = [];
-  const core = createCore({} as AppConfig);
-  core.bus.on("agent:info", (info) => { infos.push(info); });
-  const ctx = core.extensionContext({ quit: () => {} });
-  stubModule.__reset();
-  const mod = await import(`${BRIDGE_URL}?t=${Date.now()}`);
-  (mod.default ?? mod.activate)(ctx);
-  await core.activateBackend("claude-code");
-
-  assert.equal(infos.length, 1);
-  assert.equal(infos[0]!.name, "claude-code");
-  assert.equal(infos[0]!.version, "1.0");
+test("claude-code-bridge contributes identity via agent:identity pipe after boot", async () => {
+  const { bus } = await loadBridge();
+  const { identity } = bus.emitPipe("agent:identity", { identity: null });
+  assert.ok(identity, "expected identity contributor installed");
+  assert.equal(identity!.name, "claude-code");
+  assert.equal(identity!.version, "1.0");
 });
 
 test("agent:submit calls query() with the user prompt and standard options", async () => {

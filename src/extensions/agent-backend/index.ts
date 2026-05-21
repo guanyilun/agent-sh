@@ -6,20 +6,18 @@
  * opencode-bridge, ...) register themselves through it; they bring
  * their own LLM and tools.
  *
- * Identity is filtered at this layer: backends keep emitting their
- * legacy `agent:info` events (no API change for installed bridges),
- * agent-backend drops any emission whose name doesn't match the
- * currently active backend, and republishes the survivor through the
- * canonical `agent:identity` pipe. Stale ash emissions from
- * pre-`wire()` listeners can no longer overwrite the active backend's
- * label — not by guard, by construction at the gatekeeper.
+ * Identity is pull-composition: each backend installs an
+ * `onPipe("agent:identity", ...)` contributor in its start() and
+ * removes it in kill(). Consumers call emitPipe on the transition
+ * poke. Inactive backends contribute nothing — stale identity from
+ * pre-wire() listeners is structurally impossible because the
+ * contributor isn't installed.
  *
  * Core knows nothing about agents. This extension is the home of the
  * `agent:*` event namespace and the backend registry.
  *
- * Loaded as a built-in (peer to shell-context, tui-renderer) so
- * backends — which often activate via `core:extensions-loaded` — find
- * the registry already wired.
+ * Loaded as a built-in so backends — which often activate via
+ * `core:extensions-loaded` — find the registry already wired.
  */
 import "./events.js"; // augments ShellEvents
 import type { ExtensionContext } from "../../shell/host-types.js";
@@ -31,9 +29,6 @@ export default function activate(ctx: ExtensionContext): void {
 
   const backends = new Map<string, BackendRegistration>();
   let activeBackendName: string | null = null;
-  // Latest legacy `agent:info` emission from the active backend.
-  // Cleared on backend switch; updated on every accepted emission.
-  let activeIdentity: AgentIdentity | null = null;
 
   const activateByName = async (name: string): Promise<boolean> => {
     const backend = backends.get(name);
@@ -45,9 +40,6 @@ export default function activate(ctx: ExtensionContext): void {
       backends.get(activeBackendName)?.kill();
     }
     activeBackendName = name;
-    // Reset before start() — the new backend's first agent:info
-    // emission populates activeIdentity through the filter below.
-    activeIdentity = null;
     await backend.start?.();
     bus.emit("agent:identity-changed", {});
     return true;
@@ -79,25 +71,6 @@ export default function activate(ctx: ExtensionContext): void {
     active: activeBackendName,
   }));
 
-  // Identity gatekeeper — the structural fix for stale-identity leaks.
-  // Stale emissions (e.g. ash's eagerly-constructed AgentLoop reacting
-  // to a provider catalog update while claude-code is the active
-  // backend) get dropped here before reaching any consumer.
-  bus.on("agent:info", (info) => {
-    if (info.name !== activeBackendName) return;
-    activeIdentity = info;
-    bus.emit("agent:identity-changed", {});
-  });
-
-  // Canonical consume channel: the pipe returns the filtered identity.
-  // Backends that prefer the pull-composition style can chain their
-  // own onPipe handlers to override or extend (last writer wins on
-  // `acc.identity`).
-  bus.onPipe("agent:identity", (acc) => {
-    if (activeIdentity) acc.identity = activeIdentity;
-    return acc;
-  });
-
   // Hosts call this through the extension API rather than the bus
   // (one-shot, sync-await activation, not a recurring command).
   ctx.define("agent-backend:activate", async (override?: string) => {
@@ -119,7 +92,6 @@ export default function activate(ctx: ExtensionContext): void {
     if (activeBackendName) {
       backends.get(activeBackendName)?.kill();
       activeBackendName = null;
-      activeIdentity = null;
     }
   });
 }

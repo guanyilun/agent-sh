@@ -272,14 +272,8 @@ export default function activate(ctx: ExtensionContext): void {
         }
       });
 
-      const model = session.model;
-      bus.emit("agent:info", {
-        name: "pi",
-        version: "0.66",
-        model: model ? `${model.provider}/${model.id}` : undefined,
-      });
-
       booting = false;
+      bus.emit("agent:identity-changed", {});
     } catch (err) {
       booting = false;
       bus.emit("ui:error", {
@@ -363,11 +357,7 @@ export default function activate(ctx: ExtensionContext): void {
       }
       try {
         await session.setModel(full);
-        bus.emit("agent:info", {
-          name: "pi",
-          version: "0.66",
-          model: `${picked.provider}/${picked.id}`,
-        });
+        bus.emit("agent:identity-changed", {});
         bus.emit("ui:info", { message: `Model: ${picked.provider}: ${picked.id}` });
         bus.emit("config:changed", {});
       } catch (err) {
@@ -420,11 +410,22 @@ export default function activate(ctx: ExtensionContext): void {
     listeners.length = 0;
   };
 
+  const identityContributor = (acc: { identity: { name: string; version: string; model?: string; provider?: string; contextWindow?: number } | null }) => {
+    const m = session?.model;
+    acc.identity = {
+      name: "pi",
+      version: "0.66",
+      model: m ? `${m.provider}/${m.id}` : undefined,
+    };
+    return acc;
+  };
+
   bus.emit("agent:register-backend", {
     name: "pi",
     start: async () => {
       await boot();
       wireListeners();
+      bus.onPipe("agent:identity", identityContributor);
       bus.emit("command:register", {
         name: "/compact",
         description: "Compact pi's session context",
@@ -463,6 +464,7 @@ export default function activate(ctx: ExtensionContext): void {
       bus.emit("command:unregister", { name: "/compact" });
       bus.emit("command:unregister", { name: "/context" });
       unwireListeners();
+      bus.offPipe("agent:identity", identityContributor);
       runtime?.dispose();
       session = null;
       runtime = null;

@@ -4,11 +4,10 @@
  * about agents or backends; this module is the source of truth for
  * the backend-registry events and the identity pipe.
  *
- * Backends keep their existing emit API (`bus.emit("agent:info", ...)`)
- * — that's the producer-side legacy contract. agent-backend listens to
- * those events, filters by name === activeBackend (drops stale
- * emissions from non-active backends), and republishes via the canonical
- * identity pipe + transition poke for consumers.
+ * Identity uses pull-composition: backends install
+ * `onPipe("agent:identity", ...)` handlers in their own start(),
+ * remove them in kill(). The transition poke `agent:identity-changed`
+ * tells consumers to re-pull. Inactive backends contribute nothing.
  *
  * Future slices will migrate the rest of the agent:* namespace
  * (submit, response, tool-*, etc.) here as well; for this initial cut
@@ -42,18 +41,11 @@ declare module "../../core/event-bus.js" {
     "config:list-backends": Record<string, never>;
     "config:get-backends": { names: string[]; active: string | null };
 
-    // Legacy producer channel — backends emit their identity here.
-    // agent-backend filters by name === active and republishes
-    // through the identity pipe. Kept as a separate event from the
-    // pipe so bridges built against the prior API keep working.
-    "agent:info": AgentIdentity;
-
-    // Canonical consumer channel. Active backend's identity, filtered
-    // by agent-backend; stale emissions from inactive backends are
-    // dropped before reaching consumers.
+    // Pull-composition: the active backend installs an onPipe handler
+    // in start() and removes it in kill(). Consumers call emitPipe
+    // to snapshot the current identity; the transition poke tells
+    // them when to re-pull.
     "agent:identity": { identity: AgentIdentity | null };
-    // Transition poke. Emitted whenever the identity pipe answer
-    // might have changed (backend switch, active-backend agent:info).
     "agent:identity-changed": Record<string, never>;
   }
 }

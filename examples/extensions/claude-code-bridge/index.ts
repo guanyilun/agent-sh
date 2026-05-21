@@ -309,15 +309,22 @@ export default function activate(ctx: ExtensionContext): void {
   };
 
   // ── Register as backend ───────────────────────────────────────
+  const identityContributor = (acc: { identity: { name: string; version: string; model?: string; provider?: string; contextWindow?: number } | null }) => {
+    acc.identity = { name: "claude-code", version: "1.0" };
+    return acc;
+  };
+
   bus.emit("agent:register-backend", {
     name: "claude-code",
     start: async () => {
       wireListeners();
-      bus.emit("agent:info", { name: "claude-code", version: "1.0" });
+      bus.onPipe("agent:identity", identityContributor);
+      bus.emit("agent:identity-changed", {});
     },
     kill: () => {
       activeQuery?.interrupt();
       unwireListeners();
+      bus.offPipe("agent:identity", identityContributor);
     },
   });
 }

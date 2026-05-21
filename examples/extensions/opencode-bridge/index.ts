@@ -424,6 +424,11 @@ export default function activate(ctx: ExtensionContext): void {
     listeners.length = 0;
   };
 
+  const identityContributor = (acc: { identity: { name: string; version: string; model?: string; provider?: string; contextWindow?: number } | null }) => {
+    acc.identity = { name: "opencode", version: "2.x" };
+    return acc;
+  };
+
   bus.emit("agent:register-backend", {
     name: "opencode",
     start: async () => {
@@ -441,8 +446,9 @@ export default function activate(ctx: ExtensionContext): void {
         if (!sessionId) throw new Error("session.create returned no id");
 
         wireListeners();
+        bus.onPipe("agent:identity", identityContributor);
         booting = false;
-        bus.emit("agent:info", { name: "opencode", version: "2.x" });
+        bus.emit("agent:identity-changed", {});
       } catch (err) {
         booting = false;
         bus.emit("ui:error", {
@@ -452,6 +458,7 @@ export default function activate(ctx: ExtensionContext): void {
     },
     kill: () => {
       unwireListeners();
+      bus.offPipe("agent:identity", identityContributor);
       streamAbort?.abort();
       serverAbort?.abort();
       runtime?.server.close();

@@ -99,7 +99,6 @@ export class AgentLoop implements AgentBackend {
   private ctorListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
   private ctorPipeListeners: Array<{ event: string; fn: (...args: any[]) => any }> = [];
   private lastProjectSkillNames = new Set<string>();
-  private lastAgentInfo: { model?: string; provider?: string; contextWindow?: number } | null = null;
 
   // ── Session telemetry — behavioral self-awareness ──────────────
   // Every ash deserves to know what it's been doing. This tracks the
@@ -236,7 +235,7 @@ export class AgentLoop implements AgentBackend {
           message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
         });
       }
-      this.emitAgentInfoIfChanged();
+      this.notifyIdentityChanged();
       this.bus.emit("config:changed", {});
     });
     // Fires before wire() too — agent-backend emits this from
@@ -252,7 +251,7 @@ export class AgentLoop implements AgentBackend {
       } else {
         this.llmClient.model = m.model;
       }
-      this.emitAgentInfoIfChanged();
+      this.notifyIdentityChanged();
       this.bus.emit("config:changed", {});
     });
     const getToolsPipe = () => ({ tools: this.getTools() });
@@ -284,6 +283,23 @@ export class AgentLoop implements AgentBackend {
       this.boundPipeListeners.push({ event, fn, async: true });
     };
 
+    // ash's contributor to the agent:identity pull. Lives only for
+    // wire()→unwire() — when ash isn't the active backend this handler
+    // isn't installed, so the pipe returns whatever the active backend
+    // contributes (or null). No name-based filtering needed.
+    onPipe("agent:identity", (acc) => {
+      const m = this.modes[this.currentModeIndex];
+      if (!m) return acc;
+      acc.identity = {
+        name: "ash",
+        version: PACKAGE_VERSION,
+        model: m.model,
+        provider: m.provider,
+        contextWindow: m.contextWindow,
+      };
+      return acc;
+    });
+
     on("agent:submit", ({ query }) => {
       this.handleQuery(query).catch(() => {});
     });
@@ -313,7 +329,7 @@ export class AgentLoop implements AgentBackend {
         this.llmClient.model = m.model;
       }
       const label = m.provider ? `${m.provider}: ${m.model}` : m.model;
-      this.emitAgentInfoIfChanged();
+      this.notifyIdentityChanged();
 
       // Persist as the new default — selection survives restart.
       // Safe even for dynamic providers: agent-backend defers mode
@@ -436,8 +452,7 @@ export class AgentLoop implements AgentBackend {
         this.bus.emit("conversation:message-appended", { role: "system", content: note });
       }
     });
-    this.lastAgentInfo = null;
-    this.emitAgentInfoIfChanged();
+    this.notifyIdentityChanged();
   }
 
   /** Unsubscribe from bus events — deactivates this backend. */
@@ -603,21 +618,11 @@ export class AgentLoop implements AgentBackend {
     return this.modes[this.currentModeIndex];
   }
 
-  private emitAgentInfoIfChanged(): void {
-    const m = this.modes[this.currentModeIndex];
-    if (!m) return;
-    const prev = this.lastAgentInfo;
-    if (prev && prev.model === m.model && prev.provider === m.provider && prev.contextWindow === m.contextWindow) {
-      return;
-    }
-    this.lastAgentInfo = { model: m.model, provider: m.provider, contextWindow: m.contextWindow };
-    this.bus.emit("agent:info", {
-      name: "ash",
-      version: PACKAGE_VERSION,
-      model: m.model,
-      provider: m.provider,
-      contextWindow: m.contextWindow,
-    });
+  // Notify consumers that the identity pipe answer may have changed.
+  // The wire()-time onPipe handler is the source of truth; this is the
+  // transition poke. Safe to over-emit; consumers can dedup if needed.
+  private notifyIdentityChanged(): void {
+    this.bus.emit("agent:identity-changed", {});
   }
 
   private get currentModel(): string {
