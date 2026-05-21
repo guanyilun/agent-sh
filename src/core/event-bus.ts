@@ -2,122 +2,24 @@ import { EventEmitter } from "node:events";
 
 /** Typed event map — every event has a known payload shape. */
 export interface BusEvents {
-  // Shell lifecycle
-  "shell:command-start": { command: string; cwd: string };
-  "shell:command-done": {
-    command: string;
-    output: string;
-    cwd: string;
-    exitCode: number | null;
-  };
-  "shell:cwd-change": { cwd: string };
-  "shell:foreground-busy": { busy: boolean };
-  "shell:agent-exec-start": Record<string, never>;
-  "shell:agent-exec-done": Record<string, never>;
-
-  // Raw PTY output stream (every byte from the shell process).
-  // Extensions can use this to feed a virtual terminal, log, or replay.
-  "shell:pty-data": { raw: string };
-
-  // Write raw bytes to the PTY (keystroke injection).
-  // Extensions use this to send keystrokes into the user's live shell.
-  "shell:pty-write": { data: string };
-
-  // Resize the PTY (triggers SIGWINCH in the child process).
-  "shell:pty-resize": { cols: number; rows: number };
-
-  // Terminal buffer snapshot (request/response pattern via bus)
-  "shell:buffer-request": Record<string, never>;
-  "shell:buffer-snapshot": {
-    text: string;
-    altScreen: boolean;
-    cursor: { x: number; y: number };
-  };
-
-  // Input mode registration (extensions → InputHandler)
-  "input-mode:register": import("../shell/host-types.js").InputModeConfig;
-
-  // Slash command registration (extensions → slash-commands)
-  "command:register": {
-    name: string;
-    description: string;
-    handler: (args: string) => Promise<void> | void;
-  };
-  "command:unregister": { name: string };
-
-  // Slash command execution
-  "command:execute": {
-    name: string;
-    args: string;
-  };
-
-  // UI feedback (TUI subscribes to render; silently ignored without TUI)
-  "ui:info": { message: string };
-  "ui:error": { message: string };
-  "ui:suggestion": { text: string };
-
-  // Compositor surface writes (emitted by DefaultCompositor when bus provided)
-  "compositor:write": { stream: string; text: string };
-
-  // Generic keypress forwarding (control chars not handled by input-handler)
-  "input:keypress": { key: string };
-
-  // Raw input intercept (sync pipe: fired before any input processing).
-  // Extensions set `consumed: true` to swallow input before it reaches the
-  // PTY or mode handler — enables overlay UIs during foreground programs.
-  "input:intercept": { data: string; consumed: boolean };
-
-  // Stdout hold/release (ref-counted). While held, PTY output is not written
-  // to stdout — enables overlay extensions to render without interference.
-  "shell:stdout-hold": Record<string, never>;
-  "shell:stdout-release": Record<string, never>;
-
-
-  // Temporarily force PTY output visible even while agent is processing
-  // (ref-counted). Used by tools like terminal_keys that need the user
-  // to see the foreground program's response to injected keystrokes.
-  "shell:stdout-show": Record<string, never>;
-  "shell:stdout-hide": Record<string, never>;
-
-  // Prompt redraw (sync pipe: extensions set handled=true to suppress).
-  // kind="fresh" — \n to PTY, full precmd cycle, leaves a blank line.
-  // kind="redraw" — in-place \e[9999~, no visual noise.
-  "shell:redraw-prompt": {
-    cwd: string;
-    kind: "fresh" | "redraw";
-    handled: boolean;
-  };
-
-  // Shell exec (async pipe: extension requests command execution in user's PTY)
-  "shell:exec-request": {
-    command: string;
-    output: string;
-    cwd: string;
-    exitCode: number | null;
-    done: boolean;
-  };
+  // Core lifecycle
+  "core:extensions-loaded": { names: string[] };
 
   // Cross-cutting "config might have changed, repaint" signal.
   "config:changed": Record<string, never>;
 
-  // Fires after all extensions (built-in + user) have activated.
-  "core:extensions-loaded": { names: string[] };
+  // Universal UI feedback channel (any frontend may render; silently
+  // ignored without one).
+  "ui:info": { message: string };
+  "ui:error": { message: string };
+  "ui:suggestion": { text: string };
 
-  // Banner section collection (sync pipe: extensions contribute labeled items to startup banner)
+  // Banner section collection (sync pipe: extensions contribute
+  // labeled items to startup banner emitted by the CLI).
   "banner:collect": {
     sections: Array<{ label: string; items: string[] }>;
     /** Name of the backend being launched. Extensions should gate per-backend sections on this rather than settings.defaultBackend. */
     activeBackend?: string;
-  };
-
-  // Autocomplete (sync pipe: extensions inspect buffer and append items)
-  "autocomplete:request": {
-    buffer: string;
-    /** Parsed slash command name (e.g. "/backend"), or null if not a command. */
-    command: string | null;
-    /** Text after the command name (e.g. "clau" for "/backend clau"), or null. */
-    commandArgs: string | null;
-    items: { name: string; description: string }[];
   };
 }
 

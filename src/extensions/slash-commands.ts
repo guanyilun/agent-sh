@@ -15,6 +15,18 @@ import type { ExtensionContext } from "../shell/host-types.js";
 import { discoverSkills, loadSkillContent, type Skill } from "../agent/skills.js";
 import { reloadExtensions } from "../core/extension-loader.js";
 
+declare module "../core/event-bus.js" {
+  interface BusEvents {
+    "command:register": {
+      name: string;
+      description: string;
+      handler: (args: string) => Promise<void> | void;
+    };
+    "command:unregister": { name: string };
+    "command:execute": { name: string; args: string };
+  }
+}
+
 interface SlashCommand {
   name: string;
   description: string;
