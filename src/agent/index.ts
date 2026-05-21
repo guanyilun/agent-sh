@@ -1,16 +1,8 @@
 /**
- * Provider/mode resolution is deferred to `core:extensions-loaded` so
- * runtime-registered providers (e.g. openrouter) have a chance to
- * contribute before we look up settings.defaultProvider. Without this
- * deferral, a persisted `defaultProvider: "openrouter"` loses to a
- * cold-start race and the backend bails silently.
- *
- * Provider registry is pull-composed via the `agent:providers` pipe —
- * the listener list IS the registry. agentBackend recomputes its
- * derived mode catalog on every `agent:providers:changed` notification
- * and emits `agent:modes-changed` so AgentLoop can pull fresh.
+ * Mode resolution is deferred to `core:extensions-loaded` so a persisted
+ * `defaultProvider: "openrouter"` doesn't lose to a cold-start race.
  */
-import "./events.js"; // augments BusEvents with ash-owned events
+import "./events.js";
 import type { ExtensionContext } from "../shell/host-types.js";
 import type { AgentContext, AgentMode, AgentSurface, ProviderRegistration } from "../agent/host-types.js";
 import type { AppConfig } from "../shell/host-types.js";
@@ -69,7 +61,6 @@ function mergeCaps(
   return out.size > 0 ? out : undefined;
 }
 
-/** Split a ProviderRegistration's models field into ids + caps. */
 function splitRegistration(p: ProviderRegistration): { ids: string[]; caps: Map<string, ModelCap> } {
   const raw = p.models ?? (p.defaultModel ? [p.defaultModel] : []);
   const ids: string[] = [];
@@ -99,10 +90,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
   const skillContribs = new Map<string, SkillContributor>();
   const providerContribs = new Map<string, ProviderContributor>();
 
-  // Settings overlay snapshot, captured at activate. Layered onto every
-  // pulled ProviderRegistration during merge — apiKey / baseURL /
-  // defaultModel / modelsExplicit / modelCapabilities all override the
-  // contributing extension's payload.
+  // Settings overlay — fields here win over contributing extensions' payloads.
   const settingsProviders = new Map<string, ResolvedProvider>();
   for (const name of getProviderNames()) {
     const p = resolveProvider(name);
@@ -111,8 +99,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   const providerHooks = new Map<string, { reasoningParams?: (level: string, model?: string) => Record<string, unknown> }>();
 
-  // Bakes model id into the hook so AgentMode.buildReasoningParams keeps
-  // its (level) signature while the hook can branch on model.
+  // Bakes model id so AgentMode.buildReasoningParams keeps its (level) signature.
   const bindReasoning = (shapeId: string, model: string) => {
     const hook = providerHooks.get(shapeId)?.reasoningParams;
     return hook ? (level: string) => hook(level, model) : defaultReasoningBuilder;
@@ -122,7 +109,6 @@ export default function agentBackend(ctx: ExtensionContext): void {
     llm: createLlmFacade({ list: ctx.list, call: ctx.call }),
     providers: {
       register: (reg) => {
-        // Replace any prior contribution from this caller for this id.
         const existing = providerContribs.get(reg.id);
         if (existing) bus.offPipe("agent:providers", existing);
         const contrib: ProviderContributor = (acc) => {
@@ -155,7 +141,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       if (tool.readOnly) registerReadOnlyTool(tool.name);
       else unregisterReadOnlyTool(tool.name);
       const contrib: ToolContributor = (acc) => {
-        // Pull through tool:NAME:schema so adviseToolSchema reflects.
+        // Pull through schema so adviseToolSchema reflects.
         const view = ctx.call(`tool:${tool.name}:schema`) as ToolSchemaView;
         acc.tools.push({ ...tool, description: view.description, input_schema: view.parameters });
         return acc;
@@ -169,7 +155,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       bus.offPipe("agent:tools", contrib);
       toolContribs.delete(name);
       unregisterReadOnlyTool(name);
-      // Handler entries retained so external advisors survive a reload.
+      // Handlers retained so external advisors survive a reload.
     },
     adviseTool: (name, advisor) => ctx.advise(`tool:${name}`, advisor as Parameters<typeof ctx.advise>[1]),
     adviseToolSchema: (name, advisor) => ctx.advise(`tool:${name}:schema`, advisor as Parameters<typeof ctx.advise>[1]),
@@ -228,13 +214,10 @@ export default function agentBackend(ctx: ExtensionContext): void {
   };
   (ctx as { agent?: AgentSurface }).agent = agentSurface;
 
-  // Stateless core tools register at agentBackend activate — before any
-  // extension loads — so extensions that look them up at activate time
-  // (e.g. scheme.ts binding bash into its runtime) see them. Stateful
-  // tools like conversation_recall live in AgentLoop because they need
-  // its per-session conversation state.
+  // Core tools register at activate — before extensions load — so
+  // extensions that look them up at activate time (e.g. scheme.ts) find them.
+  // conversation_recall stays in AgentLoop (needs session state).
   const fileReadCache: FileReadCache = new Map();
-  // AgentLoop invalidates entries on compaction + write-tool side effects.
   ctx.define("agent:file-read-cache", () => fileReadCache);
   const getCwd = () => ctx.call("cwd") as string;
   const getEnv = () => {
@@ -258,12 +241,8 @@ export default function agentBackend(ctx: ExtensionContext): void {
   agentSurface.registerTool(createLsTool(getCwd));
   agentSurface.registerTool(createListSkillsTool(getCwd));
 
-  // Cache of resolved providers — settings-overlaid registrations
-  // keyed by id. Rebuilt on every agent:providers:changed.
   let resolvedProviders = new Map<string, ResolvedProvider>();
 
-  /** Apply the settings overlay onto a registration (or synthesize a
-   *  registration from settings when no extension contributed). */
   const resolveWithSettings = (id: string, p: ProviderRegistration | null): ResolvedProvider => {
     const s = settingsProviders.get(id);
     const { ids: payloadIds, caps: payloadCaps } = p ? splitRegistration(p) : { ids: [], caps: new Map<string, ModelCap>() };
@@ -287,16 +266,12 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   const computeResolvedProviders = (): Map<string, ResolvedProvider> => {
     const out = new Map<string, ResolvedProvider>();
-    // Pull extension contributions. Last contribution per id wins so
-    // openrouter's catalog-refresh re-registration replaces the curated
-    // default — providerContribs already enforces one entry per id, but
-    // pipe order is install order; here we want most-recent semantics.
+    // Last contribution per id wins (openrouter's catalog-refresh replaces
+    // its curated default).
     const { providers } = bus.emitPipe("agent:providers", { providers: [] as ProviderRegistration[] });
     const byId = new Map<string, ProviderRegistration>();
     for (const p of providers) byId.set(p.id, p);
     for (const [id, p] of byId) out.set(id, resolveWithSettings(id, p));
-    // Fill settings-only providers (declared in settings.json with no
-    // extension contributing) — they enter the system as overlay-only.
     for (const [id] of settingsProviders) {
       if (out.has(id)) continue;
       out.set(id, resolveWithSettings(id, null));
@@ -327,12 +302,9 @@ export default function agentBackend(ctx: ExtensionContext): void {
     return out;
   };
 
-  // Pulled by AgentLoop on every agent:modes-changed and by config:get-models.
   ctx.define("agent:get-modes", () => buildModes());
 
-  // Placeholder client — reconfigured at core:extensions-loaded. Any
-  // stream() call before then fails from the OpenAI SDK; start() won't
-  // wire the loop until we've resolved, so users never hit that path.
+  // Reconfigured at core:extensions-loaded; start() gates on `resolved`.
   const llmClient = new LlmClient({ apiKey: "not-configured", model: "not-configured" });
   ctx.define("llm:get-client", () => llmClient);
   ctx.define("llm:invoke", (messages: { role: string; content: string }[], opts?: { maxTokens?: number; model?: string; reasoningEffort?: string }) => {
@@ -347,14 +319,11 @@ export default function agentBackend(ctx: ExtensionContext): void {
   });
 
   let resolved = false;
-  // Gates late-registration reconcile so its config:switch-model emit doesn't misroute under a non-ash backend.
+  // Gates late-reconcile so config:switch-model doesn't misroute under a non-ash backend.
   let ashActive = false;
   let agentLoop: AgentLoop | null = null;
   let loadedExtensionNames: string[] = [];
 
-  // Recompute on every providers change, then notify AgentLoop. For
-  // the late-reconcile case (catalog arrives after boot and contains
-  // the persisted default), nudge AgentLoop onto it.
   bus.on("agent:providers:changed", () => {
     resolvedProviders = computeResolvedProviders();
     if (!resolved) return;
@@ -385,25 +354,19 @@ export default function agentBackend(ctx: ExtensionContext): void {
       ?? (resolvedProviders.size > 0 ? resolvedProviders.keys().next().value : undefined);
     const activeProvider = providerName ? resolvedProviders.get(providerName) ?? null : null;
 
-    // User's persisted defaultModel wins over the provider's declared
-    // default. Dynamic providers (openrouter) re-register with their
-    // hardcoded DEFAULT_MODELS[0] each startup, which would otherwise
-    // clobber the user's /model selection.
+    // Persisted defaultModel wins over openrouter's hardcoded DEFAULT_MODELS[0].
     const effectiveApiKey = config.apiKey ?? activeProvider?.apiKey;
     const effectiveBaseURL = config.baseURL ?? activeProvider?.baseURL;
     const effectiveModel = config.model ?? persistedModelFor(providerName) ?? activeProvider?.defaultModel;
 
-    // No provider → don't register ash at all, so another backend (e.g.
-    // claude-code-bridge) can own activation. CLI hard-fails only
-    // when no backend ended up registered.
+    // No provider → don't register ash; let another backend own activation.
     if (!effectiveApiKey || !effectiveModel) return;
 
     const foundInModes = buildModes().find(
       (m) => m.model === effectiveModel && (!activeProvider || m.provider === activeProvider.id),
     );
-    // Stub when the persisted default isn't in the provider's curated list
-    // yet (e.g. openrouter's async catalog fetch hasn't returned). The late
-    // catalog will reconcile via agent:providers:changed → config:switch-model.
+    // Stub when openrouter's async catalog hasn't returned yet; reconciled
+    // later via agent:providers:changed → config:switch-model.
     const initialMode: AgentMode = foundInModes ?? (activeProvider ? {
       model: effectiveModel,
       provider: activeProvider.id,
@@ -501,9 +464,8 @@ export { AgentLoop } from "./agent-loop.js";
 export { ToolRegistry } from "./tool-registry.js";
 export { runSubagent, type SubagentOptions } from "./subagent.js";
 
-/** Activate the ash backend and every built-in provider. Providers
- *  register unconditionally so `agent-sh auth list` can enumerate them;
- *  `buildModes()` skips entries without an apiKey. */
+/** Built-in providers register unconditionally so `auth list` can
+ *  enumerate them; buildModes() skips entries without an apiKey. */
 export function activateAgent(ctx: ExtensionContext): void {
   agentBackend(ctx);
   const agentCtx = ctx as AgentContext;

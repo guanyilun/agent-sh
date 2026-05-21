@@ -1,13 +1,5 @@
-/**
- * Bootstrap a throwaway core to enumerate provider IDs that built-in
- * + user-installed extensions would register. Lets `agent-sh auth list`
- * and `auth login` show ids the user hasn't keyed yet, without a
- * hardcoded list.
- *
- * Extension `activate()` functions run; provider extensions register
- * unconditionally now and gate their HTTP catalog fetches on apiKey
- * presence, so this stays cheap (a few module imports, no network).
- */
+/** Bootstrap a throwaway core to enumerate provider ids extensions
+ *  would register, so `auth list` shows ids the user hasn't keyed yet. */
 import { createCore } from "../../core/index.js";
 import activateAgentBackend from "../../extensions/agent-backend/index.js";
 import { activateAgent } from "../../agent/index.js";
@@ -24,8 +16,6 @@ export interface DiscoveredProvider {
 
 let cached: DiscoveredProvider[] | null = null;
 
-/** Returns providers contributed via `ctx.agent.providers.register`,
- *  including built-ins and user-installed extensions. Cached per process. */
 export async function discoverExtensionProviders(): Promise<DiscoveredProvider[]> {
   if (cached) return cached;
   const core = createCore({} as AppConfig);
@@ -34,7 +24,7 @@ export async function discoverExtensionProviders(): Promise<DiscoveredProvider[]
     activateAgentBackend(ctx);
     activateAgent(ctx);
     await loadBuiltinExtensions(ctx, getSettings().disabledBuiltins);
-    await loadExtensions(ctx).catch(() => { /* user-installed failures non-fatal */ });
+    await loadExtensions(ctx).catch(() => {});
     const { providers } = core.bus.emitPipe("agent:providers", { providers: [] as ProviderRegistration[] });
     cached = providers.map((p) => ({ id: p.id, noAuth: p.noAuth }));
     return cached;

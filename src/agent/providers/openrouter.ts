@@ -47,7 +47,6 @@ export default function activate(ctx: AgentContext): void {
     if (models.length === 0) return;
     const userOverrides = readUserOverrides();
     const patterns = readEchoPatterns();
-    // Replaces the curated default contribution for "openrouter".
     ctx.agent.providers.register({
       id: "openrouter",
       apiKey,

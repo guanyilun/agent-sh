@@ -1,10 +1,5 @@
-/**
- * Owns the abstract concept of "agent backend": registration,
- * switching, identity. Loaded as a built-in before any specific
- * backend (ash, bridges) so backends find the registry already wired
- * when they register themselves via `core:extensions-loaded`.
- */
-import "./events.js"; // augments BusEvents
+/** Backend registry. Loaded before any specific backend (ash, bridges). */
+import "./events.js";
 import type { ExtensionContext } from "../../shell/host-types.js";
 import type { BackendRegistration } from "./events.js";
 import * as settingsMod from "../../core/settings.js";

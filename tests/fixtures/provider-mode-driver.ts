@@ -1,13 +1,5 @@
-/**
- * Subprocess driver for provider/mode integration tests.
- *
- * Reads a scenario JSON from argv[2], wires core + agent-backend + ash,
- * captures bus events listed in `capture`, runs scripted `steps`, then
- * prints `{ events: [...] }` to stdout for the parent test to assert on.
- *
- * AGENT_SH_HOME is set by the parent so getSettings() loads from a
- * per-test settings.json — each subprocess gets its own module realm.
- */
+/** Subprocess driver for provider/mode integration tests.
+ *  Reads scenario JSON from argv[2], prints captured events as JSON. */
 import { createCore } from "../../src/core/index.js";
 import activateAgentBackend from "../../src/extensions/agent-backend/index.js";
 import agentBackend from "../../src/agent/index.js";
@@ -17,8 +9,6 @@ import type { AgentMode, AgentSurface, ProviderRegistration } from "../../src/ag
 interface Scenario {
   config?: Partial<AppConfig>;
   capture: string[];
-  /** After all steps run and bus settles, dump the current
-   *  `agent:get-modes` result under this key in the output. */
   dumpModes?: boolean;
   steps: Array<
     | { kind: "providers.register"; payload: ProviderRegistration }
@@ -78,8 +68,6 @@ async function main() {
   process.exit(0);
 }
 
-/** Strip non-JSON-serializable members (functions, bigints) so payloads
- *  with `buildReasoningParams` and `handler` round-trip cleanly. */
 function stripFns(v: unknown): unknown {
   if (v === null || typeof v !== "object") return v;
   if (Array.isArray(v)) return v.map(stripFns);

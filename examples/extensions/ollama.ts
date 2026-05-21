@@ -1,21 +1,7 @@
 /**
- * Ollama provider extension — registers both variants:
- *
- *   - `ollama`        local daemon (OLLAMA_HOST or http://localhost:11434)
- *                     No auth; catalog populates if the daemon responds.
- *   - `ollama-cloud`  Ollama Cloud (https://ollama.com)
- *                     Login with `agent-sh auth login ollama-cloud` or
- *                     export OLLAMA_API_KEY.
- *
- * Per-model context length comes from `/api/show`'s
- * `model_info["${arch}.context_length"]`. Chat uses the OpenAI-compatible
- * `/v1/chat/completions` shim.
- *
- * Usage:
- *   agent-sh -e ./examples/extensions/ollama.ts
- *
- *   # Or add to settings.json:
- *   { "extensions": ["./examples/extensions/ollama.ts"] }
+ * Registers `ollama` (local, no auth) and `ollama-cloud` (login via
+ * `agent-sh auth login ollama-cloud` or OLLAMA_API_KEY). Local host
+ * overridable via OLLAMA_HOST.
  */
 import { resolveApiKey } from "agent-sh/auth";
 import type { AgentContext } from "agent-sh/types";
@@ -28,7 +14,6 @@ function reasoningParams(level: string): Record<string, unknown> {
 }
 
 export default function activate(ctx: AgentContext): void {
-  // ── Cloud variant ──────────────────────────────────────────────
   const cloudKey = resolveApiKey("ollama-cloud").key ?? process.env.OLLAMA_API_KEY;
   const cloudHost = "https://ollama.com";
   const cloudBaseURL = `${cloudHost}/v1`;
@@ -50,14 +35,13 @@ export default function activate(ctx: AgentContext): void {
         defaultModel: models[0]!.id,
         models,
       });
-    }).catch(() => { /* leave empty */ });
+    }).catch(() => {});
   }
 
-  // ── Local variant ──────────────────────────────────────────────
   const localHost = (process.env.OLLAMA_HOST ?? "http://localhost:11434").replace(/\/$/, "");
   const localBaseURL = `${localHost}/v1`;
   ctx.agent.providers.configure("ollama", { reasoningParams });
-  // OpenAI SDK rejects an empty apiKey; the local daemon ignores the value.
+  // OpenAI SDK rejects an empty apiKey; the local daemon ignores it.
   ctx.agent.providers.register({
     id: "ollama",
     apiKey: "no-key",
@@ -75,7 +59,7 @@ export default function activate(ctx: AgentContext): void {
       models,
       noAuth: true,
     });
-  }).catch(() => { /* daemon unreachable — local stays empty */ });
+  }).catch(() => {});
 }
 
 async function fetchCatalog(

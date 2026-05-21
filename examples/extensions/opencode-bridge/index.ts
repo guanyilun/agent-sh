@@ -429,9 +429,7 @@ export default function activate(ctx: ExtensionContext): void {
     start: async () => {
       try {
         serverAbort = new AbortController();
-        // port: 0 lets the OS pick a free port; SDK defaults to 4096 which
-        // collides with an already-running `opencode` CLI on the same machine.
-        // Override via OPENCODE_SDK_PORT if you want a fixed port.
+        // port: 0 dodges collision with SDK default 4096 (override via OPENCODE_SDK_PORT).
         const port = process.env.OPENCODE_SDK_PORT ? Number(process.env.OPENCODE_SDK_PORT) : 0;
         runtime = await createOpencode({ signal: serverAbort.signal, port });
 

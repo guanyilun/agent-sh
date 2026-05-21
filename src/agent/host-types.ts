@@ -45,21 +45,15 @@ export interface LlmInterface {
   }): LlmSession;
 }
 
-/** A provider registration contributed via `ctx.agent.providers.register`.
- *  Same shape as the previous `provider:register` event payload. */
 export interface ProviderRegistration {
   id: string;
   apiKey?: string;
   baseURL?: string;
-  /** Optional — providers for custom endpoints may not know the catalog
-   *  at registration time. Falls back to models[0] when absent. */
+  /** Falls back to models[0] when absent. */
   defaultModel?: string;
   models?: (string | { id: string; reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean })[];
-  /** Provider supports the reasoning_effort parameter. Default: true. */
   supportsReasoningEffort?: boolean;
-  /** This provider needs no authentication (local daemons, etc.).
-   *  `auth list/login` surfaces this so the row doesn't read as
-   *  "not configured" when there's nothing to configure. */
+  /** Local daemons etc. — `auth list/login` shows "no auth required". */
   noAuth?: boolean;
 }
 
@@ -94,14 +88,9 @@ export interface AgentMode {
 export interface AgentSurface {
   llm: LlmInterface;
   providers: {
-    /** Contribute a provider registration. Returns a disposer that
-     *  removes the contribution. Re-registering the same id replaces the
-     *  prior contribution from the same caller. */
+    /** Re-registering the same id replaces the prior contribution. */
     register: (reg: ProviderRegistration) => () => void;
-    /** Remove a previously-registered provider by id. */
     unregister: (id: string) => void;
-    /** Attach a reasoning-effort param builder for a provider id.
-     *  Independent of registration — can be configured before/after. */
     configure: (id: string, opts: { reasoningParams?: (level: string, model?: string) => Record<string, unknown> }) => void;
   };
 

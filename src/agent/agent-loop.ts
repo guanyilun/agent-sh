@@ -68,9 +68,6 @@ export interface AgentLoopConfig {
   bus: EventBus;
   llmClient: LlmClient;
   handlers: HandlerFunctions;
-  /** Initial active mode — provided by agentBackend after resolution.
-   *  AgentLoop tracks only the active mode locally; the catalog is
-   *  pulled fresh from `agent:get-modes` on every modes:changed. */
   initialMode?: AgentMode;
   compositor?: Compositor;
   /** Instance ID from core — ensures history entries match the ID in prompts. */
@@ -84,7 +81,6 @@ export class AgentLoop implements AgentBackend {
   private history: HistoryAdapter;
   private conversation: ConversationState;
   private fileReadCache: FileReadCache;
-  /** Active mode. Catalog navigation pulls fresh via `agent:get-modes`. */
   private activeMode: AgentMode;
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
   private boundPipeListeners: Array<{ event: string; fn: (...args: any[]) => any; async: boolean }> = [];
@@ -257,22 +253,17 @@ export class AgentLoop implements AgentBackend {
       }
       this.bus.emit("config:changed", {});
     });
-    // Catalog refresh — keep activeMode as ghost if dropped; toast once.
     on("agent:modes-changed", () => {
       const modes = this.pullModes();
       const prev = this.activeMode;
-      const stillPresent = modes.some((m) => m.model === prev.model && m.provider === prev.provider);
-      if (stillPresent) {
-        const fresh = modes.find((m) => m.model === prev.model && m.provider === prev.provider)!;
-        // Refresh activeMode to pick up updated caps/providerConfig from the new catalog.
+      const fresh = modes.find((m) => m.model === prev.model && m.provider === prev.provider);
+      if (fresh) {
         this.activeMode = fresh;
         if (fresh.providerConfig && fresh.providerConfig !== prev.providerConfig) {
           this.llmClient.reconfigure({ ...fresh.providerConfig, model: fresh.model });
         }
       } else if (prev.provider) {
-        // Ghost: keep prev as active even though it's no longer in the
-        // refreshed catalog — otherwise mid-turn the next stream() would
-        // use a different model. One toast so the user knows.
+        // Ghost: keep prev active so mid-turn stream() doesn't switch models.
         this.bus.emit("ui:info", {
           message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
         });
@@ -283,8 +274,7 @@ export class AgentLoop implements AgentBackend {
     onPipe("config:get-models", () => {
       const modes = this.pullModes();
       const models = modes.map((m) => ({ model: m.model, provider: m.provider ?? "" }));
-      // Ghost: active mode might not be in the catalog (e.g. provider
-      // dropped it). Surface it so the UI still shows /model state.
+      // Surface a ghost active mode so /model still shows it.
       if (!modes.some((m) => m.model === this.activeMode.model && m.provider === this.activeMode.provider)) {
         models.push({ model: this.activeMode.model, provider: this.activeMode.provider ?? "" });
       }
@@ -524,8 +514,6 @@ export class AgentLoop implements AgentBackend {
     return this.activeMode;
   }
 
-  /** Pull the canonical mode catalog from agentBackend. Returns [] if
-   *  the handler isn't defined (e.g. another backend is active). */
   private pullModes(): AgentMode[] {
     try {
       return (this.handlers.call("agent:get-modes") as AgentMode[]) ?? [];
@@ -670,12 +658,8 @@ export class AgentLoop implements AgentBackend {
   }
 
   private registerCoreTools(): void {
-    // Stateless core tools (bash, read_file, …) register at agentBackend
-    // activate time so they're visible to extensions at load. Only the
-    // session-stateful conversation_recall lives here.
-
-    // conversation_recall — browse/search/expand evicted turns from
-    // the in-session archive and the persistent history file.
+    // Stateless core tools register in agentBackend; conversation_recall
+    // stays here because it needs this.conversation.
     this.toolRegistry.register({
       name: "conversation_recall",
       displayName: "recall",

@@ -85,19 +85,12 @@ async function main(): Promise<void> {
   let agentInfo: { name: string; version: string; model?: string; provider?: string } | null = null;
   bus.on("agent:info", (info) => {
     agentInfo = info;
-    // Prompt label reads from agentInfo on every drawPrompt; trigger
-    // a redraw so backends that emit agent:info late (e.g. opencode-bridge
-    // after its async session.create) update the prompt without waiting
-    // for the next unrelated config:changed.
+    // Redraw so late agent:info emits (opencode-bridge after session.create) reach the prompt.
     bus.emit("config:changed", {});
   });
 
-  // ── Boot-window ui:* fallback ────────────────────────────────
-  // tui-renderer subscribes to ui:error/ui:info inside activateShell,
-  // which runs after backend activation. Without this, a bridge whose
-  // start() emits ui:error (e.g. opencode-bridge when its server fails
-  // to launch) crashes silently — the event has no subscriber. Pipe to
-  // stderr until the shell is up, then detach.
+  // tui-renderer subscribes to ui:error inside activateShell, after backend
+  // activation — pipe to stderr until the shell is up so boot failures surface.
   const bootUiError = (e: { message: string }) => {
     process.stderr.write(`agent-sh: ${e.message}\n`);
   };

@@ -15,9 +15,7 @@ export interface ProviderAuthInfo {
   /** True for ids only present in keys.json — likely owned by an extension
    *  that registers a provider at runtime. */
   unattached?: boolean;
-  /** True when the registering provider declared `noAuth: true` (local
-   *  daemons etc.). Auth UI shows "no auth required" instead of
-   *  "not configured". */
+  /** Auth UI shows "no auth required" instead of "not configured". */
   noAuth?: boolean;
 }
 
@@ -27,9 +25,7 @@ export const KNOWN_PROVIDERS: ProviderAuthInfo[] = [
   { id: "deepseek",   label: "DeepSeek",   envVar: "DEEPSEEK_API_KEY" },
 ];
 
-/** Built-ins merged with settings-declared providers, plus any ids that only
- *  appear in keys.json (likely registered by an extension at runtime).
- *  Cheap synchronous path — does not load extensions. */
+/** Built-ins + settings + keys.json. Sync, no extension load. */
 export function listAllProviders(): ProviderAuthInfo[] {
   const out: ProviderAuthInfo[] = [...KNOWN_PROVIDERS];
   const seen = new Set(out.map((p) => p.id));
@@ -47,9 +43,7 @@ export function listAllProviders(): ProviderAuthInfo[] {
   return out;
 }
 
-/** Same as listAllProviders but also bootstraps a throwaway core to
- *  enumerate provider IDs contributed by built-in + user extensions.
- *  Use from interactive CLI paths (`auth list`, `auth login`). */
+/** Augments listAllProviders with extension-registered ids. */
 export async function listAllProvidersWithDiscovery(): Promise<ProviderAuthInfo[]> {
   const out = listAllProviders();
   const byId = new Map(out.map((p) => [p.id, p] as const));
@@ -58,7 +52,6 @@ export async function listAllProvidersWithDiscovery(): Promise<ProviderAuthInfo[
     for (const d of await discoverExtensionProviders()) {
       const existing = byId.get(d.id);
       if (existing) {
-        // Propagate noAuth onto a row that came from settings/keys.json.
         if (d.noAuth && !existing.noAuth) existing.noAuth = true;
         continue;
       }
@@ -66,7 +59,7 @@ export async function listAllProvidersWithDiscovery(): Promise<ProviderAuthInfo[
       out.push(entry);
       byId.set(d.id, entry);
     }
-  } catch { /* discovery is best-effort */ }
+  } catch {}
   return out;
 }
 
