@@ -125,6 +125,8 @@ async function runList(): Promise<void> {
       : "";
     if (resolved.key) {
       console.log(`  ${p.success}●${p.reset} ${padded}  ${p.dim}(${sourceLabel(resolved.source, info)})${p.reset}${marker}`);
+    } else if (info.noAuth) {
+      console.log(`  ${p.success}●${p.reset} ${padded}  ${p.dim}(no auth required)${p.reset}${marker}`);
     } else {
       console.log(`  ${p.muted}○${p.reset} ${padded}  ${p.dim}(not configured)${p.reset}${marker}`);
     }
@@ -144,6 +146,8 @@ async function pickProvider(): Promise<ProviderAuthInfo | null> {
     const resolved = resolveApiKey(info.id);
     const tag = resolved.key
       ? `${p.dim}(currently from ${sourceLabel(resolved.source, info)})${p.reset}`
+      : info.noAuth
+      ? `${p.dim}(no auth required)${p.reset}`
       : `${p.dim}(not configured)${p.reset}`;
     const labelStr = info.custom
       ? `${p.dim}custom${p.reset}`

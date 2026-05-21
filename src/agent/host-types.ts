@@ -57,6 +57,10 @@ export interface ProviderRegistration {
   models?: (string | { id: string; reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean })[];
   /** Provider supports the reasoning_effort parameter. Default: true. */
   supportsReasoningEffort?: boolean;
+  /** This provider needs no authentication (local daemons, etc.).
+   *  `auth list/login` surfaces this so the row doesn't read as
+   *  "not configured" when there's nothing to configure. */
+  noAuth?: boolean;
 }
 
 /** A model entry in the cycling list, optionally tied to a provider. */

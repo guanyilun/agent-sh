@@ -1,16 +1,15 @@
 /**
- * Ollama provider extension — local daemon or Ollama Cloud.
+ * Ollama provider extension — registers both variants:
  *
- * Cloud auth (any of):
- *   agent-sh auth login ollama-cloud   # preferred
- *   OLLAMA_API_KEY=...                 # env fallback
+ *   - `ollama`        local daemon (OLLAMA_HOST or http://localhost:11434)
+ *                     No auth; catalog populates if the daemon responds.
+ *   - `ollama-cloud`  Ollama Cloud (https://ollama.com)
+ *                     Login with `agent-sh auth login ollama-cloud` or
+ *                     export OLLAMA_API_KEY.
  *
- * Local host:
- *   OLLAMA_HOST (default http://localhost:11434)
- *
- * Catalog comes from /api/tags; per-model context length is fetched
- * from /api/show (model_info["${arch}.context_length"]). Chat goes
- * through the OpenAI-compatible /v1/chat/completions shim.
+ * Per-model context length comes from `/api/show`'s
+ * `model_info["${arch}.context_length"]`. Chat uses the OpenAI-compatible
+ * `/v1/chat/completions` shim.
  *
  * Usage:
  *   agent-sh -e ./examples/extensions/ollama.ts
@@ -23,38 +22,60 @@ import type { AgentContext } from "agent-sh/types";
 
 const ECHO_REASONING_PATTERNS: RegExp[] = [/deepseek/i];
 
+function reasoningParams(level: string): Record<string, unknown> {
+  if (level === "off") return { reasoning_effort: "none" };
+  return { reasoning_effort: level === "xhigh" ? "high" : level };
+}
+
 export default function activate(ctx: AgentContext): void {
+  // ── Cloud variant ──────────────────────────────────────────────
   const cloudKey = resolveApiKey("ollama-cloud").key ?? process.env.OLLAMA_API_KEY;
-  const host = cloudKey
-    ? "https://ollama.com"
-    : (process.env.OLLAMA_HOST ?? "http://localhost:11434").replace(/\/$/, "");
-  const id = cloudKey ? "ollama-cloud" : "ollama";
-
-  // OpenAI SDK rejects an empty apiKey; the local daemon ignores the value.
-  const sdkKey = cloudKey || "no-key";
-  const baseURL = `${host}/v1`;
-  const headers: Record<string, string> = {};
-  if (cloudKey) headers.Authorization = `Bearer ${cloudKey}`;
-
-  ctx.agent.providers.configure(id, {
-    reasoningParams: (level) => {
-      if (level === "off") return { reasoning_effort: "none" };
-      return { reasoning_effort: level === "xhigh" ? "high" : level };
-    },
+  const cloudHost = "https://ollama.com";
+  const cloudBaseURL = `${cloudHost}/v1`;
+  ctx.agent.providers.configure("ollama-cloud", { reasoningParams });
+  ctx.agent.providers.register({
+    id: "ollama-cloud",
+    apiKey: cloudKey ?? undefined,
+    baseURL: cloudBaseURL,
+    models: [],
   });
+  if (cloudKey) {
+    const headers = { Authorization: `Bearer ${cloudKey}` };
+    fetchCatalog(cloudHost, headers).then((models) => {
+      if (models.length === 0) return;
+      ctx.agent.providers.register({
+        id: "ollama-cloud",
+        apiKey: cloudKey,
+        baseURL: cloudBaseURL,
+        defaultModel: models[0]!.id,
+        models,
+      });
+    }).catch(() => { /* leave empty */ });
+  }
 
-  ctx.agent.providers.register({ id, apiKey: sdkKey, baseURL, models: [] });
-
-  fetchCatalog(host, headers).then((models) => {
+  // ── Local variant ──────────────────────────────────────────────
+  const localHost = (process.env.OLLAMA_HOST ?? "http://localhost:11434").replace(/\/$/, "");
+  const localBaseURL = `${localHost}/v1`;
+  ctx.agent.providers.configure("ollama", { reasoningParams });
+  // OpenAI SDK rejects an empty apiKey; the local daemon ignores the value.
+  ctx.agent.providers.register({
+    id: "ollama",
+    apiKey: "no-key",
+    baseURL: localBaseURL,
+    models: [],
+    noAuth: true,
+  });
+  fetchCatalog(localHost, {}).then((models) => {
     if (models.length === 0) return;
     ctx.agent.providers.register({
-      id,
-      apiKey: sdkKey,
-      baseURL,
+      id: "ollama",
+      apiKey: "no-key",
+      baseURL: localBaseURL,
       defaultModel: models[0]!.id,
       models,
+      noAuth: true,
     });
-  }).catch(() => { /* leave empty — user supplies via --model */ });
+  }).catch(() => { /* daemon unreachable — local stays empty */ });
 }
 
 async function fetchCatalog(

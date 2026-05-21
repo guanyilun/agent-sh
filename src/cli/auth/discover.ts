@@ -17,11 +17,16 @@ import { getSettings } from "../../core/settings.js";
 import type { AppConfig } from "../../shell/host-types.js";
 import type { ProviderRegistration } from "../../agent/host-types.js";
 
-let cached: string[] | null = null;
+export interface DiscoveredProvider {
+  id: string;
+  noAuth?: boolean;
+}
 
-/** Returns provider IDs contributed via `ctx.agent.providers.register`,
+let cached: DiscoveredProvider[] | null = null;
+
+/** Returns providers contributed via `ctx.agent.providers.register`,
  *  including built-ins and user-installed extensions. Cached per process. */
-export async function discoverExtensionProviders(): Promise<string[]> {
+export async function discoverExtensionProviders(): Promise<DiscoveredProvider[]> {
   if (cached) return cached;
   const core = createCore({} as AppConfig);
   try {
@@ -31,7 +36,7 @@ export async function discoverExtensionProviders(): Promise<string[]> {
     await loadBuiltinExtensions(ctx, getSettings().disabledBuiltins);
     await loadExtensions(ctx).catch(() => { /* user-installed failures non-fatal */ });
     const { providers } = core.bus.emitPipe("agent:providers", { providers: [] as ProviderRegistration[] });
-    cached = providers.map((p) => p.id);
+    cached = providers.map((p) => ({ id: p.id, noAuth: p.noAuth }));
     return cached;
   } finally {
     core.kill();

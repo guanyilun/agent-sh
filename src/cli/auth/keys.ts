@@ -15,6 +15,10 @@ export interface ProviderAuthInfo {
   /** True for ids only present in keys.json — likely owned by an extension
    *  that registers a provider at runtime. */
   unattached?: boolean;
+  /** True when the registering provider declared `noAuth: true` (local
+   *  daemons etc.). Auth UI shows "no auth required" instead of
+   *  "not configured". */
+  noAuth?: boolean;
 }
 
 export const KNOWN_PROVIDERS: ProviderAuthInfo[] = [
@@ -48,13 +52,19 @@ export function listAllProviders(): ProviderAuthInfo[] {
  *  Use from interactive CLI paths (`auth list`, `auth login`). */
 export async function listAllProvidersWithDiscovery(): Promise<ProviderAuthInfo[]> {
   const out = listAllProviders();
-  const seen = new Set(out.map((p) => p.id));
+  const byId = new Map(out.map((p) => [p.id, p] as const));
   const { discoverExtensionProviders } = await import("./discover.js");
   try {
-    for (const id of await discoverExtensionProviders()) {
-      if (seen.has(id)) continue;
-      out.push({ id, label: id, custom: true });
-      seen.add(id);
+    for (const d of await discoverExtensionProviders()) {
+      const existing = byId.get(d.id);
+      if (existing) {
+        // Propagate noAuth onto a row that came from settings/keys.json.
+        if (d.noAuth && !existing.noAuth) existing.noAuth = true;
+        continue;
+      }
+      const entry: ProviderAuthInfo = { id: d.id, label: d.id, custom: true, noAuth: d.noAuth };
+      out.push(entry);
+      byId.set(d.id, entry);
     }
   } catch { /* discovery is best-effort */ }
   return out;
