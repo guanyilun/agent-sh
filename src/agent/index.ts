@@ -1,16 +1,18 @@
 /**
- * Constructs the AgentLoop synchronously with a placeholder LlmClient,
- * so core handlers (history:append, system-prompt:build, conversation:*)
- * are defined before user extensions activate. Mode resolution is
- * deferred to `core:extensions-loaded`, giving runtime-registered
- * providers (e.g. openrouter) a chance to register before we look up
- * settings.defaultProvider. Without this deferral, a persisted
- * `defaultProvider: "openrouter"` loses to a cold-start race and the
- * backend bails silently.
+ * Provider/mode resolution is deferred to `core:extensions-loaded` so
+ * runtime-registered providers (e.g. openrouter) have a chance to
+ * contribute before we look up settings.defaultProvider. Without this
+ * deferral, a persisted `defaultProvider: "openrouter"` loses to a
+ * cold-start race and the backend bails silently.
+ *
+ * Provider registry is pull-composed via the `agent:providers` pipe —
+ * the listener list IS the registry. agentBackend recomputes its
+ * derived mode catalog on every `agent:providers:changed` notification
+ * and emits `agent:modes-changed` so AgentLoop can pull fresh.
  */
 import "./events.js"; // augments BusEvents with ash-owned events
 import type { ExtensionContext } from "../shell/host-types.js";
-import type { AgentContext, AgentMode, AgentSurface } from "../agent/host-types.js";
+import type { AgentContext, AgentMode, AgentSurface, ProviderRegistration } from "../agent/host-types.js";
 import type { AppConfig } from "../shell/host-types.js";
 import { AgentLoop } from "./agent-loop.js";
 import { LlmClient } from "./llm-client.js";
@@ -58,6 +60,22 @@ function mergeCaps(
   return out.size > 0 ? out : undefined;
 }
 
+/** Split a ProviderRegistration's models field into ids + caps. */
+function splitRegistration(p: ProviderRegistration): { ids: string[]; caps: Map<string, ModelCap> } {
+  const raw = p.models ?? (p.defaultModel ? [p.defaultModel] : []);
+  const ids: string[] = [];
+  const caps = new Map<string, ModelCap>();
+  for (const m of raw) {
+    if (typeof m === "string") {
+      ids.push(m);
+    } else {
+      ids.push(m.id);
+      caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning });
+    }
+  }
+  return { ids, caps };
+}
+
 export default function agentBackend(ctx: ExtensionContext): void {
   const { bus } = ctx;
   const config: AppConfig = ctx.call("config:get-app-config") ?? {};
@@ -65,14 +83,55 @@ export default function agentBackend(ctx: ExtensionContext): void {
   type ToolContributor = (acc: { tools: ToolDefinition[] }) => { tools: ToolDefinition[] };
   type InstructionContributor = (acc: { instructions: Array<{ name: string; text: string }> }) => { instructions: Array<{ name: string; text: string }> };
   type SkillContributor = (acc: { skills: Array<{ name: string; description: string; filePath: string }> }) => { skills: Array<{ name: string; description: string; filePath: string }> };
+  type ProviderContributor = (acc: { providers: ProviderRegistration[] }) => { providers: ProviderRegistration[] };
 
   const toolContribs = new Map<string, ToolContributor>();
   const instructionContribs = new Map<string, InstructionContributor>();
   const skillContribs = new Map<string, SkillContributor>();
+  const providerContribs = new Map<string, ProviderContributor>();
+
+  // Settings overlay snapshot, captured at activate. Layered onto every
+  // pulled ProviderRegistration during merge — apiKey / baseURL /
+  // defaultModel / modelsExplicit / modelCapabilities all override the
+  // contributing extension's payload.
+  const settingsProviders = new Map<string, ResolvedProvider>();
+  for (const name of getProviderNames()) {
+    const p = resolveProvider(name);
+    if (p) settingsProviders.set(name, p);
+  }
+
+  const providerHooks = new Map<string, { reasoningParams?: (level: string, model?: string) => Record<string, unknown> }>();
+
+  // Bakes model id into the hook so AgentMode.buildReasoningParams keeps
+  // its (level) signature while the hook can branch on model.
+  const bindReasoning = (shapeId: string, model: string) => {
+    const hook = providerHooks.get(shapeId)?.reasoningParams;
+    return hook ? (level: string) => hook(level, model) : defaultReasoningBuilder;
+  };
 
   const agentSurface: AgentSurface = {
     llm: createLlmFacade({ list: ctx.list, call: ctx.call }),
     providers: {
+      register: (reg) => {
+        // Replace any prior contribution from this caller for this id.
+        const existing = providerContribs.get(reg.id);
+        if (existing) bus.offPipe("agent:providers", existing);
+        const contrib: ProviderContributor = (acc) => {
+          acc.providers.push(reg);
+          return acc;
+        };
+        providerContribs.set(reg.id, contrib);
+        bus.onPipe("agent:providers", contrib);
+        bus.emit("agent:providers:changed", {});
+        return () => agentSurface.providers.unregister(reg.id);
+      },
+      unregister: (id) => {
+        const contrib = providerContribs.get(id);
+        if (!contrib) return;
+        bus.offPipe("agent:providers", contrib);
+        providerContribs.delete(id);
+        bus.emit("agent:providers:changed", {});
+      },
       configure: (id, configureOpts) => bus.emit("provider:configure", { id, ...configureOpts }),
     },
     registerTool: (tool) => {
@@ -160,34 +219,60 @@ export default function agentBackend(ctx: ExtensionContext): void {
   };
   (ctx as { agent?: AgentSurface }).agent = agentSurface;
 
-  // Immutable settings snapshot; provider:register payloads merge against it.
-  const providerRegistry = new Map<string, ResolvedProvider>();
-  const settingsProviders = new Map<string, ResolvedProvider>();
-  for (const name of getProviderNames()) {
-    const p = resolveProvider(name);
-    if (p) {
-      providerRegistry.set(name, p);
-      settingsProviders.set(name, p);
+  // Cache of resolved providers — settings-overlaid registrations
+  // keyed by id. Rebuilt on every agent:providers:changed.
+  let resolvedProviders = new Map<string, ResolvedProvider>();
+
+  /** Apply the settings overlay onto a registration (or synthesize a
+   *  registration from settings when no extension contributed). */
+  const resolveWithSettings = (id: string, p: ProviderRegistration | null): ResolvedProvider => {
+    const s = settingsProviders.get(id);
+    const { ids: payloadIds, caps: payloadCaps } = p ? splitRegistration(p) : { ids: [], caps: new Map<string, ModelCap>() };
+    const fallbackIds = s?.models ?? (s?.defaultModel ? [s.defaultModel] : []);
+    const modelIds = s?.modelsExplicit && s.models.length > 0
+      ? s.models
+      : payloadIds.length > 0 ? payloadIds : fallbackIds;
+    return {
+      id,
+      apiKey: s?.apiKey ?? p?.apiKey,
+      baseURL: s?.baseURL ?? p?.baseURL,
+      defaultModel: s?.defaultModel ?? p?.defaultModel ?? modelIds[0],
+      models: modelIds,
+      modelsExplicit: s?.modelsExplicit ?? false,
+      contextWindow: s?.contextWindow,
+      supportsReasoningEffort: s?.supportsReasoningEffort ?? p?.supportsReasoningEffort,
+      modelCapabilities: mergeCaps(s?.modelCapabilities, payloadCaps, modelIds),
+      reasoningShape: s?.reasoningShape,
+    };
+  };
+
+  const computeResolvedProviders = (): Map<string, ResolvedProvider> => {
+    const out = new Map<string, ResolvedProvider>();
+    // Pull extension contributions. Last contribution per id wins so
+    // openrouter's catalog-refresh re-registration replaces the curated
+    // default — providerContribs already enforces one entry per id, but
+    // pipe order is install order; here we want most-recent semantics.
+    const { providers } = bus.emitPipe("agent:providers", { providers: [] as ProviderRegistration[] });
+    const byId = new Map<string, ProviderRegistration>();
+    for (const p of providers) byId.set(p.id, p);
+    for (const [id, p] of byId) out.set(id, resolveWithSettings(id, p));
+    // Fill settings-only providers (declared in settings.json with no
+    // extension contributing) — they enter the system as overlay-only.
+    for (const [id] of settingsProviders) {
+      if (out.has(id)) continue;
+      out.set(id, resolveWithSettings(id, null));
     }
-  }
-
-  const providerHooks = new Map<string, { reasoningParams?: (level: string, model?: string) => Record<string, unknown> }>();
-
-  // Bakes model id into the hook so AgentMode.buildReasoningParams keeps
-  // its (level) signature while the hook can branch on model.
-  const bindReasoning = (shapeId: string, model: string) => {
-    const hook = providerHooks.get(shapeId)?.reasoningParams;
-    return hook ? (level: string) => hook(level, model) : defaultReasoningBuilder;
+    return out;
   };
 
   const buildModes = (): AgentMode[] => {
-    const allModes: AgentMode[] = [];
-    for (const [id, p] of providerRegistry) {
+    const out: AgentMode[] = [];
+    for (const [id, p] of resolvedProviders) {
       if (!p.apiKey) continue;
       const shapeId = p.reasoningShape ?? id;
       for (const model of p.models) {
         const mc = p.modelCapabilities?.get(model);
-        allModes.push({
+        out.push({
           model,
           provider: id,
           providerConfig: { apiKey: p.apiKey, baseURL: p.baseURL },
@@ -200,8 +285,11 @@ export default function agentBackend(ctx: ExtensionContext): void {
         });
       }
     }
-    return allModes;
+    return out;
   };
+
+  // Pulled by AgentLoop on every agent:modes-changed and by config:get-models.
+  ctx.define("agent:get-modes", () => buildModes());
 
   // Placeholder client — reconfigured at core:extensions-loaded. Any
   // stream() call before then fails from the OpenAI SDK; start() won't
@@ -219,30 +307,44 @@ export default function agentBackend(ctx: ExtensionContext): void {
     });
   });
 
-  let modes: AgentMode[] = [];
-  let initialModeIndex = 0;
   let resolved = false;
   // Gates late-registration reconcile so its config:switch-model emit doesn't misroute under a non-ash backend.
   let ashActive = false;
-
-  bus.onPipe("config:get-initial-modes", () => ({ modes, initialModeIndex }));
-
-  // Constructed lazily in start() — handlers AgentLoop defines
-  // (conversation:*, history:*, system-prompt:build) don't exist
-  // until ash starts. Ash-coupled extensions must invoke them from
-  // deferred callbacks, not at activate time.
   let agentLoop: AgentLoop | null = null;
-
   let loadedExtensionNames: string[] = [];
+
+  // Recompute on every providers change, then notify AgentLoop. For
+  // the late-reconcile case (catalog arrives after boot and contains
+  // the persisted default), nudge AgentLoop onto it.
+  bus.on("agent:providers:changed", () => {
+    resolvedProviders = computeResolvedProviders();
+    if (!resolved) return;
+    bus.emit("agent:modes-changed", {});
+    if (!ashActive) return;
+    const pendingProvider = getSettings().defaultProvider;
+    if (!pendingProvider) return;
+    const p = resolvedProviders.get(pendingProvider);
+    if (!p) return;
+    const pendingModel = persistedModelFor(pendingProvider);
+    if (pendingModel && p.models.includes(pendingModel) && llmClient.model !== pendingModel) {
+      bus.emit("config:switch-model", { model: pendingModel });
+    }
+  });
+
+  bus.on("provider:configure", ({ id, reasoningParams }) => {
+    const prev = providerHooks.get(id) ?? {};
+    if (reasoningParams !== undefined) prev.reasoningParams = reasoningParams;
+    providerHooks.set(id, prev);
+  });
 
   bus.on("core:extensions-loaded", ({ names }) => {
     loadedExtensionNames = names;
+    resolvedProviders = computeResolvedProviders();
+
     const settings = getSettings();
-    // If the user didn't pick a default, fall back to the first registered
-    // provider (built-in load order biases to openrouter → openai).
     const providerName = config.provider ?? settings.defaultProvider
-      ?? (providerRegistry.size > 0 ? providerRegistry.keys().next().value : undefined);
-    const activeProvider = providerName ? providerRegistry.get(providerName) ?? null : null;
+      ?? (resolvedProviders.size > 0 ? resolvedProviders.keys().next().value : undefined);
+    const activeProvider = providerName ? resolvedProviders.get(providerName) ?? null : null;
 
     // User's persisted defaultModel wins over the provider's declared
     // default. Dynamic providers (openrouter) re-register with their
@@ -253,35 +355,24 @@ export default function agentBackend(ctx: ExtensionContext): void {
     const effectiveModel = config.model ?? persistedModelFor(providerName) ?? activeProvider?.defaultModel;
 
     // No provider → don't register ash at all, so another backend (e.g.
-    // claude-code-bridge) can own activation. index.ts hard-fails only
+    // claude-code-bridge) can own activation. CLI hard-fails only
     // when no backend ended up registered.
     if (!effectiveApiKey || !effectiveModel) return;
 
-    modes = buildModes();
-    if (modes.length === 0) modes = [{ model: effectiveModel }];
-    let foundIdx = modes.findIndex(
+    const foundInModes = buildModes().find(
       (m) => m.model === effectiveModel && (!activeProvider || m.provider === activeProvider.id),
     );
-    // Persisted default may not be in the provider's curated list yet (e.g.
-    // openrouter's async catalog fetch hasn't returned). Prepend a stub so
-    // the initial config:set-modes activeIndex points at the real model —
-    // otherwise AgentLoop reconfigures llmClient back to modes[0].
-    if (foundIdx === -1 && activeProvider) {
-      modes = [
-        {
-          model: effectiveModel,
-          provider: activeProvider.id,
-          providerConfig: { apiKey: effectiveApiKey, baseURL: effectiveBaseURL },
-          supportsReasoningEffort: activeProvider.supportsReasoningEffort,
-        },
-        ...modes,
-      ];
-      foundIdx = 0;
-    }
-    initialModeIndex = Math.max(0, foundIdx);
+    // Stub when the persisted default isn't in the provider's curated list
+    // yet (e.g. openrouter's async catalog fetch hasn't returned). The late
+    // catalog will reconcile via agent:providers:changed → config:switch-model.
+    const initialMode: AgentMode = foundInModes ?? (activeProvider ? {
+      model: effectiveModel,
+      provider: activeProvider.id,
+      providerConfig: { apiKey: effectiveApiKey, baseURL: effectiveBaseURL },
+      supportsReasoningEffort: activeProvider.supportsReasoningEffort,
+    } : { model: effectiveModel });
 
     llmClient.reconfigure({ apiKey: effectiveApiKey, baseURL: effectiveBaseURL, model: effectiveModel });
-    bus.emit("config:set-modes", { modes, activeIndex: initialModeIndex });
     resolved = true;
 
     bus.emit("agent:register-backend", {
@@ -298,8 +389,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
           bus,
           llmClient,
           handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list },
-          modes,
-          initialModeIndex,
+          initialMode,
           compositor: ctx.shell?.compositor,
           instanceId: ctx.instanceId,
           history: config.history,
@@ -332,76 +422,8 @@ export default function agentBackend(ctx: ExtensionContext): void {
     });
   });
 
-  bus.on("provider:configure", ({ id, reasoningParams }) => {
-    const prev = providerHooks.get(id) ?? {};
-    if (reasoningParams !== undefined) prev.reasoningParams = reasoningParams;
-    providerHooks.set(id, prev);
-  });
-
-  bus.on("provider:register", (p) => {
-    const rawModels = p.models ?? (p.defaultModel ? [p.defaultModel] : []);
-    const payloadModelIds: string[] = [];
-    const payloadCaps = new Map<string, ModelCap>();
-    for (const m of rawModels) {
-      if (typeof m === "string") {
-        payloadModelIds.push(m);
-      } else {
-        payloadModelIds.push(m.id);
-        payloadCaps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning });
-      }
-    }
-
-    const settings = settingsProviders.get(p.id);
-    const modelIds = settings?.modelsExplicit && settings.models.length > 0 ? settings.models : payloadModelIds;
-    const mergedCaps = mergeCaps(settings?.modelCapabilities, payloadCaps, modelIds);
-
-    const merged: ResolvedProvider = {
-      id: p.id,
-      apiKey: settings?.apiKey ?? p.apiKey,
-      baseURL: settings?.baseURL ?? p.baseURL,
-      defaultModel: settings?.defaultModel ?? p.defaultModel,
-      models: modelIds,
-      modelsExplicit: settings?.modelsExplicit ?? false,
-      contextWindow: settings?.contextWindow,
-      supportsReasoningEffort: settings?.supportsReasoningEffort ?? p.supportsReasoningEffort,
-      modelCapabilities: mergedCaps,
-      reasoningShape: settings?.reasoningShape,
-    };
-    providerRegistry.set(p.id, merged);
-
-    const addModes: AgentMode[] = modelIds.map((m) => {
-      const mc = mergedCaps?.get(m);
-      return {
-        model: m,
-        provider: p.id,
-        providerConfig: { apiKey: merged.apiKey ?? "", baseURL: merged.baseURL },
-        contextWindow: mc?.contextWindow,
-        maxTokens: mc?.maxTokens,
-        reasoning: mc?.reasoning,
-        supportsReasoningEffort: merged.supportsReasoningEffort,
-        echoReasoning: mc?.echoReasoning,
-        buildReasoningParams: bindReasoning(p.id, m),
-      };
-    });
-    // Update the closure mode list — AgentLoop's lazy construction
-    // in start() reads from it, and may run after this fires.
-    modes = [...modes.filter((m) => m.provider !== p.id), ...addModes];
-    bus.emit("config:add-modes", { modes: addModes });
-
-    // Late-registration reconcile: if this completes the user's persisted
-    // default (openrouter's async fetch delivers the full catalog after
-    // we've already fallen back to mode 0), quietly switch to it.
-    if (!resolved || !ashActive) return;
-    const pendingProvider = getSettings().defaultProvider;
-    if (pendingProvider !== p.id) return;
-    const pendingModel = persistedModelFor(pendingProvider);
-    if (pendingModel && modelIds.includes(pendingModel) && llmClient.model !== pendingModel) {
-      bus.emit("config:switch-model", { model: pendingModel });
-    }
-  });
-
   bus.on("config:switch-provider", ({ provider: name }) => {
-    const p = providerRegistry.get(name);
+    const p = resolvedProviders.get(name);
     if (!p) {
       bus.emit("ui:error", { message: `Unknown provider: ${name}` });
       return;
@@ -416,21 +438,8 @@ export default function agentBackend(ctx: ExtensionContext): void {
       return;
     }
     llmClient.reconfigure({ apiKey: p.apiKey, baseURL: p.baseURL, model: switchModel });
-
-    const newModes: AgentMode[] = p.models.map((m) => {
-      const mc = p.modelCapabilities?.get(m);
-      return {
-        model: m,
-        provider: name,
-        providerConfig: { apiKey: p.apiKey!, baseURL: p.baseURL },
-        contextWindow: mc?.contextWindow ?? p.contextWindow,
-        maxTokens: mc?.maxTokens ?? (mc?.contextWindow ? Math.min(Math.floor(mc.contextWindow * 0.4), 65536) : undefined),
-        reasoning: mc?.reasoning,
-        supportsReasoningEffort: p.supportsReasoningEffort,
-        echoReasoning: mc?.echoReasoning,
-      };
-    });
-    bus.emit("config:set-modes", { modes: newModes });
+    bus.emit("agent:modes-changed", {});
+    bus.emit("config:switch-model", { model: switchModel });
     bus.emit("ui:info", { message: `Switched to ${name} (${switchModel})` });
   });
 

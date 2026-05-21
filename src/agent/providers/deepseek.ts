@@ -24,7 +24,7 @@ export default function activate(ctx: AgentContext): void {
 
   const apiKey = resolveApiKey("deepseek").key;
   if (!apiKey) return;
-  ctx.bus.emit("provider:register", {
+  ctx.agent.providers.register({
     id: "deepseek",
     apiKey,
     baseURL: BASE_URL,

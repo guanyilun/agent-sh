@@ -37,7 +37,7 @@ export default function activate(ctx: AgentContext): void {
 
   ctx.agent.providers.configure("openrouter", { reasoningParams: buildReasoningParams });
 
-  ctx.bus.emit("provider:register", {
+  ctx.agent.providers.register({
     id: "openrouter",
     apiKey,
     baseURL: BASE_URL,
@@ -49,7 +49,8 @@ export default function activate(ctx: AgentContext): void {
     if (models.length === 0) return;
     const userOverrides = readUserOverrides();
     const patterns = readEchoPatterns();
-    ctx.bus.emit("provider:register", {
+    // Replaces the curated default contribution for "openrouter".
+    ctx.agent.providers.register({
       id: "openrouter",
       apiKey,
       baseURL: BASE_URL,

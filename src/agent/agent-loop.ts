@@ -78,8 +78,10 @@ export interface AgentLoopConfig {
   bus: EventBus;
   llmClient: LlmClient;
   handlers: HandlerFunctions;
-  modes?: AgentMode[];
-  initialModeIndex?: number;
+  /** Initial active mode — provided by agentBackend after resolution.
+   *  AgentLoop tracks only the active mode locally; the catalog is
+   *  pulled fresh from `agent:get-modes` on every modes:changed. */
+  initialMode?: AgentMode;
   compositor?: Compositor;
   /** Instance ID from core — ensures history entries match the ID in prompts. */
   instanceId?: string;
@@ -92,12 +94,10 @@ export class AgentLoop implements AgentBackend {
   private history: HistoryAdapter;
   private conversation: ConversationState;
   private fileReadCache: FileReadCache = new Map();
-  private modes: AgentMode[];
-  private currentModeIndex = 0;
+  /** Active mode. Catalog navigation pulls fresh via `agent:get-modes`. */
+  private activeMode: AgentMode;
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
   private boundPipeListeners: Array<{ event: string; fn: (...args: any[]) => any; async: boolean }> = [];
-  private ctorListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
-  private ctorPipeListeners: Array<{ event: string; fn: (...args: any[]) => any }> = [];
   private lastProjectSkillNames = new Set<string>();
 
   // ── Session telemetry — behavioral self-awareness ──────────────
@@ -154,12 +154,7 @@ export class AgentLoop implements AgentBackend {
     this.history = config.history ?? new HistoryFile({ instanceId: this.instanceId, filePath });
     this.conversation = new ConversationState(this.handlers, this.instanceId);
 
-    // Fall back to a single-mode placeholder if the caller passed an
-    // empty array (agent-backend does this pre-resolution).
-    this.modes = config.modes?.length
-      ? config.modes
-      : [{ model: config.llmClient.model }];
-    this.currentModeIndex = config.initialModeIndex ?? 0;
+    this.activeMode = config.initialMode ?? { model: config.llmClient.model };
 
     // Tool protocol — controls how tools are presented to the LLM
     this.toolProtocol = createToolProtocol(
@@ -177,68 +172,6 @@ export class AgentLoop implements AgentBackend {
     // Register handlers — extensions can advise these
     this.registerHandlers();
 
-    const onCtor = <K extends keyof BusEvents>(event: K, fn: (payload: BusEvents[K]) => void) => {
-      this.bus.on(event, fn);
-      this.ctorListeners.push({ event, fn });
-    };
-    // Provider registration from user extensions (e.g. openrouter.ts) fires
-    // during extension activation, which happens before wire(). Subscribe
-    // here in the ctor so late-registered modes aren't dropped.
-    onCtor("config:add-modes", ({ modes: extra }) => {
-      const providers = new Set(extra.map((m) => m.provider).filter(Boolean));
-      const prev = this.modes[this.currentModeIndex];
-      // Keep the active mode even if the re-registration drops it (persisted
-      // model missing from a refreshed catalog) — otherwise currentModeIndex
-      // slips to modes[0] and the next stream() call uses a different model
-      // mid-turn.
-      const activePreserved =
-        prev &&
-        prev.provider &&
-        providers.has(prev.provider) &&
-        !extra.some((m) => m.model === prev.model && m.provider === prev.provider);
-      this.modes = [
-        ...this.modes.filter((m) => {
-          if (activePreserved && m === prev) return true;
-          return !m.provider || !providers.has(m.provider);
-        }),
-        ...extra,
-      ];
-      if (prev) {
-        const newIdx = this.modes.findIndex(
-          (m) => m.model === prev.model && m.provider === prev.provider,
-        );
-        if (newIdx !== -1) {
-          this.currentModeIndex = newIdx;
-          const next = this.modes[newIdx]!;
-          if (next.providerConfig && next.providerConfig !== prev.providerConfig) {
-            this.llmClient.reconfigure({ ...next.providerConfig, model: next.model });
-          }
-        }
-      }
-      if (activePreserved && prev) {
-        this.bus.emit("ui:info", {
-          message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
-        });
-      }
-      this.emitIdentity();
-      this.bus.emit("config:changed", {});
-    });
-    // Fires before wire() too — agent-backend emits this from
-    // `core:extensions-loaded` to replace the placeholder mode list.
-    onCtor("config:set-modes", ({ modes: newModes, activeIndex }) => {
-      this.modes = newModes;
-      const inRange = activeIndex != null && activeIndex >= 0 && activeIndex < newModes.length;
-      this.currentModeIndex = inRange ? activeIndex! : 0;
-      const m = newModes[this.currentModeIndex];
-      if (!m) return;
-      if (m.providerConfig) {
-        this.llmClient.reconfigure({ ...m.providerConfig, model: m.model });
-      } else {
-        this.llmClient.model = m.model;
-      }
-      this.emitIdentity();
-      this.bus.emit("config:changed", {});
-    });
   }
 
   /** Subscribe to bus events — activates this backend. */
@@ -301,31 +234,31 @@ export class AgentLoop implements AgentBackend {
       const atIdx = target.lastIndexOf("@");
       const modelId = atIdx > 0 ? target.slice(0, atIdx) : target;
       const providerHint = atIdx > 0 ? target.slice(atIdx + 1) : undefined;
-      const idx = this.modes.findIndex((m) =>
+      const modes = this.pullModes();
+      const found = modes.find((m) =>
         m.model === modelId && (!providerHint || m.provider === providerHint),
       );
-      if (idx === -1) {
+      if (!found) {
         this.bus.emit("ui:error", { message: `Unknown model: ${target}` });
         return;
       }
-      this.currentModeIndex = idx;
-      const m = this.modes[idx];
-      if (m.providerConfig) {
-        this.llmClient.reconfigure({ ...m.providerConfig, model: m.model });
+      this.activeMode = found;
+      if (found.providerConfig) {
+        this.llmClient.reconfigure({ ...found.providerConfig, model: found.model });
       } else {
-        this.llmClient.model = m.model;
+        this.llmClient.model = found.model;
       }
-      const label = m.provider ? `${m.provider}: ${m.model}` : m.model;
+      const label = found.provider ? `${found.provider}: ${found.model}` : found.model;
       this.emitIdentity();
 
       // Persist as the new default — selection survives restart.
       // Safe even for dynamic providers: agent-backend defers mode
       // resolution to `core:extensions-loaded`, so the extension gets
       // to re-register before the persisted default is looked up.
-      if (m.provider) {
+      if (found.provider) {
         updateSettings({
-          defaultProvider: m.provider,
-          providers: { [m.provider]: { defaultModel: m.model } },
+          defaultProvider: found.provider,
+          providers: { [found.provider]: { defaultModel: found.model } },
         });
         this.bus.emit("ui:info", { message: `Model: ${label} (saved as default)` });
       } else {
@@ -333,10 +266,38 @@ export class AgentLoop implements AgentBackend {
       }
       this.bus.emit("config:changed", {});
     });
+    // Catalog refresh — keep activeMode as ghost if dropped; toast once.
+    on("agent:modes-changed", () => {
+      const modes = this.pullModes();
+      const prev = this.activeMode;
+      const stillPresent = modes.some((m) => m.model === prev.model && m.provider === prev.provider);
+      if (stillPresent) {
+        const fresh = modes.find((m) => m.model === prev.model && m.provider === prev.provider)!;
+        // Refresh activeMode to pick up updated caps/providerConfig from the new catalog.
+        this.activeMode = fresh;
+        if (fresh.providerConfig && fresh.providerConfig !== prev.providerConfig) {
+          this.llmClient.reconfigure({ ...fresh.providerConfig, model: fresh.model });
+        }
+      } else if (prev.provider) {
+        // Ghost: keep prev as active even though it's no longer in the
+        // refreshed catalog — otherwise mid-turn the next stream() would
+        // use a different model. One toast so the user knows.
+        this.bus.emit("ui:info", {
+          message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
+        });
+      }
+      this.emitIdentity();
+      this.bus.emit("config:changed", {});
+    });
     onPipe("config:get-models", () => {
-      const models = this.modes.map((m) => ({ model: m.model, provider: m.provider ?? "" }));
-      const cur = this.modes[this.currentModeIndex];
-      const active = cur ? { model: cur.model, provider: cur.provider ?? "" } : null;
+      const modes = this.pullModes();
+      const models = modes.map((m) => ({ model: m.model, provider: m.provider ?? "" }));
+      // Ghost: active mode might not be in the catalog (e.g. provider
+      // dropped it). Surface it so the UI still shows /model state.
+      if (!modes.some((m) => m.model === this.activeMode.model && m.provider === this.activeMode.provider)) {
+        models.push({ model: this.activeMode.model, provider: this.activeMode.provider ?? "" });
+      }
+      const active = { model: this.activeMode.model, provider: this.activeMode.provider ?? "" };
       return { models, active };
     });
     on("config:set-thinking", ({ level }) => {
@@ -551,15 +512,6 @@ export class AgentLoop implements AgentBackend {
   kill(): void {
     this.cancel();
     this.unwire();
-    // Clean up constructor-level bus subscriptions
-    for (const { event, fn } of this.ctorListeners) {
-      this.bus.off(event as any, fn);
-    }
-    this.ctorListeners = [];
-    for (const { event, fn } of this.ctorPipeListeners) {
-      this.bus.offPipe(event as any, fn);
-    }
-    this.ctorPipeListeners = [];
   }
 
   private cancel(): void {
@@ -578,12 +530,21 @@ export class AgentLoop implements AgentBackend {
 
 
   private get currentMode(): AgentMode {
-    return this.modes[this.currentModeIndex];
+    return this.activeMode;
+  }
+
+  /** Pull the canonical mode catalog from agentBackend. Returns [] if
+   *  the handler isn't defined (e.g. another backend is active). */
+  private pullModes(): AgentMode[] {
+    try {
+      return (this.handlers.call("agent:get-modes") as AgentMode[]) ?? [];
+    } catch {
+      return [];
+    }
   }
 
   private emitIdentity(): void {
-    const m = this.modes[this.currentModeIndex];
-    if (!m) return;
+    const m = this.activeMode;
     this.bus.emit("agent:info", {
       name: "ash",
       version: PACKAGE_VERSION,
@@ -594,7 +555,7 @@ export class AgentLoop implements AgentBackend {
   }
 
   private get currentModel(): string {
-    return this.modes[this.currentModeIndex].model;
+    return this.activeMode.model;
   }
 
   /**

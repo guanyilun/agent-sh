@@ -43,11 +43,11 @@ export default function activate(ctx: AgentContext): void {
     },
   });
 
-  ctx.bus.emit("provider:register", { id, apiKey: sdkKey, baseURL, models: [] });
+  ctx.agent.providers.register({ id, apiKey: sdkKey, baseURL, models: [] });
 
   fetchCatalog(host, headers).then((models) => {
     if (models.length === 0) return;
-    ctx.bus.emit("provider:register", {
+    ctx.agent.providers.register({
       id,
       apiKey: sdkKey,
       baseURL,

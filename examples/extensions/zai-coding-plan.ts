@@ -30,7 +30,7 @@ export default function activate(ctx: AgentContext): void {
 
   ctx.agent.providers.configure(ID, { reasoningParams: buildReasoningParams });
 
-  ctx.bus.emit("provider:register", {
+  ctx.agent.providers.register({
     id: ID,
     apiKey: apiKey,
     baseURL: BASE_URL,
