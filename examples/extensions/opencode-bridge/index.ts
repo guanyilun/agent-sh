@@ -319,7 +319,13 @@ export default function activate(ctx: ExtensionContext): void {
             }
           } finally {
             pickerOpen = false;
-            drainQueue();
+            if (result.cancelled) {
+              eventQueue.length = 0;
+              pendingTurnEnd?.();
+              bus.emit("agent:processing-done", {});
+            } else {
+              drainQueue();
+            }
           }
         });
         break;
@@ -371,7 +377,15 @@ export default function activate(ctx: ExtensionContext): void {
             finish(result.reply, result.cancelled ? { skipReply: true } : undefined);
           } finally {
             pickerOpen = false;
-            drainQueue();
+            if (result.cancelled) {
+              // Drop queued SSE — replaying would render tool indicators
+              // for a turn the user just aborted.
+              eventQueue.length = 0;
+              pendingTurnEnd?.();
+              bus.emit("agent:processing-done", {});
+            } else {
+              drainQueue();
+            }
           }
         });
         break;
