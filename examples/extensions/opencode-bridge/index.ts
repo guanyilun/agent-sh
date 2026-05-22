@@ -315,12 +315,12 @@ export default function activate(ctx: ExtensionContext): void {
         const detail = req.patterns.length > 0
           ? `${req.permission}: ${req.patterns.join(", ")}`
           : req.permission;
-        const finish = (reply: "once" | "always" | "reject", note?: string) => {
+        const finish = (reply: "once" | "always" | "reject", opts?: { note?: string; skipReply?: boolean }) => {
           // Only emit a timeline entry on reject — once/always are followed
           // by the actual tool run, which is its own record.
           if (reply === "reject") {
             const callID = `permission-${req.id}`;
-            const summary = note ? `denied (${note})` : `denied: ${detail}`;
+            const summary = opts?.note ? `denied (${opts.note})` : `denied: ${detail}`;
             bus.emit("agent:tool-started", {
               title: "permission",
               toolCallId: callID,
@@ -335,7 +335,7 @@ export default function activate(ctx: ExtensionContext): void {
               resultDisplay: { summary },
             });
           }
-          if (!runtime) return;
+          if (!runtime || opts?.skipReply) return;
           runtime.client.permission
             .reply({ requestID: req.id, reply, directory: sessionDirectory ?? undefined })
             .catch((err) => {
@@ -345,15 +345,15 @@ export default function activate(ctx: ExtensionContext): void {
             });
         };
         if (!compositor) {
-          finish("reject", "no shell host");
+          finish("reject", { note: "no shell host" });
           bus.emit("ui:error", {
             message: `opencode-bridge: rejected permission (no shell host): ${detail}`,
           });
           break;
         }
         const ui = createToolUI(bus, compositor.surface("agent"));
-        ui.custom(createPermissionSession(req)).then((result: PermissionResult) => {
-          finish(result.reply);
+        ui.custom(createPermissionSession(req, bus)).then((result: PermissionResult) => {
+          finish(result.reply, result.cancelled ? { skipReply: true } : undefined);
         });
         break;
       }
@@ -520,7 +520,7 @@ export default function activate(ctx: ExtensionContext): void {
 // ── Interactive question picker ──────────────────────────────────
 
 type QuestionResult = { answers: string[][]; cancelled: boolean };
-type PermissionResult = { reply: "once" | "always" | "reject" };
+type PermissionResult = { reply: "once" | "always" | "reject"; cancelled?: boolean };
 
 function isKey(data: string, key: string): boolean {
   switch (key) {
@@ -652,8 +652,23 @@ function createQuestionSession(questions: QuestionInfo[]): InteractiveSession<Qu
   };
 }
 
-function createPermissionSession(req: PermissionRequest): InteractiveSession<PermissionResult> {
+function createPermissionSession(
+  req: PermissionRequest,
+  bus: { on: (e: "agent:cancel-request", fn: () => void) => void; off: (e: "agent:cancel-request", fn: () => void) => void },
+): InteractiveSession<PermissionResult> {
+  let cancelHandler: (() => void) | null = null;
+  // Framework passes (invalidate, done) to onMount; the vendored type only
+  // declares (invalidate), so widen via cast at the assignment site.
+  const onMount = ((_invalidate: () => void, done: (r: PermissionResult) => void): void => {
+    cancelHandler = () => done({ reply: "reject", cancelled: true });
+    bus.on("agent:cancel-request", cancelHandler);
+  }) as InteractiveSession<PermissionResult>["onMount"];
   return {
+    onMount,
+    onUnmount() {
+      if (cancelHandler) bus.off("agent:cancel-request", cancelHandler);
+      cancelHandler = null;
+    },
     render(_width) {
       const lines: string[] = [];
       lines.push(` ${p.warning}${p.bold}Permission required: ${req.permission}${p.reset}`);
