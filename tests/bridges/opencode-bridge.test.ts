@@ -194,16 +194,34 @@ test("agent:cancel-request triggers client.session.abort", async () => {
   assert.equal(after[before]!.sessionID, stubModule.__sessionId());
 });
 
-test("permission.asked is auto-approved via client.permission.reply", async () => {
-  const { bus: _ } = await loadBridge();
+test("permission.asked without a shell host replies reject + emits ui:error", async () => {
+  stubModule.__reset();
+  const core = createCore({} as AppConfig);
+  const ctx = core.extensionContext({ quit: () => {} });
+  const mod = await import(`${BRIDGE_URL}?t=${Date.now()}`);
+  (mod.default ?? mod.activate)(ctx);
+  await core.activateBackend("opencode");
+  await flush();
+
+  const uiErrors: Array<{ message: string }> = [];
+  core.bus.on("ui:error", (e) => uiErrors.push(e));
+
   stubModule.__emitEvent({
     type: "permission.asked",
-    properties: { id: "req-42" },
+    properties: {
+      id: "req-42",
+      permission: "bash",
+      patterns: ["echo test"],
+      metadata: {},
+      always: [],
+    },
   });
   await flush();
 
   const replies = stubModule.__permissionReplies();
   assert.equal(replies.length, 1);
   assert.equal(replies[0]!.requestID, "req-42");
-  assert.equal(replies[0]!.reply, "once");
+  assert.equal(replies[0]!.reply, "reject");
+  assert.equal(uiErrors.length, 1);
+  assert.match(uiErrors[0]!.message, /no shell host/);
 });
