@@ -111,6 +111,44 @@ function readPackageJson(target: string): PackageJson | null {
   return JSON.parse(fs.readFileSync(pkgJson, "utf-8")) as PackageJson;
 }
 
+/** Version of the host agent-sh package this CLI is running from. */
+function hostAgentShVersion(): string | null {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf-8"));
+    return typeof pkg.version === "string" ? pkg.version : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Pin the extension's `agent-sh` dep to the host's exact version so
+ *  `npm install` lands a copy that matches the running host. Without this
+ *  an extension shipping `agent-sh: "^0.12.0"` would get 0.12.x even when
+ *  the host is 0.14.x, producing runtime/type drift inside the extension. */
+function syncAgentShVersion(target: string): void {
+  const hostVersion = hostAgentShVersion();
+  if (!hostVersion) return;
+  const pkgJson = path.join(target, "package.json");
+  if (!fs.existsSync(pkgJson)) return;
+  const raw = fs.readFileSync(pkgJson, "utf-8");
+  const pkg = JSON.parse(raw) as Record<string, unknown>;
+  const sections = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] as const;
+  let changed = false;
+  for (const section of sections) {
+    const deps = pkg[section];
+    if (!deps || typeof deps !== "object") continue;
+    const d = deps as Record<string, string>;
+    const current = d["agent-sh"];
+    if (typeof current !== "string") continue;
+    // file: deps point at a local checkout — rewriteFileDeps handles them.
+    if (current.startsWith("file:")) continue;
+    if (current === hostVersion) continue;
+    d["agent-sh"] = hostVersion;
+    changed = true;
+  }
+  if (changed) fs.writeFileSync(pkgJson, `${JSON.stringify(pkg, null, 2)}\n`);
+}
+
 /** Relative `file:` deps in bundled extensions (e.g. `"agent-sh": "file:../../.."`)
  *  point at the wrong location after the source is copied into ~/.agent-sh/extensions/.
  *  Resolve them against the original source dir so npm install in the target succeeds. */
@@ -224,6 +262,7 @@ export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<
     fs.cpSync(resolved.sourcePath, target, { recursive: true });
     try {
       rewriteFileDeps(target, resolved.sourcePath);
+      syncAgentShVersion(target);
       const pkg = readPackageJson(target);
       if (pkg) {
         maybeNpmInstall(target, pkg);
