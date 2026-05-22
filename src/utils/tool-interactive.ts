@@ -30,11 +30,16 @@ export function createToolUI(
         const done = (result: T) => {
           if (finished) return;
           finished = true;
-          clearLines(surface, prevLineCount);
-          // Restore cursor to where it was before the leading \n so the
-          // caller's next write (e.g. opencode's `✓ 7s` completion marker)
-          // lands inline on the original tool-started row, not below it.
-          surface.write("\x1b8");
+          // Restore cursor to the saved position, then delete the picker's
+          // rows so they don't sit as empty space pushing subsequent content
+          // down. \x1b[B + \x1b[<N>M = cursor down one + delete N lines,
+          // which collapses the picker's vertical footprint while leaving
+          // the saved-position row intact.
+          if (prevLineCount > 0) {
+            surface.write(`\x1b8\x1b[B\x1b[${prevLineCount}M`);
+          } else {
+            surface.write("\x1b8");
+          }
           bus.offPipe("input:intercept", interceptor);
           bus.emit("shell:stdout-hide", {});
           bus.emit("tool:interactive-end", {});
