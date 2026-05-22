@@ -307,8 +307,6 @@ export default function activate(ctx: ExtensionContext): void {
         });
         break;
       }
-      // opencode.json's `permission.*` settings short-circuit before we
-      // get here; this branch surfaces whatever opencode still wants asked.
       case "permission.asked": {
         const req = props as PermissionRequest;
         if (!runtime) break;
@@ -316,8 +314,6 @@ export default function activate(ctx: ExtensionContext): void {
           ? `${req.permission}: ${req.patterns.join(", ")}`
           : req.permission;
         const finish = (reply: "once" | "always" | "reject", opts?: { note?: string; skipReply?: boolean }) => {
-          // Only emit a timeline entry on reject — once/always are followed
-          // by the actual tool run, which is its own record.
           if (reply === "reject") {
             const callID = `permission-${req.id}`;
             const summary = opts?.note ? `denied (${opts.note})` : `denied: ${detail}`;
