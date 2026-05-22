@@ -19,7 +19,7 @@ So I built agent-sh. Under the hood it's a normal shell on top of node-pty — y
 ~ $ > draft a commit message     # agent reads your diff and shell history
 ```
 
-agent-sh is built to be agent-agnostic. You can [bring your own coding agent](#bring-your-own-agent) or use the built-in agent `ash` — a lightweight, extensible agent if you'd like to build extensions on top of it.
+agent-sh is built to be agent-agnostic. The recommended path is the built-in agent `ash` — a lightweight agent designed so extensions can plug into the same tool surface. If you'd rather host an existing coding agent (pi, claude-code, opencode), you can [bring your own](#bring-your-own-agent) — with the trade-off that it manages its own separate tools.
 
 ## Quick Start
 
@@ -55,24 +55,9 @@ alias ash="agent-sh"
 
 Once installed, pick a backend below.
 
-### Option A: Bring your own coding agent
+### Option A: Use the built-in agent (ash) — recommended
 
-If you already use a coding agent, host it inside agent-sh — same terminal, same `>` entry point, same shell-context wiring. Three bridges ship in the box:
-
-- **pi** — [pi-mono](https://github.com/badlogic/pi-mono) coding agent
-- **claude-code** — official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)
-- **opencode** — [opencode](https://opencode.ai/) via `@opencode-ai/sdk`
-
-```bash
-agent-sh install pi-bridge
-agent-sh --backend pi
-```
-
-See [Bring your own agent](#bring-your-own-agent) below for full details and the other backends.
-
-### Option B: Use the built-in agent (ash)
-
-`ash` is agent-sh's own lightweight agent. It works with any OpenAI-compatible API — pick one of the zero-config paths below, no settings file needed. The built-in providers (openrouter, openai, openai-compatible, deepseek) register on startup; ash activates the first one with a usable key.
+`ash` is agent-sh's own lightweight agent, and the path most users should start with: it shares its tool surface with the rest of the system, so extensions you install (new tools, content transforms, slash commands, themes) compose with it directly. It works with any OpenAI-compatible API — pick one of the zero-config paths below, no settings file needed. The built-in providers (openrouter, openai, openai-compatible, deepseek) register on startup; ash activates the first one with a usable key.
 
 **Quickest path** — store a key once via the auth subcommand:
 
@@ -120,6 +105,10 @@ Once running, switch models at any time with `/model <name>` (tab-completes; sel
 For richer configuration (multiple providers, extensions), run `agent-sh init` to scaffold `~/.agent-sh/settings.json` with copy-pasteable examples. See the [Usage Guide](docs/usage.md) for the full list of supported providers.
 
 `ash` is designed to be extended. Extensions can add tools, content transforms (e.g. render LaTeX or Mermaid), themes, slash commands, or new input modes — see [Extensions](docs/extensions.md) for the full surface.
+
+### Option B: Bring your own coding agent
+
+If you already use pi, claude-code, or opencode, agent-sh can host it as the backend instead — see [Bring your own agent](#bring-your-own-agent) just below for the full setup and the trade-offs.
 
 ## Bring your own agent
 
