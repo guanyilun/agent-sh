@@ -106,6 +106,13 @@ export default function activate(ctx: ExtensionContext): void {
     for (const ev of events) handleEvent(ev);
   };
 
+  // After Ctrl+C through a picker, opencode keeps emitting tool / error
+  // state for the aborted turn (e.g. final "errored" state on the bash
+  // tool we never ran). Those events restart spinners and replay tool
+  // entries the user already knows are dead. Drop them until the abort
+  // is acknowledged by session.error (or a fresh turn).
+  let cancelledTurn = false;
+
   const listeners: Array<{ event: string; fn: Function }> = [];
 
   function toolKind(name: string): string {
@@ -212,6 +219,20 @@ export default function activate(ctx: ExtensionContext): void {
     const props = (event as any).properties ?? {};
     const sid = props.sessionID;
     if (typeof sid === "string" && sid !== sessionId) return;
+
+    if (cancelledTurn) {
+      // Pass through only what we need to unblock onSubmit; suppress
+      // tool / delta / error renders for the aborted turn.
+      if (evType === "session.idle") {
+        turnIdleSeen = true;
+        pendingTurnEnd?.();
+      } else if (evType === "session.error") {
+        cancelledTurn = false;
+        turnIdleSeen = true;
+        pendingTurnEnd?.();
+      }
+      return;
+    }
 
     switch (evType) {
       // message.part.delta is undocumented in the SDK's Event union but
@@ -321,6 +342,7 @@ export default function activate(ctx: ExtensionContext): void {
             pickerOpen = false;
             if (result.cancelled) {
               eventQueue.length = 0;
+              cancelledTurn = true;
               pendingTurnEnd?.();
               bus.emit("agent:processing-done", {});
             } else {
@@ -381,6 +403,7 @@ export default function activate(ctx: ExtensionContext): void {
               // Drop queued SSE — replaying would render tool indicators
               // for a turn the user just aborted.
               eventQueue.length = 0;
+              cancelledTurn = true;
               pendingTurnEnd?.();
               bus.emit("agent:processing-done", {});
             } else {
@@ -421,6 +444,7 @@ export default function activate(ctx: ExtensionContext): void {
       bus.emit("agent:query", { query: userQuery });
       bus.emit("agent:processing-start", {});
       turnText = "";
+      cancelledTurn = false;
       turnIdleSeen = false;
       turnError = null;
       // Set the idle waiter BEFORE prompt() so a fast session.idle can't
