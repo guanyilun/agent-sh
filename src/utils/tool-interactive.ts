@@ -61,7 +61,7 @@ export function createToolUI(
         bus.emit("tool:interactive-start", {});
         bus.emit("shell:stdout-show", {});
         bus.onPipe("input:intercept", interceptor);
-        session.onMount?.(() => render());
+        session.onMount?.(() => render(), done);
         render();
       });
     },
