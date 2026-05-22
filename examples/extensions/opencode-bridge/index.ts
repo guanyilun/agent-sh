@@ -312,26 +312,29 @@ export default function activate(ctx: ExtensionContext): void {
       case "permission.asked": {
         const req = props as PermissionRequest;
         if (!runtime) break;
-        const callID = `permission-${req.id}`;
         const detail = req.patterns.length > 0
           ? `${req.permission}: ${req.patterns.join(", ")}`
           : req.permission;
-        bus.emit("agent:tool-started", {
-          title: "permission",
-          toolCallId: callID,
-          kind: "execute",
-          displayDetail: detail,
-        });
         const finish = (reply: "once" | "always" | "reject", note?: string) => {
-          const exitCode = reply === "reject" ? 1 : 0;
-          const summary = note ? `${reply} (${note})` : `${reply}: ${detail}`;
-          bus.emitTransform("agent:tool-completed", {
-            toolCallId: callID,
-            exitCode,
-            rawOutput: summary,
-            kind: "execute",
-            resultDisplay: { summary },
-          });
+          // Only emit a timeline entry on reject — once/always are followed
+          // by the actual tool run, which is its own record.
+          if (reply === "reject") {
+            const callID = `permission-${req.id}`;
+            const summary = note ? `denied (${note})` : `denied: ${detail}`;
+            bus.emit("agent:tool-started", {
+              title: "permission",
+              toolCallId: callID,
+              kind: "execute",
+              displayDetail: detail,
+            });
+            bus.emitTransform("agent:tool-completed", {
+              toolCallId: callID,
+              exitCode: 1,
+              rawOutput: summary,
+              kind: "execute",
+              resultDisplay: { summary },
+            });
+          }
           if (!runtime) return;
           runtime.client.permission
             .reply({ requestID: req.id, reply, directory: sessionDirectory ?? undefined })
@@ -651,13 +654,9 @@ function createQuestionSession(questions: QuestionInfo[]): InteractiveSession<Qu
 
 function createPermissionSession(req: PermissionRequest): InteractiveSession<PermissionResult> {
   return {
-    render(width) {
-      const w = Math.min(80, width);
+    render(_width) {
       const lines: string[] = [];
-
-      lines.push(`${p.muted}${"─".repeat(w)}${p.reset}`);
       lines.push(` ${p.warning}${p.bold}Permission required: ${req.permission}${p.reset}`);
-      lines.push("");
 
       const meta = req.metadata ?? {};
       const cmd = typeof meta.command === "string" ? meta.command : null;
@@ -668,22 +667,17 @@ function createPermissionSession(req: PermissionRequest): InteractiveSession<Per
         for (const line of cmd.split("\n").slice(0, 6)) {
           lines.push(`   ${p.dim}${line}${p.reset}`);
         }
-        lines.push("");
       } else if (file) {
         lines.push(`   ${p.dim}${file}${p.reset}`);
-        lines.push("");
       }
 
-      if (req.patterns.length > 0) {
-        lines.push(` ${p.muted}Patterns:${p.reset}`);
+      if (req.patterns.length > 0 && !cmd && !file) {
         for (const pat of req.patterns) {
-          lines.push(`   ${pat}`);
+          lines.push(`   ${p.dim}${pat}${p.reset}`);
         }
-        lines.push("");
       }
 
       lines.push(` ${p.dim}[y] allow once  [a] allow always  [n] reject${p.reset}`);
-      lines.push(`${p.muted}${"─".repeat(w)}${p.reset}`);
       return lines;
     },
 
