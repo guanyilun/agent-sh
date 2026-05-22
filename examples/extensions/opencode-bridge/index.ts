@@ -60,7 +60,8 @@ function parseUnifiedDiff(patch: string): DiffResult | null {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, call } = ctx; const { compositor } = ctx.shell;
+  const { bus, call } = ctx;
+  const compositor = ctx.shell?.compositor;
 
   const cwd = (): string => {
     const v = call("cwd");
@@ -242,6 +243,15 @@ export default function activate(ctx: ExtensionContext): void {
       case "question.asked": {
         const req = props as QuestionRequest;
         if (!runtime) break;
+        if (!compositor) {
+          runtime.client.question
+            .reject({ requestID: req.id, directory: sessionDirectory ?? undefined })
+            .catch(() => { /* best-effort */ });
+          bus.emit("ui:error", {
+            message: `opencode-bridge: rejected interactive question (no shell host): ${req.questions.map((q) => q.question).join("; ")}`,
+          });
+          break;
+        }
         const ui = createToolUI(bus, compositor.surface("agent"));
         ui.custom(createQuestionSession(req.questions)).then(async (result: QuestionResult) => {
           if (!runtime) return;
