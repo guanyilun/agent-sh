@@ -61,6 +61,9 @@ export function createToolUI(
         bus.emit("tool:interactive-start", {});
         bus.emit("shell:stdout-show", {});
         bus.onPipe("input:intercept", interceptor);
+        // Drop to a fresh row in case the cursor was mid-line; uncounted
+        // so clearLines on dismiss stops at the gap, not above it.
+        surface.write("\n");
         session.onMount?.(() => render(), done);
         render();
       });
