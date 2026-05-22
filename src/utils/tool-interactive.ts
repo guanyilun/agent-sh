@@ -30,10 +30,8 @@ export function createToolUI(
         const done = (result: T) => {
           if (finished) return;
           finished = true;
-          // Leave the rendered picker as a transcript so the user sees what
-          // was asked and what they picked; subsequent output lands below
-          // it. Clearing on dismiss was a worse trade — it produced an
-          // unexplained gap on terminals where cursor-restore tricks fail.
+          // Leave the rendered picker as a transcript; subsequent output
+          // lands below it.
           bus.offPipe("input:intercept", interceptor);
           bus.emit("shell:stdout-hide", {});
           bus.emit("tool:interactive-end", {});

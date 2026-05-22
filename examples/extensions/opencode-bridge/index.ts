@@ -96,9 +96,8 @@ export default function activate(ctx: ExtensionContext): void {
   let turnIdleSeen = false;
   let turnError: string | null = null;
 
-  // While a picker is open, queue SSE events so subsequent tool-started /
-  // delta renders don't paint above or below the picker. Replayed in order
-  // once the user resolves the picker.
+  // Queue SSE while a picker is open; replay on resolve so renders don't
+  // interleave with the picker's own writes.
   let pickerOpen = false;
   const eventQueue: Event[] = [];
   const drainQueue = (): void => {
@@ -106,11 +105,9 @@ export default function activate(ctx: ExtensionContext): void {
     for (const ev of events) handleEvent(ev);
   };
 
-  // After Ctrl+C through a picker, opencode keeps emitting tool / error
-  // state for the aborted turn (e.g. final "errored" state on the bash
-  // tool we never ran). Those events restart spinners and replay tool
-  // entries the user already knows are dead. Drop them until the abort
-  // is acknowledged by session.error (or a fresh turn).
+  // After Ctrl+C, opencode emits a tail of tool / error state for the
+  // aborted turn. Suppress until the next turn so it doesn't restart the
+  // spinner or replay dead tool entries.
   let cancelledTurn = false;
 
   const listeners: Array<{ event: string; fn: Function }> = [];
@@ -221,11 +218,9 @@ export default function activate(ctx: ExtensionContext): void {
     if (typeof sid === "string" && sid !== sessionId) return;
 
     if (cancelledTurn) {
-      // Pass through only what we need to unblock onSubmit; suppress
-      // everything else for the aborted turn. cancelledTurn is reset by
-      // onSubmit on the next turn — clearing it earlier (e.g. on
-      // session.error) lets opencode's later message.part.updated for
-      // the cancelled bash tool slip through and restart the spinner.
+      // Only let through what unblocks onSubmit. Clearing the flag earlier
+      // (e.g. on session.error) lets the trailing bash part.updated slip
+      // past and restart the spinner.
       if (evType === "session.idle" || evType === "session.error") {
         turnIdleSeen = true;
         pendingTurnEnd?.();
@@ -398,12 +393,9 @@ export default function activate(ctx: ExtensionContext): void {
           } finally {
             pickerOpen = false;
             if (result.cancelled) {
-              // Drop queued SSE — replaying would render tool indicators
-              // for a turn the user just aborted. pendingTurnEnd?.() lets
-              // onSubmit's await idlePromise resolve so its finally block
-              // emits the single agent:processing-done; emitting one here
-              // too races with onSubmit's still-pending session.prompt()
-              // and leaves the TUI with two stacked prompts.
+              // Drop queued SSE; let onSubmit's finally be the single
+              // emitter of agent:processing-done (a second one here races
+              // and produces stacked prompts).
               eventQueue.length = 0;
               cancelledTurn = true;
               pendingTurnEnd?.();

@@ -141,8 +141,8 @@ function satisfies(version: string, spec: string): boolean {
 }
 
 /** Warn when the extension's `agent-sh` pin can't admit the host version;
- *  rewrite only when explicitly opted in via `--sync-deps`, since silent
- *  edits diverge the installed package.json from the upstream source. */
+ *  only rewrite when `--sync-deps` is set so the installed package.json
+ *  doesn't silently diverge from upstream. */
 function syncAgentShVersion(target: string, syncDeps: boolean): void {
   const hostVersion = hostAgentShVersion();
   if (!hostVersion) return;
@@ -292,9 +292,8 @@ export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<
   if (resolved.isDirectory) {
     fs.cpSync(resolved.sourcePath, target, {
       recursive: true,
-      // Skip the source's node_modules — stale npm cache there would let
-      // maybeNpmInstall short-circuit on the copy and silently install a
-      // bridge whose dep pin and actual bundled deps disagree.
+      // Skip source node_modules: maybeNpmInstall short-circuits on
+      // existing node_modules, silently leaving the bridge's deps stale.
       filter: (src) => path.basename(src) !== "node_modules",
     });
     try {
