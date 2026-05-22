@@ -30,16 +30,7 @@ export function createToolUI(
         const done = (result: T) => {
           if (finished) return;
           finished = true;
-          // Restore cursor to the saved position, then delete the picker's
-          // rows so they don't sit as empty space pushing subsequent content
-          // down. \x1b[B + \x1b[<N>M = cursor down one + delete N lines,
-          // which collapses the picker's vertical footprint while leaving
-          // the saved-position row intact.
-          if (prevLineCount > 0) {
-            surface.write(`\x1b8\x1b[B\x1b[${prevLineCount}M`);
-          } else {
-            surface.write("\x1b8");
-          }
+          clearLines(surface, prevLineCount);
           bus.offPipe("input:intercept", interceptor);
           bus.emit("shell:stdout-hide", {});
           bus.emit("tool:interactive-end", {});
@@ -70,10 +61,9 @@ export function createToolUI(
         bus.emit("tool:interactive-start", {});
         bus.emit("shell:stdout-show", {});
         bus.onPipe("input:intercept", interceptor);
-        // Save cursor, then drop to a fresh row. On dismiss we restore to
-        // the saved position so the caller's next write (e.g. opencode's
-        // `✓ 7s` completion marker) lands inline on the original row.
-        surface.write("\x1b7\n");
+        // Drop to a fresh row in case the cursor was mid-line; uncounted
+        // so clearLines on dismiss stops at the gap, not above it.
+        surface.write("\n");
         session.onMount?.(() => render(), done);
         render();
       });
