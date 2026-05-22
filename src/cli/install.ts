@@ -121,13 +121,38 @@ function hostAgentShVersion(): string | null {
   }
 }
 
-/** Pin the extension's `agent-sh` dep to the host's exact version so
- *  `npm install` lands a copy that matches the running host. Without this
- *  an extension shipping `agent-sh: "^0.12.0"` would get 0.12.x even when
- *  the host is 0.14.x, producing runtime/type drift inside the extension. */
+/** Whether `spec` (a small subset of npm semver ranges) admits `version`.
+ *  Conservatively returns true for anything we can't parse so the caller
+ *  leaves authored, intentional ranges alone. */
+function satisfies(version: string, spec: string): boolean {
+  if (spec === version || spec === "*" || spec === "latest") return true;
+  const [vMaj, vMin, vPatch] = version.split(/[.-]/, 3).map(Number);
+  if ([vMaj, vMin, vPatch].some(Number.isNaN)) return true;
+  const m = spec.match(/^([\^~]?)(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return true;
+  const op = m[1];
+  const sMaj = Number(m[2]);
+  const sMin = Number(m[3]);
+  const sPatch = Number(m[4]);
+  if (op === "") return vMaj === sMaj && vMin === sMin && vPatch === sPatch;
+  if (op === "~") return vMaj === sMaj && vMin === sMin && vPatch >= sPatch;
+  // ^x.y.z: zero-major treats minor as the breaking boundary (npm rule).
+  if (sMaj > 0) return vMaj === sMaj && (vMin > sMin || (vMin === sMin && vPatch >= sPatch));
+  if (sMin > 0) return vMaj === 0 && vMin === sMin && vPatch >= sPatch;
+  return vMaj === 0 && vMin === 0 && vPatch === sPatch;
+}
+
+/** Pin the extension's `agent-sh` dep to the host's exact version when the
+ *  existing range *doesn't* admit the host version (e.g. bridge shipping
+ *  `^0.12.0` against a 0.14.x host). Ranges that already satisfy the host
+ *  are left untouched so authored intent survives. */
 function syncAgentShVersion(target: string): void {
   const hostVersion = hostAgentShVersion();
   if (!hostVersion) return;
+  // Prerelease hosts (e.g. `0.15.0-pre`) likely aren't on npm; rewriting
+  // would leave `npm install` unable to resolve. Dev workflows on a
+  // prerelease host should use a file: dep or symlinked node_modules.
+  if (hostVersion.includes("-")) return;
   const pkgJson = path.join(target, "package.json");
   if (!fs.existsSync(pkgJson)) return;
   const raw = fs.readFileSync(pkgJson, "utf-8");
@@ -140,9 +165,9 @@ function syncAgentShVersion(target: string): void {
     const d = deps as Record<string, string>;
     const current = d["agent-sh"];
     if (typeof current !== "string") continue;
-    // file: deps point at a local checkout — rewriteFileDeps handles them.
     if (current.startsWith("file:")) continue;
-    if (current === hostVersion) continue;
+    if (satisfies(hostVersion, current)) continue;
+    console.log(`agent-sh: ${path.basename(target)} pinned agent-sh ${current} doesn't admit host ${hostVersion}; bumping to ${hostVersion}.`);
     d["agent-sh"] = hostVersion;
     changed = true;
   }
