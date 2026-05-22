@@ -112,7 +112,6 @@ function readPackageJson(target: string): PackageJson | null {
   return JSON.parse(fs.readFileSync(pkgJson, "utf-8")) as PackageJson;
 }
 
-/** Version of the host agent-sh package this CLI is running from. */
 function hostAgentShVersion(): string | null {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf-8"));
@@ -122,9 +121,7 @@ function hostAgentShVersion(): string | null {
   }
 }
 
-/** Whether `spec` (a small subset of npm semver ranges) admits `version`.
- *  Conservatively returns true for anything we can't parse so the caller
- *  leaves authored, intentional ranges alone. */
+/** Returns true for unparseable specs so authored ranges survive untouched. */
 function satisfies(version: string, spec: string): boolean {
   if (spec === version || spec === "*" || spec === "latest") return true;
   const [vMaj, vMin, vPatch] = version.split(/[.-]/, 3).map(Number);
@@ -143,17 +140,13 @@ function satisfies(version: string, spec: string): boolean {
   return vMaj === 0 && vMin === 0 && vPatch === sPatch;
 }
 
-/** When the extension's `agent-sh` dep doesn't admit the host version
- *  (e.g. bridge shipping `^0.12.0` against a 0.14.x host), warn so the
- *  user knows drift is imminent. Only rewrites the pin when explicitly
- *  asked via `--sync-deps` — silently mutating the bridge's package.json
- *  on every install would hide drift from the source-of-truth on github. */
+/** Warn when the extension's `agent-sh` pin can't admit the host version;
+ *  rewrite only when explicitly opted in via `--sync-deps`, since silent
+ *  edits diverge the installed package.json from the upstream source. */
 function syncAgentShVersion(target: string, syncDeps: boolean): void {
   const hostVersion = hostAgentShVersion();
   if (!hostVersion) return;
-  // Prerelease hosts (e.g. `0.15.0-pre`) likely aren't on npm; rewriting
-  // would leave `npm install` unable to resolve. Dev workflows on a
-  // prerelease host should use a file: dep or symlinked node_modules.
+  // Prerelease hosts aren't on npm; rewriting would leave npm install unable to resolve.
   if (hostVersion.includes("-")) return;
   const pkgJson = path.join(target, "package.json");
   if (!fs.existsSync(pkgJson)) return;

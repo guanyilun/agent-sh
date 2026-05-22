@@ -653,8 +653,7 @@ function createPermissionSession(
   bus: { on: (e: "agent:cancel-request", fn: () => void) => void; off: (e: "agent:cancel-request", fn: () => void) => void },
 ): InteractiveSession<PermissionResult> {
   let cancelHandler: (() => void) | null = null;
-  // Framework passes (invalidate, done) to onMount; the vendored type only
-  // declares (invalidate), so widen via cast at the assignment site.
+  // Cast widens onMount: the vendored agent-sh type still declares the 1-arg signature.
   const onMount = ((_invalidate: () => void, done: (r: PermissionResult) => void): void => {
     cancelHandler = () => done({ reply: "reject", cancelled: true });
     bus.on("agent:cancel-request", cancelHandler);
