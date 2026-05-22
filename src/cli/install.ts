@@ -290,7 +290,13 @@ export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<
 
   let linkedBins: string[] = [];
   if (resolved.isDirectory) {
-    fs.cpSync(resolved.sourcePath, target, { recursive: true });
+    fs.cpSync(resolved.sourcePath, target, {
+      recursive: true,
+      // Skip the source's node_modules — stale npm cache there would let
+      // maybeNpmInstall short-circuit on the copy and silently install a
+      // bridge whose dep pin and actual bundled deps disagree.
+      filter: (src) => path.basename(src) !== "node_modules",
+    });
     try {
       rewriteFileDeps(target, resolved.sourcePath);
       syncAgentShVersion(target, opts.syncDeps ?? false);
