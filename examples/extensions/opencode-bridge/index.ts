@@ -96,6 +96,16 @@ export default function activate(ctx: ExtensionContext): void {
   let turnIdleSeen = false;
   let turnError: string | null = null;
 
+  // While a picker is open, queue SSE events so subsequent tool-started /
+  // delta renders don't paint above or below the picker. Replayed in order
+  // once the user resolves the picker.
+  let pickerOpen = false;
+  const eventQueue: Event[] = [];
+  const drainQueue = (): void => {
+    const events = eventQueue.splice(0);
+    for (const ev of events) handleEvent(ev);
+  };
+
   const listeners: Array<{ event: string; fn: Function }> = [];
 
   function toolKind(name: string): string {
@@ -196,6 +206,7 @@ export default function activate(ctx: ExtensionContext): void {
 
 
   function handleEvent(event: Event): void {
+    if (pickerOpen) { eventQueue.push(event); return; }
     if (!sessionId) return;
     const evType = (event as any).type as string;
     const props = (event as any).properties ?? {};
@@ -253,56 +264,62 @@ export default function activate(ctx: ExtensionContext): void {
           });
           break;
         }
+        pickerOpen = true;
         const ui = createToolUI(bus, compositor.surface("agent"));
         ui.custom(createQuestionSession(req.questions)).then(async (result: QuestionResult) => {
-          if (!runtime) return;
-          // Record the question + answer as a synthetic tool entry so the
-          // timeline shows what was asked and what the user picked.
-          const callID = `question-${req.id}`;
-          const detail = req.questions.length === 1
-            ? req.questions[0]!.question
-            : req.questions.map((q, i) => `${q.header || `Q${i + 1}`}: ${q.question}`).join("; ");
-          bus.emit("agent:tool-started", {
-            title: "question",
-            toolCallId: callID,
-            kind: "execute",
-            displayDetail: detail,
-          });
-          if (result.cancelled) {
+          try {
+            if (!runtime) return;
+            // Record the question + answer as a synthetic tool entry so the
+            // timeline shows what was asked and what the user picked.
+            const callID = `question-${req.id}`;
+            const detail = req.questions.length === 1
+              ? req.questions[0]!.question
+              : req.questions.map((q, i) => `${q.header || `Q${i + 1}`}: ${q.question}`).join("; ");
+            bus.emit("agent:tool-started", {
+              title: "question",
+              toolCallId: callID,
+              kind: "execute",
+              displayDetail: detail,
+            });
+            if (result.cancelled) {
+              bus.emitTransform("agent:tool-completed", {
+                toolCallId: callID,
+                exitCode: 1,
+                rawOutput: "cancelled",
+                kind: "execute",
+                resultDisplay: { summary: "cancelled" },
+              });
+              runtime.client.question
+                .reject({ requestID: req.id, directory: sessionDirectory ?? undefined })
+                .catch(() => { /* best-effort */ });
+              return;
+            }
+            const summary = result.answers.length === 1
+              ? result.answers[0]!.join(", ")
+              : result.answers
+                  .map((ans, i) => `${req.questions[i]!.header || `Q${i + 1}`}: ${ans.join(", ")}`)
+                  .join("; ");
             bus.emitTransform("agent:tool-completed", {
               toolCallId: callID,
-              exitCode: 1,
-              rawOutput: "cancelled",
+              exitCode: 0,
+              rawOutput: summary,
               kind: "execute",
-              resultDisplay: { summary: "cancelled" },
+              resultDisplay: { summary },
             });
-            runtime.client.question
-              .reject({ requestID: req.id, directory: sessionDirectory ?? undefined })
-              .catch(() => { /* best-effort */ });
-            return;
-          }
-          const summary = result.answers.length === 1
-            ? result.answers[0]!.join(", ")
-            : result.answers
-                .map((ans, i) => `${req.questions[i]!.header || `Q${i + 1}`}: ${ans.join(", ")}`)
-                .join("; ");
-          bus.emitTransform("agent:tool-completed", {
-            toolCallId: callID,
-            exitCode: 0,
-            rawOutput: summary,
-            kind: "execute",
-            resultDisplay: { summary },
-          });
-          try {
-            await runtime.client.question.reply({
-              requestID: req.id,
-              answers: result.answers,
-              directory: sessionDirectory ?? undefined,
-            });
-          } catch (err) {
-            bus.emit("agent:error", {
-              message: err instanceof Error ? err.message : String(err),
-            });
+            try {
+              await runtime.client.question.reply({
+                requestID: req.id,
+                answers: result.answers,
+                directory: sessionDirectory ?? undefined,
+              });
+            } catch (err) {
+              bus.emit("agent:error", {
+                message: err instanceof Error ? err.message : String(err),
+              });
+            }
+          } finally {
+            pickerOpen = false;
+            drainQueue();
           }
         });
         break;
@@ -347,9 +364,15 @@ export default function activate(ctx: ExtensionContext): void {
           });
           break;
         }
+        pickerOpen = true;
         const ui = createToolUI(bus, compositor.surface("agent"));
         ui.custom(createPermissionSession(req, bus)).then((result: PermissionResult) => {
-          finish(result.reply, result.cancelled ? { skipReply: true } : undefined);
+          try {
+            finish(result.reply, result.cancelled ? { skipReply: true } : undefined);
+          } finally {
+            pickerOpen = false;
+            drainQueue();
+          }
         });
         break;
       }

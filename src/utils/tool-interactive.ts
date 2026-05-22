@@ -31,6 +31,10 @@ export function createToolUI(
           if (finished) return;
           finished = true;
           clearLines(surface, prevLineCount);
+          // Restore cursor to where it was before the leading \n so the
+          // caller's next write (e.g. opencode's `✓ 7s` completion marker)
+          // lands inline on the original tool-started row, not below it.
+          surface.write("\x1b8");
           bus.offPipe("input:intercept", interceptor);
           bus.emit("shell:stdout-hide", {});
           bus.emit("tool:interactive-end", {});
@@ -61,9 +65,10 @@ export function createToolUI(
         bus.emit("tool:interactive-start", {});
         bus.emit("shell:stdout-show", {});
         bus.onPipe("input:intercept", interceptor);
-        // Drop to a fresh row in case the cursor was mid-line; uncounted
-        // so clearLines on dismiss stops at the gap, not above it.
-        surface.write("\n");
+        // Save cursor, then drop to a fresh row. On dismiss we restore to
+        // the saved position so the caller's next write (e.g. opencode's
+        // `✓ 7s` completion marker) lands inline on the original row.
+        surface.write("\x1b7\n");
         session.onMount?.(() => render(), done);
         render();
       });
