@@ -17,6 +17,7 @@ const EXT_DIR = path.join(CONFIG_DIR, "extensions");
 
 interface InstallOpts {
   force?: boolean;
+  syncDeps?: boolean;
 }
 
 interface ResolvedSource {
@@ -142,11 +143,12 @@ function satisfies(version: string, spec: string): boolean {
   return vMaj === 0 && vMin === 0 && vPatch === sPatch;
 }
 
-/** Pin the extension's `agent-sh` dep to the host's exact version when the
- *  existing range *doesn't* admit the host version (e.g. bridge shipping
- *  `^0.12.0` against a 0.14.x host). Ranges that already satisfy the host
- *  are left untouched so authored intent survives. */
-function syncAgentShVersion(target: string): void {
+/** When the extension's `agent-sh` dep doesn't admit the host version
+ *  (e.g. bridge shipping `^0.12.0` against a 0.14.x host), warn so the
+ *  user knows drift is imminent. Only rewrites the pin when explicitly
+ *  asked via `--sync-deps` — silently mutating the bridge's package.json
+ *  on every install would hide drift from the source-of-truth on github. */
+function syncAgentShVersion(target: string, syncDeps: boolean): void {
   const hostVersion = hostAgentShVersion();
   if (!hostVersion) return;
   // Prerelease hosts (e.g. `0.15.0-pre`) likely aren't on npm; rewriting
@@ -158,7 +160,9 @@ function syncAgentShVersion(target: string): void {
   const raw = fs.readFileSync(pkgJson, "utf-8");
   const pkg = JSON.parse(raw) as Record<string, unknown>;
   const sections = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] as const;
+  const name = path.basename(target);
   let changed = false;
+  let warned = false;
   for (const section of sections) {
     const deps = pkg[section];
     if (!deps || typeof deps !== "object") continue;
@@ -167,9 +171,18 @@ function syncAgentShVersion(target: string): void {
     if (typeof current !== "string") continue;
     if (current.startsWith("file:")) continue;
     if (satisfies(hostVersion, current)) continue;
-    console.log(`agent-sh: ${path.basename(target)} pinned agent-sh ${current} doesn't admit host ${hostVersion}; bumping to ${hostVersion}.`);
-    d["agent-sh"] = hostVersion;
-    changed = true;
+    if (syncDeps) {
+      console.log(`agent-sh: rewriting ${name} agent-sh ${current} -> ${hostVersion}.`);
+      d["agent-sh"] = hostVersion;
+      changed = true;
+    } else if (!warned) {
+      console.warn(
+        `agent-sh: ${name} pins agent-sh ${current}, which doesn't admit host ${hostVersion}. ` +
+        `npm install will land an older agent-sh inside the extension and drift from the running host. ` +
+        `Re-run with --sync-deps to rewrite the pin to ${hostVersion}, or update the bridge's source pin.`,
+      );
+      warned = true;
+    }
   }
   if (changed) fs.writeFileSync(pkgJson, `${JSON.stringify(pkg, null, 2)}\n`);
 }
@@ -254,7 +267,7 @@ function linkBins(target: string, pkg: PackageJson): string[] {
 export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<void> {
   if (!spec) {
     console.error(
-      "Usage: agent-sh install <name|file:|npm:|github:> [--force]\n\n" +
+      "Usage: agent-sh install <name|file:|npm:|github:> [--force] [--sync-deps]\n\n" +
         "Bundled extensions:\n" +
         listBundled()
           .map((n) => `  ${n}`)
@@ -287,7 +300,7 @@ export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<
     fs.cpSync(resolved.sourcePath, target, { recursive: true });
     try {
       rewriteFileDeps(target, resolved.sourcePath);
-      syncAgentShVersion(target);
+      syncAgentShVersion(target, opts.syncDeps ?? false);
       const pkg = readPackageJson(target);
       if (pkg) {
         maybeNpmInstall(target, pkg);
