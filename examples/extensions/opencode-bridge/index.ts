@@ -13,6 +13,7 @@ import {
   type ToolPart,
   type QuestionRequest,
   type QuestionInfo,
+  type PermissionRequest,
 } from "@opencode-ai/sdk/v2";
 import type { ExtensionContext } from "agent-sh/types";
 import type { InteractiveSession } from "agent-sh/agent/types";
@@ -306,16 +307,51 @@ export default function activate(ctx: ExtensionContext): void {
         });
         break;
       }
-      // Without a reply the gated tool hangs forever. The bridge has no
-      // interactive approval UI, so auto-approve — mirrors claude-code-
-      // bridge's permissionMode: "acceptEdits". Set permission.edit:
-      // "allow" in opencode.json to skip the round-trip entirely.
+      // opencode.json's `permission.*` settings short-circuit before we
+      // get here; this branch surfaces whatever opencode still wants asked.
       case "permission.asked": {
-        const requestID = props.id as string | undefined;
-        if (!requestID || !runtime) break;
-        runtime.client.permission
-          .reply({ requestID, reply: "once", directory: sessionDirectory ?? undefined })
-          .catch(() => { /* approval is best-effort */ });
+        const req = props as PermissionRequest;
+        if (!runtime) break;
+        const callID = `permission-${req.id}`;
+        const detail = req.patterns.length > 0
+          ? `${req.permission}: ${req.patterns.join(", ")}`
+          : req.permission;
+        bus.emit("agent:tool-started", {
+          title: "permission",
+          toolCallId: callID,
+          kind: "execute",
+          displayDetail: detail,
+        });
+        const finish = (reply: "once" | "always" | "reject", note?: string) => {
+          const exitCode = reply === "reject" ? 1 : 0;
+          const summary = note ? `${reply} (${note})` : `${reply}: ${detail}`;
+          bus.emitTransform("agent:tool-completed", {
+            toolCallId: callID,
+            exitCode,
+            rawOutput: summary,
+            kind: "execute",
+            resultDisplay: { summary },
+          });
+          if (!runtime) return;
+          runtime.client.permission
+            .reply({ requestID: req.id, reply, directory: sessionDirectory ?? undefined })
+            .catch((err) => {
+              bus.emit("agent:error", {
+                message: err instanceof Error ? err.message : String(err),
+              });
+            });
+        };
+        if (!compositor) {
+          finish("reject", "no shell host");
+          bus.emit("ui:error", {
+            message: `opencode-bridge: rejected permission (no shell host): ${detail}`,
+          });
+          break;
+        }
+        const ui = createToolUI(bus, compositor.surface("agent"));
+        ui.custom(createPermissionSession(req)).then((result: PermissionResult) => {
+          finish(result.reply);
+        });
         break;
       }
     }
@@ -481,6 +517,7 @@ export default function activate(ctx: ExtensionContext): void {
 // ── Interactive question picker ──────────────────────────────────
 
 type QuestionResult = { answers: string[][]; cancelled: boolean };
+type PermissionResult = { reply: "once" | "always" | "reject" };
 
 function isKey(data: string, key: string): boolean {
   switch (key) {
@@ -607,6 +644,56 @@ function createQuestionSession(questions: QuestionInfo[]): InteractiveSession<Qu
           tab = next;
           optionIdx = 0;
         }
+      }
+    },
+  };
+}
+
+function createPermissionSession(req: PermissionRequest): InteractiveSession<PermissionResult> {
+  return {
+    render(width) {
+      const w = Math.min(80, width);
+      const lines: string[] = [];
+
+      lines.push(`${p.muted}${"─".repeat(w)}${p.reset}`);
+      lines.push(` ${p.warning}${p.bold}Permission required: ${req.permission}${p.reset}`);
+      lines.push("");
+
+      const meta = req.metadata ?? {};
+      const cmd = typeof meta.command === "string" ? meta.command : null;
+      const file = typeof meta.file === "string"
+        ? meta.file
+        : typeof meta.path === "string" ? meta.path : null;
+      if (cmd) {
+        for (const line of cmd.split("\n").slice(0, 6)) {
+          lines.push(`   ${p.dim}${line}${p.reset}`);
+        }
+        lines.push("");
+      } else if (file) {
+        lines.push(`   ${p.dim}${file}${p.reset}`);
+        lines.push("");
+      }
+
+      if (req.patterns.length > 0) {
+        lines.push(` ${p.muted}Patterns:${p.reset}`);
+        for (const pat of req.patterns) {
+          lines.push(`   ${pat}`);
+        }
+        lines.push("");
+      }
+
+      lines.push(` ${p.dim}[y] allow once  [a] allow always  [n] reject${p.reset}`);
+      lines.push(`${p.muted}${"─".repeat(w)}${p.reset}`);
+      return lines;
+    },
+
+    handleInput(data, done) {
+      if (isKey(data, "escape") || data === "n" || data === "N") {
+        done({ reply: "reject" });
+      } else if (data === "y" || data === "Y" || isKey(data, "enter")) {
+        done({ reply: "once" });
+      } else if (data === "a" || data === "A") {
+        done({ reply: "always" });
       }
     },
   };
