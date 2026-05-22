@@ -222,12 +222,11 @@ export default function activate(ctx: ExtensionContext): void {
 
     if (cancelledTurn) {
       // Pass through only what we need to unblock onSubmit; suppress
-      // tool / delta / error renders for the aborted turn.
-      if (evType === "session.idle") {
-        turnIdleSeen = true;
-        pendingTurnEnd?.();
-      } else if (evType === "session.error") {
-        cancelledTurn = false;
+      // everything else for the aborted turn. cancelledTurn is reset by
+      // onSubmit on the next turn — clearing it earlier (e.g. on
+      // session.error) lets opencode's later message.part.updated for
+      // the cancelled bash tool slip through and restart the spinner.
+      if (evType === "session.idle" || evType === "session.error") {
         turnIdleSeen = true;
         pendingTurnEnd?.();
       }
