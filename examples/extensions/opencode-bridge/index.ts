@@ -343,7 +343,6 @@ export default function activate(ctx: ExtensionContext): void {
               eventQueue.length = 0;
               cancelledTurn = true;
               pendingTurnEnd?.();
-              bus.emit("agent:processing-done", {});
             } else {
               drainQueue();
             }
@@ -400,11 +399,14 @@ export default function activate(ctx: ExtensionContext): void {
             pickerOpen = false;
             if (result.cancelled) {
               // Drop queued SSE — replaying would render tool indicators
-              // for a turn the user just aborted.
+              // for a turn the user just aborted. pendingTurnEnd?.() lets
+              // onSubmit's await idlePromise resolve so its finally block
+              // emits the single agent:processing-done; emitting one here
+              // too races with onSubmit's still-pending session.prompt()
+              // and leaves the TUI with two stacked prompts.
               eventQueue.length = 0;
               cancelledTurn = true;
               pendingTurnEnd?.();
-              bus.emit("agent:processing-done", {});
             } else {
               drainQueue();
             }
