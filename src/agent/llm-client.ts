@@ -39,6 +39,7 @@ function attributionHeaders(config: LlmClientConfig): Record<string, string> {
   return {
     "HTTP-Referer": config.appUrl ?? "https://agent-sh.dev",
     "X-Title": config.appName ?? "agent-sh",
+    "X-OpenRouter-Categories": "cli-agent,programming-app",
   };
 }
 
