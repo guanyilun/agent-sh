@@ -21,6 +21,7 @@ export default function activate(ctx: ExtensionContext): void {
   };
 
   let activeQuery: Query | null = null;
+  let sessionId: string | null = null;
   const listeners: Array<{ event: string; fn: Function }> = [];
 
   // ── Tool display helpers ────────────────────────────────────────
@@ -97,6 +98,7 @@ export default function activate(ctx: ExtensionContext): void {
             allowedTools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
             permissionMode: "acceptEdits",
             includePartialMessages: true,
+            ...(sessionId ? { resume: sessionId } : {}),
           },
         });
 
@@ -262,8 +264,11 @@ export default function activate(ctx: ExtensionContext): void {
               // Tool still running — nothing to do, TUI spinner already active
               break;
 
-            case "result":
+            case "result": {
+              const sid = (message as any).session_id;
+              if (typeof sid === "string" && sid) sessionId = sid;
               break;
+            }
           }
         }
 
@@ -291,7 +296,7 @@ export default function activate(ctx: ExtensionContext): void {
     };
 
     const onCancel = () => { activeQuery?.interrupt(); };
-    const onReset = () => { /* each query() is a new session */ };
+    const onReset = () => { sessionId = null; };
 
     bus.on("agent:submit", onSubmit);
     bus.on("agent:cancel-request", onCancel);
