@@ -96,8 +96,6 @@ export default function activate(ctx: ExtensionContext): void {
   let turnIdleSeen = false;
   let turnError: string | null = null;
 
-  // Queue SSE while a picker is open; replay on resolve so renders don't
-  // interleave with the picker's own writes.
   let pickerOpen = false;
   const eventQueue: Event[] = [];
   const drainQueue = (): void => {
@@ -393,9 +391,8 @@ export default function activate(ctx: ExtensionContext): void {
           } finally {
             pickerOpen = false;
             if (result.cancelled) {
-              // Drop queued SSE; let onSubmit's finally be the single
-              // emitter of agent:processing-done (a second one here races
-              // and produces stacked prompts).
+              // Let onSubmit's finally emit the single agent:processing-done;
+              // a second one here races and stacks prompts.
               eventQueue.length = 0;
               cancelledTurn = true;
               pendingTurnEnd?.();

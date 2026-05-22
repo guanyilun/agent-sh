@@ -121,7 +121,6 @@ function hostAgentShVersion(): string | null {
   }
 }
 
-/** Returns true for unparseable specs so authored ranges survive untouched. */
 function satisfies(version: string, spec: string): boolean {
   if (spec === version || spec === "*" || spec === "latest") return true;
   const [vMaj, vMin, vPatch] = version.split(/[.-]/, 3).map(Number);
@@ -141,8 +140,7 @@ function satisfies(version: string, spec: string): boolean {
 }
 
 /** Warn when the extension's `agent-sh` pin can't admit the host version;
- *  only rewrite when `--sync-deps` is set so the installed package.json
- *  doesn't silently diverge from upstream. */
+ *  only rewrite when --sync-deps is set. */
 function syncAgentShVersion(target: string, syncDeps: boolean): void {
   const hostVersion = hostAgentShVersion();
   if (!hostVersion) return;

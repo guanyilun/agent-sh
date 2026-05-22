@@ -30,8 +30,6 @@ export function createToolUI(
         const done = (result: T) => {
           if (finished) return;
           finished = true;
-          // Leave the rendered picker as a transcript; subsequent output
-          // lands below it.
           bus.offPipe("input:intercept", interceptor);
           bus.emit("shell:stdout-hide", {});
           bus.emit("tool:interactive-end", {});
