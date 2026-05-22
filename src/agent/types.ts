@@ -55,8 +55,8 @@ export interface InteractiveSession<T> {
   render(width: number): string[];
   /** Handle raw input. Call done(result) to finish the session. */
   handleInput(data: string, done: (result: T) => void): void;
-  /** Called when session starts. Receives invalidate() for async re-renders. */
-  onMount?(invalidate: () => void): void;
+  /** done() lets the session resolve itself from outside handleInput. */
+  onMount?(invalidate: () => void, done: (result: T) => void): void;
   /** Called when session ends (cleanup). */
   onUnmount?(): void;
 }

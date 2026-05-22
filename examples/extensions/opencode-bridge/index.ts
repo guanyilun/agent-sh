@@ -13,6 +13,7 @@ import {
   type ToolPart,
   type QuestionRequest,
   type QuestionInfo,
+  type PermissionRequest,
 } from "@opencode-ai/sdk/v2";
 import type { ExtensionContext } from "agent-sh/types";
 import type { InteractiveSession } from "agent-sh/agent/types";
@@ -60,7 +61,8 @@ function parseUnifiedDiff(patch: string): DiffResult | null {
 }
 
 export default function activate(ctx: ExtensionContext): void {
-  const { bus, call } = ctx; const { compositor } = ctx.shell;
+  const { bus, call } = ctx;
+  const compositor = ctx.shell?.compositor;
 
   const cwd = (): string => {
     const v = call("cwd");
@@ -93,6 +95,18 @@ export default function activate(ctx: ExtensionContext): void {
   let pendingTurnEnd: (() => void) | null = null;
   let turnIdleSeen = false;
   let turnError: string | null = null;
+
+  let pickerOpen = false;
+  const eventQueue: Event[] = [];
+  const drainQueue = (): void => {
+    const events = eventQueue.splice(0);
+    for (const ev of events) handleEvent(ev);
+  };
+
+  // After Ctrl+C, opencode emits a tail of tool / error state for the
+  // aborted turn. Suppress until the next turn so it doesn't restart the
+  // spinner or replay dead tool entries.
+  let cancelledTurn = false;
 
   const listeners: Array<{ event: string; fn: Function }> = [];
 
@@ -194,11 +208,23 @@ export default function activate(ctx: ExtensionContext): void {
 
 
   function handleEvent(event: Event): void {
+    if (pickerOpen) { eventQueue.push(event); return; }
     if (!sessionId) return;
     const evType = (event as any).type as string;
     const props = (event as any).properties ?? {};
     const sid = props.sessionID;
     if (typeof sid === "string" && sid !== sessionId) return;
+
+    if (cancelledTurn) {
+      // Only let through what unblocks onSubmit. Clearing the flag earlier
+      // (e.g. on session.error) lets the trailing bash part.updated slip
+      // past and restart the spinner.
+      if (evType === "session.idle" || evType === "session.error") {
+        turnIdleSeen = true;
+        pendingTurnEnd?.();
+      }
+      return;
+    }
 
     switch (evType) {
       // message.part.delta is undocumented in the SDK's Event union but
@@ -242,70 +268,139 @@ export default function activate(ctx: ExtensionContext): void {
       case "question.asked": {
         const req = props as QuestionRequest;
         if (!runtime) break;
+        if (!compositor) {
+          runtime.client.question
+            .reject({ requestID: req.id, directory: sessionDirectory ?? undefined })
+            .catch(() => { /* best-effort */ });
+          bus.emit("ui:error", {
+            message: `opencode-bridge: rejected interactive question (no shell host): ${req.questions.map((q) => q.question).join("; ")}`,
+          });
+          break;
+        }
+        pickerOpen = true;
         const ui = createToolUI(bus, compositor.surface("agent"));
         ui.custom(createQuestionSession(req.questions)).then(async (result: QuestionResult) => {
-          if (!runtime) return;
-          // Record the question + answer as a synthetic tool entry so the
-          // timeline shows what was asked and what the user picked.
-          const callID = `question-${req.id}`;
-          const detail = req.questions.length === 1
-            ? req.questions[0]!.question
-            : req.questions.map((q, i) => `${q.header || `Q${i + 1}`}: ${q.question}`).join("; ");
-          bus.emit("agent:tool-started", {
-            title: "question",
-            toolCallId: callID,
-            kind: "execute",
-            displayDetail: detail,
-          });
-          if (result.cancelled) {
+          try {
+            if (!runtime) return;
+            // Record the question + answer as a synthetic tool entry so the
+            // timeline shows what was asked and what the user picked.
+            const callID = `question-${req.id}`;
+            const detail = req.questions.length === 1
+              ? req.questions[0]!.question
+              : req.questions.map((q, i) => `${q.header || `Q${i + 1}`}: ${q.question}`).join("; ");
+            bus.emit("agent:tool-started", {
+              title: "question",
+              toolCallId: callID,
+              kind: "execute",
+              displayDetail: detail,
+            });
+            if (result.cancelled) {
+              bus.emitTransform("agent:tool-completed", {
+                toolCallId: callID,
+                exitCode: 1,
+                rawOutput: "cancelled",
+                kind: "execute",
+                resultDisplay: { summary: "cancelled" },
+              });
+              runtime.client.question
+                .reject({ requestID: req.id, directory: sessionDirectory ?? undefined })
+                .catch(() => { /* best-effort */ });
+              return;
+            }
+            const summary = result.answers.length === 1
+              ? result.answers[0]!.join(", ")
+              : result.answers
+                  .map((ans, i) => `${req.questions[i]!.header || `Q${i + 1}`}: ${ans.join(", ")}`)
+                  .join("; ");
             bus.emitTransform("agent:tool-completed", {
               toolCallId: callID,
-              exitCode: 1,
-              rawOutput: "cancelled",
+              exitCode: 0,
+              rawOutput: summary,
               kind: "execute",
-              resultDisplay: { summary: "cancelled" },
+              resultDisplay: { summary },
             });
-            runtime.client.question
-              .reject({ requestID: req.id, directory: sessionDirectory ?? undefined })
-              .catch(() => { /* best-effort */ });
-            return;
-          }
-          const summary = result.answers.length === 1
-            ? result.answers[0]!.join(", ")
-            : result.answers
-                .map((ans, i) => `${req.questions[i]!.header || `Q${i + 1}`}: ${ans.join(", ")}`)
-                .join("; ");
-          bus.emitTransform("agent:tool-completed", {
-            toolCallId: callID,
-            exitCode: 0,
-            rawOutput: summary,
-            kind: "execute",
-            resultDisplay: { summary },
-          });
-          try {
-            await runtime.client.question.reply({
-              requestID: req.id,
-              answers: result.answers,
-              directory: sessionDirectory ?? undefined,
-            });
-          } catch (err) {
-            bus.emit("agent:error", {
-              message: err instanceof Error ? err.message : String(err),
-            });
+            try {
+              await runtime.client.question.reply({
+                requestID: req.id,
+                answers: result.answers,
+                directory: sessionDirectory ?? undefined,
+              });
+            } catch (err) {
+              bus.emit("agent:error", {
+                message: err instanceof Error ? err.message : String(err),
+              });
+            }
+          } finally {
+            pickerOpen = false;
+            if (result.cancelled) {
+              eventQueue.length = 0;
+              cancelledTurn = true;
+              pendingTurnEnd?.();
+            } else {
+              drainQueue();
+            }
           }
         });
         break;
       }
-      // Without a reply the gated tool hangs forever. The bridge has no
-      // interactive approval UI, so auto-approve — mirrors claude-code-
-      // bridge's permissionMode: "acceptEdits". Set permission.edit:
-      // "allow" in opencode.json to skip the round-trip entirely.
       case "permission.asked": {
-        const requestID = props.id as string | undefined;
-        if (!requestID || !runtime) break;
-        runtime.client.permission
-          .reply({ requestID, reply: "once", directory: sessionDirectory ?? undefined })
-          .catch(() => { /* approval is best-effort */ });
+        const req = props as PermissionRequest;
+        if (!runtime) break;
+        const detail = req.patterns.length > 0
+          ? `${req.permission}: ${req.patterns.join(", ")}`
+          : req.permission;
+        const finish = (reply: "once" | "always" | "reject", opts?: { note?: string; skipReply?: boolean }) => {
+          if (reply === "reject") {
+            const callID = `permission-${req.id}`;
+            const summary = opts?.note ? `denied (${opts.note})` : `denied: ${detail}`;
+            bus.emit("agent:tool-started", {
+              title: "permission",
+              toolCallId: callID,
+              kind: "execute",
+              displayDetail: detail,
+            });
+            bus.emitTransform("agent:tool-completed", {
+              toolCallId: callID,
+              exitCode: 1,
+              rawOutput: summary,
+              kind: "execute",
+              resultDisplay: { summary },
+            });
+          }
+          if (!runtime || opts?.skipReply) return;
+          runtime.client.permission
+            .reply({ requestID: req.id, reply, directory: sessionDirectory ?? undefined })
+            .catch((err) => {
+              bus.emit("agent:error", {
+                message: err instanceof Error ? err.message : String(err),
+              });
+            });
+        };
+        if (!compositor) {
+          finish("reject", { note: "no shell host" });
+          bus.emit("ui:error", {
+            message: `opencode-bridge: rejected permission (no shell host): ${detail}`,
+          });
+          break;
+        }
+        pickerOpen = true;
+        const ui = createToolUI(bus, compositor.surface("agent"));
+        ui.custom(createPermissionSession(req, bus)).then((result: PermissionResult) => {
+          try {
+            finish(result.reply, result.cancelled ? { skipReply: true } : undefined);
+          } finally {
+            pickerOpen = false;
+            if (result.cancelled) {
+              // Let onSubmit's finally emit the single agent:processing-done;
+              // a second one here races and stacks prompts.
+              eventQueue.length = 0;
+              cancelledTurn = true;
+              pendingTurnEnd?.();
+            } else {
+              drainQueue();
+            }
+          }
+        });
         break;
       }
     }
@@ -339,6 +434,7 @@ export default function activate(ctx: ExtensionContext): void {
       bus.emit("agent:query", { query: userQuery });
       bus.emit("agent:processing-start", {});
       turnText = "";
+      cancelledTurn = false;
       turnIdleSeen = false;
       turnError = null;
       // Set the idle waiter BEFORE prompt() so a fast session.idle can't
@@ -471,6 +567,7 @@ export default function activate(ctx: ExtensionContext): void {
 // ── Interactive question picker ──────────────────────────────────
 
 type QuestionResult = { answers: string[][]; cancelled: boolean };
+type PermissionResult = { reply: "once" | "always" | "reject"; cancelled?: boolean };
 
 function isKey(data: string, key: string): boolean {
   switch (key) {
@@ -597,6 +694,61 @@ function createQuestionSession(questions: QuestionInfo[]): InteractiveSession<Qu
           tab = next;
           optionIdx = 0;
         }
+      }
+    },
+  };
+}
+
+function createPermissionSession(
+  req: PermissionRequest,
+  bus: { on: (e: "agent:cancel-request", fn: () => void) => void; off: (e: "agent:cancel-request", fn: () => void) => void },
+): InteractiveSession<PermissionResult> {
+  let cancelHandler: (() => void) | null = null;
+  // Cast widens onMount: the vendored agent-sh type still declares the 1-arg signature.
+  const onMount = ((_invalidate: () => void, done: (r: PermissionResult) => void): void => {
+    cancelHandler = () => done({ reply: "reject", cancelled: true });
+    bus.on("agent:cancel-request", cancelHandler);
+  }) as InteractiveSession<PermissionResult>["onMount"];
+  return {
+    onMount,
+    onUnmount() {
+      if (cancelHandler) bus.off("agent:cancel-request", cancelHandler);
+      cancelHandler = null;
+    },
+    render(_width) {
+      const lines: string[] = [];
+      lines.push(` ${p.warning}${p.bold}Permission required: ${req.permission}${p.reset}`);
+
+      const meta = req.metadata ?? {};
+      const cmd = typeof meta.command === "string" ? meta.command : null;
+      const file = typeof meta.file === "string"
+        ? meta.file
+        : typeof meta.path === "string" ? meta.path : null;
+      if (cmd) {
+        for (const line of cmd.split("\n").slice(0, 6)) {
+          lines.push(`   ${p.dim}${line}${p.reset}`);
+        }
+      } else if (file) {
+        lines.push(`   ${p.dim}${file}${p.reset}`);
+      }
+
+      if (req.patterns.length > 0 && !cmd && !file) {
+        for (const pat of req.patterns) {
+          lines.push(`   ${p.dim}${pat}${p.reset}`);
+        }
+      }
+
+      lines.push(` ${p.dim}[y] allow once  [a] allow always  [n] reject${p.reset}`);
+      return lines;
+    },
+
+    handleInput(data, done) {
+      if (isKey(data, "escape") || data === "n" || data === "N") {
+        done({ reply: "reject" });
+      } else if (data === "y" || data === "Y" || isKey(data, "enter")) {
+        done({ reply: "once" });
+      } else if (data === "a" || data === "A") {
+        done({ reply: "always" });
       }
     },
   };

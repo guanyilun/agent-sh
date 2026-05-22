@@ -17,6 +17,7 @@ const EXT_DIR = path.join(CONFIG_DIR, "extensions");
 
 interface InstallOpts {
   force?: boolean;
+  syncDeps?: boolean;
 }
 
 interface ResolvedSource {
@@ -111,6 +112,72 @@ function readPackageJson(target: string): PackageJson | null {
   return JSON.parse(fs.readFileSync(pkgJson, "utf-8")) as PackageJson;
 }
 
+function hostAgentShVersion(): string | null {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf-8"));
+    return typeof pkg.version === "string" ? pkg.version : null;
+  } catch {
+    return null;
+  }
+}
+
+function satisfies(version: string, spec: string): boolean {
+  if (spec === version || spec === "*" || spec === "latest") return true;
+  const [vMaj, vMin, vPatch] = version.split(/[.-]/, 3).map(Number);
+  if ([vMaj, vMin, vPatch].some(Number.isNaN)) return true;
+  const m = spec.match(/^([\^~]?)(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return true;
+  const op = m[1];
+  const sMaj = Number(m[2]);
+  const sMin = Number(m[3]);
+  const sPatch = Number(m[4]);
+  if (op === "") return vMaj === sMaj && vMin === sMin && vPatch === sPatch;
+  if (op === "~") return vMaj === sMaj && vMin === sMin && vPatch >= sPatch;
+  // ^x.y.z: zero-major treats minor as the breaking boundary (npm rule).
+  if (sMaj > 0) return vMaj === sMaj && (vMin > sMin || (vMin === sMin && vPatch >= sPatch));
+  if (sMin > 0) return vMaj === 0 && vMin === sMin && vPatch >= sPatch;
+  return vMaj === 0 && vMin === 0 && vPatch === sPatch;
+}
+
+/** Warn when the extension's `agent-sh` pin can't admit the host version;
+ *  only rewrite when --sync-deps is set. */
+function syncAgentShVersion(target: string, syncDeps: boolean): void {
+  const hostVersion = hostAgentShVersion();
+  if (!hostVersion) return;
+  // Prerelease hosts aren't on npm; rewriting would leave npm install unable to resolve.
+  if (hostVersion.includes("-")) return;
+  const pkgJson = path.join(target, "package.json");
+  if (!fs.existsSync(pkgJson)) return;
+  const raw = fs.readFileSync(pkgJson, "utf-8");
+  const pkg = JSON.parse(raw) as Record<string, unknown>;
+  const sections = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] as const;
+  const name = path.basename(target);
+  let changed = false;
+  let warned = false;
+  for (const section of sections) {
+    const deps = pkg[section];
+    if (!deps || typeof deps !== "object") continue;
+    const d = deps as Record<string, string>;
+    const current = d["agent-sh"];
+    if (typeof current !== "string") continue;
+    if (current.startsWith("file:")) continue;
+    if (satisfies(hostVersion, current)) continue;
+    if (syncDeps) {
+      console.log(`agent-sh: rewriting ${name} agent-sh ${current} -> ${hostVersion}.`);
+      d["agent-sh"] = hostVersion;
+      changed = true;
+    } else if (!warned) {
+      console.warn(
+        `agent-sh: ${name} pins agent-sh ${current}, which doesn't admit host ${hostVersion}. ` +
+        `npm install will land an older agent-sh inside the extension and drift from the running host. ` +
+        `Re-run with --sync-deps to rewrite the pin to ${hostVersion}, or update the bridge's source pin.`,
+      );
+      warned = true;
+    }
+  }
+  if (changed) fs.writeFileSync(pkgJson, `${JSON.stringify(pkg, null, 2)}\n`);
+}
+
 /** Relative `file:` deps in bundled extensions (e.g. `"agent-sh": "file:../../.."`)
  *  point at the wrong location after the source is copied into ~/.agent-sh/extensions/.
  *  Resolve them against the original source dir so npm install in the target succeeds. */
@@ -191,7 +258,7 @@ function linkBins(target: string, pkg: PackageJson): string[] {
 export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<void> {
   if (!spec) {
     console.error(
-      "Usage: agent-sh install <name|file:|npm:|github:> [--force]\n\n" +
+      "Usage: agent-sh install <name|file:|npm:|github:> [--force] [--sync-deps]\n\n" +
         "Bundled extensions:\n" +
         listBundled()
           .map((n) => `  ${n}`)
@@ -221,9 +288,15 @@ export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<
 
   let linkedBins: string[] = [];
   if (resolved.isDirectory) {
-    fs.cpSync(resolved.sourcePath, target, { recursive: true });
+    fs.cpSync(resolved.sourcePath, target, {
+      recursive: true,
+      // Skip source node_modules: maybeNpmInstall short-circuits on
+      // existing node_modules, silently leaving the bridge's deps stale.
+      filter: (src) => path.basename(src) !== "node_modules",
+    });
     try {
       rewriteFileDeps(target, resolved.sourcePath);
+      syncAgentShVersion(target, opts.syncDeps ?? false);
       const pkg = readPackageJson(target);
       if (pkg) {
         maybeNpmInstall(target, pkg);

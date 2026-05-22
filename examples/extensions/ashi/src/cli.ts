@@ -70,7 +70,10 @@ async function main(): Promise<void> {
 
   if (sub === "install" || sub === "uninstall" || sub === "list") {
     const { runInstall, runUninstall, runList } = await import("agent-sh/cli/install");
-    if (sub === "install") await runInstall(rest[0] ?? "", { force: rest.includes("--force") });
+    if (sub === "install") await runInstall(rest[0] ?? "", {
+      force: rest.includes("--force"),
+      syncDeps: rest.includes("--sync-deps"),
+    });
     else if (sub === "uninstall") await runUninstall(rest[0] ?? "");
     else runList();
     process.exit(0);

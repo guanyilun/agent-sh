@@ -30,7 +30,6 @@ export function createToolUI(
         const done = (result: T) => {
           if (finished) return;
           finished = true;
-          clearLines(surface, prevLineCount);
           bus.offPipe("input:intercept", interceptor);
           bus.emit("shell:stdout-hide", {});
           bus.emit("tool:interactive-end", {});
@@ -61,7 +60,10 @@ export function createToolUI(
         bus.emit("tool:interactive-start", {});
         bus.emit("shell:stdout-show", {});
         bus.onPipe("input:intercept", interceptor);
-        session.onMount?.(() => render());
+        // Drop to a fresh row in case the cursor was mid-line; uncounted
+        // so clearLines on dismiss stops at the gap, not above it.
+        surface.write("\n");
+        session.onMount?.(() => render(), done);
         render();
       });
     },
