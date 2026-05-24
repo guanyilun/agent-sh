@@ -39,9 +39,12 @@ export interface ToolResultArgs extends RenderState {
 }
 
 /** Mutated by ashi when the tool completes. Renderers may ignore setStatus
- *  if they encode status differently (e.g. a sigil in the call line). */
+ *  if they encode status differently (e.g. a sigil in the call line).
+ *  Optional toggleExpanded lets long labels (e.g. bash commands) reveal
+ *  their full form on Ctrl+O. */
 export interface ToolCallView extends Component {
   setStatus(opts: { exitCode: number | null; elapsedMs: number; summary?: string }): void;
+  toggleExpanded?(): void;
 }
 
 /** Mutated by ashi as output streams in and when the tool completes.

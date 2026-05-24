@@ -1,4 +1,5 @@
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
+import { highlight, supportsLanguage } from "cli-highlight";
 import type { ExtensionContext } from "agent-sh/types";
 import { theme } from "./theme.js";
 import { GROUP_ICONS } from "./components.js";
@@ -66,12 +67,14 @@ function statusSuffix(opts?: StatusOpts): string {
   return `  ${mark}${elapsed}${sum}`;
 }
 
-/** Renders a one-line tool call header from a label producer. The label is
- *  recomputed on setStatus so the trailing status mark updates in place. */
+/** Renders a one-line tool call header from a label producer. The label
+ *  receives an `expanded` flag so producers like bash can truncate when
+ *  collapsed and reveal the full command on Ctrl+O. */
 class LabeledCallLine extends Container implements ToolCallView {
   private line: Text;
   private status?: StatusOpts;
-  constructor(private label: () => string) {
+  private expanded = false;
+  constructor(private label: (opts: { expanded: boolean }) => string) {
     super();
     this.line = new Text("", 1, 0);
     this.addChild(new Spacer(1));
@@ -82,8 +85,12 @@ class LabeledCallLine extends Container implements ToolCallView {
     this.status = opts;
     this.repaint();
   }
+  toggleExpanded(): void {
+    this.expanded = !this.expanded;
+    this.repaint();
+  }
   private repaint(): void {
-    this.line.setText(`${this.label()}${statusSuffix(this.status)}`);
+    this.line.setText(`${this.label({ expanded: this.expanded })}${statusSuffix(this.status)}`);
   }
 }
 
@@ -91,12 +98,24 @@ const bold = (t: string): string => theme.bold(theme.fg("toolTitle", t));
 const accent = (t: string): string => theme.fg("accent", t);
 const muted = (t: string): string => theme.fg("muted", t);
 
-function bashLabel(args: ToolCallArgs): string {
+function highlightBash(src: string): string {
+  if (!supportsLanguage("bash")) return src;
+  try { return highlight(src, { language: "bash", ignoreIllegals: true }); }
+  catch { return src; }
+}
+
+function compactPreview(src: string, max = 80): string {
+  const compact = src.replace(/\s+/g, " ").trim();
+  return compact.length > max ? compact.slice(0, max - 1) + "…" : compact;
+}
+
+function bashLabel(args: ToolCallArgs, opts: { expanded: boolean }): string {
   const r = parseRaw(args.rawInput);
   const command = str(r.command) ?? "…";
   const timeout = num(r.timeout);
   const to = timeout ? muted(` (timeout ${timeout}s)`) : "";
-  return `${bold("$")} ${accent(command)}${to}`;
+  const text = opts.expanded ? command : compactPreview(command);
+  return `${bold("$")} ${highlightBash(text)}${to}`;
 }
 
 function readLabel(args: ToolCallArgs): string {
@@ -153,7 +172,7 @@ export function registerDefaultToolRenderers(ctx: ExtensionContext): void {
     ctx.define(`ashi:render-tool-call:${name}`, fn);
   };
 
-  define("bash", (args) => new LabeledCallLine(() => bashLabel(args)));
+  define("bash", (args) => new LabeledCallLine((opts) => bashLabel(args, opts)));
   define("read_file", (args) => new LabeledCallLine(() => readLabel(args)));
   define("grep", (args) => new LabeledCallLine(() => grepLabel(args)));
   define("glob", (args) => new LabeledCallLine(() => globLabel(args)));
