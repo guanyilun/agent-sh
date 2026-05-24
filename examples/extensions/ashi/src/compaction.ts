@@ -21,21 +21,21 @@ export function registerCompaction(
 ): void {
   ctx.define("ashi:compact:build-summary", (_evicted: AgentMessage[]): string | null => null);
 
-  ctx.advise("conversation:compact", async (next: (...a: unknown[]) => unknown, opts: unknown) => {
+  ctx.advise("conversation:compact", async (_next: (...a: unknown[]) => unknown, opts: unknown) => {
     await capture.flush();
     const messages = ctx.call("conversation:get-messages") as AgentMessage[] | undefined;
-    if (!messages || messages.length < 4) return next(opts);
+    if (!messages || messages.length < 4) return null;
 
     const o = (opts ?? {}) as { force?: boolean; target?: number };
     const budget = pickBudget(o);
     const minCut = o.force ? 1 : 2;
     const cutIdx = findCutPoint(messages, budget);
-    if (cutIdx < minCut) return next(opts);
+    if (cutIdx < minCut) return null;
 
     const firstKeptId = capture.getEntryIdAt(cutIdx);
     if (!firstKeptId) {
-      ctx.bus.emit("ui:error", { message: "compaction: kept-message has no on-disk entry; falling back" });
-      return next(opts);
+      ctx.bus.emit("ui:error", { message: "compaction: kept-message has no on-disk entry; aborting" });
+      return null;
     }
 
     const older = messages.slice(0, cutIdx);
