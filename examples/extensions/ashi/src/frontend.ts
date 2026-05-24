@@ -25,6 +25,7 @@ import {
 } from "./components.js";
 import type { ToolCallView, ToolResultView } from "./hooks.js";
 import { createToolHookResolver } from "./hooks.js";
+import { loadGroupMaxVisible } from "./display-config.js";
 
 const GROUPABLE_KINDS = new Set(["read", "search"]);
 const TOOL_KIND: Record<string, string> = {
@@ -120,6 +121,10 @@ function detailFromArgs(argsJson: string | undefined): string {
     if (typeof args.path === "string") return relativize(args.path);
     if (typeof args.file_path === "string") return relativize(args.file_path);
     if (typeof args.query === "string") return `"${args.query}"`;
+    if (typeof args.source === "string") {
+      const compact = args.source.replace(/\s+/g, " ").trim();
+      return compact.length > 80 ? compact.slice(0, 77) + "…" : compact;
+    }
   } catch { /* fall through */ }
   return "";
 }
@@ -229,10 +234,22 @@ export function mountAshi(
   let activeAssistant: AssistantMessage | null = null;
   let activeThinking: ThinkingBlock | null = null;
   const activeTools = new Map<string, LiveToolEntry>();
-  /** Per-batch state from agent:tool-batch — the group is created lazily on
-   *  the first member's tool-started so the chat insertion order is correct. */
-  const batchGroups = new Map<string, { total: number; group: ToolGroup | null }>();
-  let lastToolResult: ToolResultView | null = null;
+  const groupMaxVisible = loadGroupMaxVisible();
+
+  /** Find a same-kind ToolGroup at the chat tail. ThinkingBlocks are
+   *  visually-neutral only when hidden — visible thinking is a hard separator,
+   *  so toggling thinking on splits previously-merged groups at iteration
+   *  boundaries. */
+  const findMergeableGroup = (kind: string): ToolGroup | null => {
+    for (let i = chat.children.length - 1; i >= 0; i--) {
+      const c = chat.children[i]!;
+      if (c instanceof ToolGroup) return c.kind === kind ? c : null;
+      if (c instanceof ThinkingBlock && hideThinking) continue;
+      if (c instanceof AssistantMessage && !c.hasContent()) continue;
+      return null;
+    }
+    return null;
+  };
   let loader: Loader | null = null;
   let processing = false;
   const queuedQueries: string[] = [];
@@ -343,32 +360,18 @@ export function mountAshi(
         chat.addChild(renderAssistantFinal(text));
       }
       if (m.tool_calls) {
-        const calls = m.tool_calls;
-        let i = 0;
-        while (i < calls.length) {
-          const startName = calls[i]!.function?.name ?? "";
-          const startKind = TOOL_KIND[startName];
-          if (startKind && GROUPABLE_KINDS.has(startKind)) {
-            let j = i;
-            while (j < calls.length && TOOL_KIND[calls[j]!.function?.name ?? ""] === startKind) j++;
-            const runLen = j - i;
-            if (runLen > 1) {
-              const group = new ToolGroup(startKind, runLen);
-              chat.addChild(group);
-              for (let k = i; k < j; k++) {
-                const c = calls[k]!;
-                const cid = c.id ?? "";
-                const cname = c.function?.name ?? "tool";
-                group.addCall(cid, cname, detailFromArgs(c.function?.arguments));
-                if (cid) toolMap.set(cid, { kind: "group", group, name: cname });
-              }
-              i = j;
-              continue;
-            }
-          }
-          const tc = calls[i]!;
+        for (const tc of m.tool_calls) {
           const id = tc.id ?? "";
           const name = tc.function?.name ?? "tool";
+          const kind = TOOL_KIND[name];
+          if (kind && GROUPABLE_KINDS.has(kind)) {
+            const mergeable = findMergeableGroup(kind);
+            const group = mergeable
+              ?? (() => { const g = new ToolGroup(kind, groupMaxVisible); chat.addChild(g); return g; })();
+            group.addCall(id, name, detailFromArgs(tc.function?.arguments));
+            if (id) toolMap.set(id, { kind: "group", group, name });
+            continue;
+          }
           const pair = renderToolPair({
             toolCallId: id, name, title: name, kind: undefined,
             displayDetail: detailFromArgs(tc.function?.arguments),
@@ -377,8 +380,6 @@ export function mountAshi(
           chat.addChild(pair.call);
           chat.addChild(pair.result);
           if (id) toolMap.set(id, { kind: "pair", pair, name });
-          lastToolResult = pair.result;
-          i++;
         }
       }
     } else if (m.role === "tool") {
@@ -411,8 +412,6 @@ export function mountAshi(
     activeAssistant = null;
     activeThinking = null;
     activeTools.clear();
-    batchGroups.clear();
-    lastToolResult = null;
     chat.clear();
     const branch = getStore().current().getBranch();
     const toolMap = new Map<string, ReplayEntry>();
@@ -480,13 +479,6 @@ export function mountAshi(
     tui.requestRender();
   });
 
-  bus.on("agent:tool-batch", (e) => {
-    batchGroups.clear();
-    for (const g of e.groups) {
-      batchGroups.set(g.kind, { total: g.tools.length, group: null });
-    }
-  });
-
   bus.on("agent:tool-started", (e) => {
     finalizeThinking();
     if (activeAssistant) {
@@ -500,17 +492,12 @@ export function mountAshi(
     );
 
     const kind = e.kind ?? "";
-    const batchEntry = batchGroups.get(kind);
-    const shouldGroup = !!batchEntry && batchEntry.total > 1 && GROUPABLE_KINDS.has(kind);
-    if (shouldGroup) {
-      if (!batchEntry!.group) {
-        batchEntry!.group = new ToolGroup(kind, batchEntry!.total);
-        chat.addChild(batchEntry!.group);
-      }
-      batchEntry!.group.addCall(id, title, detail);
-      activeTools.set(id, { kind: "group", group: batchEntry!.group });
-      // Grouped tools have no individual result body — Ctrl+O wouldn't have
-      // anything to expand, so leave lastToolResult pointing at the prior tool.
+    if (GROUPABLE_KINDS.has(kind)) {
+      const mergeable = findMergeableGroup(kind);
+      const group = mergeable
+        ?? (() => { const g = new ToolGroup(kind, groupMaxVisible); chat.addChild(g); return g; })();
+      group.addCall(id, title, detail);
+      activeTools.set(id, { kind: "group", group });
       tui.requestRender();
       return;
     }
@@ -522,7 +509,6 @@ export function mountAshi(
     activeTools.set(id, { kind: "pair", pair });
     chat.addChild(pair.call);
     chat.addChild(pair.result);
-    lastToolResult = pair.result;
     tui.requestRender();
   });
 
@@ -743,14 +729,21 @@ export function mountAshi(
   // ── Keybindings ────────────────────────────────────────────────
   const toggleThinking = (): void => {
     hideThinking = !hideThinking;
-    const walk = (node: Container): void => {
-      for (const child of node.children) {
-        if (child instanceof ThinkingBlock) child.setHidden(hideThinking);
-        else if (child instanceof Container) walk(child);
-      }
-    };
-    walk(chat);
-    tui.requestRender();
+    if (processing) {
+      // Mid-turn: in-place show/hide only. Past groups stay as they merged
+      // under the old flag; future tool calls in this turn respect the new
+      // flag via findMergeableGroup. Next idle rebuild reflows everything.
+      const walk = (node: Container): void => {
+        for (const child of node.children) {
+          if (child instanceof ThinkingBlock) child.setHidden(hideThinking);
+          else if (child instanceof Container) walk(child);
+        }
+      };
+      walk(chat);
+      tui.requestRender();
+      return;
+    }
+    void rebuildChat();
   };
 
   tui.addInputListener((data) => {
@@ -807,10 +800,15 @@ export function mountAshi(
       return { consume: true };
     }
     if (matchesKey(data, "ctrl+o")) {
-      if (lastToolResult) {
-        lastToolResult.toggleExpanded();
-        tui.requestRender();
-      }
+      const toggle = (node: Container): void => {
+        for (const child of node.children) {
+          const fn = (child as unknown as { toggleExpanded?: () => void }).toggleExpanded;
+          if (typeof fn === "function") fn.call(child);
+          if (child instanceof Container) toggle(child);
+        }
+      };
+      toggle(chat);
+      tui.requestRender();
       return { consume: true };
     }
     return undefined;
