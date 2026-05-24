@@ -39,7 +39,7 @@ export interface CompactionEntry {
   id: string;
   parentId: string;
   timestamp: number;
-  summary: string;
+  summary?: string;
   firstKeptId: string;
   tokensBefore: number;
 }
@@ -53,6 +53,44 @@ export interface SessionMeta {
 
 export function newEntryId(): string {
   return crypto.randomBytes(4).toString("hex");
+}
+
+function extractText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((p) => {
+      if (typeof p === "string") return p;
+      const part = p as { text?: string; content?: string };
+      return part?.text ?? part?.content ?? "";
+    }).join(" ");
+  }
+  return "";
+}
+
+function snippet(text: string, max: number): string {
+  const cleaned = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (cleaned.length <= max) return cleaned || "(empty)";
+  return cleaned.slice(0, max) + "…";
+}
+
+function summarizeMessage(m: AgentMessage): string {
+  const role = m.role ?? "?";
+  if (role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+    const tools = m.tool_calls.map((tc) => tc.function?.name ?? "tool").join(", ");
+    const text = extractText(m.content);
+    const prefix = text ? `${snippet(text, 60)} → ` : "";
+    return `assistant: ${prefix}called ${tools}`;
+  }
+  if (role === "tool") {
+    const text = typeof m.content === "string" ? m.content : extractText(m.content);
+    return `tool result: ${snippet(text, 80)}`;
+  }
+  return `${role}: ${snippet(extractText(m.content), 100)}`;
+}
+
+export function renderEvictedSummary(evicted: AgentMessage[]): string {
+  const lines = evicted.map((m) => `- ${summarizeMessage(m)}`);
+  return `${lines.length} message(s) elided\n${lines.join("\n")}`;
 }
 
 /** One session = one JSONL file (entries) + sidecar files for leaf & meta.
@@ -152,7 +190,7 @@ export class SessionStore {
     return newIds;
   }
 
-  async appendCompaction(summary: string, firstKeptId: string, tokensBefore: number): Promise<string> {
+  async appendCompaction(firstKeptId: string, tokensBefore: number, summary?: string): Promise<string> {
     if (!this.entries.has(firstKeptId)) throw new Error(`firstKeptId unknown: ${firstKeptId}`);
     this.flushHeader();
     const e: CompactionEntry = {
@@ -160,9 +198,9 @@ export class SessionStore {
       id: newEntryId(),
       parentId: this.activeLeaf,
       timestamp: Date.now(),
-      summary,
       firstKeptId,
       tokensBefore,
+      ...(summary !== undefined ? { summary } : {}),
     };
     this.entries.set(e.id, e);
     this.activeLeaf = e.id;
@@ -203,9 +241,14 @@ export class SessionStore {
     const c = branch[compactionIdx] as CompactionEntry;
     const firstKeptIdx = branch.findIndex((e) => e.id === c.firstKeptId);
     const keepFrom = firstKeptIdx >= 0 ? firstKeptIdx : 0;
+    const summary = c.summary ?? renderEvictedSummary(
+      branch.slice(0, keepFrom)
+        .filter((e): e is MessageEntry => e.type === "message")
+        .map((e) => e.message),
+    );
     const out: AgentMessage[] = [{
       role: "user",
-      content: `[Compacted conversation summary]\n${c.summary}`,
+      content: `[Compacted conversation summary]\n${summary}`,
     }];
     for (let i = keepFrom; i < branch.length; i++) {
       const e = branch[i]!;
