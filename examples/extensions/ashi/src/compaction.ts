@@ -43,9 +43,9 @@ export function registerCompaction(
     const tokensBefore = (ctx.call("conversation:estimate-prompt-tokens") as number) ?? 0;
     const customSummary = (await ctx.call("ashi:compact:build-summary", older)) as string | null | undefined;
 
-    await getStore().current().appendCompaction(firstKeptId, tokensBefore, customSummary ?? undefined);
-
-    ctx.call("conversation:replace-messages", getStore().current().buildMessages());
+    const store = getStore().current();
+    await store.appendCompaction(firstKeptId, tokensBefore, customSummary ?? undefined);
+    ctx.call("conversation:replace-messages", store.buildMessages());
 
     const keptIds = kept.map((_, i) => capture.getEntryIdAt(cutIdx + i));
     if (keptIds.some((id) => id === null)) {

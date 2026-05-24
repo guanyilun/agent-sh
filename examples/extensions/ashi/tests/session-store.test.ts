@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -11,8 +11,14 @@ import {
   type AgentMessage,
 } from "../src/session-store.js";
 
+const tmpDirs: string[] = [];
+after(() => {
+  for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true });
+});
+
 function tmpSessionPath(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ashi-store-"));
+  tmpDirs.push(dir);
   return path.join(dir, "session.jsonl");
 }
 
