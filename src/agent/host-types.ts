@@ -57,7 +57,7 @@ export interface ProviderRegistration {
     contextWindow?: number;
     maxTokens?: number;
     echoReasoning?: boolean;
-    input?: ("text" | "image")[];
+    modalities?: ("text" | "image")[];
   })[];
   supportsReasoningEffort?: boolean;
   /** Local daemons etc. — `auth list/login` shows "no auth required". */
@@ -83,7 +83,7 @@ export interface AgentMode {
    *  default off (leaky shims may forward it to the model as OOD input). */
   echoReasoning?: boolean;
   /** Input modalities the model supports. Defaults to ["text"]. */
-  input?: ("text" | "image")[];
+  modalities?: ("text" | "image")[];
   buildReasoningParams?: (level: string) => Record<string, unknown>;
 }
 

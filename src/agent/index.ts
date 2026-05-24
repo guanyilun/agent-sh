@@ -33,7 +33,7 @@ function persistedModelFor(providerName: string | undefined): string | undefined
   return getSettings().providers?.[providerName]?.defaultModel;
 }
 
-type ModelCap = { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean; input?: ("text" | "image")[] };
+type ModelCap = { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean; modalities?: ("text" | "image")[] };
 
 function defaultReasoningBuilder(level: string): Record<string, unknown> {
   if (level === "off") return {};
@@ -70,7 +70,7 @@ function splitRegistration(p: ProviderRegistration): { ids: string[]; caps: Map<
       ids.push(m);
     } else {
       ids.push(m.id);
-      caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning, input: m.input });
+      caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning, modalities: m.modalities });
     }
   }
   return { ids, caps };
@@ -295,7 +295,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
           reasoning: mc?.reasoning,
           supportsReasoningEffort: p.supportsReasoningEffort,
           echoReasoning: mc?.echoReasoning,
-          input: mc?.input,
+          modalities: mc?.modalities,
           buildReasoningParams: bindReasoning(shapeId, model),
         });
       }

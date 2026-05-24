@@ -773,7 +773,7 @@ export class AgentLoop implements AgentBackend {
       }
 
       // Image support note — only included when the active model supports image input
-      if (this.currentMode.input?.includes("image")) {
+      if (this.currentMode.modalities?.includes("image")) {
         parts.push(
           "# Image Support\n\n"
           + "This model supports image input. When you need visual information, "

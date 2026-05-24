@@ -100,7 +100,7 @@ interface ModelDef {
   reasoning: boolean;
   contextWindow: number;
   maxTokens: number;
-  input: ("text" | "image")[];
+  modalities: ("text" | "image")[];
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -169,16 +169,16 @@ function resolveModel(
   modelId: string,
   metadata: ModelsDevModelEntry | undefined,
 ): ModelDef {
-  const rawInput = metadata?.modalities?.input;
-  const input: ("text" | "image")[] = Array.isArray(rawInput)
-    ? rawInput.filter((v): v is "text" | "image" => v === "text" || v === "image")
+  const rawModalities = metadata?.modalities?.input;
+  const modalities: ("text" | "image")[] = Array.isArray(rawModalities)
+    ? rawModalities.filter((v): v is "text" | "image" => v === "text" || v === "image")
     : ["text"];
   return {
     id: modelId,
     reasoning: metadata?.reasoning ?? false,
     contextWindow: normalizePosNum(metadata?.limit?.context) ?? DEFAULT_CONTEXT_WINDOW,
     maxTokens: normalizePosNum(metadata?.limit?.output) ?? DEFAULT_MAX_TOKENS,
-    input,
+    modalities,
   };
 }
 
