@@ -13,19 +13,60 @@ export interface SessionInfo {
 }
 
 /** Many sessions per cwd. Each is one .jsonl file under `dir/`. Constructor
- *  always opens a fresh session; /resume callers can `openSession(id)` to
- *  swap the current store to a past session file. */
+ *  always opens a fresh session unless `opts.resumeSessionId` is given and
+ *  points to an existing session file. /resume callers can `openSession(id)`
+ *  to swap the current store to a past session file. */
 export class MultiSessionStore {
   private dir: string;
   private cwd: string;
   private currentStore: SessionStore;
 
-  constructor(dir: string, cwd: string) {
+  constructor(dir: string, cwd: string, opts?: { resumeSessionId?: string }) {
     this.dir = dir;
     this.cwd = cwd;
     fs.mkdirSync(dir, { recursive: true });
     this.migrateLegacy();
+    if (opts?.resumeSessionId) {
+      const filePath = this.sessionFile(opts.resumeSessionId);
+      if (fs.existsSync(filePath)) {
+        this.currentStore = new SessionStore(filePath);
+        return;
+      }
+    }
     this.currentStore = this.createFreshSession();
+  }
+
+  markLastSession(): void {
+    const lastFile = path.join(this.dir, ".last-session");
+    fs.writeFileSync(lastFile, this.currentStore.id);
+  }
+
+  static readLastSessionId(dir: string, opts?: { fallbackToLatest?: boolean }): string | undefined {
+    const lastFile = path.join(dir, ".last-session");
+    try {
+      const id = fs.readFileSync(lastFile, "utf-8").trim();
+      if (id && fs.existsSync(path.join(dir, `${id}.jsonl`))) return id;
+    } catch { /* no .last-session file yet */ }
+
+    if (opts?.fallbackToLatest) {
+      let best: { id: string; createdAt: number } | undefined;
+      let names: string[];
+      try { names = fs.readdirSync(dir); } catch { return undefined; }
+      for (const name of names) {
+        if (!name.endsWith(".jsonl")) continue;
+        const id = name.slice(0, -".jsonl".length);
+        try {
+          const raw = fs.readFileSync(path.join(dir, `${id}.jsonl.meta`), "utf-8");
+          const meta = JSON.parse(raw) as { createdAt?: number };
+          if (typeof meta.createdAt === "number" && (!best || meta.createdAt > best.createdAt)) {
+            best = { id, createdAt: meta.createdAt };
+          }
+        } catch { /* skip unreadable meta */ }
+      }
+      if (best) return best.id;
+    }
+
+    return undefined;
   }
 
   /** One-time import from the previous storage format (sessions stored as

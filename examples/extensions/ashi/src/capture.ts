@@ -38,6 +38,7 @@ export function registerCapture(
     const newMessages = messages.slice(liveEntryIds.length).map(enrich);
     const newIds = await getStore().current().appendMessages(newMessages);
     liveEntryIds = [...liveEntryIds, ...newIds];
+    getStore().markLastSession();
   };
 
   ctx.bus.on("agent:processing-done", () => { void flush(); });
