@@ -51,7 +51,14 @@ export interface ProviderRegistration {
   baseURL?: string;
   /** Falls back to models[0] when absent. */
   defaultModel?: string;
-  models?: (string | { id: string; reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean })[];
+  models?: (string | {
+    id: string;
+    reasoning?: boolean;
+    contextWindow?: number;
+    maxTokens?: number;
+    echoReasoning?: boolean;
+    input?: ("text" | "image")[];
+  })[];
   supportsReasoningEffort?: boolean;
   /** Local daemons etc. — `auth list/login` shows "no auth required". */
   noAuth?: boolean;
@@ -75,6 +82,8 @@ export interface AgentMode {
   /** Echo reasoning_content back on assistant turns. Required by DeepSeek;
    *  default off (leaky shims may forward it to the model as OOD input). */
   echoReasoning?: boolean;
+  /** Input modalities the model supports. Defaults to ["text"]. */
+  input?: ("text" | "image")[];
   buildReasoningParams?: (level: string) => Record<string, unknown>;
 }
 

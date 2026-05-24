@@ -27,6 +27,8 @@ export interface ModelCapabilityConfig {
   maxTokens?: number;
   /** Echo reasoning_content back on assistant turns. Required by DeepSeek. */
   echoReasoning?: boolean;
+  /** Input modalities the model supports (e.g. ["text", "image"]). */
+  input?: ("text" | "image")[];
 }
 
 /** Provider profile — a named LLM configuration. */
@@ -288,7 +290,7 @@ export interface ResolvedProvider {
   /** Provider supports the reasoning_effort parameter. Default: true. */
   supportsReasoningEffort?: boolean;
   /** Per-model capabilities, keyed by model id. */
-  modelCapabilities?: Map<string, { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean }>;
+  modelCapabilities?: Map<string, { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean; input?: ("text" | "image")[] }>;
   /** Borrow another registered provider's reasoning request shape by id. */
   reasoningShape?: string;
 }
@@ -304,14 +306,14 @@ export function resolveProvider(name: string): ResolvedProvider | null {
 
   const rawModels = provider.models ?? (provider.defaultModel ? [provider.defaultModel] : []);
   const modelIds: string[] = [];
-  const caps = new Map<string, { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean }>();
+  const caps = new Map<string, { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean; input?: ("text" | "image")[] }>();
   for (const m of rawModels) {
     if (typeof m === "string") {
       modelIds.push(m);
     } else {
       modelIds.push(m.id);
-      if (m.reasoning !== undefined || m.contextWindow !== undefined || m.maxTokens !== undefined || m.echoReasoning !== undefined) {
-        caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning });
+      if (m.reasoning !== undefined || m.contextWindow !== undefined || m.maxTokens !== undefined || m.echoReasoning !== undefined || m.input !== undefined) {
+        caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning, input: m.input });
       }
     }
   }
