@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,13 +25,7 @@ test("contentText maps ImageContent[] to [image: mime/type] lines", () => {
 
 // ── Integration driver ──────────────────────────────────────────────
 
-interface CapturedEvent {
-  event: string;
-  payload: any;
-}
-
 interface DriverResult {
-  events: CapturedEvent[];
   systemPrompt: string;
   exitCode: number | null;
 }
@@ -51,7 +45,8 @@ async function runDriver(
             HOME: home,
             AGENT_SH_HOME: home,
             AGENT_SH_SKIP_SHELL_ENV: "1",
-            OPENROUTER_API_KEY: "sk-test",
+            // Suppress built-in providers so only our test provider has active models.
+            OPENROUTER_API_KEY: "",
             OPENAI_API_KEY: "",
             DEEPSEEK_API_KEY: "",
             OPENAI_BASE_URL: "",
@@ -68,8 +63,8 @@ async function runDriver(
         clearTimeout(timer);
         try {
           const line = stdout.trim().split(/\r?\n/).pop() ?? "";
-          const parsed = JSON.parse(line) as { events: CapturedEvent[]; systemPrompt: string };
-          resolve({ events: parsed.events, systemPrompt: parsed.systemPrompt, exitCode: code });
+          const parsed = JSON.parse(line) as { systemPrompt: string };
+          resolve({ systemPrompt: parsed.systemPrompt, exitCode: code });
         } catch (err) {
           reject(new Error(`driver output not JSON.\nexit=${code}\nstdout:\n${stdout}\nstderr:\n${stderr}\nparse error: ${(err as Error).message}`));
         }
@@ -78,10 +73,6 @@ async function runDriver(
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
-}
-
-function pickEvents(events: CapturedEvent[], name: string): any[] {
-  return events.filter((e) => e.event === name).map((e) => e.payload);
 }
 
 // ── System prompt ───────────────────────────────────────────────────

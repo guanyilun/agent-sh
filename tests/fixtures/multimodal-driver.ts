@@ -18,11 +18,6 @@ async function main() {
   const scenario = JSON.parse(raw) as Scenario;
 
   const core = createCore({} as AppConfig);
-  const captured: Array<{ event: string; payload: unknown }> = [];
-  core.bus.on("agent:info" as never, (payload: unknown) => {
-    captured.push({ event: "agent:info", payload });
-  });
-
   const ctx = core.extensionContext({ quit: () => {} });
   agentBackend(ctx);
   const agent = (ctx as ExtensionContext & { agent: AgentSurface }).agent;
@@ -30,12 +25,10 @@ async function main() {
   agent.providers.register(scenario.provider);
   core.bus.emit("core:extensions-loaded", { names: [] });
   await core.activateBackend("ash");
-
   await new Promise((r) => setImmediate(r));
 
   const systemPrompt = ctx.call("system-prompt:build") as string;
-
-  process.stdout.write(JSON.stringify({ events: captured, systemPrompt }) + "\n");
+  process.stdout.write(JSON.stringify({ systemPrompt }) + "\n");
   process.exit(0);
 }
 
