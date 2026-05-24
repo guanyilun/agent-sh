@@ -76,16 +76,24 @@ function snippet(text: string, max: number): string {
 function summarizeMessage(m: AgentMessage): string {
   const role = m.role ?? "?";
   if (role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
-    const tools = m.tool_calls.map((tc) => tc.function?.name ?? "tool").join(", ");
+    const tools = m.tool_calls.map((tc) => {
+      const name = tc.function?.name ?? "tool";
+      const args = tc.function?.arguments;
+      return args ? `${name}(${snippet(args, 200)})` : name;
+    }).join(", ");
     const text = extractText(m.content);
-    const prefix = text ? `${snippet(text, 60)} → ` : "";
+    const prefix = text ? `${snippet(text, 400)} → ` : "";
     return `assistant: ${prefix}called ${tools}`;
   }
   if (role === "tool") {
     const text = typeof m.content === "string" ? m.content : extractText(m.content);
-    return `tool result: ${snippet(text, 80)}`;
+    const isErr = /^error\b|: error\b/i.test(text.slice(0, 200));
+    return `tool result: ${snippet(text, isErr ? 1000 : 400)}`;
   }
-  return `${role}: ${snippet(extractText(m.content), 100)}`;
+  if (role === "user") {
+    return `user: ${snippet(extractText(m.content), 1000)}`;
+  }
+  return `${role}: ${snippet(extractText(m.content), 500)}`;
 }
 
 export function renderEvictedSummary(evicted: AgentMessage[]): string {

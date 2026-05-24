@@ -43,8 +43,6 @@ export function registerCompaction(
     capture.resetTo([null, ...keptIds]);
 
     const tokensAfter = (ctx.call("conversation:estimate-prompt-tokens") as number) ?? 0;
-    ctx.bus.emit("ui:info", { message: `compacted ${older.length} messages: ${tokensBefore} → ${tokensAfter} tokens` });
-
     return { before: tokensBefore, after: tokensAfter, evictedCount: older.length };
   });
 }
