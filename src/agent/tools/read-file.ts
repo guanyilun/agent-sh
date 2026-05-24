@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { contentText, type ToolDefinition } from "../types.js";
+import { contentText, type ImageContent, type ToolDefinition } from "../types.js";
 import { expandHome } from "./expand-home.js";
 
 /** Tracks the last-read state of a file for deduplication. */
@@ -12,6 +12,16 @@ export interface FileReadState {
 
 /** Shared cache — keyed by absolute path. */
 export type FileReadCache = Map<string, FileReadState>;
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".svg": "image/svg+xml",
+};
 
 export function createReadFileTool(
   getCwd: () => string,
@@ -95,6 +105,19 @@ export function createReadFileTool(
             content: `File is ${sizeMB}MB (${stat.size} bytes) — too large to read in full. Use offset and limit to read specific sections, e.g. offset=1 limit=200.`,
             exitCode: 1,
             isError: true,
+          };
+        }
+
+        // Image files: read as base64 for multimodal models
+        const ext = path.extname(absPath).toLowerCase();
+        const mimeType = IMAGE_MIME_TYPES[ext];
+        if (mimeType) {
+          const buf = await fs.readFile(absPath);
+          const data = buf.toString("base64");
+          return {
+            content: [{ type: "image", data, mimeType }],
+            exitCode: 0,
+            isError: false,
           };
         }
 
