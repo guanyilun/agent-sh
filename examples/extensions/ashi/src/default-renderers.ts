@@ -154,18 +154,12 @@ export function registerDefaultToolRenderers(ctx: ExtensionContext): void {
   };
 
   define("bash", (args) => new LabeledCallLine(() => bashLabel(args)));
-
   define("read_file", (args) => new LabeledCallLine(() => readLabel(args)));
-  define("read", (args) => new LabeledCallLine(() => readLabel(args)));
-
   define("grep", (args) => new LabeledCallLine(() => grepLabel(args)));
   define("glob", (args) => new LabeledCallLine(() => globLabel(args)));
   define("ls", (args) => new LabeledCallLine(() => lsLabel(args)));
-
   define("edit_file", (args) => new LabeledCallLine(() => pathOnlyLabel("edit", args)));
-  define("edit", (args) => new LabeledCallLine(() => pathOnlyLabel("edit", args)));
   define("write_file", (args) => new LabeledCallLine(() => pathOnlyLabel("write", args)));
-  define("write", (args) => new LabeledCallLine(() => pathOnlyLabel("write", args)));
 
   define("default", (args) => new LabeledCallLine(() => genericLabel(args)));
 }

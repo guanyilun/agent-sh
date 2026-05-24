@@ -206,6 +206,7 @@ export default function activate(ctx: ExtensionContext): void {
             }
             bus.emit("agent:tool-started", {
               title: ev.toolName,
+              name: ev.toolName,
               toolCallId: ev.toolCallId,
               kind: kindForTool(ev.toolName),
               rawInput: ev.args,

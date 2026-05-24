@@ -148,6 +148,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
         const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" };
         bus.emit("agent:tool-started", {
           title: tc.name,
+          name: tc.name,
           toolCallId: tc.id,
           kind: display.kind,
           locations: display.locations,
