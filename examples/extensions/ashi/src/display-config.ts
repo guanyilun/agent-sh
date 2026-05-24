@@ -29,6 +29,14 @@ const BUILTIN_OVERRIDES: Record<string, Partial<ToolEntryConfig>> = {
 
 interface AshiSettings extends Record<string, unknown> {
   display?: Record<string, Partial<ToolEntryConfig>>;
+  groupMaxVisible?: number;
+}
+
+export function loadGroupMaxVisible(): number {
+  const ashi = getExtensionSettings<AshiSettings>("ashi", {});
+  const v = ashi.groupMaxVisible;
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 2) return Infinity;
+  return Math.floor(v);
 }
 
 function mergeEntry(base: ToolEntryConfig, patch?: Partial<ToolEntryConfig>): ToolEntryConfig {

@@ -222,85 +222,95 @@ function shortToolName(name: string): string {
   return SHORT_TOOL_NAMES[name] ?? name;
 }
 
-/** A batch of parallel same-kind tool calls. Renders one header, per-call
- *  child branch lines that each carry their own summary on completion, and
- *  a final aggregate. Mirrors ash's grouping (read_file/ls → "read";
- *  grep/glob → "search"). */
+/** An open-ended run of same-kind tool calls. Grows by tail-merge: the caller
+ *  extends an existing group when its `kind` matches the next call and the
+ *  group is still the chat's tail. Trailing child renders with └, others ├.
+ *
+ *  When `maxVisible` is finite and exceeded, the oldest children collapse to
+ *  a summary line ("⋯ N earlier ✓") and the last (maxVisible − 1) stay
+ *  visible. `toggleExpanded()` reveals all; `maxVisible = Infinity` disables
+ *  eviction. */
 export class ToolGroup extends Container {
   private headerText: Text;
+  private summaryText: Text;
   private childContainer: Container;
-  private aggregateText: Text;
-  private kind: string;
-  private total: number;
+  readonly kind: string;
   private maxVisible: number;
-  private visibleChildren = new Map<string, GroupChild>();
-  private hiddenSummaries: string[] = [];
-  private addedCount = 0;
-  private renderedCount = 0;
-  private completedCount = 0;
-  private allOk = true;
+  private allChildren: GroupChild[] = [];
+  private callsById = new Map<string, GroupChild>();
+  private expanded = false;
 
-  constructor(kind: string, total: number, maxVisible = 5) {
+  constructor(kind: string, maxVisible: number = Infinity) {
     super();
     this.kind = kind;
-    this.total = total;
     this.maxVisible = maxVisible;
     this.headerText = new Text("", 1, 0);
+    this.summaryText = new Text("", 1, 0);
     this.childContainer = new Container();
-    this.aggregateText = new Text("", 1, 0);
     this.addChild(new Spacer(1));
     this.addChild(this.headerText);
+    this.addChild(this.summaryText);
     this.addChild(this.childContainer);
-    this.addChild(this.aggregateText);
     this.repaintHeader();
   }
 
   addCall(toolCallId: string, name: string, detail: string): void {
-    this.addedCount++;
-    if (this.renderedCount < this.maxVisible && toolCallId) {
-      const text = new Text("", 1, 0);
-      const child: GroupChild = { name: shortToolName(name), detail: detail || "…", text };
-      this.visibleChildren.set(toolCallId, child);
-      this.childContainer.addChild(text);
-      this.renderedCount++;
-      this.repaintChild(child);
-    }
+    const text = new Text("", 1, 0);
+    const child: GroupChild = { name: shortToolName(name), detail: detail || "…", text };
+    if (toolCallId) this.callsById.set(toolCallId, child);
+    this.allChildren.push(child);
+    this.repaint();
   }
 
   recordCompletion(toolCallId: string, exitCode: number | null, summary?: string): void {
-    this.completedCount++;
-    if (exitCode !== null && exitCode !== 0) this.allOk = false;
-    const child = this.visibleChildren.get(toolCallId);
-    if (child) {
-      child.status = { exitCode, summary };
-      this.repaintChild(child);
-    } else if (summary) {
-      this.hiddenSummaries.push(summary);
-    }
-    if (this.completedCount >= this.total) this.finalize();
+    const child = this.callsById.get(toolCallId);
+    if (!child) return;
+    child.status = { exitCode, summary };
+    this.repaint();
   }
 
-  finalize(): void {
-    const collapsed = this.addedCount - this.renderedCount;
-    // No overflow ⇒ no aggregate; close the tree by promoting the last
-    // visible child's ├ to a └.
-    if (collapsed === 0) {
-      this.aggregateText.setText("");
-      const last = [...this.visibleChildren.values()].pop();
-      if (last) this.repaintChild(last, true);
-      return;
-    }
-    const mark = this.allOk ? theme.fg("success", "✓") : theme.fg("error", "✗");
-    const more = theme.fg("muted", `+${collapsed} more`);
-    const sumText = this.hiddenSummaries.length > 0
-      ? ` ${theme.fg("muted", this.hiddenSummaries.join(", "))}`
-      : "";
-    this.aggregateText.setText(`${theme.fg("muted", "└")} ${more} ${mark}${sumText}`);
+  toggleExpanded(): void {
+    this.expanded = !this.expanded;
+    this.repaint();
   }
 
-  isComplete(): boolean { return this.completedCount >= this.total; }
+  /** How many children at the tail are visible right now. When collapsed and
+   *  over the cap, this is maxVisible − 1 (one line goes to the summary). */
+  private visibleSliceStart(): number {
+    if (this.expanded || !Number.isFinite(this.maxVisible)) return 0;
+    if (this.allChildren.length <= this.maxVisible) return 0;
+    return this.allChildren.length - (this.maxVisible - 1);
+  }
 
-  private repaintChild(child: GroupChild, isLast = false): void {
+  private repaint(): void {
+    const start = this.visibleSliceStart();
+    const evicted = this.allChildren.slice(0, start);
+    const visible = this.allChildren.slice(start);
+
+    if (evicted.length === 0) {
+      this.summaryText.setText("");
+    } else {
+      const allOk = evicted.every(
+        (c) => !c.status || c.status.exitCode === null || c.status.exitCode === 0,
+      );
+      const mark = allOk ? theme.fg("success", "✓") : theme.fg("error", "✗");
+      const noun = evicted.length === 1 ? "earlier call" : "earlier calls";
+      this.summaryText.setText(
+        `${theme.fg("muted", "├")} ${theme.fg("muted", "⋯")} ${theme.fg("muted", `${evicted.length} ${noun}`)} ${mark}`,
+      );
+    }
+
+    // Reconcile childContainer to exactly the `visible` slice, in order. We
+    // rebuild rather than diff because group sizes are small.
+    this.childContainer.clear();
+    visible.forEach((child, idx) => {
+      const isLast = idx === visible.length - 1;
+      this.repaintChild(child, isLast);
+      this.childContainer.addChild(child.text);
+    });
+  }
+
+  private repaintChild(child: GroupChild, isLast: boolean): void {
     let tail: string;
     if (!child.status) {
       tail = ` ${theme.fg("muted", "…")}`;
@@ -311,8 +321,6 @@ export class ToolGroup extends Container {
       tail = ` ${mark}${sum}`;
     }
     const connector = isLast ? "└" : "├";
-    // Tool name omitted when it duplicates the kind header (e.g. read_file
-    // children under "◆ read").
     const namePart = child.name !== this.kind
       ? `${theme.bold(theme.fg("toolTitle", child.name))} `
       : "";
