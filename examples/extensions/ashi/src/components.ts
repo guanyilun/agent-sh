@@ -166,8 +166,11 @@ export class ToolResultBody extends Container {
       this.outputText.setText("");
       return;
     }
+    // POSIX-style outputs typically end with \n; rendering that trailing
+    // newline as a real line produces a phantom blank gap below the tool.
+    const display = this.outputBuffer.replace(/\n+$/, "");
     if (this.expanded) {
-      this.outputText.setText(theme.fg("toolOutput", this.outputBuffer));
+      this.outputText.setText(theme.fg("toolOutput", display));
       return;
     }
     if (this.mode === "hidden") {
@@ -178,14 +181,14 @@ export class ToolResultBody extends Container {
     if (this.mode === "summary") {
       if (!this.finalized) {
         // Brief tail while streaming; collapses to a line count on finalize.
-        const tail = this.outputBuffer.split("\n").slice(-2).join("\n");
+        const tail = display.split("\n").slice(-2).join("\n");
         this.outputText.setText(theme.fg("muted", tail));
         return;
       }
       this.outputText.setText(lineCountHint(this.outputBuffer, this.exitCode));
       return;
     }
-    const lines = this.outputBuffer.split("\n");
+    const lines = display.split("\n");
     const trimmed = lines.slice(-this.previewLines).join("\n");
     const remaining = Math.max(0, lines.length - this.previewLines);
     const overflow = remaining > 0
