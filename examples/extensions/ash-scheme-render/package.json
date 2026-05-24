@@ -5,8 +5,7 @@
   "type": "module",
   "main": "index.ts",
   "dependencies": {
-    "@earendil-works/pi-tui": "^0.74.2",
-    "cli-highlight": "^2.1.11",
-    "agent-sh": "^0.14.0"
+    "agent-sh": "^0.14.0",
+    "@guanyilun/ashi": "^0.1.6"
   }
 }
