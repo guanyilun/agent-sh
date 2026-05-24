@@ -189,6 +189,15 @@ export default function activate(ctx) {
 
 `ToolDisplay` body kinds: `text`, `code` (with syntax highlighting via `lang`), `stream` (preview/summary/hidden policy applied by ashi), `diff` (closure pushed by the frontend orchestrator), `lines`, `compound`. Custom state transitions can be declared via an optional `reducers` map.
 
+To ship a default display policy with your renderer (e.g. "this tool's output is large, default to `summary`"), set `display` on the model. User `settings.json` still wins:
+
+```ts
+const myModel: RenderModel<...> = {
+  initial, view,
+  display: { result: "summary", previewLines: 3 },
+};
+```
+
 For non-render concerns (commands, settings, tools, providers) use the standard `agent-sh` extension API. See the [agent-sh extension docs](https://github.com/guanyilun/agent-sh/blob/main/docs/extensions.md).
 
 ## Install from source

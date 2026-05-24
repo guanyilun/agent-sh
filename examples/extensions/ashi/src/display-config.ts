@@ -7,9 +7,8 @@ export interface ToolEntryConfig {
   previewLines: number;
 }
 
-export interface ToolDisplayConfig {
-  default: ToolEntryConfig;
-  [toolName: string]: ToolEntryConfig;
+export interface DisplayResolver {
+  resolve(name: string, modelDisplay?: Partial<ToolEntryConfig>): ToolEntryConfig;
 }
 
 const DEFAULT_ENTRY: ToolEntryConfig = { result: "preview", previewLines: 5 };
@@ -47,24 +46,16 @@ function mergeEntry(base: ToolEntryConfig, patch?: Partial<ToolEntryConfig>): To
   };
 }
 
-export function loadToolDisplayConfig(): ToolDisplayConfig {
+export function loadDisplayResolver(): DisplayResolver {
   const ashi = getExtensionSettings<AshiSettings>("ashi", {});
   const userDisplay = ashi.display ?? {};
   const userDefault = mergeEntry(DEFAULT_ENTRY, userDisplay.default);
-  const config: ToolDisplayConfig = { default: userDefault };
-  const names = new Set([
-    ...Object.keys(BUILTIN_OVERRIDES),
-    ...Object.keys(userDisplay).filter((k) => k !== "default"),
-  ]);
-  for (const name of names) {
-    config[name] = mergeEntry(
-      mergeEntry(userDefault, BUILTIN_OVERRIDES[name]),
-      userDisplay[name],
-    );
-  }
-  return config;
-}
-
-export function entryFor(config: ToolDisplayConfig, name: string): ToolEntryConfig {
-  return config[name] ?? config.default;
+  return {
+    resolve(name, modelDisplay) {
+      let entry = mergeEntry(userDefault, BUILTIN_OVERRIDES[name]);
+      if (modelDisplay) entry = mergeEntry(entry, modelDisplay);
+      if (userDisplay[name]) entry = mergeEntry(entry, userDisplay[name]);
+      return entry;
+    },
+  };
 }

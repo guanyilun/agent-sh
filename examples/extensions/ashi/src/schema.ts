@@ -11,6 +11,9 @@
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ThemeColor } from "./theme.js";
+import type { ToolEntryConfig } from "./display-config.js";
+
+export type { ToolEntryConfig, ToolResultMode } from "./display-config.js";
 
 export type Color = ThemeColor;
 
@@ -89,6 +92,7 @@ export interface RenderModel<S = Record<string, never>> {
    *  reducers here only for tool-specific state transitions. */
   reducers?: Record<string, Reducer<ViewState<S>, never>>;
   view: (state: ViewState<S>, env: Env) => ToolDisplay;
+  display?: Partial<ToolEntryConfig>;
 }
 
 export function isRenderModel(v: unknown): v is RenderModel<unknown> {
