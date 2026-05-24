@@ -190,8 +190,8 @@ export class ConversationState {
       for (const img of content) {
         parts.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.data}` } });
       }
-      // Always include a text part so the message isn't empty
-      parts.unshift({ type: "text", text: `[${content.length} image(s)]` });
+      const label = isError ? `Error: [${content.length} image(s)]` : `[${content.length} image(s)]`;
+      parts.unshift({ type: "text", text: label });
       this.messages.push({ role: "tool", tool_call_id: toolCallId, content: parts } as unknown as ChatCompletionMessageParam);
     }
     if (isError) this.toolErrors.add(toolCallId);
