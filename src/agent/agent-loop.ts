@@ -17,7 +17,7 @@ import type { LlmClient } from "./llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
 import * as path from "node:path";
-import type { AgentBackend, SkillView, ToolDefinition, ToolExecutionContext } from "./types.js";
+import { contentText, type AgentBackend, type SkillView, type ToolDefinition, type ToolExecutionContext } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { normalizeToolArgs } from "./normalize-args.js";
 import { ConversationState, type CompactResult } from "./conversation-state.js";
@@ -701,7 +701,7 @@ export class AgentLoop implements AgentBackend {
       },
       formatResult: (args, result) => {
         const action = args.action as string;
-        const text = result.content;
+        const text = contentText(result.content);
         if (result.isError) return { summary: "error" };
         if (action === "search") {
           if (text.startsWith("No results")) return { summary: "0 matches" };
@@ -770,6 +770,16 @@ export class AgentLoop implements AgentBackend {
       const extensionSections = this.buildExtensionSections();
       if (extensionSections.length > 0) {
         parts.push("# Extension Instructions\n\n" + extensionSections.join("\n\n"));
+      }
+
+      if (this.currentMode.modalities?.includes("image")) {
+        parts.push(
+          "# Image Support\n\n"
+          + "This model supports image input. When you need visual information, "
+          + "you can read image files (PNG, JPEG, GIF, WebP) with read_file — "
+          + "they will be shown to you directly. Use this to inspect screenshots, "
+          + "diagrams, UI mockups, charts, or any visual content relevant to the task.",
+        );
       }
 
       return parts.join("\n\n");
@@ -1041,7 +1051,7 @@ export class AgentLoop implements AgentBackend {
         resultDisplay,
       });
       this.bus.emit("agent:tool-output", {
-        tool: name, output: result.content, exitCode: result.exitCode,
+        tool: name, output: contentText(result.content), exitCode: result.exitCode,
       });
 
       return result;
@@ -1276,7 +1286,7 @@ export class AgentLoop implements AgentBackend {
               resultDisplay,
             });
             this.bus.emit("agent:tool-output", {
-              tool: tc.name, output: cached.content, exitCode: 0,
+              tool: tc.name, output: contentText(cached.content), exitCode: 0,
             });
             collectedResults.push({
               callId: tc.id, toolName: tc.name,
@@ -1298,29 +1308,30 @@ export class AgentLoop implements AgentBackend {
             signal },
         );
 
-        // Truncate large outputs to avoid blowing context.
         let content = result.content;
-        const maxBytes = tool.maxResultBytes ?? 100_000; // ~25k tokens
-        if (content.length > maxBytes) {
-          const headBytes = Math.floor(maxBytes * 0.6);
-          const tailBytes = maxBytes - headBytes;
-          const lines = content.split("\n");
-          let headEnd = 0, headLen = 0;
-          for (let i = 0; i < lines.length && headLen + lines[i].length + 1 <= headBytes; i++) {
-            headLen += lines[i].length + 1;
-            headEnd = i + 1;
+        if (typeof content === "string") {
+          const maxBytes = tool.maxResultBytes ?? 100_000; // ~25k tokens
+          if (content.length > maxBytes) {
+            const headBytes = Math.floor(maxBytes * 0.6);
+            const tailBytes = maxBytes - headBytes;
+            const lines = content.split("\n");
+            let headEnd = 0, headLen = 0;
+            for (let i = 0; i < lines.length && headLen + lines[i].length + 1 <= headBytes; i++) {
+              headLen += lines[i].length + 1;
+              headEnd = i + 1;
+            }
+            let tailStart = lines.length, tailLen = 0;
+            for (let i = lines.length - 1; i >= headEnd && tailLen + lines[i].length + 1 <= tailBytes; i--) {
+              tailLen += lines[i].length + 1;
+              tailStart = i;
+            }
+            const omitted = tailStart - headEnd;
+            content = [
+              ...lines.slice(0, headEnd),
+              `\n[… ${omitted} lines omitted (output truncated to ${Math.round(maxBytes / 1024)}KB) …]\n`,
+              ...lines.slice(tailStart),
+            ].join("\n");
           }
-          let tailStart = lines.length, tailLen = 0;
-          for (let i = lines.length - 1; i >= headEnd && tailLen + lines[i].length + 1 <= tailBytes; i--) {
-            tailLen += lines[i].length + 1;
-            tailStart = i;
-          }
-          const omitted = tailStart - headEnd;
-          content = [
-            ...lines.slice(0, headEnd),
-            `\n[… ${omitted} lines omitted (output truncated to ${Math.round(maxBytes / 1024)}KB) …]\n`,
-            ...lines.slice(tailStart),
-          ].join("\n");
         }
 
         const finalResult: ProtocolToolResult = {

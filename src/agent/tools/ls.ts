@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ToolDefinition } from "../types.js";
+import { contentText, type ToolDefinition } from "../types.js";
 import { expandHome } from "./expand-home.js";
 
 function formatSize(bytes: number): string {
@@ -37,8 +37,9 @@ export function createLsTool(getCwd: () => string): ToolDefinition {
     }),
 
     formatResult: (_args, result) => {
-      if (result.isError || result.content === "(empty directory)") return { summary: "0 entries" };
-      const lines = result.content.split("\n").filter(Boolean);
+      const text = contentText(result.content);
+      if (result.isError || text === "(empty directory)") return { summary: "0 entries" };
+      const lines = text.split("\n").filter(Boolean);
       return { summary: `${lines.length} entries` };
     },
 

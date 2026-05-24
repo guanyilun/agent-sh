@@ -18,8 +18,23 @@ export interface AgentBackend {
   kill(): void;
 }
 
+/** Image content block for multimodal tool results. */
+export interface ImageContent {
+  type: "image";
+  /** Base64-encoded image data (no data: URL prefix). */
+  data: string;
+  /** MIME type (e.g. "image/png", "image/jpeg"). */
+  mimeType: string;
+}
+
+/** Extract the text portion of a tool result's content. Returns "" for image-only results. */
+export function contentText(content: string | ImageContent[]): string {
+  if (typeof content === "string") return content;
+  return content.map(c => `[image: ${c.mimeType}]`).join("\n");
+}
+
 export interface ToolResult {
-  content: string;
+  content: string | ImageContent[];
   exitCode: number | null;
   isError: boolean;
   /** When set, takes precedence over `tool.formatResult()`. */

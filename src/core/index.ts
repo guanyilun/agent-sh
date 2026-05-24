@@ -24,7 +24,7 @@ export type { AgentContext, AgentConfig, AgentSurface, AgentConfigSurface, Agent
 export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, ExtensionContext, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, AppConfig } from "../shell/host-types.js";
 export { palette, setPalette, resetPalette } from "../utils/palette.js";
 export type { ColorPalette } from "../utils/palette.js";
-export type { AgentBackend, ToolDefinition } from "../agent/types.js";
+export type { AgentBackend, ToolDefinition, ImageContent } from "../agent/types.js";
 export { runSubagent, type SubagentOptions } from "../agent/subagent.js";
 export { LlmClient } from "../agent/llm-client.js";
 export { HistoryFile, InMemoryHistory, NoopHistory, type HistoryAdapter } from "../agent/history-file.js";

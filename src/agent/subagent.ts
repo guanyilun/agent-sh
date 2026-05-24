@@ -11,7 +11,7 @@
  */
 import type { EventBus } from "../core/event-bus.js";
 import type { LlmClient } from "./llm-client.js";
-import type { ToolDefinition } from "./types.js";
+import { contentText, type ToolDefinition } from "./types.js";
 import { ConversationState } from "./conversation-state.js";
 import { normalizeToolArgs } from "./normalize-args.js";
 import { wrapTrailingWithDynamicContext } from "../utils/message-utils.js";
@@ -174,7 +174,9 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
         });
       }
 
-      const content = result.isError ? `Error: ${result.content}` : result.content;
+      const content = result.isError
+        ? `Error: ${contentText(result.content)}`
+        : result.content;
       conversation.addToolResult(tc.id, content, !!result.isError);
     }
   }

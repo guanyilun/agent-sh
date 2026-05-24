@@ -10,7 +10,7 @@
  * doesn't need to know which mode is active.
  */
 import type { ChatCompletionTool } from "./llm-client.js";
-import type { ToolDefinition } from "./types.js";
+import { contentText, type ToolDefinition, type ImageContent } from "./types.js";
 import type { ConversationState } from "./conversation-state.js";
 
 export interface PendingToolCall {
@@ -22,7 +22,7 @@ export interface PendingToolCall {
 export interface ToolResult {
   callId: string;
   toolName: string;
-  content: string;
+  content: string | import("./types.js").ImageContent[];
   isError: boolean;
 }
 
@@ -121,7 +121,7 @@ export class ApiToolProtocol implements ToolProtocol {
 
   recordResults(conv: ConversationState, results: ToolResult[]): void {
     for (const r of results) {
-      const content = r.isError ? `Error: ${r.content}` : r.content;
+      const content = r.isError ? `Error: ${contentText(r.content)}` : r.content;
       conv.addToolResult(r.callId, content, r.isError);
     }
   }
@@ -208,7 +208,7 @@ export class InlineToolProtocol implements ToolProtocol {
     if (results.length === 0) return;
     const parts = results.map((r) => {
       const status = r.isError ? "error" : "ok";
-      return `[${r.toolName} ${r.callId} ${status}]\n${r.content}`;
+      return `[${r.toolName} ${r.callId} ${status}]\n${contentText(r.content)}`;
     });
     conv.addToolResultInline(parts.join("\n\n"));
   }
@@ -497,7 +497,7 @@ export class DeferredToolProtocol implements ToolProtocol {
 
   recordResults(conv: ConversationState, results: ToolResult[]): void {
     for (const r of results) {
-      const content = r.isError ? `Error: ${r.content}` : r.content;
+      const content = r.isError ? `Error: ${contentText(r.content)}` : r.content;
       conv.addToolResult(r.callId, content, r.isError);
     }
   }
@@ -611,7 +611,7 @@ export class DeferredLookupProtocol implements ToolProtocol {
 
   recordResults(conv: ConversationState, results: ToolResult[]): void {
     for (const r of results) {
-      const content = r.isError ? `Error: ${r.content}` : r.content;
+      const content = r.isError ? `Error: ${contentText(r.content)}` : r.content;
       conv.addToolResult(r.callId, content, r.isError);
     }
   }

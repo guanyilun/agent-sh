@@ -1,6 +1,6 @@
 import { executeArgv } from "../../utils/executor.js";
 import { resolveRgPath } from "../../utils/ripgrep-path.js";
-import type { ToolDefinition } from "../types.js";
+import { contentText, type ToolDefinition } from "../types.js";
 import { expandHome } from "./expand-home.js";
 
 export function createGrepTool(getCwd: () => string): ToolDefinition {
@@ -67,8 +67,9 @@ export function createGrepTool(getCwd: () => string): ToolDefinition {
     showOutput: false,
 
     formatResult: (args, result) => {
-      if (result.isError || result.content === "No matches found.") return { summary: "0 matches" };
-      const lines = result.content.split("\n").filter(Boolean);
+      const text = contentText(result.content);
+      if (result.isError || text === "No matches found.") return { summary: "0 matches" };
+      const lines = text.split("\n").filter(Boolean);
       // Strip pagination info line from count
       const resultLines = lines.filter(l => !l.startsWith("[Showing "));
       const mode = (args.output_mode as string) ?? "files_with_matches";

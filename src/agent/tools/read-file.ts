@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ToolDefinition } from "../types.js";
+import { contentText, type ImageContent, type ToolDefinition } from "../types.js";
 import { expandHome } from "./expand-home.js";
 
 /** Tracks the last-read state of a file for deduplication. */
@@ -12,6 +12,14 @@ export interface FileReadState {
 
 /** Shared cache — keyed by absolute path. */
 export type FileReadCache = Map<string, FileReadState>;
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
 
 export function createReadFileTool(
   getCwd: () => string,
@@ -51,9 +59,10 @@ export function createReadFileTool(
     }),
 
     formatResult: (_args, result) => {
+      const text = contentText(result.content);
       if (result.isError) return {};
-      if (result.content.startsWith("File unchanged")) return { summary: "cached" };
-      const lines = result.content.split("\n").filter(l => !l.startsWith("["));
+      if (text.startsWith("File unchanged")) return { summary: "cached" };
+      const lines = text.split("\n").filter(l => !l.startsWith("["));
       return { summary: `${lines.length} lines` };
     },
 
@@ -94,6 +103,26 @@ export function createReadFileTool(
             content: `File is ${sizeMB}MB (${stat.size} bytes) — too large to read in full. Use offset and limit to read specific sections, e.g. offset=1 limit=200.`,
             exitCode: 1,
             isError: true,
+          };
+        }
+
+        const ext = path.extname(absPath).toLowerCase();
+        const mimeType = IMAGE_MIME_TYPES[ext];
+        if (mimeType) {
+          const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB — base64 adds ~33%
+          if (stat.size > MAX_IMAGE_BYTES) {
+            return {
+              content: `Image is ${(stat.size / (1024 * 1024)).toFixed(1)}MB — too large. Images are capped at 5MB.`,
+              exitCode: 1,
+              isError: true,
+            };
+          }
+          const buf = await fs.readFile(absPath);
+          const data = buf.toString("base64");
+          return {
+            content: [{ type: "image", data, mimeType }],
+            exitCode: 0,
+            isError: false,
           };
         }
 
