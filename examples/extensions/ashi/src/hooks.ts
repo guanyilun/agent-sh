@@ -1,12 +1,8 @@
 import type { Component } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
-import {
-  AssistantMessage,
-  ThinkingBlock,
-  ToolResultBody,
-  UserMessage,
-} from "./components.js";
+import { AssistantMessage, ThinkingBlock, UserMessage } from "./components.js";
 import { entryFor, loadToolDisplayConfig, type ToolResultMode } from "./display-config.js";
+import { isRenderModel, mountCall, mountResult, type RenderModel } from "./schema.js";
 
 export interface RenderState {
   state: Record<string, unknown>;
@@ -14,44 +10,19 @@ export interface RenderState {
 }
 
 export interface UserMessageArgs extends RenderState { text: string }
-
 export interface AssistantArgs extends RenderState { text: string }
-
 export interface ThinkingArgs extends RenderState { text: string; hidden: boolean }
 
-export interface ToolCallArgs extends RenderState {
-  toolCallId: string;
-  name: string;
-  title: string;
-  kind?: string;
-  displayDetail?: string;
-  rawInput?: unknown;
-}
-
-export interface ToolResultArgs extends RenderState {
-  toolCallId: string;
-  name: string;
-  kind?: string;
-  rawInput?: unknown;
-  /** Resolved from ashi.display.{name} (or .default) in settings.json. */
-  mode: ToolResultMode;
-  previewLines: number;
-}
-
-/** Mutated by ashi when the tool completes. Renderers may ignore setStatus
- *  if they encode status differently (e.g. a sigil in the call line).
- *  Optional toggleExpanded lets long labels (e.g. bash commands) reveal
- *  their full form on Ctrl+O. */
+/** The contract ashi's frontend mutates on the call-side component. Schema
+ *  renderers satisfy this via SchemaCallComponent — extension authors don't
+ *  implement it directly. */
 export interface ToolCallView extends Component {
   setStatus(opts: { exitCode: number | null; elapsedMs: number; summary?: string }): void;
   toggleExpanded?(): void;
 }
 
-/** Mutated by ashi as output streams in and when the tool completes.
- *  setDiffRenderer is optional behavior — renderers may no-op if they don't
- *  show diffs. The renderer is called on each terminal-width change so diffs
- *  reflow on resize. toggleExpanded flips the view's internal expansion state
- *  (Ctrl+O). */
+/** Result-side counterpart. setDiffRenderer receives the width-aware diff
+ *  closure produced by the edit/write tool at finalize. */
 export interface ToolResultView extends Component {
   appendChunk(chunk: string): void;
   setDiffRenderer(fn: (width: number) => string[]): void;
@@ -59,12 +30,8 @@ export interface ToolResultView extends Component {
   toggleExpanded(): void;
 }
 
-const CALL_PREFIX = "ashi:render-tool-call:";
-const RESULT_PREFIX = "ashi:render-tool-result:";
+const SCHEMA_PREFIX = "ashi:render-tool:";
 
-/** Register the default render-* handlers. Per-tool overrides are advised by
- *  name (e.g. `ashi:render-tool-call:bash`); unknown tools fall back to
- *  `:default`. */
 export function registerRenderDefaults(ctx: ExtensionContext): void {
   ctx.define("ashi:render-user-message", (args: UserMessageArgs): Component => {
     return new UserMessage(args.text);
@@ -88,32 +55,50 @@ export function registerRenderDefaults(ctx: ExtensionContext): void {
     tb.setHidden(args.hidden);
     return tb;
   });
+}
 
-  ctx.define(`${RESULT_PREFIX}default`, (args: ToolResultArgs): ToolResultView => {
-    return new ToolResultBody(args.mode, args.previewLines);
-  });
+export interface ToolCallResolveArgs {
+  toolCallId: string;
+  name: string;
+  title: string;
+  kind?: string;
+  displayDetail?: string;
+  rawInput?: unknown;
+}
+
+export interface ToolResultResolveArgs {
+  toolCallId: string;
+  name: string;
+  kind?: string;
+  rawInput?: unknown;
 }
 
 export interface ToolHookResolver {
-  call: (args: Omit<ToolCallArgs, "state" | "invalidate"> & Partial<RenderState>) => ToolCallView;
-  result: (args: Omit<ToolResultArgs, "mode" | "previewLines" | "state" | "invalidate"> & Partial<RenderState>) => ToolResultView;
+  call: (args: ToolCallResolveArgs) => ToolCallView;
+  result: (args: ToolResultResolveArgs) => ToolResultView;
   modeFor: (name: string) => { mode: ToolResultMode; previewLines: number };
 }
 
-/** Resolves :{name} → :default for tool render hooks and looks up each tool's
- *  display mode from ashi.display. Cache the registered-handler set; callers
- *  can `refresh()` after extensions register new tool-specific renderers. */
+/** Resolves a tool name to a schema RenderModel — :{name} first, then :default.
+ *  Cache the registered-handler set; callers can `refresh()` after extensions
+ *  register new tool-specific renderers. */
 export function createToolHookResolver(
   ctx: ExtensionContext,
-  renderState: () => RenderState,
 ): ToolHookResolver & { refresh: () => void } {
   const config = loadToolDisplayConfig();
   let registered = new Set(ctx.list());
 
-  const pick = (prefix: string, name: string): string => {
-    const specific = `${prefix}${name}`;
-    return registered.has(specific) ? specific : `${prefix}default`;
+  const schemaModel = (name: string): RenderModel<unknown> => {
+    for (const candidate of [`${SCHEMA_PREFIX}${name}`, `${SCHEMA_PREFIX}default`]) {
+      if (!registered.has(candidate)) continue;
+      const v = ctx.call(candidate, {}) as unknown;
+      if (isRenderModel(v)) return v;
+    }
+    throw new Error(`no render model for tool "${name}" and no ${SCHEMA_PREFIX}default registered`);
   };
+
+  // SchemaResultComponent.render(width) corrects env.width on the first frame.
+  const initialWidth = (): number => process.stdout.columns ?? 80;
 
   return {
     refresh(): void {
@@ -124,18 +109,14 @@ export function createToolHookResolver(
       return { mode: e.result, previewLines: e.previewLines };
     },
     call(args) {
-      const handler = pick(CALL_PREFIX, args.name);
-      return ctx.call(handler, { ...renderState(), ...args }) as ToolCallView;
+      const { mode, previewLines } = this.modeFor(args.name);
+      return mountCall(schemaModel(args.name), args,
+        { width: initialWidth(), mode, previewLines }) as ToolCallView;
     },
     result(args) {
       const { mode, previewLines } = this.modeFor(args.name);
-      const handler = pick(RESULT_PREFIX, args.name);
-      return ctx.call(handler, {
-        ...renderState(),
-        ...args,
-        mode,
-        previewLines,
-      }) as ToolResultView;
+      return mountResult(schemaModel(args.name), { ...args, title: args.name },
+        { width: initialWidth(), mode, previewLines }) as ToolResultView;
     },
   };
 }

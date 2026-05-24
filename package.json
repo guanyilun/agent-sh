@@ -3,6 +3,9 @@
   "version": "0.14.2",
   "description": "A shell-first terminal where AI is one keystroke away",
   "type": "module",
+  "workspaces": [
+    "examples/extensions/*"
+  ],
   "main": "dist/core/index.js",
   "types": "dist/core/index.d.ts",
   "bin": {
