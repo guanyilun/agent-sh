@@ -11,7 +11,7 @@ import type { AppConfig } from "agent-sh/types";
 
 import { mountAshi } from "./frontend.js";
 import { MultiSessionStore } from "./multi-session-store.js";
-import { registerForkCommands } from "./commands.js";
+import { registerForkCommands, applyBranchMessages } from "./commands.js";
 import { registerSessionCommands } from "./session-commands.js";
 import { registerCompaction } from "./compaction.js";
 import { registerCapture } from "./capture.js";
@@ -20,12 +20,13 @@ import { registerDefaultToolRenderers } from "./default-renderers.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
-function parseArgs(argv: string[]): AppConfig & { extensions?: string[] } {
+function parseArgs(argv: string[]): AppConfig & { extensions?: string[]; continueLast: boolean } {
   let model: string | undefined;
   let apiKey: string | undefined = process.env.OPENAI_API_KEY ?? process.env.OPENROUTER_API_KEY;
   let baseURL: string | undefined = process.env.OPENAI_BASE_URL;
   let provider: string | undefined;
   let backend: string | undefined;
+  let continueLast = false;
   const extensions: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -37,13 +38,15 @@ function parseArgs(argv: string[]): AppConfig & { extensions?: string[] } {
     else if (a === "--backend" && argv[i + 1]) backend = argv[++i];
     else if ((a === "-e" || a === "--extensions") && argv[i + 1]) {
       extensions.push(...argv[++i]!.split(",").map(s => s.trim()).filter(Boolean));
+    } else if (a === "-c" || a === "--continue") {
+      continueLast = true;
     } else if (a === "-h" || a === "--help") {
       process.stdout.write(MANAGEMENT_HELP + "\n");
       process.exit(0);
     }
   }
 
-  return { shell: "/bin/sh", model, apiKey, baseURL, provider, backend, extensions };
+  return { shell: "/bin/sh", model, apiKey, baseURL, provider, backend, extensions, continueLast };
 }
 
 const MANAGEMENT_HELP = `ashi — ash (agent-sh's built-in agent) in an interactive TUI
@@ -59,7 +62,9 @@ Management:
 
 Launch (default):
   ashi [--provider <name>] [--model <id>] [--api-key <key>] [--base-url <url>]
-       [--backend <name>] [-e <ext>[,<ext>...]]
+       [--backend <name>] [-e <ext>[,<ext>...]] [-c | --continue]
+
+  -c, --continue   Resume the last session in this cwd (fresh session if none)
 
 Reads ~/.agent-sh/settings.json for providers and defaults.`;
 
@@ -110,7 +115,10 @@ async function main(): Promise<void> {
   const cwd = process.cwd();
   const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
   const sessionsDir = path.join(os.homedir(), ".agent-sh", "ashi", "history", cwdSlug, "sessions");
-  const store = new MultiSessionStore(sessionsDir, cwd);
+  const resumeId = config.continueLast
+    ? MultiSessionStore.readLastSessionId(sessionsDir, { fallbackToLatest: true })
+    : undefined;
+  const store = new MultiSessionStore(sessionsDir, cwd, { resumeSessionId: resumeId });
   const getStore = (): MultiSessionStore => store;
 
   const core = createCore({ ...config, history: new NoopHistory() });
@@ -158,6 +166,12 @@ async function main(): Promise<void> {
     openSessionPicker: handle.openSessionPicker,
     rebuildChat: handle.rebuildChat,
   });
+
+  if (resumeId) {
+    applyBranchMessages(ctx, getStore, capture);
+    await handle.rebuildChat();
+    ctx.bus.emit("ui:info", { message: `continued session ${resumeId.slice(0, 12)}…` });
+  }
 
   await core.activateBackend(config.backend ?? getSettings().defaultBackend);
 
