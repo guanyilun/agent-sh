@@ -1308,7 +1308,6 @@ export class AgentLoop implements AgentBackend {
             signal },
         );
 
-        // Truncate large string outputs to avoid blowing context.
         let content = result.content;
         if (typeof content === "string") {
           const maxBytes = tool.maxResultBytes ?? 100_000; // ~25k tokens
