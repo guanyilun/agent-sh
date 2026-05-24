@@ -4,7 +4,7 @@
   "description": "Ashi-targeting renderer for the scheme_eval tool — λ icon, syntax-highlighted source preview, expandable on Ctrl+O.",
   "type": "module",
   "main": "index.ts",
-  "dependencies": {
+  "devDependencies": {
     "agent-sh": "^0.14.0",
     "@guanyilun/ashi": "^0.1.6"
   }
