@@ -6,7 +6,7 @@ import { InputHandler, type InputContext } from "./input-handler.js";
 import { OutputParser } from "./output-parser.js";
 import { getSettings } from "../core/settings.js";
 import { clearOpost } from "../utils/tty.js";
-import type { Terminal } from "./terminal.js";
+import { processTerminal, type Terminal } from "./terminal.js";
 import {
   pickStrategy,
   FALLBACK_STRATEGY,
@@ -58,9 +58,9 @@ export class Shell implements InputContext {
     shell: string;
     cwd: string;
     instanceId: string;
-    terminal: Terminal;
+    terminal?: Terminal;
   }) {
-    this.terminal = opts.terminal;
+    this.terminal = opts.terminal ?? processTerminal();
 
     // Build environment — filter out undefined values (node-pty's native
     // posix_spawnp fails if any env value is undefined)

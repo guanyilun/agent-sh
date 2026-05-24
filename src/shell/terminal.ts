@@ -44,8 +44,7 @@ export function processTerminal(): Terminal {
     cols() { return process.stdout.columns || 80; },
     rows() { return process.stdout.rows || 24; },
     suspendInput() {
-      /* eslint-disable @typescript-eslint/no-explicit-any */
-      const wasRaw = process.stdin.isTTY && (process.stdin as any).isRaw;
+      const wasRaw = process.stdin.isTTY && (process.stdin as { isRaw?: boolean }).isRaw;
       if (process.stdin.isTTY) {
         try {
           process.stdin.setRawMode(false);
@@ -62,7 +61,6 @@ export function processTerminal(): Terminal {
           }
         },
       };
-      /* eslint-enable @typescript-eslint/no-explicit-any */
     },
   };
 }
@@ -73,15 +71,12 @@ export function processTerminal(): Terminal {
  * since the PTY has OPOST disabled.
  */
 export function surfaceFromTerminal(terminal: Terminal): RenderSurface {
+  const write = (text: string) => terminal.write(text.replace(/(?<!\r)\n/g, "\r\n"));
   return {
-    write(text: string) {
-      terminal.write(text.replace(/(?<!\r)\n/g, "\r\n"));
-    },
-    writeLine(line: string) {
-      this.write(line + "\n");
-    },
+    write,
+    writeLine: (line) => write(line + "\n"),
     get columns() { return terminal.cols(); },
     get rows() { return terminal.rows(); },
-    onResize(cb) { return terminal.onResize(cb); },
+    onResize: (cb) => terminal.onResize(cb),
   };
 }
