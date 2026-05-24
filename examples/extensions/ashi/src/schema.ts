@@ -123,11 +123,14 @@ interface SharedCell<S> {
 interface RenderHandle<S> {
   cell: SharedCell<S>;
   model: RenderModel<S>;
+  toolCallId: string;
   dispatch: (action: string, payload?: unknown) => void;
 }
 
-/** Per-toolCallId handle registry — lets the result-side hook find the call-side
- *  cell and share state. Cleared when either component is finalized + GC'd. */
+/** Per-toolCallId handle registry — sole purpose is letting the result-side
+ *  mount find the call-side cell so they can share state. Once the result
+ *  component is mounted, both views hold their own handle reference and the
+ *  map entry is dead weight; cleared on finalize. */
 const HANDLES = new Map<string, RenderHandle<unknown>>();
 
 export interface MountArgs {
@@ -162,6 +165,7 @@ function handleFor<S>(
   const handle: RenderHandle<ViewState<S>> = {
     cell,
     model: model as unknown as RenderModel<ViewState<S>>,
+    toolCallId: args.toolCallId,
     dispatch(action, payload) {
       if (action === "status") {
         cell.state = { ...cell.state, status: payload as DisplayStatus };
@@ -346,6 +350,7 @@ class SchemaResultComponent extends Container {
   finalize(opts: { exitCode: number | null; summary?: string }): void {
     this.handle.cell.env = { ...this.handle.cell.env, finalized: true };
     this.handle.dispatch("status", { ...opts, elapsedMs: 0 });
+    HANDLES.delete(this.handle.toolCallId);
   }
   toggleExpanded(): void {
     this.handle.cell.env = { ...this.handle.cell.env, expanded: !this.handle.cell.env.expanded };

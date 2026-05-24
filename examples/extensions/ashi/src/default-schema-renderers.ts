@@ -173,11 +173,18 @@ function editLikeModel(verb: string): RenderModel<EditInit> {
       const path = str(r.file_path) ?? str(r.path);
       return { path: path ? relativize(path) : "…", verb };
     },
-    view: (s) => ({
+    view: (s, env) => ({
       titleIcon: "edit",
       title: [nameSeg(`${s.verb} `), accentSeg(s.path)],
       status: s.status,
-      body: s.hasDiff ? { kind: "diff" } : { kind: "stream", text: s.output },
+      // Collapsed-with-diff: diff only (the "Edited /path (+N -M)" stream line
+      // restates the call line). Expanded-with-diff: both, matching the
+      // legacy ToolResultBody behavior at components.ts.
+      body: s.hasDiff
+        ? (env.expanded
+            ? { kind: "compound", parts: [{ kind: "diff" }, { kind: "stream", text: s.output }] }
+            : { kind: "diff" })
+        : { kind: "stream", text: s.output },
       expandable: true,
     }),
   };

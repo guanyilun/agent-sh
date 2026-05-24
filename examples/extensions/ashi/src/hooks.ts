@@ -126,7 +126,8 @@ export function createToolHookResolver(
     return undefined;
   };
 
-  // TODO: pull from the live TuiFrame so the first paint isn't cold-width.
+  // Initial guess only — SchemaResultComponent.render(width) corrects on the
+  // first frame, and no current model uses width in the call-line title.
   const initialWidth = (): number => process.stdout.columns ?? 80;
 
   return {
