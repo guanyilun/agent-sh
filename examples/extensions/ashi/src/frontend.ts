@@ -269,7 +269,7 @@ export function mountAshi(
     invalidate: () => tui.requestRender(),
   });
 
-  const tools = createToolHookResolver(ctx, renderState);
+  const tools = createToolHookResolver(ctx);
 
   const renderUserMessage = (text: string): Component =>
     ctx.call("ashi:render-user-message", { text, ...renderState() }) as Component;

@@ -178,8 +178,7 @@ function editLikeModel(verb: string): RenderModel<EditInit> {
       title: [nameSeg(`${s.verb} `), accentSeg(s.path)],
       status: s.status,
       // Collapsed-with-diff: diff only (the "Edited /path (+N -M)" stream line
-      // restates the call line). Expanded-with-diff: both, matching the
-      // legacy ToolResultBody behavior at components.ts.
+      // restates the call line). Expanded-with-diff: diff + stream output.
       body: s.hasDiff
         ? (env.expanded
             ? { kind: "compound", parts: [{ kind: "diff" }, { kind: "stream", text: s.output }] }

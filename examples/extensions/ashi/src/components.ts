@@ -6,7 +6,6 @@ import {
   Text,
 } from "@earendil-works/pi-tui";
 import { markdownTheme, theme } from "./theme.js";
-import type { ToolResultMode } from "./display-config.js";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -92,118 +91,6 @@ export class ThinkingBlock extends Container {
     });
     this.addChild(this.md);
   }
-}
-
-export class ToolResultBody extends Container {
-  private outputText: Text;
-  private bodyText: Text;
-  private outputBuffer = "";
-  private diffRenderer: ((width: number) => string[]) | null = null;
-  private lastDiffWidth = -1;
-  private mode: ToolResultMode;
-  private previewLines: number;
-  private finalized = false;
-  private expanded = false;
-  private exitCode: number | null | undefined;
-
-  constructor(mode: ToolResultMode, previewLines: number) {
-    super();
-    this.mode = mode;
-    this.previewLines = previewLines;
-    this.outputText = new Text("", 1, 0);
-    this.bodyText = new Text("", 0, 0);
-    this.addChild(this.outputText);
-    this.addChild(this.bodyText);
-  }
-
-  appendChunk(chunk: string): void {
-    this.outputBuffer += chunk;
-    this.repaint();
-  }
-
-  setDiffRenderer(fn: (width: number) => string[]): void {
-    this.diffRenderer = fn;
-    this.lastDiffWidth = -1;
-    this.repaint();
-  }
-
-  finalize(opts: { exitCode: number | null; summary?: string }): void {
-    this.finalized = true;
-    this.exitCode = opts.exitCode;
-    this.repaint();
-  }
-
-  toggleExpanded(): void {
-    this.expanded = !this.expanded;
-    this.repaint();
-  }
-
-  override render(width: number): string[] {
-    if (this.diffRenderer && width !== this.lastDiffWidth) {
-      this.lastDiffWidth = width;
-      const showDiff = this.expanded || this.mode === "preview";
-      this.bodyText.setText(showDiff ? this.diffRenderer(width).join("\n") : "");
-    }
-    return super.render(width);
-  }
-
-  private repaint(): void {
-    const hasDiff = this.diffRenderer !== null;
-    const showDiff = hasDiff && (this.expanded || this.mode === "preview");
-    if (showDiff && this.lastDiffWidth >= 0 && this.diffRenderer) {
-      this.bodyText.setText(this.diffRenderer(this.lastDiffWidth).join("\n"));
-    } else if (!showDiff) {
-      this.bodyText.setText("");
-    }
-
-    // When a diff exists, the textual output ("Edited /path (+12 -3)") just
-    // restates the call line — suppress its line-count hint to keep edits quiet.
-    if (hasDiff && !this.expanded) {
-      this.outputText.setText("");
-      return;
-    }
-    if (!this.outputBuffer) {
-      this.outputText.setText("");
-      return;
-    }
-    // POSIX-style outputs typically end with \n; rendering that trailing
-    // newline as a real line produces a phantom blank gap below the tool.
-    const display = this.outputBuffer.replace(/\n+$/, "");
-    if (this.expanded) {
-      this.outputText.setText(theme.fg("toolOutput", display));
-      return;
-    }
-    if (this.mode === "hidden") {
-      if (!this.finalized) { this.outputText.setText(""); return; }
-      this.outputText.setText(lineCountHint(this.outputBuffer, this.exitCode));
-      return;
-    }
-    if (this.mode === "summary") {
-      if (!this.finalized) {
-        // Brief tail while streaming; collapses to a line count on finalize.
-        const tail = display.split("\n").slice(-2).join("\n");
-        this.outputText.setText(theme.fg("muted", tail));
-        return;
-      }
-      this.outputText.setText(lineCountHint(this.outputBuffer, this.exitCode));
-      return;
-    }
-    const lines = display.split("\n");
-    const trimmed = lines.slice(-this.previewLines).join("\n");
-    const remaining = Math.max(0, lines.length - this.previewLines);
-    const overflow = remaining > 0
-      ? `\n${theme.fg("muted", `... (${remaining} more ${remaining === 1 ? "line" : "lines"})`)}`
-      : "";
-    this.outputText.setText(`${theme.fg("toolOutput", trimmed)}${overflow}`);
-  }
-}
-
-function lineCountHint(buffer: string, exitCode: number | null | undefined): string {
-  const lines = buffer.split("\n").filter((l) => l.length > 0);
-  const label = lines.length === 1 ? "1 line" : `${lines.length} lines`;
-  const ok = exitCode === null || exitCode === 0;
-  const arrow = ok ? theme.fg("muted", "↳ ") : theme.fg("error", "↳ ");
-  return `${arrow}${theme.fg("muted", label)}`;
 }
 
 export const GROUP_ICONS: Record<string, string> = { read: "◆", search: "⌕" };
