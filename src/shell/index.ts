@@ -6,12 +6,13 @@
 import "./events.js"; // augments BusEvents with shell-owned events
 import type { ExtensionContext, RemoteSession, RemoteSessionOptions, ShellSurface } from "./host-types.js";
 import { Shell } from "./shell.js";
-import { DefaultCompositor, StdoutSurface } from "../utils/compositor.js";
+import { DefaultCompositor } from "../utils/compositor.js";
 import { TerminalBuffer } from "../utils/terminal-buffer.js";
 import { setPalette } from "../utils/palette.js";
 import * as streamTransform from "../utils/stream-transform.js";
 import activateShellContext from "./shell-context.js";
 import activateTuiRenderer from "./tui-renderer.js";
+import { type Terminal, processTerminal, surfaceFromTerminal } from "./terminal.js";
 
 export interface ShellActivateOptions {
   cols: number;
@@ -21,6 +22,11 @@ export interface ShellActivateOptions {
   cwd: string;
   /** Optional callback used by the inline status indicator. */
   onShowAgentInfo?: () => { info: string; model?: string };
+  /**
+   * Host-side I/O endpoint. Defaults to processTerminal() so the CLI
+   * works unchanged; headless callers (web hubs, tests) supply their own.
+   */
+  terminal?: Terminal;
 }
 
 export interface ShellHandle {
@@ -104,10 +110,11 @@ export function activateShell(
   ctx: ExtensionContext,
   opts: ShellActivateOptions,
 ): ShellHandle {
-  const stdoutSurface = new StdoutSurface();
-  ctx.shell!.compositor.setDefault("agent", stdoutSurface);
-  ctx.shell!.compositor.setDefault("query", stdoutSurface);
-  ctx.shell!.compositor.setDefault("status", stdoutSurface);
+  const terminal = opts.terminal ?? processTerminal();
+  const surface = surfaceFromTerminal(terminal);
+  ctx.shell!.compositor.setDefault("agent", surface);
+  ctx.shell!.compositor.setDefault("query", surface);
+  ctx.shell!.compositor.setDefault("status", surface);
 
   const shell = new Shell({
     bus: ctx.bus,
@@ -118,15 +125,13 @@ export function activateShell(
     cwd: opts.cwd,
     instanceId: ctx.instanceId,
     onShowAgentInfo: opts.onShowAgentInfo,
+    terminal,
   });
 
-  const onResize = () => {
-    shell.resize(process.stdout.columns || 80, process.stdout.rows || 24);
-  };
-  process.stdout.on("resize", onResize);
+  const offResize = terminal.onResize((cols, rows) => shell.resize(cols, rows));
 
   ctx.onDispose(() => {
-    process.stdout.off("resize", onResize);
+    offResize();
     shell.kill();
   });
 

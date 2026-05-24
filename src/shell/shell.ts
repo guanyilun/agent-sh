@@ -6,6 +6,7 @@ import { InputHandler, type InputContext } from "./input-handler.js";
 import { OutputParser } from "./output-parser.js";
 import { getSettings } from "../core/settings.js";
 import { clearOpost } from "../utils/tty.js";
+import type { Terminal } from "./terminal.js";
 import {
   pickStrategy,
   FALLBACK_STRATEGY,
@@ -35,6 +36,8 @@ export class Shell implements InputContext {
   private handlers: ShellHandlers;
   private inputHandler: InputHandler;
   private outputParser: OutputParser;
+  private terminal: Terminal;
+  private inputDispose: (() => void) | null = null;
   // hardMute is unconditional (overlay compositing); softMute is overridable
   // by unmute (terminal_keys, permission UI). Gate: hard wins; otherwise
   // muted iff softMute held without an unmute.
@@ -55,7 +58,9 @@ export class Shell implements InputContext {
     shell: string;
     cwd: string;
     instanceId: string;
+    terminal: Terminal;
   }) {
+    this.terminal = opts.terminal;
 
     // Build environment — filter out undefined values (node-pty's native
     // posix_spawnp fails if any env value is undefined)
@@ -96,17 +101,10 @@ export class Shell implements InputContext {
     Object.assign(env, spawnConfig.envOverrides);
     const shellArgs = spawnConfig.args;
 
-    // Pause stdin before spawning PTY to avoid TTY contention on macOS.
-    // The PTY will become the controlling terminal for the child shell.
-    const wasRaw = process.stdin.isTTY && (process.stdin as any).isRaw;
-    if (process.stdin.isTTY) {
-      try {
-        process.stdin.setRawMode(false);
-        process.stdin.pause();
-      } catch {
-        // Ignore
-      }
-    }
+    // The PTY will become the controlling terminal for the child shell;
+    // suspend the host terminal's input around spawn to avoid TTY contention
+    // on macOS. Headless terminals make this a no-op.
+    const suspended = this.terminal.suspendInput?.();
 
     this.ptyProcess = pty.spawn(shellBin, shellArgs, {
       name: "xterm-256color",
@@ -116,17 +114,7 @@ export class Shell implements InputContext {
       env,
     });
 
-    // Restore stdin after PTY is created
-    if (process.stdin.isTTY) {
-      try {
-        process.stdin.resume();
-        if (wasRaw) {
-          process.stdin.setRawMode(true);
-        }
-      } catch {
-        // Ignore - will be set up later in index.ts
-      }
-    }
+    suspended?.resume();
 
     clearOpost();
 
@@ -305,17 +293,16 @@ export class Shell implements InputContext {
         if (nlIdx === -1) return;
         this.pendingEchoSkips--;
         const rest = data.slice(nlIdx + 1);
-        if (rest) process.stdout.write(rest);
+        if (rest) this.terminal.write(rest);
         return;
       }
 
-      process.stdout.write(data);
+      this.terminal.write(data);
     });
   }
 
   private setupInput(): void {
-    process.stdin.on("data", (data: Buffer) => {
-      const str = data.toString("utf-8");
+    this.inputDispose = this.terminal.onInput((str) => {
       this.inputHandler.handleInput(str);
     });
   }
@@ -358,7 +345,7 @@ export class Shell implements InputContext {
     this.bus.onPipeAsync("shell:exec-request", async (payload) => {
       const visible = this.acquireUnmute("exec-request");
       this.skipNextLine();
-      process.stdout.write("\r\n");
+      this.terminal.write("\r\n");
       this.bus.emit("shell:agent-exec-start", {});
 
       try {
@@ -409,6 +396,8 @@ export class Shell implements InputContext {
   }
 
   kill(): void {
+    this.inputDispose?.();
+    this.inputDispose = null;
     this.ptyProcess.kill();
     if (this.tmpDir) {
       fs.rmSync(this.tmpDir, { recursive: true, force: true });
