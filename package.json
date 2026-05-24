@@ -38,6 +38,10 @@
       "types": "./dist/shell/shell.d.ts",
       "default": "./dist/shell/shell.js"
     },
+    "./shell/strategies": {
+      "types": "./dist/shell/strategies/index.d.ts",
+      "default": "./dist/shell/strategies/index.js"
+    },
     "./utils/stream-transform": {
       "types": "./dist/utils/stream-transform.d.ts",
       "default": "./dist/utils/stream-transform.js"
