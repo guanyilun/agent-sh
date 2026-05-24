@@ -12,7 +12,7 @@ export interface ToolDisplayConfig {
   [toolName: string]: ToolEntryConfig;
 }
 
-const DEFAULT_ENTRY: ToolEntryConfig = { result: "preview", previewLines: 8 };
+const DEFAULT_ENTRY: ToolEntryConfig = { result: "preview", previewLines: 5 };
 
 const BUILTIN_OVERRIDES: Record<string, Partial<ToolEntryConfig>> = {
   read: { result: "hidden" },
@@ -20,7 +20,7 @@ const BUILTIN_OVERRIDES: Record<string, Partial<ToolEntryConfig>> = {
   grep: { result: "summary" },
   find: { result: "summary" },
   glob: { result: "summary" },
-  bash: { result: "preview", previewLines: 12 },
+  bash: { result: "preview" },
   edit: { result: "preview" },
   edit_file: { result: "preview" },
   write: { result: "preview" },

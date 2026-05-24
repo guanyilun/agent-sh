@@ -122,11 +122,11 @@ Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
 {
   "ashi": {
     "display": {
-      "default": { "result": "preview", "previewLines": 8 },
+      "default": { "result": "preview", "previewLines": 5 },
       "read":    { "result": "hidden" },
       "ls":      { "result": "hidden" },
       "grep":    { "result": "summary" },
-      "bash":    { "result": "preview", "previewLines": 12 },
+      "bash":    { "result": "preview" },
       "edit":    { "result": "preview" },
       "write":   { "result": "preview" }
     }
@@ -138,7 +138,7 @@ Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
 
 - `"hidden"` — call line only while streaming; line count (`↳ 42 lines`) after completion.
 - `"summary"` — 2-line tail while streaming; line count after completion.
-- `"preview"` — last `previewLines` lines of output (default 8), with a `... (N more lines)` hint when content overflows.
+- `"preview"` — last `previewLines` lines of output (default 5), with a `... (N more lines)` hint when content overflows.
 
 For `edit_file` / `write_file`, the diff frame is treated as the output and follows the same gating: shown for `preview`, hidden for `hidden`/`summary` (the call line already carries `+12 -3` stats). The line-count hint is suppressed for diff-producing tools so edits stay quiet.
 
