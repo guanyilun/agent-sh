@@ -108,7 +108,6 @@ export function createReadFileTool(
           };
         }
 
-        // Image files: read as base64 for multimodal models
         const ext = path.extname(absPath).toLowerCase();
         const mimeType = IMAGE_MIME_TYPES[ext];
         if (mimeType) {

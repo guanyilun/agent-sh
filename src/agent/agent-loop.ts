@@ -772,7 +772,6 @@ export class AgentLoop implements AgentBackend {
         parts.push("# Extension Instructions\n\n" + extensionSections.join("\n\n"));
       }
 
-      // Image support note — only included when the active model supports image input
       if (this.currentMode.modalities?.includes("image")) {
         parts.push(
           "# Image Support\n\n"
@@ -1310,7 +1309,6 @@ export class AgentLoop implements AgentBackend {
         );
 
         // Truncate large string outputs to avoid blowing context.
-        // Image content is left untouched.
         let content = result.content;
         if (typeof content === "string") {
           const maxBytes = tool.maxResultBytes ?? 100_000; // ~25k tokens

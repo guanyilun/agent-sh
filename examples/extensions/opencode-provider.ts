@@ -228,13 +228,11 @@ export default function activate(ctx: AgentContext): void {
       const zenProvider = modelsDev?.[MODELS_DEV_PROVIDER_IDS.zen];
       const goProvider = modelsDev?.[MODELS_DEV_PROVIDER_IDS.go];
 
-      // Fetch Zen + Go model IDs in parallel
       const [zenIds, goIds] = await Promise.all([
         fetchOfficialModelIds(ZEN_MODELS_ENDPOINT),
         fetchOfficialModelIds(GO_MODELS_ENDPOINT),
       ]);
 
-      // Resolve with metadata, falling back to fallback lists if /models was empty
       const resolveModels = (
         ids: string[],
         provider: ModelsDevProviderEntry | undefined,
@@ -247,7 +245,6 @@ export default function activate(ctx: AgentContext): void {
       const zenModels = resolveModels(zenIds, zenProvider, ZEN_FALLBACK_MODELS);
       const goModels = resolveModels(goIds, goProvider, GO_FALLBACK_MODELS);
 
-      // Re-register both with full catalogs (still uses the same apiKey)
       ctx.agent.providers.register({
         id: "opencode",
         apiKey,
@@ -266,7 +263,5 @@ export default function activate(ctx: AgentContext): void {
         supportsReasoningEffort: true,
       });
     })
-    .catch(() => {
-      // Keep fallback models from Phase 1
-    });
+    .catch(() => {});
 }
