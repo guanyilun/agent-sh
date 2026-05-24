@@ -16,6 +16,7 @@
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc",
     "start": "node dist/cli.js",
+    "test": "node --import tsx --test $(find tests -name '*.test.ts' -type f)",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

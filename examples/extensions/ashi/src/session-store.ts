@@ -73,7 +73,7 @@ function snippet(text: string, max: number): string {
   return cleaned.slice(0, max) + "…";
 }
 
-function summarizeMessage(m: AgentMessage): string {
+export function summarizeMessage(m: AgentMessage): string {
   const role = m.role ?? "?";
   if (role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
     const tools = m.tool_calls.map((tc) => {

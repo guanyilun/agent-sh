@@ -47,7 +47,7 @@ export function registerCompaction(
   });
 }
 
-function findCutPoint(messages: AgentMessage[], tokenBudget: number): number {
+export function findCutPoint(messages: AgentMessage[], tokenBudget: number): number {
   let acc = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     acc += estimateMessageTokens(messages[i]!);
@@ -60,14 +60,14 @@ function findCutPoint(messages: AgentMessage[], tokenBudget: number): number {
   return 0;
 }
 
-function isSafeCutPoint(messages: AgentMessage[], idx: number): boolean {
+export function isSafeCutPoint(messages: AgentMessage[], idx: number): boolean {
   const m = messages[idx];
   if (!m) return true;
   if (m.role === "tool") return false;
   return !(m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0);
 }
 
-function estimateMessageTokens(m: AgentMessage): number {
+export function estimateMessageTokens(m: AgentMessage): number {
   let chars = 0;
   if (typeof m.content === "string") chars += m.content.length;
   if (m.tool_calls) for (const t of m.tool_calls) chars += (t.function?.arguments?.length ?? 0);
