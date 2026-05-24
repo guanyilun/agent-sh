@@ -487,6 +487,7 @@ export function mountAshi(
     }
     const id = e.toolCallId ?? `${e.title}-${Date.now()}`;
     const title = e.title.split(":")[0]!.trim();
+    const lookupName = e.name ?? title;
     const detail = e.displayDetail || detailFromArgs(
       typeof e.rawInput === "string" ? e.rawInput : JSON.stringify(e.rawInput ?? {})
     );
@@ -496,14 +497,14 @@ export function mountAshi(
       const mergeable = findMergeableGroup(kind);
       const group = mergeable
         ?? (() => { const g = new ToolGroup(kind, groupMaxVisible); chat.addChild(g); return g; })();
-      group.addCall(id, title, detail);
+      group.addCall(id, lookupName, detail);
       activeTools.set(id, { kind: "group", group });
       tui.requestRender();
       return;
     }
 
     const pair = renderToolPair({
-      toolCallId: id, name: title, title, kind: e.kind,
+      toolCallId: id, name: lookupName, title, kind: e.kind,
       displayDetail: detail, rawInput: e.rawInput,
     });
     activeTools.set(id, { kind: "pair", pair });

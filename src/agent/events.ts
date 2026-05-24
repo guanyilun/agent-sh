@@ -62,6 +62,8 @@ declare module "../core/event-bus.js" {
     };
     "agent:tool-started": {
       title: string;
+      /** Canonical tool name; `title` is the display label and may differ. */
+      name?: string;
       toolCallId?: string;
       kind?: string;
       icon?: string;

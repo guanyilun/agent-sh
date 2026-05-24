@@ -140,6 +140,7 @@ export default function activate(ctx: ExtensionContext): void {
                   const kind = toolKind(meta.name);
                   bus.emit("agent:tool-started", {
                     title: meta.name,
+                    name: meta.name,
                     toolCallId: meta.id,
                     kind,
                     icon: toolIcon(meta.name),
@@ -176,6 +177,7 @@ export default function activate(ctx: ExtensionContext): void {
                   const kind = toolKind(b.name);
                   bus.emit("agent:tool-started", {
                     title: b.name,
+                    name: b.name,
                     toolCallId: b.id,
                     kind,
                     icon: toolIcon(b.name),

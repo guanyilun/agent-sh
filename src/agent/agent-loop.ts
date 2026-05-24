@@ -1000,6 +1000,7 @@ export class AgentLoop implements AgentBackend {
       const label = tool.displayName ?? name;
       this.bus.emit("agent:tool-started", {
         title: typeof args.description === "string" ? `${label}: ${args.description}` : label,
+        name,
         toolCallId: id,
         kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
         displayDetail: tool.formatCall?.(args),
@@ -1258,6 +1259,7 @@ export class AgentLoop implements AgentBackend {
             const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" as const };
             this.bus.emit("agent:tool-started", {
               title: tool.displayName ?? tc.name,
+              name: tc.name,
               toolCallId: tc.id,
               kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
               displayDetail: tool.formatCall?.(args),

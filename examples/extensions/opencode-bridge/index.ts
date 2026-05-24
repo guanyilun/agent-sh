@@ -147,6 +147,7 @@ export default function activate(ctx: ExtensionContext): void {
       announcedTools.add(callID);
       bus.emit("agent:tool-started", {
         title: toolName,
+        name: toolName,
         toolCallId: callID,
         kind,
         locations: toolLocations(state.input ?? {}),
@@ -290,6 +291,7 @@ export default function activate(ctx: ExtensionContext): void {
               : req.questions.map((q, i) => `${q.header || `Q${i + 1}`}: ${q.question}`).join("; ");
             bus.emit("agent:tool-started", {
               title: "question",
+              name: "question",
               toolCallId: callID,
               kind: "execute",
               displayDetail: detail,
@@ -355,6 +357,7 @@ export default function activate(ctx: ExtensionContext): void {
             const summary = opts?.note ? `denied (${opts.note})` : `denied: ${detail}`;
             bus.emit("agent:tool-started", {
               title: "permission",
+              name: "permission",
               toolCallId: callID,
               kind: "execute",
               displayDetail: detail,
