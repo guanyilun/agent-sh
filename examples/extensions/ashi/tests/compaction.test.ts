@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findCutPoint, isSafeCutPoint, estimateMessageTokens } from "../src/compaction.js";
+import { findCutPoint, isSafeCutPoint, estimateMessageTokens, pickBudget } from "../src/compaction.js";
 import type { AgentMessage } from "../src/session-store.js";
 
 const userMsg = (text: string): AgentMessage => ({ role: "user", content: text });
@@ -58,6 +58,22 @@ test("findCutPoint walks back-to-front and lands on the budget-crossing message"
   ];
   const cut = findCutPoint(msgs, 500);
   assert.ok(cut >= 1 && cut <= 2, `expected cut in [1,2], got ${cut}`);
+});
+
+test("pickBudget defaults to 20k when no force or target", () => {
+  assert.equal(pickBudget(undefined), 20_000);
+  assert.equal(pickBudget({}), 20_000);
+});
+
+test("pickBudget returns tight 4k budget when force=true", () => {
+  assert.equal(pickBudget({ force: true }), 4_000);
+  assert.equal(pickBudget({ force: true, target: 50_000 }), 4_000);
+});
+
+test("pickBudget clamps target up to the 4k minimum", () => {
+  assert.equal(pickBudget({ target: 1000 }), 4_000);
+  assert.equal(pickBudget({ target: 0 }), 20_000);
+  assert.equal(pickBudget({ target: 37_500 }), 37_500);
 });
 
 test("findCutPoint snaps forward past an unsafe cut (tool result)", () => {

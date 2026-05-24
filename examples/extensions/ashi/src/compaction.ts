@@ -4,7 +4,15 @@ import type { Capture } from "./capture.js";
 import type { AgentMessage } from "./session-store.js";
 
 const KEEP_RECENT_TOKEN_BUDGET = 20_000;
+const FORCE_KEEP_RECENT_TOKEN_BUDGET = 4_000;
 const APPROX_TOKENS_PER_CHAR = 0.25;
+
+export function pickBudget(opts: { force?: boolean; target?: number } | undefined): number {
+  if (opts?.force) return FORCE_KEEP_RECENT_TOKEN_BUDGET;
+  const target = opts?.target ?? 0;
+  if (target > 0) return Math.max(target, FORCE_KEEP_RECENT_TOKEN_BUDGET);
+  return KEEP_RECENT_TOKEN_BUDGET;
+}
 
 export function registerCompaction(
   ctx: ExtensionContext,
@@ -16,10 +24,13 @@ export function registerCompaction(
   ctx.advise("conversation:compact", async (next: (...a: unknown[]) => unknown, opts: unknown) => {
     await capture.flush();
     const messages = ctx.call("conversation:get-messages") as AgentMessage[] | undefined;
-    if (!messages || messages.length < 6) return next(opts);
+    if (!messages || messages.length < 4) return next(opts);
 
-    const cutIdx = findCutPoint(messages, KEEP_RECENT_TOKEN_BUDGET);
-    if (cutIdx < 2) return next(opts);
+    const o = (opts ?? {}) as { force?: boolean; target?: number };
+    const budget = pickBudget(o);
+    const minCut = o.force ? 1 : 2;
+    const cutIdx = findCutPoint(messages, budget);
+    if (cutIdx < minCut) return next(opts);
 
     const firstKeptId = capture.getEntryIdAt(cutIdx);
     if (!firstKeptId) {
