@@ -1,4 +1,5 @@
 import type { ChatCompletionMessageParam } from "./llm-client.js";
+import type { ImageContent } from "./types.js";
 import {
   type NuclearEntry,
   toNuclearEntries,
@@ -180,8 +181,19 @@ export class ConversationState {
     this.invalidateMessagesCache();
   }
 
-  addToolResult(toolCallId: string, content: string, isError = false): void {
-    this.messages.push({ role: "tool", tool_call_id: toolCallId, content });
+  addToolResult(toolCallId: string, content: string | ImageContent[], isError = false): void {
+    if (typeof content === "string") {
+      this.messages.push({ role: "tool", tool_call_id: toolCallId, content });
+    } else {
+      // OpenAI vision format: array of content parts (text + image_url blocks)
+      const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [];
+      for (const img of content) {
+        parts.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.data}` } });
+      }
+      // Always include a text part so the message isn't empty
+      parts.unshift({ type: "text", text: `[${content.length} image(s)]` });
+      this.messages.push({ role: "tool", tool_call_id: toolCallId, content: parts } as unknown as ChatCompletionMessageParam);
+    }
     if (isError) this.toolErrors.add(toolCallId);
     this.invalidateMessagesCache();
     this.flushPendingMessages();
@@ -374,20 +386,21 @@ export class ConversationState {
 
   /** Nucleate tool call results. One entry per tool call, enriched with result. */
   eagerNucleateTools(
-    results: Array<{ toolName: string; args: Record<string, unknown>; content: string; isError: boolean }>,
+    results: Array<{ toolName: string; args: Record<string, unknown>; content: string | ImageContent[]; isError: boolean }>,
   ): void {
     if (!this.handlers || results.length === 0) return;
     const entries: NuclearEntry[] = [];
     for (const r of results) {
       const seq = this.nextSeq++;
+      const text = typeof r.content === "string" ? r.content : `[${r.content.length} image(s)]`;
       const entry = this.handlers.call(
         "conversation:nucleate-tool",
-        r.toolName, r.args, r.content, r.isError, this.instanceId, seq,
+        r.toolName, r.args, text, r.isError, this.instanceId, seq,
       ) as NuclearEntry;
       entries.push(entry);
       this.recordNuclearEntry(entry, [
         { role: "assistant", content: null, tool_calls: [{ id: `seq_${seq}`, type: "function", function: { name: r.toolName, arguments: JSON.stringify(r.args) } }] },
-        { role: "tool", tool_call_id: `seq_${seq}`, content: r.content },
+        { role: "tool", tool_call_id: `seq_${seq}`, content: text },
       ]);
     }
     this.appendToHistory(entries);

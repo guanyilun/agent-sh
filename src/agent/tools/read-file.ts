@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ToolDefinition } from "../types.js";
+import { contentText, type ToolDefinition } from "../types.js";
 import { expandHome } from "./expand-home.js";
 
 /** Tracks the last-read state of a file for deduplication. */
@@ -51,9 +51,10 @@ export function createReadFileTool(
     }),
 
     formatResult: (_args, result) => {
+      const text = contentText(result.content);
       if (result.isError) return {};
-      if (result.content.startsWith("File unchanged")) return { summary: "cached" };
-      const lines = result.content.split("\n").filter(l => !l.startsWith("["));
+      if (text.startsWith("File unchanged")) return { summary: "cached" };
+      const lines = text.split("\n").filter(l => !l.startsWith("["));
       return { summary: `${lines.length} lines` };
     },
 

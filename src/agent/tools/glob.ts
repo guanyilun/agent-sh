@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { executeArgv } from "../../utils/executor.js";
 import { resolveRgPath } from "../../utils/ripgrep-path.js";
-import type { ToolDefinition } from "../types.js";
+import { contentText, type ToolDefinition } from "../types.js";
 import { expandHome } from "./expand-home.js";
 
 export function createGlobTool(getCwd: () => string): ToolDefinition {
@@ -32,8 +32,9 @@ export function createGlobTool(getCwd: () => string): ToolDefinition {
     showOutput: false,
 
     formatResult: (_args, result) => {
-      if (result.isError || result.content === "No files matched.") return { summary: "0 files" };
-      const lines = result.content.split("\n").filter(l => l && !l.startsWith("["));
+      const text = contentText(result.content);
+      if (result.isError || text === "No files matched.") return { summary: "0 files" };
+      const lines = text.split("\n").filter(l => l && !l.startsWith("["));
       return { summary: `${lines.length} files` };
     },
 
