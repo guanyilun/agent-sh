@@ -8,7 +8,7 @@
 // buffer policy, diff reflow on resize, expand/collapse — everything that used
 // to leak into renderer subclasses.
 
-import { Container, Text } from "@earendil-works/pi-tui";
+import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ThemeColor } from "./theme.js";
 
@@ -312,6 +312,7 @@ class SchemaCallComponent extends Container {
   constructor(private handle: RenderHandle<unknown>) {
     super();
     this.line = new Text("", 1, 0);
+    this.addChild(new Spacer(1));
     this.addChild(this.line);
     handle.cell.callView = this;
     this.repaint();
@@ -319,12 +320,6 @@ class SchemaCallComponent extends Container {
 
   setStatus(opts: { exitCode: number | null; elapsedMs: number; summary?: string }): void {
     this.handle.dispatch("status", opts);
-  }
-
-  toggleExpanded(): void {
-    this.handle.cell.env = { ...this.handle.cell.env, expanded: !this.handle.cell.env.expanded };
-    this.repaint();
-    this.handle.cell.resultView?.repaint();
   }
 
   repaint(): void {
