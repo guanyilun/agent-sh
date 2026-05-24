@@ -68,7 +68,7 @@ Ctrl+C       Clear editor
 Ctrl+D       Quit (when editor is empty)
 Ctrl+T       Toggle thinking-block visibility (hidden by default)
 Shift+Tab    Cycle thinking level (off → low → medium → high → …)
-Ctrl+O       Expand/collapse the most recent tool result
+Ctrl+O       Expand/collapse all tool calls and results in chat
 ```
 
 The current thinking level is shown in the footer as `[level]` next to the model name.
@@ -142,7 +142,7 @@ Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
 
 For `edit_file` / `write_file`, the diff frame is treated as the output and follows the same gating: shown for `preview`, hidden for `hidden`/`summary` (the call line already carries `+12 -3` stats). The line-count hint is suppressed for diff-producing tools so edits stay quiet.
 
-Hit `Ctrl+O` to expand the most recent tool result inline regardless of mode. Press again to collapse.
+Hit `Ctrl+O` to toggle expansion across all tool entries in chat — result bodies show their full output regardless of mode, and call lines with truncated labels (e.g. long `bash` commands) reveal their full text. Press again to collapse.
 
 Each tool inherits from `default` and is overridden by its own block. Unknown tool names fall through to `default`.
 
@@ -173,8 +173,8 @@ Tool rendering is split into a call line (the input header) and a result body (s
 
 `state` is a per-call mutable bag; `invalidate()` requests a re-render.
 
-- `ToolCallView` extends `Component` with `setStatus({ exitCode, elapsedMs, summary })` — called once on completion.
-- `ToolResultView` extends `Component` with `appendChunk(chunk)`, `setDiff(lines)`, `finalize({ exitCode, summary })`, and `toggleExpanded()` — ashi mutates the result view as output streams in and when the user hits `Ctrl+O`.
+- `ToolCallView` extends `Component` with `setStatus({ exitCode, elapsedMs, summary })` — called once on completion. Optional `toggleExpanded()` lets long labels reveal their full text on Ctrl+O.
+- `ToolResultView` extends `Component` with `appendChunk(chunk)`, `setDiff(lines)`, `finalize({ exitCode, summary })`, and `toggleExpanded()` — ashi mutates the result view as output streams in and toggles it on Ctrl+O.
 
 `mode` and `previewLines` on result args come from `ashi.display.{name}` config so renderers can honor the user's compactness preference without re-implementing the resolution logic.
 
