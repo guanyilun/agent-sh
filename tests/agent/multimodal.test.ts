@@ -165,6 +165,29 @@ test("ConversationState.addToolResult with error ImageContent[] still marks erro
   assert.ok(toolMsg.content[0].text.startsWith("Error:"));
 });
 
+// ── eagerNucleateTools ──────────────────────────────────────────────
+
+test("eagerNucleateTools with ImageContent[] stores text summary in recall archive", () => {
+  const conv = new ConversationState({
+    call: (name: string, ...args: unknown[]) => {
+      if (name === "conversation:nucleate-tool") {
+        const [, , text] = args as [string, Record<string, unknown>, string, boolean, string, number];
+        return { seq: 1, type: "tool", summary: text, body: text, tool: "read_file" };
+      }
+      if (name === "history:append") return undefined;
+      return undefined;
+    },
+  } as any);
+
+  conv.eagerNucleateTools([
+    { toolName: "read_file", args: { path: "x.png" }, content: [{ type: "image", data: "Zm9v", mimeType: "image/png" }], isError: false },
+  ]);
+
+  const entries = conv.getNuclearEntries();
+  assert.equal(entries.length, 1);
+  assert.ok(entries[0].body.includes("[1 image(s)]"), "nuclear entry body should contain image count summary");
+});
+
 // ── System prompt ───────────────────────────────────────────────────
 
 test("system prompt includes Image Support when model has image modality", async () => {

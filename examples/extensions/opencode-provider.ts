@@ -41,30 +41,16 @@ const ZEN_MODELS_ENDPOINT = `${ZEN_BASE_URL}/models`;
 const GO_MODELS_ENDPOINT = `${GO_BASE_URL}/models`;
 const MODELS_DEV_ENDPOINT = "https://models.dev/api.json";
 
-const MODELS_DEV_PROVIDER_IDS = { zen: "opencode", go: "opencode-go" } as const;
-
 /** Conservative defaults when models.dev metadata is unavailable. */
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const DEFAULT_MAX_TOKENS = 16_384;
 
 // ── Fallback model lists (curated; kept in sync with OpenCode docs) ──
 
-const ZEN_FALLBACK_MODELS = [
-  "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5", "claude-opus-4-1",
-  "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-sonnet-4",
-  "claude-haiku-4-5", "claude-3-5-haiku",
-  "gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini",
-  "gpt-5.4-nano", "gpt-5.3-codex", "gpt-5.3-codex-spark",
-  "gpt-5.2", "gpt-5.2-codex", "gpt-5.1", "gpt-5.1-codex",
-  "gpt-5.1-codex-max", "gpt-5.1-codex-mini", "gpt-5", "gpt-5-codex",
-  "gpt-5-nano",
-  "gemini-3.1-pro", "gemini-3-flash",
-];
+// Single fallback model per tier — the live /models catalog replaces these on startup.
+const ZEN_FALLBACK_MODELS = ["claude-sonnet-4-6"];
 
-const GO_FALLBACK_MODELS = [
-  "gpt-5.3-codex", "gpt-5.2", "gpt-5.2-codex", "gpt-5.1",
-  "gpt-5.1-codex", "claude-sonnet-4-6", "claude-sonnet-4-5",
-];
+const GO_FALLBACK_MODELS = ["gpt-5.2"];
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -194,8 +180,7 @@ function buildReasoningParams(level: string): Record<string, unknown> {
 export default function activate(ctx: AgentContext): void {
   const apiKey =
     process.env.OPENCODE_API_KEY ??
-    resolveApiKey("opencode").key ??
-    undefined;
+    resolveApiKey("opencode").key ?? undefined;
 
   // ── Phase 1: register both providers synchronously with fallback models ──
 
@@ -225,8 +210,8 @@ export default function activate(ctx: AgentContext): void {
 
   fetchModelsDev()
     .then(async (modelsDev) => {
-      const zenProvider = modelsDev?.[MODELS_DEV_PROVIDER_IDS.zen];
-      const goProvider = modelsDev?.[MODELS_DEV_PROVIDER_IDS.go];
+      const zenProvider = modelsDev?.opencode;
+      const goProvider = modelsDev?.["opencode-go"];
 
       const [zenIds, goIds] = await Promise.all([
         fetchOfficialModelIds(ZEN_MODELS_ENDPOINT),

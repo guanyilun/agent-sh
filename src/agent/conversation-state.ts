@@ -185,7 +185,11 @@ export class ConversationState {
     if (typeof content === "string") {
       this.messages.push({ role: "tool", tool_call_id: toolCallId, content });
     } else {
-      // OpenAI vision format: array of content parts (text + image_url blocks)
+      // Assembles OpenAI vision content parts for multimodal tool results.
+      // This format (array of text + image_url blocks on a tool message) is
+      // supported by OpenAI and most OpenAI-compatible providers. Providers
+      // that don't support it should not declare image modalities, so this
+      // path is only reached for providers known to handle it.
       const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [];
       for (const img of content) {
         parts.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.data}` } });

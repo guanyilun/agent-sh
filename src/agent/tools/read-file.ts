@@ -19,8 +19,6 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
   ".webp": "image/webp",
-  ".bmp": "image/bmp",
-  ".svg": "image/svg+xml",
 };
 
 export function createReadFileTool(
@@ -111,6 +109,14 @@ export function createReadFileTool(
         const ext = path.extname(absPath).toLowerCase();
         const mimeType = IMAGE_MIME_TYPES[ext];
         if (mimeType) {
+          const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB — base64 adds ~33%
+          if (stat.size > MAX_IMAGE_BYTES) {
+            return {
+              content: `Image is ${(stat.size / (1024 * 1024)).toFixed(1)}MB — too large. Images are capped at 5MB.`,
+              exitCode: 1,
+              isError: true,
+            };
+          }
           const buf = await fs.readFile(absPath);
           const data = buf.toString("base64");
           return {
