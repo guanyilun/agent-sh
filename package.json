@@ -42,6 +42,10 @@
       "types": "./dist/shell/strategies/index.d.ts",
       "default": "./dist/shell/strategies/index.js"
     },
+    "./shell/terminal": {
+      "types": "./dist/shell/terminal.d.ts",
+      "default": "./dist/shell/terminal.js"
+    },
     "./utils/stream-transform": {
       "types": "./dist/utils/stream-transform.d.ts",
       "default": "./dist/utils/stream-transform.js"
