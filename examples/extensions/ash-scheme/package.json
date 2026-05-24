@@ -1,0 +1,11 @@
+{
+  "name": "ash-scheme",
+  "version": "0.1.0",
+  "description": "LIPS Scheme as a cognitive substrate: a scheme_eval tool with host bindings to bash, read-file, grep, glob, etc.",
+  "type": "module",
+  "main": "index.ts",
+  "dependencies": {
+    "@jcubic/lips": "^0.20.3",
+    "agent-sh": "^0.14.0"
+  }
+}
