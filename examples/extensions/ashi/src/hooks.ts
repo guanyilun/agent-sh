@@ -7,6 +7,7 @@ import {
   UserMessage,
 } from "./components.js";
 import { entryFor, loadToolDisplayConfig, type ToolResultMode } from "./display-config.js";
+import { isRenderModel, mountCall, mountResult, type RenderModel } from "./schema.js";
 
 export interface RenderState {
   state: Record<string, unknown>;
@@ -61,6 +62,7 @@ export interface ToolResultView extends Component {
 
 const CALL_PREFIX = "ashi:render-tool-call:";
 const RESULT_PREFIX = "ashi:render-tool-result:";
+const SCHEMA_PREFIX = "ashi:render-tool:";
 
 /** Register the default render-* handlers. Per-tool overrides are advised by
  *  name (e.g. `ashi:render-tool-call:bash`); unknown tools fall back to
@@ -115,6 +117,18 @@ export function createToolHookResolver(
     return registered.has(specific) ? specific : `${prefix}default`;
   };
 
+  const schemaModel = (name: string): RenderModel<unknown> | undefined => {
+    for (const candidate of [`${SCHEMA_PREFIX}${name}`, `${SCHEMA_PREFIX}default`]) {
+      if (!registered.has(candidate)) continue;
+      const v = ctx.call(candidate, {}) as unknown;
+      if (isRenderModel(v)) return v;
+    }
+    return undefined;
+  };
+
+  // TODO: pull from the live TuiFrame so the first paint isn't cold-width.
+  const initialWidth = (): number => process.stdout.columns ?? 80;
+
   return {
     refresh(): void {
       registered = new Set(ctx.list());
@@ -124,10 +138,32 @@ export function createToolHookResolver(
       return { mode: e.result, previewLines: e.previewLines };
     },
     call(args) {
+      const model = schemaModel(args.name);
+      if (model) {
+        const { mode, previewLines } = this.modeFor(args.name);
+        return mountCall(model, {
+          toolCallId: args.toolCallId,
+          name: args.name,
+          title: args.title,
+          kind: args.kind,
+          displayDetail: args.displayDetail,
+          rawInput: args.rawInput,
+        }, { width: initialWidth(), mode, previewLines }) as ToolCallView;
+      }
       const handler = pick(CALL_PREFIX, args.name);
       return ctx.call(handler, { ...renderState(), ...args }) as ToolCallView;
     },
     result(args) {
+      const model = schemaModel(args.name);
+      if (model) {
+        const { mode, previewLines } = this.modeFor(args.name);
+        return mountResult(model, {
+          toolCallId: args.toolCallId,
+          name: args.name,
+          title: args.name,
+          rawInput: args.rawInput,
+        }, { width: initialWidth(), mode, previewLines }) as ToolResultView;
+      }
       const { mode, previewLines } = this.modeFor(args.name);
       const handler = pick(RESULT_PREFIX, args.name);
       return ctx.call(handler, {

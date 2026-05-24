@@ -7,6 +7,13 @@
   "bin": {
     "ashi": "dist/cli.js"
   },
+  "exports": {
+    ".": "./dist/cli.js",
+    "./render": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
+    }
+  },
   "files": [
     "dist",
     "README.md"
