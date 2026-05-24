@@ -309,9 +309,9 @@ export class AgentLoop implements AgentBackend {
       this.conversation = new ConversationState(this.handlers, this.instanceId);
       this.lastProjectSkillNames.clear();
     });
-    on("agent:compact-request", () => {
+    on("agent:compact-request", async () => {
       // Force compaction. Strategy lives behind `conversation:compact`.
-      const stats = this.compactWithHooks(0, 0, true);
+      const stats = await this.compactWithHooks(0, 0, true);
       if (stats) {
         this.bus.emit("ui:info", {
           message: `(compacted: ~${stats.before.toLocaleString()} → ~${stats.after.toLocaleString()} tokens)`,
@@ -542,18 +542,18 @@ export class AgentLoop implements AgentBackend {
    * compaction, emit `conversation:after-compact` so listeners
    * (metrics, UI, agent-awareness notes) can react.
    */
-  private compactWithHooks(
+  private async compactWithHooks(
     target: number,
     keepRecent?: number,
     force?: boolean,
     strategy?: BusEvents["context:compact"]["strategy"],
-  ): CompactResult | null {
-    const stats = this.handlers.call("conversation:compact", {
+  ): Promise<CompactResult | null> {
+    const stats = (await this.handlers.call("conversation:compact", {
       target,
       keepRecent,
       force: !!force,
       strategy,
-    }) as CompactResult | null;
+    })) as CompactResult | null;
     if (stats) {
       this.bus.emit("conversation:after-compact", {
         beforeTokens: stats.before,
@@ -1141,7 +1141,7 @@ export class AgentLoop implements AgentBackend {
         // Compact deeply — shallow targets buy only 1–2 turns of runway on
         // tool-heavy workloads.
         const target = Math.floor(threshold * 0.25);
-        const result = this.compactWithHooks(target, 1);
+        const result = await this.compactWithHooks(target, 1);
         if (!result) {
           // Auto-compact fired but nothing was evictable. This can happen
           // in short conversations with heavy tool output where the pin
@@ -1548,7 +1548,7 @@ export class AgentLoop implements AgentBackend {
         if (this.isContextOverflow(e)) {
           const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
           const target = Math.floor((contextWindow - RESPONSE_RESERVE) * 0.6);
-          const stats = this.compactWithHooks(target, 1);
+          const stats = await this.compactWithHooks(target, 1);
           // If compaction freed nothing, retrying will hit the same error.
           // Surface the real failure instead of looping until exhaustion.
           if (!stats || stats.after >= stats.before) {

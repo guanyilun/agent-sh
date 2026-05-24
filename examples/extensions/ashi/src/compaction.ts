@@ -1,93 +1,51 @@
 import type { ExtensionContext } from "agent-sh/types";
 import type { MultiSessionStore } from "./multi-session-store.js";
 import type { Capture } from "./capture.js";
-import type { AgentMessage, CompactionEntry } from "./session-store.js";
+import type { AgentMessage } from "./session-store.js";
 
 const KEEP_RECENT_TOKEN_BUDGET = 20_000;
+const FORCE_KEEP_RECENT_TOKEN_BUDGET = 4_000;
 const APPROX_TOKENS_PER_CHAR = 0.25;
 
-const SUMMARY_PROMPT = `You are compacting a coding-agent conversation so the agent can continue with limited context.
-
-Produce a Markdown summary using EXACTLY this structure:
-
-## Goal
-[What the user is trying to accomplish, one or two sentences]
-
-## Constraints & Preferences
-- [Bulleted user requirements / preferences expressed so far]
-
-## Progress
-### Done
-- [x] [Completed work]
-
-### In Progress
-- [ ] [Active work and current sub-goal]
-
-### Blocked
-- [Issues, or "None"]
-
-## Key Decisions
-- **[Decision]**: [Rationale]
-
-## Next Steps
-1. [What should happen next]
-
-## Critical Context
-- [Specific paths, names, identifiers, or data the agent must remember]
-
-Be concrete. Quote file paths, function names, error strings verbatim when relevant. Do not invent details that aren't in the conversation.`;
+export function pickBudget(opts: { force?: boolean; target?: number } | undefined): number {
+  if (opts?.force) return FORCE_KEEP_RECENT_TOKEN_BUDGET;
+  const target = opts?.target ?? 0;
+  if (target > 0) return Math.max(target, FORCE_KEEP_RECENT_TOKEN_BUDGET);
+  return KEEP_RECENT_TOKEN_BUDGET;
+}
 
 export function registerCompaction(
   ctx: ExtensionContext,
   getStore: () => MultiSessionStore,
   capture: Capture,
 ): void {
-  ctx.advise("conversation:compact", async (next: (...a: unknown[]) => unknown, opts: unknown) => {
-    const llm = ctx.agent?.llm;
-    if (!llm?.available) return next(opts);
+  ctx.define("ashi:compact:build-summary", (_evicted: AgentMessage[]): string | null => null);
 
+  ctx.advise("conversation:compact", async (_next: (...a: unknown[]) => unknown, opts: unknown) => {
     await capture.flush();
     const messages = ctx.call("conversation:get-messages") as AgentMessage[] | undefined;
-    if (!messages || messages.length < 6) return next(opts);
+    if (!messages || messages.length < 4) return null;
 
-    const cutIdx = findCutPoint(messages, KEEP_RECENT_TOKEN_BUDGET);
-    if (cutIdx < 2) return next(opts);
+    const o = (opts ?? {}) as { force?: boolean; target?: number };
+    const budget = pickBudget(o);
+    const minCut = o.force ? 1 : 2;
+    const cutIdx = findCutPoint(messages, budget);
+    if (cutIdx < minCut) return null;
 
     const firstKeptId = capture.getEntryIdAt(cutIdx);
     if (!firstKeptId) {
-      ctx.bus.emit("ui:error", { message: "compaction: kept-message has no on-disk entry; falling back" });
-      return next(opts);
+      ctx.bus.emit("ui:error", { message: "compaction: kept-message has no on-disk entry; aborting" });
+      return null;
     }
 
     const older = messages.slice(0, cutIdx);
     const kept = messages.slice(cutIdx);
-
-    const branch = getStore().current().getBranch();
-    const prevCompaction = [...branch].reverse().find((e) => e.type === "compaction") as CompactionEntry | undefined;
-    const prevSummary = prevCompaction?.summary;
-
     const tokensBefore = (ctx.call("conversation:estimate-prompt-tokens") as number) ?? 0;
+    const customSummary = (await ctx.call("ashi:compact:build-summary", older)) as string | null | undefined;
 
-    let summary: string;
-    try {
-      summary = await llm.ask({
-        system: SUMMARY_PROMPT,
-        query: buildQuery(older, prevSummary),
-        maxTokens: 16384,
-        reasoningEffort: "low",
-      });
-    } catch (e) {
-      ctx.bus.emit("ui:error", { message: `compaction: LLM failed (${(e as Error).message}); falling back` });
-      return next(opts);
-    }
-
-    await getStore().current().appendCompaction(summary.trim(), firstKeptId, tokensBefore);
-
-    const summaryMessage: AgentMessage = {
-      role: "user",
-      content: `[Compacted conversation summary]\n${summary.trim()}`,
-    };
-    ctx.call("conversation:replace-messages", [summaryMessage, ...kept]);
+    const store = getStore().current();
+    await store.appendCompaction(firstKeptId, tokensBefore, customSummary ?? undefined);
+    ctx.call("conversation:replace-messages", store.buildMessages());
 
     const keptIds = kept.map((_, i) => capture.getEntryIdAt(cutIdx + i));
     if (keptIds.some((id) => id === null)) {
@@ -96,13 +54,11 @@ export function registerCompaction(
     capture.resetTo([null, ...keptIds]);
 
     const tokensAfter = (ctx.call("conversation:estimate-prompt-tokens") as number) ?? 0;
-    ctx.bus.emit("ui:info", { message: `compacted ${older.length} messages: ${tokensBefore} → ${tokensAfter} tokens` });
-
     return { before: tokensBefore, after: tokensAfter, evictedCount: older.length };
   });
 }
 
-function findCutPoint(messages: AgentMessage[], tokenBudget: number): number {
+export function findCutPoint(messages: AgentMessage[], tokenBudget: number): number {
   let acc = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     acc += estimateMessageTokens(messages[i]!);
@@ -115,43 +71,16 @@ function findCutPoint(messages: AgentMessage[], tokenBudget: number): number {
   return 0;
 }
 
-function isSafeCutPoint(messages: AgentMessage[], idx: number): boolean {
+export function isSafeCutPoint(messages: AgentMessage[], idx: number): boolean {
   const m = messages[idx];
   if (!m) return true;
   if (m.role === "tool") return false;
   return !(m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0);
 }
 
-function estimateMessageTokens(m: AgentMessage): number {
+export function estimateMessageTokens(m: AgentMessage): number {
   let chars = 0;
   if (typeof m.content === "string") chars += m.content.length;
   if (m.tool_calls) for (const t of m.tool_calls) chars += (t.function?.arguments?.length ?? 0);
   return Math.ceil(chars * APPROX_TOKENS_PER_CHAR) + 20;
-}
-
-function buildQuery(messages: AgentMessage[], prevSummary?: string): string {
-  const lines: string[] = [];
-  if (prevSummary) lines.push("Previous compaction summary (continue iteratively):\n", prevSummary, "\n---\n");
-  lines.push("Conversation to summarize:");
-  for (const m of messages) {
-    const text = typeof m.content === "string" ? m.content : "";
-    if (m.role === "user") lines.push(`[User]: ${text}`);
-    else if (m.role === "assistant") {
-      if (text) lines.push(`[Assistant]: ${text}`);
-      if (m.tool_calls) {
-        for (const t of m.tool_calls) {
-          const args = t.function?.arguments ?? "";
-          lines.push(`[Assistant tool call]: ${t.function?.name ?? "?"}(${truncate(args, 400)})`);
-        }
-      }
-    } else if (m.role === "tool") {
-      lines.push(`[Tool result]: ${truncate(text, 2000)}`);
-    }
-  }
-  return lines.join("\n");
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max) + `\n[…truncated ${s.length - max} chars…]`;
 }
