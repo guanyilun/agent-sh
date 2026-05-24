@@ -772,6 +772,17 @@ export class AgentLoop implements AgentBackend {
         parts.push("# Extension Instructions\n\n" + extensionSections.join("\n\n"));
       }
 
+      // Image support note — only included when the active model supports image input
+      if (this.currentMode.input?.includes("image")) {
+        parts.push(
+          "# Image Support\n\n"
+          + "This model supports image input. When you need visual information, "
+          + "you can read image files (PNG, JPEG, GIF, WebP) with read_file — "
+          + "they will be shown to you directly. Use this to inspect screenshots, "
+          + "diagrams, UI mockups, charts, or any visual content relevant to the task.",
+        );
+      }
+
       return parts.join("\n\n");
     });
 
