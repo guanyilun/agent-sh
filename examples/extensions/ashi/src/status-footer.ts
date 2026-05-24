@@ -1,4 +1,5 @@
-import { Container, Text } from "@earendil-works/pi-tui";
+import { basename } from "node:path";
+import { Container, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { theme } from "./theme.js";
 
 interface StatusFields {
@@ -16,6 +17,7 @@ interface StatusFields {
 export class StatusFooter extends Container {
   private text: Text;
   private fields: StatusFields = {};
+  private lastWidth = 0;
 
   constructor() {
     super();
@@ -25,10 +27,28 @@ export class StatusFooter extends Container {
 
   update(patch: Partial<StatusFields>): void {
     this.fields = { ...this.fields, ...patch };
-    this.repaint();
+    this.repaint(this.lastWidth);
   }
 
-  private repaint(): void {
+  render(width: number): string[] {
+    if (width !== this.lastWidth) {
+      this.lastWidth = width;
+      this.repaint(width);
+    }
+    return super.render(width);
+  }
+
+  private repaint(width: number): void {
+    const contentWidth = width > 0 ? Math.max(1, width - 2) : 0;
+    const full = this.buildLine("full");
+    if (contentWidth === 0 || visibleWidth(full) <= contentWidth) {
+      this.text.setText(full);
+      return;
+    }
+    this.text.setText(this.buildLine("basename"));
+  }
+
+  private buildLine(cwdMode: "full" | "basename"): string {
     const { model, provider, contextWindow, cwd, branch, leaf, tokens, compactions, thinking } = this.fields;
     const sep = theme.fg("dim", " | ");
     const parts: string[] = [];
@@ -39,7 +59,7 @@ export class StatusFooter extends Container {
     } else if (provider) {
       parts.push(theme.fg("muted", `@${provider}`));
     }
-    if (cwd) parts.push(theme.fg("muted", shortenCwd(cwd)));
+    if (cwd) parts.push(theme.fg("muted", formatCwd(cwd, cwdMode)));
     if (branch) parts.push(theme.fg("muted", `⎇ ${branch}`));
     if (leaf != null && leaf > 0) parts.push(theme.fg("muted", `#${leaf}`));
     if (tokens != null) {
@@ -48,11 +68,12 @@ export class StatusFooter extends Container {
       parts.push(`${theme.fg("muted", tokStr)}${pct}`);
     }
     if (compactions && compactions > 0) parts.push(theme.fg("muted", `⊟ ${compactions}`));
-    this.text.setText(parts.length === 0 ? "" : parts.join(sep));
+    return parts.length === 0 ? "" : parts.join(sep);
   }
 }
 
-function shortenCwd(cwd: string): string {
+function formatCwd(cwd: string, mode: "full" | "basename"): string {
+  if (mode === "basename") return basename(cwd) || cwd;
   const home = process.env.HOME;
   if (home && cwd.startsWith(`${home}/`)) return `~/${cwd.slice(home.length + 1)}`;
   if (home && cwd === home) return "~";
