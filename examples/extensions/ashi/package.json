@@ -56,7 +56,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-tui": "^0.74.0",
-    "agent-sh": "^0.14.2",
+    "agent-sh": "^0.14.0",
     "chalk": "^5.5.0",
     "cli-highlight": "^2.1.11"
   },
