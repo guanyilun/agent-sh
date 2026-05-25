@@ -53,7 +53,8 @@ const RAW = {
   toolDiffAdded: "green",
   toolDiffRemoved: "red",
   toolDiffContext: "gray",
-  bashMode: "green",
+  bashMode: "yellow",
+  bashModePrivate: "green",
 } as const;
 
 export type ThemeColor = keyof typeof RAW;

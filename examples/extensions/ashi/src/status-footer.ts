@@ -58,7 +58,7 @@ export class StatusFooter extends Container {
   private buildRight(): string {
     const mode = this.fields.shellMode;
     if (mode === "on") return theme.fg("bashMode", "▸ shell");
-    if (mode === "private") return theme.fg("warning", "▸ shell · private");
+    if (mode === "private") return theme.fg("bashModePrivate", "▸ shell · private");
     return "";
   }
 

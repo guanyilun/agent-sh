@@ -1,6 +1,5 @@
 import type { ExtensionContext } from "agent-sh/types";
 import type { MultiSessionStore } from "./multi-session-store.js";
-import type { AgentMessage } from "./session-store.js";
 import type { Capture } from "./capture.js";
 
 export function registerForkCommands(
@@ -12,14 +11,13 @@ export function registerForkCommands(
 ): void {
   const { bus } = ctx;
 
-  ctx.registerCommand("fork", "Rewind and branch: /fork (interactive picker) or /fork <id-prefix>", async (args) => {
+  ctx.registerCommand("fork", "Pick a past user message to edit, or a branch tip to switch to", async (args) => {
     const arg = args.trim();
     if (arg === "") {
       await openTreePicker();
       return;
     }
-    const branch = getStore().current().getBranch();
-    const matches = branch.filter((e) => e.id.startsWith(arg));
+    const matches = getStore().current().getAllEntries().filter((e) => e.id.startsWith(arg));
     if (matches.length === 0) {
       bus.emit("ui:error", { message: `fork: no entry matches "${arg}"` });
       return;
@@ -33,22 +31,6 @@ export function registerForkCommands(
     applyBranchMessages(ctx, getStore, capture);
     bus.emit("ui:info", { message: `fork: rewound to ${target.id}` });
     await rebuildChat();
-  });
-
-  ctx.registerCommand("branch", "Show the active branch (root → leaf)", async () => {
-    const branch = getStore().current().getBranch();
-    if (branch.length === 0) {
-      bus.emit("ui:info", { message: "branch: empty" });
-      return;
-    }
-    const lines = branch.map((e) => {
-      if (e.type === "session") return `[${e.id}] session start (${e.cwd})`;
-      if (e.type === "compaction") return `[${e.id}] compaction (firstKept=${e.firstKeptId})`;
-      const msg = (e as { message: AgentMessage }).message;
-      const text = typeof msg.content === "string" ? msg.content : "";
-      return `[${e.id}] ${msg.role}: ${text.slice(0, 60)}`;
-    });
-    bus.emit("ui:info", { message: `branch (${branch.length} entries):\n${lines.join("\n")}` });
   });
 }
 

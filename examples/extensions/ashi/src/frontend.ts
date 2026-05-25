@@ -195,7 +195,7 @@ export function mountAshi(
 
   const defaultBorderColor = editor.borderColor;
   const shellBorderColor = (t: string): string => theme.fg("bashMode", t);
-  const privateBorderColor = (t: string): string => theme.fg("warning", t);
+  const privateBorderColor = (t: string): string => theme.fg("bashModePrivate", t);
   const refreshShellChrome = (): void => {
     editor.borderColor = shellMode
       ? (pendingPrivate ? privateBorderColor : shellBorderColor)
@@ -754,20 +754,102 @@ export function mountAshi(
 
   const openTreePicker = async (): Promise<void> => {
     if (pickerOpen) return;
-    const branch = getStore().current().getBranch();
-    if (branch.length <= 1) {
-      bus.emit("ui:info", { message: "tree: nothing to rewind to yet" });
+    const store = getStore().current();
+    const all = store.getAllEntries();
+    const byId = new Map(all.map((e) => [e.id, e]));
+    const rawChildren = new Map<string, string[]>();
+    for (const e of all) {
+      if (!e.parentId) continue;
+      const kids = rawChildren.get(e.parentId) ?? [];
+      kids.push(e.id);
+      rawChildren.set(e.parentId, kids);
+    }
+    for (const ids of rawChildren.values()) {
+      ids.sort((a, b) => (byId.get(a)?.timestamp ?? 0) - (byId.get(b)?.timestamp ?? 0));
+    }
+
+    const isVisible = (e: SessionEntry): boolean => {
+      if (e.type === "message" && e.message.role === "user") return true;
+      return (rawChildren.get(e.id)?.length ?? 0) === 0;
+    };
+    const visibleChildren = (id: string): string[] => {
+      const out: string[] = [];
+      const stack = [...(rawChildren.get(id) ?? [])];
+      while (stack.length > 0) {
+        const cid = stack.shift()!;
+        const e = byId.get(cid);
+        if (e && isVisible(e)) out.push(cid);
+        else stack.unshift(...(rawChildren.get(cid) ?? []));
+      }
+      return out;
+    };
+
+    const activeLeaf = store.getActiveLeaf();
+    type Row = { id: string; entry: SessionEntry; prefix: string; kind: "msg" | "tip" };
+    const rows: Row[] = [];
+    const walk = (id: string, lineage: string[], isBranchChild: boolean): void => {
+      const e = byId.get(id);
+      if (!e) return;
+      if (isVisible(e)) {
+        const cols = isBranchChild
+          ? [...lineage.slice(0, -1), lineage[lineage.length - 1] === "│" ? "├" : "└"]
+          : lineage;
+        const isUserMsg = e.type === "message" && e.message.role === "user";
+        rows.push({ id: e.id, entry: e, prefix: cols.join(" "), kind: isUserMsg ? "msg" : "tip" });
+      }
+      const kids = visibleChildren(id);
+      if (kids.length === 0) return;
+      if (kids.length === 1) {
+        const only = byId.get(kids[0]!);
+        const isTip = !!only && !(only.type === "message" && only.message.role === "user");
+        if (isTip) {
+          // Render the tip as a branch-child so it gets a `└` connector at
+          // a deeper indent, visually "the next node in this branch."
+          walk(kids[0]!, [...lineage, " "], true);
+        } else {
+          walk(kids[0]!, lineage, false);
+        }
+      } else {
+        for (let i = 0; i < kids.length; i++) {
+          const last = i === kids.length - 1;
+          walk(kids[i]!, [...lineage, last ? " " : "│"], true);
+        }
+      }
+    };
+    const rootId = store.getRootId();
+    const rootEntry = byId.get(rootId);
+    if (rootEntry && isVisible(rootEntry)) {
+      rows.push({ id: rootId, entry: rootEntry, prefix: "", kind: "tip" });
+    }
+    const rootKids = visibleChildren(rootId);
+    if (rootKids.length === 1) {
+      walk(rootKids[0]!, [], false);
+    } else {
+      for (let i = 0; i < rootKids.length; i++) {
+        const last = i === rootKids.length - 1;
+        walk(rootKids[i]!, [last ? " " : "│"], true);
+      }
+    }
+
+    if (rows.length === 0) {
+      bus.emit("ui:info", { message: "fork: no past prompts yet" });
       return;
     }
-    const activeId = getStore().current().getActiveLeaf();
-    const items: SelectItem[] = branch.map((e) => ({
-      value: e.id,
-      label: pickerLabel(e, e.id === activeId),
-      description: e.parentId ? `← ${e.parentId.slice(0, 6)}` : "root",
-    }));
+
+    const items: SelectItem[] = rows.map((r) => {
+      const treePrefix = r.prefix ? `${r.prefix} ` : "";
+      if (r.kind === "msg") {
+        const raw = r.entry.type === "message" && typeof r.entry.message.content === "string"
+          ? r.entry.message.content : "";
+        const text = stripContextWrappers(raw).slice(0, 70).replace(/\n/g, " ");
+        return { value: `msg:${r.id}`, label: `${treePrefix}${text}` };
+      }
+      const label = r.id === activeLeaf ? "● current" : "leaf";
+      return { value: `tip:${r.id}`, label: `${treePrefix}${label}` };
+    });
     const picker = new SelectList(items, 15, selectListTheme());
-    const activeIdx = items.findIndex((it) => it.value === activeId);
-    if (activeIdx >= 0) picker.setSelectedIndex(activeIdx);
+    const activeIdx = items.findIndex((it) => it.value === `tip:${activeLeaf}`);
+    picker.setSelectedIndex(activeIdx >= 0 ? activeIdx : items.length - 1);
 
     const close = (): void => {
       pickerOpen = false;
@@ -777,12 +859,25 @@ export function mountAshi(
     };
 
     picker.onSelect = async (item) => {
-      const id = item.value;
       close();
-      if (id === activeId) return;
-      getStore().current().setActiveLeaf(id);
+      const [kind, id] = item.value.split(":") as ["msg" | "tip", string];
+      if (kind === "tip") {
+        if (id === store.getActiveLeaf()) return;
+        store.setActiveLeaf(id);
+        applyBranchMessages(ctx, getStore, capture);
+        bus.emit("ui:info", { message: `fork: switched to branch tip ${id.slice(0, 6)}` });
+        await rebuildChat();
+        refreshFooterStats();
+        return;
+      }
+      const entry = byId.get(id);
+      if (!entry || entry.type !== "message") return;
+      const targetLeaf = entry.parentId;
+      store.setActiveLeaf(targetLeaf);
       applyBranchMessages(ctx, getStore, capture);
-      bus.emit("ui:info", { message: `fork: rewound to ${id.slice(0, 6)}` });
+      const raw = typeof entry.message.content === "string" ? entry.message.content : "";
+      editor.setText(stripContextWrappers(raw));
+      bus.emit("ui:info", { message: `fork: rewound to ${targetLeaf.slice(0, 6)}` });
       await rebuildChat();
       refreshFooterStats();
     };
@@ -964,18 +1059,17 @@ export function mountAshi(
   };
 }
 
+function isForkAnchor(e: SessionEntry): boolean {
+  if (e.type === "session" || e.type === "compaction") return true;
+  return e.type === "message" && e.message.role === "user";
+}
+
 function pickerLabel(e: SessionEntry, isActive: boolean): string {
   const marker = isActive ? "●" : "│";
   const short = e.id.slice(0, 6);
   if (e.type === "session") return `${marker} ${short} session start`;
   if (e.type === "compaction") return `${marker} ${short} ▼ compacted (firstKept=${e.firstKeptId.slice(0, 6)})`;
-  if (e.type === "shell-exchange") {
-    const cmd = e.command.slice(0, 60).replace(/\n/g, " ");
-    return `${marker} ${short} ${e.private ? "shell·private" : "shell"}: ${cmd}`;
-  }
-  const m = e.message;
-  const raw = typeof m.content === "string" ? m.content : "";
-  const cleaned = m.role === "user" ? stripContextWrappers(raw) : raw;
-  const text = cleaned.slice(0, 70).replace(/\n/g, " ");
-  return `${marker} ${short} ${m.role}: ${text}`;
+  const raw = e.type === "message" && typeof e.message.content === "string" ? e.message.content : "";
+  const text = stripContextWrappers(raw).slice(0, 70).replace(/\n/g, " ");
+  return `${marker} ${short} ${text}`;
 }

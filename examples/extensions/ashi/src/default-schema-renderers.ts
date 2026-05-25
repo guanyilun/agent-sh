@@ -60,7 +60,7 @@ const bashModel: RenderModel<BashInit> = {
 /** User-typed `!` shell commands. `▸` mirrors the status-footer glyph; the
  *  right-aligned tag disambiguates private vs public on scrollback. */
 function makeUserBashModel(opts: { private: boolean }): RenderModel<BashInit> {
-  const color: Color = opts.private ? "warning" : "bashMode";
+  const color: Color = opts.private ? "bashModePrivate" : "bashMode";
   const prefixSeg: Segment = { text: "▸ ", style: { bold: true, color } };
   const tagText = opts.private ? "shell · private" : "shell";
   const tagSeg: Segment = { text: tagText, style: { color, dim: true } };
