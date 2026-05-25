@@ -131,9 +131,8 @@ function detailFromArgs(argsJson: string | undefined): string {
   return "";
 }
 
-/** Recompute the per-tool summary from a saved tool result message. We don't
- *  persist resultDisplay, so /resume would otherwise lose "16 entries" / "117
- *  lines" etc. Mirrors agent-sh's formatResult logic for the common tools. */
+/** resultDisplay isn't persisted, so /resume rebuilds the "16 entries" / "117
+ *  lines" hints from saved tool output. */
 function inferSummary(toolName: string, content: unknown): string | undefined {
   if (typeof content !== "string" || content.length === 0) return undefined;
   const lines = content.split("\n").filter((l) => l.length > 0);
@@ -220,11 +219,10 @@ export function mountAshi(
   };
 
   editor.onChange = (text) => {
-    // onChange (not keydown) so paste also flips the mode.
     const r = deriveChangeHandlerResult(shellMode, pendingPrivate, text);
-    // Apply mode + private state BEFORE setText. setText fires onChange
-    // synchronously; the recursive call must see the new values or it
-    // re-runs the entry transition and may clobber the just-set state.
+    // Order matters: setText fires onChange synchronously, and the recursive
+    // call must see the new mode/private values or it re-runs the entry
+    // transition and clobbers the just-set state.
     if (r.mode !== shellMode) setShellMode(r.mode);
     setPendingPrivate(r.pendingPrivate);
     if (r.replaceText !== undefined) editor.setText(r.replaceText);
@@ -287,10 +285,7 @@ export function mountAshi(
   const activeTools = new Map<string, LiveToolEntry>();
   const groupMaxVisible = loadGroupMaxVisible();
 
-  /** Find a same-kind ToolGroup at the chat tail. ThinkingBlocks are
-   *  visually-neutral only when hidden — visible thinking is a hard separator,
-   *  so toggling thinking on splits previously-merged groups at iteration
-   *  boundaries. */
+  /** Visible thinking acts as a hard separator; hidden thinking is transparent. */
   const findMergeableGroup = (kind: string): ToolGroup | null => {
     for (let i = chat.children.length - 1; i >= 0; i--) {
       const c = chat.children[i]!;
@@ -305,8 +300,7 @@ export function mountAshi(
   let processing = false;
   const queuedQueries: string[] = [];
   const queuedShellLines: { line: string; private: boolean }[] = [];
-  // FIFO of privacy flags for in-flight user shell commands; consumed by the
-  // shell:command-start handler in the order pty-writes were emitted.
+  /** FIFO matching pty-writes to their shell:command-start events. */
   const pendingUserBlockPrivacy: boolean[] = [];
 
   const renderQueueSlot = (): void => {
@@ -503,13 +497,10 @@ export function mountAshi(
     const branch = getStore().current().getBranch();
     const toolMap = new Map<string, ReplayEntry>();
     for (const e of branch) replayEntry(e, toolMap);
-    // Match the trailing gap that processing-done adds in live turns, so the
-    // editor doesn't sit flush against the last replayed response.
     chat.addChild(new Spacer(1));
     tui.requestRender();
   };
 
-  // ── Bus wiring ───────────────────────────────────────────────
   bus.on("agent:query", ({ query }) => {
     chat.addChild(renderUserMessage(query));
     activeAssistant = null;
@@ -534,8 +525,7 @@ export function mountAshi(
     );
   };
 
-  /** Drop the live assistant message so the image lands as its own block,
-   *  then subsequent text starts a fresh markdown context below it. */
+  /** Drop the live assistant so subsequent text starts fresh markdown below the image. */
   const appendImage = (data: Buffer): void => {
     const img = imageComponentFromPng(data);
     if (!img) return;
@@ -543,8 +533,7 @@ export function mountAshi(
     chat.addChild(img);
   };
 
-  // tui-renderer normally owns render:image, but ashi disables it; provide
-  // our own so latex-images and friends reach the chat.
+  /** tui-renderer normally owns this hook; ashi disables it and provides its own. */
   ctx.define("render:image", (data: Buffer) => {
     appendImage(data);
     tui.requestRender();
@@ -636,8 +625,8 @@ export function mountAshi(
     tui.requestRender();
   });
 
-  // Skip rendering while the agent is running its own bash tool — that
-  // path is already covered by the agent:tool-* listeners above.
+  // agent:tool-* listeners already render agent-issued bash; the shell:* path
+  // is only for user-issued `!` commands.
   let agentShellActive = false;
   let shellForegroundBusy = false;
   bus.on("shell:agent-exec-start", () => { agentShellActive = true; });
@@ -669,8 +658,6 @@ export function mountAshi(
     pair.call.setStatus({ exitCode, elapsedMs: Date.now() - pair.startedAt });
     pair.result.finalize({ exitCode });
     activeUserShell = null;
-    // Matches the trailing gap that agent:processing-done adds, so the
-    // composer doesn't sit flush against the shell output.
     chat.addChild(new Spacer(1));
     tui.requestRender();
     void getStore().current().appendShellExchange({
@@ -688,8 +675,7 @@ export function mountAshi(
     chat.addChild(new Spacer(1));
     refreshFooterStats();
     refreshBranch();
-    // Drain shell queue before agent queue so the next turn's <shell_events>
-    // includes their output.
+    // Shell queue drains first so its output lands in the next turn's <shell_events>.
     while (queuedShellLines.length > 0) {
       const item = queuedShellLines.shift()!;
       pendingUserBlockPrivacy.push(item.private);
@@ -761,7 +747,6 @@ export function mountAshi(
 
   refreshFooterStats();
 
-  // ── Pickers ────────────────────────────────────────────────────
   let pickerOpen = false;
   let activeSessionPicker: SelectList | null = null;
   let activeSessionRepopulate: ((keepIndex?: number) => boolean) | null = null;
@@ -868,13 +853,11 @@ export function mountAshi(
     tui.requestRender();
   };
 
-  // ── Keybindings ────────────────────────────────────────────────
   const toggleThinking = (): void => {
     hideThinking = !hideThinking;
     if (processing) {
-      // Mid-turn: in-place show/hide only. Past groups stay as they merged
-      // under the old flag; future tool calls in this turn respect the new
-      // flag via findMergeableGroup. Next idle rebuild reflows everything.
+      // Mid-turn: only show/hide existing nodes. Group-merging respects the
+      // new flag for future calls; next idle rebuild reflows everything.
       const walk = (node: Container): void => {
         for (const child of node.children) {
           if (child instanceof ThinkingBlock) child.setHidden(hideThinking);
@@ -896,8 +879,7 @@ export function mountAshi(
         return { consume: true };
       }
       if (shellForegroundBusy) {
-        // Real ctrl-c byte. PTY in cooked mode translates to SIGINT to the
-        // foreground process group — same behavior as typing ^C in the shell.
+        // Real ^C byte; PTY translates it to SIGINT for the foreground process.
         bus.emit("shell:pty-write", { data: "\x03" });
         return { consume: true };
       }
@@ -928,8 +910,8 @@ export function mountAshi(
       return { consume: true };
     }
     if (matchesKey(data, "backspace") && shellMode && editor.getText().length === 0) {
-      // Editor swallows backspace-on-empty silently; intercept it so the user
-      // can exit. Two-step: first clear the private signal if set, then exit mode.
+      // Editor swallows backspace-on-empty; two-step exit: first clears the
+      // private signal, second exits shell mode entirely.
       if (pendingPrivate) setPendingPrivate(false);
       else setShellMode(false);
       return { consume: true };

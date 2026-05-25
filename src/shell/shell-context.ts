@@ -1,9 +1,6 @@
-/**
- * Tracks PTY commands and cwd, spills long outputs, contributes the
- * per-query `<cwd>` (always) and `<shell_events>` (when there are fresh
- * user-shell exchanges) signals. Frontends without a PTY skip this
- * built-in and the agent runs cwd-aware via core's process.cwd() default.
- */
+/** Tracks PTY commands and cwd, spills long outputs, contributes per-query
+ *  `<cwd>` (always) and `<shell_events>` (fresh user exchanges). Frontends
+ *  without a PTY skip this and fall back to core's process.cwd() default. */
 import type { ExtensionContext } from "./host-types.js";
 import { getSettings } from "../core/settings.js";
 import { spillOutput } from "../utils/shell-output-spill.js";
@@ -36,8 +33,8 @@ export default function activate(ctx: ExtensionContext): void {
     const lines = e.output.split("\n");
     const s = getSettings();
 
-    // Long outputs spill to a tempfile so the agent can `read_file` them
-    // on demand instead of carrying the full text in LLM context.
+    // Long outputs spill to a tempfile the agent can `read_file` instead of
+    // carrying the full text in LLM context.
     let output = e.output;
     let spillPath: string | undefined;
     if (lines.length > s.shellTruncateThreshold) {
@@ -77,11 +74,10 @@ export default function activate(ctx: ExtensionContext): void {
   bus.on("shell:agent-exec-done", () => { agentShellActive = false; });
   bus.on("shell:user-exec-exclude-next", () => { nextUserExcluded = true; });
 
-  // Override core's process.cwd() default with the PTY-tracked value.
   ctx.advise("cwd", () => currentCwd);
 
-  // Advises the core handler directly: shell-context loads before the
-  // agent host attaches `ctx.agent`, so the sugar isn't available yet.
+  // Advise the core handler directly: this loads before the agent host
+  // attaches `ctx.agent`, so the sugar isn't available yet.
   ctx.advise("query-context:build", (next) => {
     const base = next() as string;
     const part = (() => {

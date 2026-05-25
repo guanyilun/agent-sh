@@ -118,7 +118,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // ── Pi-tui frontend
   const config = parseArgs(rawArgs);
 
   if (!process.stdin.isTTY) {
@@ -141,11 +140,11 @@ async function main(): Promise<void> {
 
   let shellRef: { kill(): void } | null = null;
   const cleanup = (): void => {
-    try { stopFrontend?.(); } catch { /* ignore */ }
-    try { shellRef?.kill(); } catch { /* ignore */ }
-    try { core.kill(); } catch { /* ignore */ }
+    try { stopFrontend?.(); } catch {}
+    try { shellRef?.kill(); } catch {}
+    try { core.kill(); } catch {}
     if (process.stdin.isTTY) {
-      try { process.stdin.setRawMode(false); } catch { /* ignore */ }
+      try { process.stdin.setRawMode(false); } catch {}
     }
     process.exit(0);
   };

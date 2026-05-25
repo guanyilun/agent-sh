@@ -11,9 +11,9 @@ export function deriveShellModeTransition(
   if (!mode && text.startsWith("!")) {
     return { mode: true, replaceText: text.slice(1) };
   }
-  // Sticky on purpose. Exit is via the Backspace-on-empty intercept at the
-  // TUI input listener — auto-exiting on empty text would also fire on
-  // pi-tui's pre-emptive onChange("") inside Editor.submitValue().
+  // Sticky: exit only via the Backspace-on-empty intercept. Auto-exit on
+  // empty text would fire during pi-tui's pre-emptive onChange("") in
+  // Editor.submitValue() and misroute the submit.
   return { mode };
 }
 
@@ -22,14 +22,9 @@ export interface ChangeHandlerResult extends ShellModeTransition {
   pendingPrivate: boolean;
 }
 
-/**
- * Pure onChange transition.
- *
- * Strips `!` (entry), `!!` (entry + private), and in-mode leading `!`
- * (upgrade to private). pendingPrivate is sticky while shell mode is on
- * — auto-clearing on empty text would fire during the entry-strip's
- * recursive onChange("") and lose the signal.
- */
+/** Strips `!` (entry), `!!` (entry + private), in-mode `!` (upgrade to private).
+ *  pendingPrivate is sticky while in shell mode — clearing on empty text would
+ *  fire during the entry-strip's recursive onChange("") and lose the signal. */
 export function deriveChangeHandlerResult(
   mode: boolean,
   pendingPrivate: boolean,

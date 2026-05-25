@@ -1,7 +1,5 @@
-// Default schema-style renderers shipped with ashi. Each model below could
-// equally well live in an external extension — they use only the public
-// "@guanyilun/ashi/render" surface, proving the schema covers ashi's own
-// variety.
+// Default schema-style renderers shipped with ashi. Each uses only the public
+// "@guanyilun/ashi/render" surface — they could equally well live externally.
 
 import type { ExtensionContext } from "agent-sh/types";
 import type { RenderModel, Segment, ToolDisplay, TitleIcon, Color } from "./schema.js";
@@ -37,9 +35,6 @@ const accentSeg = (text: string): Segment => ({ text, style: { color: "accent" }
 const mutedSeg = (text: string): Segment => ({ text, style: { color: "muted" } });
 const warnSeg = (text: string): Segment => ({ text, style: { color: "warning" } });
 
-// ---------------------------------------------------------------------------
-// bash — full command toggle on Ctrl+O, syntax-highlighted, streaming output.
-
 interface BashInit { command: string; timeout?: number }
 
 const bashModel: RenderModel<BashInit> = {
@@ -62,9 +57,8 @@ const bashModel: RenderModel<BashInit> = {
   },
 };
 
-/** User-typed `!` shell commands. `▸ ` prefix mirrors the status-footer
- *  glyph for instant left-side recognition; right-aligned tag carries the
- *  full label so private vs public is unambiguous on scrollback. */
+/** User-typed `!` shell commands. `▸` mirrors the status-footer glyph; the
+ *  right-aligned tag disambiguates private vs public on scrollback. */
 function makeUserBashModel(opts: { private: boolean }): RenderModel<BashInit> {
   const color: Color = opts.private ? "warning" : "bashMode";
   const prefixSeg: Segment = { text: "▸ ", style: { bold: true, color } };
@@ -84,9 +78,6 @@ function makeUserBashModel(opts: { private: boolean }): RenderModel<BashInit> {
     }),
   };
 }
-
-// ---------------------------------------------------------------------------
-// read — file path + optional offset:limit range.
 
 interface ReadInit { path: string; range?: string }
 
@@ -116,9 +107,6 @@ const readModel: RenderModel<ReadInit> = {
     expandable: true,
   }),
 };
-
-// ---------------------------------------------------------------------------
-// grep / glob / ls — pattern + scope.
 
 interface GrepInit { pattern: string; scope: string; extras: string }
 
@@ -182,11 +170,6 @@ const lsModel: RenderModel<LsInit> = {
   }),
 };
 
-// ---------------------------------------------------------------------------
-// edit_file / write_file — path + framework-supplied diff body. The "Edited
-// /path (+N -M)" streaming text is suppressed because the diff body already
-// shows that information; per-line output reappears via expand on Ctrl+O.
-
 interface EditInit { path: string; verb: string }
 
 function editLikeModel(verb: string): RenderModel<EditInit> {
@@ -200,8 +183,8 @@ function editLikeModel(verb: string): RenderModel<EditInit> {
       titleIcon: "edit",
       title: [nameSeg(`${s.verb} `), accentSeg(s.path)],
       status: s.status,
-      // Collapsed-with-diff: diff only (the "Edited /path (+N -M)" stream line
-      // restates the call line). Expanded-with-diff: diff + stream output.
+      // Collapsed shows just the diff (the "Edited /path (+N -M)" stream
+      // line would only restate the call); expand adds the stream output.
       body: s.hasDiff
         ? (env.expanded
             ? { kind: "compound", parts: [{ kind: "diff" }, { kind: "stream", text: s.output }] }
@@ -211,9 +194,6 @@ function editLikeModel(verb: string): RenderModel<EditInit> {
     }),
   };
 }
-
-// ---------------------------------------------------------------------------
-// default — fallback for any tool without a specific renderer.
 
 interface DefaultInit { title: string; detail?: string; icon: TitleIcon }
 
@@ -234,8 +214,6 @@ const defaultModel: RenderModel<DefaultInit> = {
     expandable: true,
   }),
 };
-
-// ---------------------------------------------------------------------------
 
 export function registerDefaultSchemaRenderers(ctx: ExtensionContext): void {
   ctx.define("ashi:render-tool:bash", () => bashModel);

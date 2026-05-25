@@ -44,10 +44,8 @@ export interface CompactionEntry {
   tokensBefore: number;
 }
 
-/** UI-only entry: a `!`-mode shell command the user ran. Omitted from
- *  buildMessages because the agent already saw it through <shell_events>
- *  at the time it ran (or didn't, if private). Replayed by the frontend
- *  on resume so scrollback matches the live session. */
+/** Omitted from buildMessages — the agent already saw it via <shell_events>
+ *  (or didn't, if private). The frontend replays it for scrollback fidelity. */
 export interface ShellExchangeEntry {
   type: "shell-exchange";
   id: string;
@@ -116,10 +114,7 @@ export function summarizeMessage(m: AgentMessage): string {
   return `${role}: ${snippet(extractText(m.content), 500)}`;
 }
 
-/** Strip the agent-loop's `<query_context>` (frozen at send time) and
- *  `<dynamic_context>` (wrapped at request time) envelopes from a message's
- *  content. Loops because both can stack at the head. The wrapped form is
- *  what the LLM saw — the unwrapped form is what the user actually typed. */
+/** For displayed user text. Loops because both wrappers can stack at the head. */
 export function stripContextWrappers(content: string): string {
   let out = content;
   for (;;) {
@@ -134,8 +129,7 @@ export function renderEvictedSummary(evicted: AgentMessage[]): string {
   return `${lines.length} message(s) elided\n${lines.join("\n")}`;
 }
 
-/** One session = one JSONL file (entries) + sidecar files for leaf & meta.
- *  Tree is implicit via parentId pointers; entries kept in memory after load. */
+/** Tree is implicit via parentId pointers; entries are kept in memory after load. */
 export class SessionStore {
   private entriesPath: string;
   private leafPath: string;
@@ -203,9 +197,6 @@ export class SessionStore {
     this.persistMeta();
   }
 
-  /** Append messages as a chain of MessageEntry, each parented at the
-   *  previously appended id (starting from current leaf). Returns the new
-   *  entry ids in order. */
   async appendMessages(messages: AgentMessage[]): Promise<string[]> {
     if (messages.length === 0) return [];
     this.flushHeader();
@@ -276,7 +267,7 @@ export class SessionStore {
     return e.id;
   }
 
-  /** Walk parent pointers from a leaf back to the root. Returns oldest-first. */
+  /** Oldest-first walk from leaf to root. */
   getBranch(leafId: string = this.activeLeaf): SessionEntry[] {
     const out: SessionEntry[] = [];
     const seen = new Set<string>();
@@ -291,9 +282,7 @@ export class SessionStore {
     return out.reverse();
   }
 
-  /** Reconstruct the live message array for the active leaf, honoring the
-   *  latest compaction on the branch (summary + kept tail). Mirrors pi's
-   *  buildSessionContext. */
+  /** Honors the latest compaction on the branch (summary + kept tail). */
   buildMessages(leafId: string = this.activeLeaf): AgentMessage[] {
     const branch = this.getBranch(leafId);
     let compactionIdx = -1;
@@ -324,8 +313,6 @@ export class SessionStore {
     return out;
   }
 
-  /** A short, human-friendly preview for picker rows. Uses the first user
-   *  message's text when available, else the session id. */
   getPreview(): string {
     for (const e of this.entries.values()) {
       if (e.type === "message" && e.message.role === "user") {
