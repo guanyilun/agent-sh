@@ -7,6 +7,7 @@ import {
   Loader,
   SelectList,
   Spacer,
+  Text,
   type Component,
   type SelectItem,
   getImageDimensions,
@@ -26,6 +27,7 @@ import {
 import type { ToolCallView, ToolResultView } from "./hooks.js";
 import { createToolHookResolver } from "./hooks.js";
 import { loadGroupMaxVisible } from "./display-config.js";
+import { classifySubmit, deriveChangeHandlerResult } from "./shell-mode.js";
 
 const GROUPABLE_KINDS = new Set(["read", "search"]);
 const TOOL_KIND: Record<string, string> = {
@@ -35,7 +37,7 @@ const TOOL_KIND: Record<string, string> = {
 import { BusAutocompleteProvider } from "./autocomplete.js";
 import { StatusFooter } from "./status-footer.js";
 import type { MultiSessionStore } from "./multi-session-store.js";
-import type { SessionEntry } from "./session-store.js";
+import { stripContextWrappers, type SessionEntry } from "./session-store.js";
 import { formatSessionRow } from "./session-commands.js";
 import { resumeSession } from "./session-commands.js";
 import { applyBranchMessages } from "./commands.js";
@@ -129,9 +131,8 @@ function detailFromArgs(argsJson: string | undefined): string {
   return "";
 }
 
-/** Recompute the per-tool summary from a saved tool result message. We don't
- *  persist resultDisplay, so /resume would otherwise lose "16 entries" / "117
- *  lines" etc. Mirrors agent-sh's formatResult logic for the common tools. */
+/** resultDisplay isn't persisted, so /resume rebuilds the "16 entries" / "117
+ *  lines" hints from saved tool output. */
 function inferSummary(toolName: string, content: unknown): string | undefined {
   if (typeof content !== "string" || content.length === 0) return undefined;
   const lines = content.split("\n").filter((l) => l.length > 0);
@@ -182,25 +183,73 @@ export function mountAshi(
   const footerSlot = new Container();
   const queueSlot = new Container();
   const editor = new Editor(tui, editorTheme(), { paddingX: 1 });
-  editor.setAutocompleteProvider(new BusAutocompleteProvider(bus));
+
+  let shellMode = false;
+  let pendingPrivate = false;
+  const baseAutocomplete = new BusAutocompleteProvider(bus);
+  editor.setAutocompleteProvider({
+    getSuggestions: async (lines, line, col) =>
+      shellMode ? null : baseAutocomplete.getSuggestions(lines, line, col),
+    applyCompletion: baseAutocomplete.applyCompletion.bind(baseAutocomplete),
+  });
+
+  const defaultBorderColor = editor.borderColor;
+  const shellBorderColor = (t: string): string => theme.fg("bashMode", t);
+  const privateBorderColor = (t: string): string => theme.fg("bashModePrivate", t);
+  const refreshShellChrome = (): void => {
+    editor.borderColor = shellMode
+      ? (pendingPrivate ? privateBorderColor : shellBorderColor)
+      : defaultBorderColor;
+    editor.invalidate();
+    statusFooter.update({
+      shellMode: shellMode ? (pendingPrivate ? "private" : "on") : "off",
+    });
+    tui.requestRender();
+  };
+  const setShellMode = (on: boolean): void => {
+    if (shellMode === on) return;
+    shellMode = on;
+    if (!on) pendingPrivate = false;
+    refreshShellChrome();
+  };
+  const setPendingPrivate = (on: boolean): void => {
+    if (pendingPrivate === on) return;
+    pendingPrivate = on;
+    refreshShellChrome();
+  };
+
+  editor.onChange = (text) => {
+    const r = deriveChangeHandlerResult(shellMode, pendingPrivate, text);
+    // Order matters: setText fires onChange synchronously, and the recursive
+    // call must see the new mode/private values or it re-runs the entry
+    // transition and clobbers the just-set state.
+    if (r.mode !== shellMode) setShellMode(r.mode);
+    setPendingPrivate(r.pendingPrivate);
+    if (r.replaceText !== undefined) editor.setText(r.replaceText);
+  };
+
   editor.onSubmit = (text) => {
-    const query = text.trim();
-    if (!query) return;
+    const action = classifySubmit(text, shellMode, pendingPrivate);
+    if (action.kind === "noop") return;
     editor.setText("");
-    if (query.startsWith("/")) {
-      const sp = query.indexOf(" ");
-      const name = sp === -1 ? query : query.slice(0, sp);
-      const args = sp === -1 ? "" : query.slice(sp + 1).trim();
-      bus.emit("command:execute", { name, args });
-      return;
+    switch (action.kind) {
+      case "shell":
+        submitShell(action.line, { private: action.private });
+        setPendingPrivate(false);
+        return;
+      case "command":
+        bus.emit("command:execute", { name: action.name, args: action.args });
+        return;
+      case "agent":
+        if (processing) {
+          queuedQueries.push(action.query);
+          renderQueueSlot();
+          tui.requestRender();
+          return;
+        }
+        bus.emit("agent:submit", { query: action.query });
+        return;
     }
-    if (processing) {
-      queuedQueries.push(query);
-      renderQueueSlot();
-      tui.requestRender();
-      return;
-    }
-    bus.emit("agent:submit", { query });
   };
 
   const statusFooter = new StatusFooter();
@@ -236,10 +285,7 @@ export function mountAshi(
   const activeTools = new Map<string, LiveToolEntry>();
   const groupMaxVisible = loadGroupMaxVisible();
 
-  /** Find a same-kind ToolGroup at the chat tail. ThinkingBlocks are
-   *  visually-neutral only when hidden — visible thinking is a hard separator,
-   *  so toggling thinking on splits previously-merged groups at iteration
-   *  boundaries. */
+  /** Visible thinking acts as a hard separator; hidden thinking is transparent. */
   const findMergeableGroup = (kind: string): ToolGroup | null => {
     for (let i = chat.children.length - 1; i >= 0; i--) {
       const c = chat.children[i]!;
@@ -253,14 +299,35 @@ export function mountAshi(
   let loader: Loader | null = null;
   let processing = false;
   const queuedQueries: string[] = [];
+  const queuedShellLines: { line: string; private: boolean }[] = [];
+  /** FIFO matching pty-writes to their shell:command-start events. */
+  const pendingUserBlockPrivacy: boolean[] = [];
 
   const renderQueueSlot = (): void => {
     queueSlot.clear();
+    for (const item of queuedShellLines) {
+      const oneLine = item.line.replace(/\s+/g, " ");
+      const preview = oneLine.length > 80 ? oneLine.slice(0, 77) + "…" : oneLine;
+      const tag = item.private ? "shell·private" : "shell";
+      queueSlot.addChild(new InfoLine(`↳ ${tag}: ${preview}`));
+    }
     for (const q of queuedQueries) {
       const oneLine = q.replace(/\s+/g, " ");
       const preview = oneLine.length > 80 ? oneLine.slice(0, 77) + "…" : oneLine;
       queueSlot.addChild(new InfoLine(`↳ queued: ${preview}`));
     }
+  };
+
+  const submitShell = (line: string, opts?: { private?: boolean }): void => {
+    if (processing) {
+      queuedShellLines.push({ line, private: !!opts?.private });
+      renderQueueSlot();
+      tui.requestRender();
+      return;
+    }
+    pendingUserBlockPrivacy.push(!!opts?.private);
+    if (opts?.private) bus.emit("shell:user-exec-exclude-next", {});
+    bus.emit("shell:pty-write", { data: line + "\n" });
   };
   let hideThinking = true;
 
@@ -345,11 +412,25 @@ export function mountAshi(
       chat.addChild(new InfoLine(`▼ compacted (firstKept=${entry.firstKeptId.slice(0, 6)}, ${entry.tokensBefore} tokens)`));
       return;
     }
+    if (entry.type === "shell-exchange") {
+      const name = entry.private ? "user_bash_private" : "user_bash";
+      const pair = renderToolPair({
+        toolCallId: `user-shell-replay-${entry.id}`, name, title: name,
+        kind: "bash", displayDetail: entry.command, rawInput: { command: entry.command },
+      });
+      chat.addChild(pair.call);
+      chat.addChild(pair.result);
+      if (entry.output) pair.result.appendChunk(entry.output);
+      pair.result.finalize({ exitCode: entry.exitCode });
+      pair.call.setStatus({ exitCode: entry.exitCode, elapsedMs: 0 });
+      chat.addChild(new Spacer(1));
+      return;
+    }
     const m = entry.message;
     if (m.role === "user") {
-      const text = typeof m.content === "string" ? m.content : "";
-      if (text.startsWith("[Compacted conversation summary]")) return;
-      chat.addChild(renderUserMessage(text));
+      const raw = typeof m.content === "string" ? m.content : "";
+      if (raw.startsWith("[Compacted conversation summary]")) return;
+      chat.addChild(renderUserMessage(stripContextWrappers(raw)));
     } else if (m.role === "assistant") {
       const reasoning = readReasoning(m);
       if (reasoning) {
@@ -416,13 +497,10 @@ export function mountAshi(
     const branch = getStore().current().getBranch();
     const toolMap = new Map<string, ReplayEntry>();
     for (const e of branch) replayEntry(e, toolMap);
-    // Match the trailing gap that processing-done adds in live turns, so the
-    // editor doesn't sit flush against the last replayed response.
     chat.addChild(new Spacer(1));
     tui.requestRender();
   };
 
-  // ── Bus wiring ───────────────────────────────────────────────
   bus.on("agent:query", ({ query }) => {
     chat.addChild(renderUserMessage(query));
     activeAssistant = null;
@@ -447,8 +525,7 @@ export function mountAshi(
     );
   };
 
-  /** Drop the live assistant message so the image lands as its own block,
-   *  then subsequent text starts a fresh markdown context below it. */
+  /** Drop the live assistant so subsequent text starts fresh markdown below the image. */
   const appendImage = (data: Buffer): void => {
     const img = imageComponentFromPng(data);
     if (!img) return;
@@ -456,8 +533,7 @@ export function mountAshi(
     chat.addChild(img);
   };
 
-  // tui-renderer normally owns render:image, but ashi disables it; provide
-  // our own so latex-images and friends reach the chat.
+  /** tui-renderer normally owns this hook; ashi disables it and provides its own. */
   ctx.define("render:image", (data: Buffer) => {
     appendImage(data);
     tui.requestRender();
@@ -549,6 +625,48 @@ export function mountAshi(
     tui.requestRender();
   });
 
+  // agent:tool-* listeners already render agent-issued bash; the shell:* path
+  // is only for user-issued `!` commands.
+  let agentShellActive = false;
+  let shellForegroundBusy = false;
+  bus.on("shell:agent-exec-start", () => { agentShellActive = true; });
+  bus.on("shell:agent-exec-done", () => { agentShellActive = false; });
+  bus.on("shell:foreground-busy", ({ busy }) => { shellForegroundBusy = busy; });
+
+  let activeUserShell: { pair: ToolPair; command: string; isPrivate: boolean } | null = null;
+  bus.on("shell:command-start", ({ command }) => {
+    if (agentShellActive) return;
+    finalizeThinking();
+    if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
+    const isPrivate = pendingUserBlockPrivacy.shift() ?? false;
+    const name = isPrivate ? "user_bash_private" : "user_bash";
+    const pair = renderToolPair({
+      toolCallId: `user-shell-${Date.now()}`, name, title: name,
+      kind: "bash", displayDetail: command, rawInput: { command },
+    });
+    activeUserShell = { pair, command, isPrivate };
+    chat.addChild(pair.call);
+    chat.addChild(pair.result);
+    tui.requestRender();
+  });
+
+  bus.on("shell:command-done", ({ output, cwd, exitCode }) => {
+    const active = activeUserShell;
+    if (!active) return;
+    const { pair, command, isPrivate } = active;
+    if (output) pair.result.appendChunk(output);
+    pair.call.setStatus({ exitCode, elapsedMs: Date.now() - pair.startedAt });
+    pair.result.finalize({ exitCode });
+    activeUserShell = null;
+    chat.addChild(new Spacer(1));
+    tui.requestRender();
+    void getStore().current().appendShellExchange({
+      command, output: output ?? "", exitCode, cwd,
+      ...(isPrivate ? { private: true } : {}),
+    });
+    getStore().markLastSession();
+  });
+
   bus.on("agent:processing-done", () => {
     processing = false;
     stopLoader();
@@ -557,10 +675,19 @@ export function mountAshi(
     chat.addChild(new Spacer(1));
     refreshFooterStats();
     refreshBranch();
+    // Shell queue drains first so its output lands in the next turn's <shell_events>.
+    while (queuedShellLines.length > 0) {
+      const item = queuedShellLines.shift()!;
+      pendingUserBlockPrivacy.push(item.private);
+      if (item.private) bus.emit("shell:user-exec-exclude-next", {});
+      bus.emit("shell:pty-write", { data: item.line + "\n" });
+    }
     const next = queuedQueries.shift();
     if (next !== undefined) {
       renderQueueSlot();
       bus.emit("agent:submit", { query: next });
+    } else {
+      renderQueueSlot();
     }
     tui.requestRender();
   });
@@ -620,7 +747,6 @@ export function mountAshi(
 
   refreshFooterStats();
 
-  // ── Pickers ────────────────────────────────────────────────────
   let pickerOpen = false;
   let activeSessionPicker: SelectList | null = null;
   let activeSessionRepopulate: ((keepIndex?: number) => boolean) | null = null;
@@ -628,20 +754,102 @@ export function mountAshi(
 
   const openTreePicker = async (): Promise<void> => {
     if (pickerOpen) return;
-    const branch = getStore().current().getBranch();
-    if (branch.length <= 1) {
-      bus.emit("ui:info", { message: "tree: nothing to rewind to yet" });
+    const store = getStore().current();
+    const all = store.getAllEntries();
+    const byId = new Map(all.map((e) => [e.id, e]));
+    const rawChildren = new Map<string, string[]>();
+    for (const e of all) {
+      if (!e.parentId) continue;
+      const kids = rawChildren.get(e.parentId) ?? [];
+      kids.push(e.id);
+      rawChildren.set(e.parentId, kids);
+    }
+    for (const ids of rawChildren.values()) {
+      ids.sort((a, b) => (byId.get(a)?.timestamp ?? 0) - (byId.get(b)?.timestamp ?? 0));
+    }
+
+    const isVisible = (e: SessionEntry): boolean => {
+      if (e.type === "message" && e.message.role === "user") return true;
+      return (rawChildren.get(e.id)?.length ?? 0) === 0;
+    };
+    const visibleChildren = (id: string): string[] => {
+      const out: string[] = [];
+      const stack = [...(rawChildren.get(id) ?? [])];
+      while (stack.length > 0) {
+        const cid = stack.shift()!;
+        const e = byId.get(cid);
+        if (e && isVisible(e)) out.push(cid);
+        else stack.unshift(...(rawChildren.get(cid) ?? []));
+      }
+      return out;
+    };
+
+    const activeLeaf = store.getActiveLeaf();
+    type Row = { id: string; entry: SessionEntry; prefix: string; kind: "msg" | "tip" };
+    const rows: Row[] = [];
+    const walk = (id: string, lineage: string[], isBranchChild: boolean): void => {
+      const e = byId.get(id);
+      if (!e) return;
+      if (isVisible(e)) {
+        const cols = isBranchChild
+          ? [...lineage.slice(0, -1), lineage[lineage.length - 1] === "│" ? "├" : "└"]
+          : lineage;
+        const isUserMsg = e.type === "message" && e.message.role === "user";
+        rows.push({ id: e.id, entry: e, prefix: cols.join(" "), kind: isUserMsg ? "msg" : "tip" });
+      }
+      const kids = visibleChildren(id);
+      if (kids.length === 0) return;
+      if (kids.length === 1) {
+        const only = byId.get(kids[0]!);
+        const isTip = !!only && !(only.type === "message" && only.message.role === "user");
+        if (isTip) {
+          // Render the tip as a branch-child so it gets a `└` connector at
+          // a deeper indent, visually "the next node in this branch."
+          walk(kids[0]!, [...lineage, " "], true);
+        } else {
+          walk(kids[0]!, lineage, false);
+        }
+      } else {
+        for (let i = 0; i < kids.length; i++) {
+          const last = i === kids.length - 1;
+          walk(kids[i]!, [...lineage, last ? " " : "│"], true);
+        }
+      }
+    };
+    const rootId = store.getRootId();
+    const rootEntry = byId.get(rootId);
+    if (rootEntry && isVisible(rootEntry)) {
+      rows.push({ id: rootId, entry: rootEntry, prefix: "", kind: "tip" });
+    }
+    const rootKids = visibleChildren(rootId);
+    if (rootKids.length === 1) {
+      walk(rootKids[0]!, [], false);
+    } else {
+      for (let i = 0; i < rootKids.length; i++) {
+        const last = i === rootKids.length - 1;
+        walk(rootKids[i]!, [last ? " " : "│"], true);
+      }
+    }
+
+    if (rows.length === 0) {
+      bus.emit("ui:info", { message: "fork: no past prompts yet" });
       return;
     }
-    const activeId = getStore().current().getActiveLeaf();
-    const items: SelectItem[] = branch.map((e) => ({
-      value: e.id,
-      label: pickerLabel(e, e.id === activeId),
-      description: e.parentId ? `← ${e.parentId.slice(0, 6)}` : "root",
-    }));
+
+    const items: SelectItem[] = rows.map((r) => {
+      const treePrefix = r.prefix ? `${r.prefix} ` : "";
+      if (r.kind === "msg") {
+        const raw = r.entry.type === "message" && typeof r.entry.message.content === "string"
+          ? r.entry.message.content : "";
+        const text = stripContextWrappers(raw).slice(0, 70).replace(/\n/g, " ");
+        return { value: `msg:${r.id}`, label: `${treePrefix}${text}` };
+      }
+      const label = r.id === activeLeaf ? "● current" : "leaf";
+      return { value: `tip:${r.id}`, label: `${treePrefix}${label}` };
+    });
     const picker = new SelectList(items, 15, selectListTheme());
-    const activeIdx = items.findIndex((it) => it.value === activeId);
-    if (activeIdx >= 0) picker.setSelectedIndex(activeIdx);
+    const activeIdx = items.findIndex((it) => it.value === `tip:${activeLeaf}`);
+    picker.setSelectedIndex(activeIdx >= 0 ? activeIdx : items.length - 1);
 
     const close = (): void => {
       pickerOpen = false;
@@ -651,12 +859,25 @@ export function mountAshi(
     };
 
     picker.onSelect = async (item) => {
-      const id = item.value;
       close();
-      if (id === activeId) return;
-      getStore().current().setActiveLeaf(id);
+      const [kind, id] = item.value.split(":") as ["msg" | "tip", string];
+      if (kind === "tip") {
+        if (id === store.getActiveLeaf()) return;
+        store.setActiveLeaf(id);
+        applyBranchMessages(ctx, getStore, capture);
+        bus.emit("ui:info", { message: `fork: switched to branch tip ${id.slice(0, 6)}` });
+        await rebuildChat();
+        refreshFooterStats();
+        return;
+      }
+      const entry = byId.get(id);
+      if (!entry || entry.type !== "message") return;
+      const targetLeaf = entry.parentId;
+      store.setActiveLeaf(targetLeaf);
       applyBranchMessages(ctx, getStore, capture);
-      bus.emit("ui:info", { message: `fork: rewound to ${id.slice(0, 6)}` });
+      const raw = typeof entry.message.content === "string" ? entry.message.content : "";
+      editor.setText(stripContextWrappers(raw));
+      bus.emit("ui:info", { message: `fork: rewound to ${targetLeaf.slice(0, 6)}` });
       await rebuildChat();
       refreshFooterStats();
     };
@@ -727,13 +948,11 @@ export function mountAshi(
     tui.requestRender();
   };
 
-  // ── Keybindings ────────────────────────────────────────────────
   const toggleThinking = (): void => {
     hideThinking = !hideThinking;
     if (processing) {
-      // Mid-turn: in-place show/hide only. Past groups stay as they merged
-      // under the old flag; future tool calls in this turn respect the new
-      // flag via findMergeableGroup. Next idle rebuild reflows everything.
+      // Mid-turn: only show/hide existing nodes. Group-merging respects the
+      // new flag for future calls; next idle rebuild reflows everything.
       const walk = (node: Container): void => {
         for (const child of node.children) {
           if (child instanceof ThinkingBlock) child.setHidden(hideThinking);
@@ -749,9 +968,16 @@ export function mountAshi(
 
   tui.addInputListener((data) => {
     if (isKeyRelease(data) || isKeyRepeat(data)) return;
-    if (matchesKey(data, "escape") && processing) {
-      bus.emit("agent:cancel-request", {});
-      return { consume: true };
+    if (matchesKey(data, "escape")) {
+      if (processing) {
+        bus.emit("agent:cancel-request", {});
+        return { consume: true };
+      }
+      if (shellForegroundBusy) {
+        // Real ^C byte; PTY translates it to SIGINT for the foreground process.
+        bus.emit("shell:pty-write", { data: "\x03" });
+        return { consume: true };
+      }
     }
     if (activeSessionPicker && matchesKey(data, "d")) {
       const selected = activeSessionPicker.getSelectedItem();
@@ -776,6 +1002,13 @@ export function mountAshi(
       renderQueueSlot();
       editor.setText(last);
       tui.requestRender();
+      return { consume: true };
+    }
+    if (matchesKey(data, "backspace") && shellMode && editor.getText().length === 0) {
+      // Editor swallows backspace-on-empty; two-step exit: first clears the
+      // private signal, second exits shell mode entirely.
+      if (pendingPrivate) setPendingPrivate(false);
+      else setShellMode(false);
       return { consume: true };
     }
     if (matchesKey(data, "ctrl+c")) {
@@ -826,12 +1059,17 @@ export function mountAshi(
   };
 }
 
+function isForkAnchor(e: SessionEntry): boolean {
+  if (e.type === "session" || e.type === "compaction") return true;
+  return e.type === "message" && e.message.role === "user";
+}
+
 function pickerLabel(e: SessionEntry, isActive: boolean): string {
   const marker = isActive ? "●" : "│";
   const short = e.id.slice(0, 6);
   if (e.type === "session") return `${marker} ${short} session start`;
   if (e.type === "compaction") return `${marker} ${short} ▼ compacted (firstKept=${e.firstKeptId.slice(0, 6)})`;
-  const m = e.message;
-  const text = typeof m.content === "string" ? m.content.slice(0, 70).replace(/\n/g, " ") : "";
-  return `${marker} ${short} ${m.role}: ${text}`;
+  const raw = e.type === "message" && typeof e.message.content === "string" ? e.message.content : "";
+  const text = stripContextWrappers(raw).slice(0, 70).replace(/\n/g, " ");
+  return `${marker} ${short} ${text}`;
 }

@@ -12,6 +12,7 @@ interface StatusFields {
   tokens?: number;
   compactions?: number;
   thinking?: string;
+  shellMode?: "off" | "on" | "private";
 }
 
 export class StatusFooter extends Container {
@@ -40,12 +41,25 @@ export class StatusFooter extends Container {
 
   private repaint(width: number): void {
     const contentWidth = width > 0 ? Math.max(1, width - 2) : 0;
+    const right = this.buildRight();
+    const rightWidth = visibleWidth(right);
+    const join = (left: string): string => {
+      if (!right) return left;
+      const leftWidth = visibleWidth(left);
+      const gap = Math.max(1, contentWidth - leftWidth - rightWidth);
+      return `${left}${" ".repeat(gap)}${right}`;
+    };
     const full = this.buildLine("full");
-    if (contentWidth === 0 || visibleWidth(full) <= contentWidth) {
-      this.text.setText(full);
-      return;
-    }
-    this.text.setText(this.buildLine("basename"));
+    const fullFits = contentWidth === 0
+      || visibleWidth(full) + (right ? rightWidth + 1 : 0) <= contentWidth;
+    this.text.setText(fullFits ? join(full) : join(this.buildLine("basename")));
+  }
+
+  private buildRight(): string {
+    const mode = this.fields.shellMode;
+    if (mode === "on") return theme.fg("bashMode", "▸ shell");
+    if (mode === "private") return theme.fg("bashModePrivate", "▸ shell · private");
+    return "";
   }
 
   private buildLine(cwdMode: "full" | "basename"): string {

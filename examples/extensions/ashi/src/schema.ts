@@ -1,14 +1,7 @@
-// Declarative render schema for tool-call hooks.
-//
-// External renderers register one hook per tool:
-//   ctx.define("ashi:render-tool:scheme", () => ({ initial, reducers, view }))
-//
-// The view function is pure: `view(state, env)` returns a ToolDisplay describing
-// title + status + body. Ashi owns the pi-tui mapping, theming, streaming
-// buffer policy, diff reflow on resize, expand/collapse — everything that used
-// to leak into renderer subclasses.
+// Declarative render schema for tool-call hooks. External renderers register
+// `ctx.define("ashi:render-tool:<name>", () => ({ initial, reducers, view }))`.
 
-import { Container, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ThemeColor } from "./theme.js";
 import type { ToolEntryConfig } from "./display-config.js";
@@ -29,9 +22,8 @@ export type Segment = string | { text: string; style?: StyleHint; highlight?: st
 export type Body =
   | { kind: "text"; segments: Segment[] }
   | { kind: "code"; lang?: string; text: string }
-  /** Diff body — framework supplies the width-aware renderer via setDiffRenderer
-   *  (called from frontend.ts when the edit/write tool finalizes). Renderers
-   *  opt in by returning { kind: "diff" } and reading hasDiff from state. */
+  /** Width-aware renderer is supplied via setDiffRenderer; view() opts in by
+   *  returning { kind: "diff" } and gating on hasDiff in state. */
   | { kind: "diff" }
   | { kind: "stream"; text: string }
   | { kind: "lines"; lines: Segment[][] }
@@ -43,22 +35,22 @@ export interface DisplayStatus {
   summary?: string;
 }
 
-/** Built-in icon set ashi knows how to theme. Renderers pick a category;
- *  ashi picks the glyph. Falls back to the generic gear if absent. */
+/** Renderers pick a category; ashi picks the glyph. Falls back to generic. */
 export type TitleIcon = "read" | "search" | "edit" | "shell" | "generic" | "scheme";
 
 export interface ToolDisplay {
   titleIcon?: TitleIcon;
   title: Segment[];
+  /** Right-aligned on the title line; framework handles padding and reserves
+   *  space for the status suffix so renderers don't compute widths. */
+  titleRight?: Segment[];
   status?: DisplayStatus;
   body?: Body;
   expandable?: boolean;
   defaultExpanded?: boolean;
 }
 
-/** What the host tells the view about the rendering environment. Pure:
- *  changes here trigger a re-invocation of view(). `mode` and `previewLines`
- *  come from ashi.display.{name} — see display-config.ts. */
+/** `mode` and `previewLines` come from ashi.display.{name} (display-config.ts). */
 export interface Env {
   width: number;
   expanded: boolean;
@@ -69,9 +61,8 @@ export interface Env {
 
 export type Reducer<S, P = unknown> = (state: S, payload: P) => S;
 
-/** State as seen by view() — the user's S plus framework-tracked output/status.
- *  Renderers never need to wire `chunk` / `status` / `diff` reducers themselves.
- *  hasDiff is true once setDiffRenderer has been called (edit/write tools). */
+/** Framework tracks `output`, `status`, `hasDiff` — renderers don't wire
+ *  `chunk` / `status` / `diff` reducers themselves. */
 export type ViewState<S> = S & {
   output: string;
   status?: DisplayStatus;
@@ -88,8 +79,7 @@ export interface RenderInitArgs {
 
 export interface RenderModel<S = Record<string, never>> {
   initial: (args: RenderInitArgs) => S;
-  /** Optional. `status` and `chunk` are tracked by the framework — declare
-   *  reducers here only for tool-specific state transitions. */
+  /** Only for tool-specific state transitions; `status`/`chunk` are framework-tracked. */
   reducers?: Record<string, Reducer<ViewState<S>, never>>;
   view: (state: ViewState<S>, env: Env) => ToolDisplay;
   display?: Partial<ToolEntryConfig>;
@@ -101,12 +91,8 @@ export function isRenderModel(v: unknown): v is RenderModel<unknown> {
   return typeof o.initial === "function" && typeof o.view === "function";
 }
 
-// ---------------------------------------------------------------------------
-// Adapter: model → paired Components for call-side and result-side hooks.
-//
-// Both Components share a single state cell so that a `chunk` dispatch from
-// the result side repaints the call line too (e.g. for renderers that show
-// progress in the title).
+// Call-side and result-side components share one state cell, so chunks from
+// the result side can repaint the call line (e.g. for in-title progress).
 
 import { theme } from "./theme.js";
 
@@ -131,10 +117,7 @@ interface RenderHandle<S> {
   dispatch: (action: string, payload?: unknown) => void;
 }
 
-/** Per-toolCallId handle registry — sole purpose is letting the result-side
- *  mount find the call-side cell so they can share state. Once the result
- *  component is mounted, both views hold their own handle reference and the
- *  map entry is dead weight; cleared on finalize. */
+/** Lets the result-side mount find the call-side cell. Cleared on finalize. */
 const HANDLES = new Map<string, RenderHandle<unknown>>();
 
 export interface MountArgs {
@@ -191,9 +174,7 @@ function handleFor<S>(
   return handle as unknown as RenderHandle<S>;
 }
 
-// ---------------------------------------------------------------------------
-// Segment / Body → ANSI string rendering. Lives here so it's the only place
-// that knows about theme colors + highlighting; renderers stay pure-data.
+// Sole place that knows about theme colors + highlighting; renderers stay pure-data.
 
 import { highlight, supportsLanguage } from "cli-highlight";
 
@@ -271,9 +252,7 @@ function renderBody(body: Body, env: Env, diff: DiffSlot, exitCode?: number | nu
   }
 }
 
-// Lifted from ToolResultBody.repaint() in components.ts — preview/summary/hidden
-// policy is host-wide display config, not per-tool, so it lives here once and
-// every schema renderer with a kind:"stream" body inherits it for free.
+// Host-wide preview/summary/hidden policy inherited by every kind:"stream" body.
 function renderStream(buffer: string, env: Env, exitCode: number | null | undefined): string {
   const display = buffer.replace(/\n+$/, "");
   if (env.expanded) return theme.fg("toolOutput", display);
@@ -306,10 +285,7 @@ function lineCountHint(buffer: string, exitCode: number | null | undefined): str
   return `${arrow}${theme.fg("muted", label)}`;
 }
 
-// ---------------------------------------------------------------------------
-// Pi-tui Components produced by the adapter. Implement the existing
-// ToolCallView / ToolResultView contracts so the ashi resolver doesn't care
-// whether a renderer is legacy or schema-style.
+// Components that satisfy the legacy ToolCallView / ToolResultView contracts.
 
 class SchemaCallComponent extends Container {
   private line: Text;
@@ -330,7 +306,16 @@ class SchemaCallComponent extends Container {
     const display = this.handle.model.view(this.handle.cell.state as ViewState<unknown>, this.handle.cell.env);
     const icon = iconString(display.titleIcon);
     const title = segmentsToString(display.title);
-    this.line.setText(`${icon}${title}${statusSuffix(display.status)}`);
+    const status = statusSuffix(display.status);
+    if (display.titleRight && display.titleRight.length > 0) {
+      const right = segmentsToString(display.titleRight);
+      // env.width − 2 accounts for Text's paddingX=1 on each side.
+      const used = visibleWidth(icon) + visibleWidth(title) + visibleWidth(status) + visibleWidth(right);
+      const pad = " ".repeat(Math.max(2, this.handle.cell.env.width - 2 - used));
+      this.line.setText(`${icon}${title}${status}${pad}${right}`);
+    } else {
+      this.line.setText(`${icon}${title}${status}`);
+    }
   }
 }
 
@@ -369,9 +354,8 @@ class SchemaResultComponent extends Container {
     const env = this.handle.cell.env;
     const display = this.handle.model.view(this.handle.cell.state as ViewState<unknown>, env);
     if (!display.body) { this.body.setText(""); return; }
-    // kind:"stream" embeds preview/summary/hidden policy.
-    // kind:"diff" shows in preview mode or when expanded.
-    // Other kinds show iff expanded or the view requested defaultExpanded.
+    // stream embeds the preview/summary/hidden policy; diff shows in preview
+    // or when expanded; other kinds show only when expanded/defaultExpanded.
     if (display.body.kind === "diff" && !env.expanded && env.mode !== "preview") {
       this.body.setText("");
       return;
@@ -384,11 +368,6 @@ class SchemaResultComponent extends Container {
     this.body.setText(renderBody(display.body, env, this.handle.cell.diff, display.status?.exitCode));
   }
 }
-
-// ---------------------------------------------------------------------------
-// Public mount functions used by hooks.ts when resolving a schema-style
-// renderer. Each returns a Component that satisfies the legacy view contract,
-// so the rest of ashi doesn't need to know schema renderers exist.
 
 export interface MountEnv {
   width: number;

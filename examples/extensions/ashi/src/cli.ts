@@ -7,7 +7,21 @@ import { loadBuiltinExtensions } from "agent-sh/extensions";
 import { loadExtensions } from "agent-sh/extension-loader";
 import { activateAgent } from "agent-sh/agent";
 import { getSettings } from "agent-sh/settings";
+import { Shell } from "agent-sh/shell";
+import type { Terminal } from "agent-sh/shell/terminal";
+import activateShellContext from "agent-sh/shell/context";
 import type { AppConfig } from "agent-sh/types";
+
+/** No-op: ashi renders via pi-tui, the PTY only needs to exist. */
+function headlessTerminal(): Terminal {
+  return {
+    write() {},
+    onInput: () => () => {},
+    onResize: () => () => {},
+    cols: () => 100,
+    rows: () => 30,
+  };
+}
 
 import { mountAshi } from "./frontend.js";
 import { MultiSessionStore } from "./multi-session-store.js";
@@ -104,7 +118,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // ── Pi-tui frontend
   const config = parseArgs(rawArgs);
 
   if (!process.stdin.isTTY) {
@@ -125,11 +138,13 @@ async function main(): Promise<void> {
 
   let stopFrontend: (() => void) | null = null;
 
+  let shellRef: { kill(): void } | null = null;
   const cleanup = (): void => {
-    try { stopFrontend?.(); } catch { /* ignore */ }
-    try { core.kill(); } catch { /* ignore */ }
+    try { stopFrontend?.(); } catch {}
+    try { shellRef?.kill(); } catch {}
+    try { core.kill(); } catch {}
     if (process.stdin.isTTY) {
-      try { process.stdin.setRawMode(false); } catch { /* ignore */ }
+      try { process.stdin.setRawMode(false); } catch {}
     }
     process.exit(0);
   };
@@ -137,7 +152,20 @@ async function main(): Promise<void> {
   const ctx = core.extensionContext({ quit: cleanup });
 
   activateAgent(ctx);
+  activateShellContext(ctx);
   await loadBuiltinExtensions(ctx);
+
+  const shell = new Shell({
+    bus: core.bus,
+    handlers: { define: ctx.define, call: ctx.call },
+    cols: 100,
+    rows: 30,
+    shell: process.env.SHELL ?? "/bin/bash",
+    cwd: process.cwd(),
+    instanceId: ctx.instanceId,
+    terminal: headlessTerminal(),
+  });
+  shellRef = shell;
 
   const loaded = await loadExtensions(ctx, config.extensions);
   core.bus.emit("core:extensions-loaded", { names: loaded });

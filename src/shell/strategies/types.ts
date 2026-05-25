@@ -54,4 +54,11 @@ export interface ShellStrategy {
    * Returns null if the shell can't redraw — caller falls back to freshPrompt.
    */
   redrawEscape(): string | null;
+
+  /**
+   * Strip shell-specific artifacts from raw PTY output before stripAnsi
+   * collapses SGR codes (e.g. zsh's PROMPT_SP inverse-video `%`). Default
+   * is identity — most shells need no cleanup.
+   */
+  cleanOutput?(raw: string): string;
 }

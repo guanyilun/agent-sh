@@ -80,4 +80,13 @@ export const zshStrategy: ShellStrategy = {
   redrawEscape(): string {
     return "\x1b[9999~";
   },
+
+  cleanOutput(raw: string): string {
+    return raw.replace(PROMPT_SP_RE, "");
+  },
 };
+
+/** PROMPT_SP marker (inverse-video PROMPT_EOL_MARK, default `%`) zsh prints
+ *  before a prompt when prior output didn't end at column 0. Matching the
+ *  inverse-video wrapper preserves legitimate trailing `%`. */
+const PROMPT_SP_RE = /\x1b\[7m.\x1b\[(?:0|27)m/g;

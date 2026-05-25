@@ -18,8 +18,6 @@ function osc(num: number, tag: string, body: string): string {
   return `\x1b]${num};id=${tag};${body}\x07`;
 }
 
-// ── OSC 7 (cwd tracking) ─────────────────────────────────────────
-
 test("OSC 7 with a new path updates cwd and emits shell:cwd-change", () => {
   const { parser, events } = makeParser();
   parser.processData("\x1b]7;file://host/new/path\x07");
@@ -41,8 +39,6 @@ test("OSC 7 decodes percent-encoded paths", () => {
   const cwd = events.find((e) => e.name === "shell:cwd-change");
   assert.deepEqual(cwd?.payload, { cwd: "/has space/dir" });
 });
-
-// ── OSC 9997 (preexec / command-start) ──────────────────────────
 
 test("OSC 9997 with own tag emits shell:command-start with the carried command text", () => {
   const { parser, events } = makeParser();
@@ -72,11 +68,8 @@ test("OSC 9997 is stripped from the captured output buffer so it never reaches c
   parser.processData(`prefix${osc(9997, OWN, "ls")}body${osc(9999, OWN, "PROMPT")}`);
   const done = events.find((e) => e.name === "shell:command-done") as { payload: { output: string } } | undefined;
   assert.ok(done);
-  // Echoed-command stripping removes the first line ("ls"), leaving "body".
   assert.equal(done!.payload.output.includes("\x1b]"), false);
 });
-
-// ── OSC 9999 (prompt marker / command-done) ─────────────────────
 
 test("OSC 9999 with own tag fires shell:command-done with stripped output and clears foreground-busy", () => {
   const { parser, events } = makeParser();
@@ -116,8 +109,6 @@ test("OSC 9999 without a prior command does not emit command-done", () => {
   assert.equal(events.filter((e) => e.name === "shell:command-done").length, 0);
 });
 
-// ── OSC 9998 (prompt-ready) ─────────────────────────────────────
-
 test("OSC 9998 with own tag flips isPromptReady() to true", () => {
   const { parser } = makeParser();
   assert.equal(parser.isPromptReady(), false);
@@ -139,8 +130,6 @@ test("OSC 9999 (own tag) resets promptReady — a new command is starting", () =
   assert.equal(parser.isPromptReady(), false);
 });
 
-// ── onCommandEntered (the legacy line-buffer path) ──────────────
-
 test("onCommandEntered emits shell:command-start and flips foreground-busy true", () => {
   const { parser, events } = makeParser();
   parser.onCommandEntered("vim file", "/work");
@@ -149,8 +138,6 @@ test("onCommandEntered emits shell:command-start and flips foreground-busy true"
   const busy = events.find((e) => e.name === "shell:foreground-busy");
   assert.deepEqual(busy?.payload, { busy: true });
 });
-
-// ── Buffer growth guard ─────────────────────────────────────────
 
 test("output capture is capped — a runaway program does not grow the buffer unboundedly", () => {
   const { parser, events } = makeParser();
@@ -162,6 +149,21 @@ test("output capture is capped — a runaway program does not grow the buffer un
     | { payload: { output: string } }
     | undefined;
   assert.ok(done);
-  // Cap is 128 KB; the captured output must not exceed that meaningfully.
   assert.ok(done!.payload.output.length <= 128 * 1024);
+});
+
+test("cleanOutput hook runs before stripAnsi so the strategy can match SGR-wrapped artifacts", () => {
+  const bus = new EventBus();
+  const events: Array<{ name: string; payload: unknown }> = [];
+  bus.onAny((name, payload) => events.push({ name, payload }));
+  const parser = new OutputParser(bus, "/start/cwd", OWN, {
+    cleanOutput: (raw) => raw.replace(/<<<artifact>>>/g, ""),
+  });
+  parser.onCommandEntered("noop", "/work");
+  parser.processData("body<<<artifact>>>more");
+  parser.processData(osc(9999, OWN, "PROMPT"));
+  const done = events.find((e) => e.name === "shell:command-done") as
+    | { payload: { output: string } }
+    | undefined;
+  assert.equal(done?.payload.output, "bodymore");
 });

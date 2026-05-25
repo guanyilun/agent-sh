@@ -7,6 +7,7 @@ import * as crypto from "node:crypto";
 import {
   SessionStore,
   renderEvictedSummary,
+  stripContextWrappers,
   summarizeMessage,
   type AgentMessage,
 } from "../src/session-store.js";
@@ -145,4 +146,101 @@ test("buildMessages with compaction + no summary regenerates via renderEvictedSu
 test("appendCompaction throws when firstKeptId is unknown", async () => {
   const store = makeStore();
   await assert.rejects(() => store.appendCompaction("nonexistent", 0));
+});
+
+test("stripContextWrappers removes the agent-loop's wrapper", () => {
+  const wrapped = "<query_context>\n<cwd>/tmp</cwd>\n<shell_events>\n#1 $ ls\n  out\n  exit 0\n</shell_events>\n</query_context>\n\nwhat happened?";
+  assert.equal(stripContextWrappers(wrapped), "what happened?");
+});
+
+test("stripContextWrappers is a no-op on unwrapped text", () => {
+  assert.equal(stripContextWrappers("hello"), "hello");
+  assert.equal(stripContextWrappers("<other>x</other>\n\nhi"), "<other>x</other>\n\nhi");
+});
+
+test("stripContextWrappers preserves embedded query_context further down", () => {
+  // Only the leading wrapper is stripped; content mentioning the tag stays.
+  const text = "what is <query_context>?";
+  assert.equal(stripContextWrappers(text), text);
+});
+
+test("stripContextWrappers strips dynamic_context too", () => {
+  const wrapped = "<dynamic_context>\nmode: foo\n</dynamic_context>\n\nhello";
+  assert.equal(stripContextWrappers(wrapped), "hello");
+});
+
+test("getPreview strips the agent-loop's query_context envelope", async () => {
+  const store = makeStore();
+  await store.appendMessages([{
+    role: "user",
+    content: "<query_context>\n<cwd>/tmp</cwd>\n</query_context>\n\nfix the build",
+  }]);
+  assert.equal(store.getPreview(), "fix the build");
+});
+
+test("stripContextWrappers loops to strip stacked wrappers", () => {
+  // Defensive: in case both end up at the head of a persisted message.
+  const wrapped = "<dynamic_context>\nmode: foo\n</dynamic_context>\n\n<query_context>\n<cwd>/x</cwd>\n</query_context>\n\nactual query";
+  assert.equal(stripContextWrappers(wrapped), "actual query");
+});
+
+test("appendShellExchange persists to the branch and bumps the leaf", async () => {
+  const store = makeStore();
+  await store.appendMessages([{ role: "user", content: "hi" }]);
+  const id = await store.appendShellExchange({
+    command: "ls -la", output: "a\nb\n", exitCode: 0, cwd: "/tmp",
+  });
+  assert.equal(store.getActiveLeaf(), id);
+  const branch = store.getBranch();
+  const shell = branch.find((e) => e.id === id);
+  assert.ok(shell && shell.type === "shell-exchange");
+  if (shell.type === "shell-exchange") {
+    assert.equal(shell.command, "ls -la");
+    assert.equal(shell.output, "a\nb\n");
+    assert.equal(shell.cwd, "/tmp");
+    assert.equal(shell.private, undefined);
+  }
+});
+
+test("buildMessages omits shell-exchange entries from the LLM view", async () => {
+  const store = makeStore();
+  await store.appendMessages([{ role: "user", content: "before" }]);
+  await store.appendShellExchange({ command: "ls", output: "x\n", exitCode: 0 });
+  await store.appendMessages([{ role: "assistant", content: "after" }]);
+  const msgs = store.buildMessages();
+  assert.equal(msgs.length, 2);
+  assert.equal(msgs[0]!.content, "before");
+  assert.equal(msgs[1]!.content, "after");
+});
+
+test("shell-exchange entry survives reload", async () => {
+  const filePath = tmpSessionPath();
+  const sid = crypto.randomBytes(4).toString("hex");
+  const s1 = new SessionStore(filePath, { create: { cwd: process.cwd(), sessionId: sid } });
+  await s1.appendMessages([{ role: "user", content: "hi" }]);
+  const shellId = await s1.appendShellExchange({
+    command: "pwd", output: "/tmp\n", exitCode: 0, private: true,
+  });
+  const s2 = new SessionStore(filePath);
+  assert.equal(s2.getActiveLeaf(), shellId);
+  const found = s2.getEntry(shellId);
+  assert.ok(found && found.type === "shell-exchange");
+  if (found.type === "shell-exchange") {
+    assert.equal(found.command, "pwd");
+    assert.equal(found.private, true);
+  }
+});
+
+test("compaction firstKeptId can point past a shell-exchange entry", async () => {
+  const store = makeStore();
+  const [_old, kept] = await store.appendMessages([
+    { role: "user", content: "old" },
+    { role: "user", content: "kept" },
+  ]);
+  await store.appendShellExchange({ command: "ls", output: "", exitCode: 0 });
+  await store.appendCompaction(kept!, 50, "SUMMARY");
+  const msgs = store.buildMessages();
+  assert.equal(msgs.length, 2);
+  assert.match(String(msgs[0]!.content), /SUMMARY/);
+  assert.equal(msgs[1]!.content, "kept");
 });
