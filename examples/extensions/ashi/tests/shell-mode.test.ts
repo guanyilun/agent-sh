@@ -38,10 +38,8 @@ test("plain text out of shell mode is a no-op", () => {
 });
 
 test("sticky: empty buffer in shell mode does NOT auto-exit", () => {
-  // pi-tui's Editor.submitValue() fires onChange("") before onSubmit; if
-  // empty-text exited, that pre-emptive onChange would flip shellMode off
-  // and the subsequent onSubmit would route to the agent. Backspace-on-
-  // empty is handled explicitly at the TUI input-listener level.
+  // Regression guard — Editor.submitValue() fires onChange("") before onSubmit,
+  // so auto-exit on empty would misroute the submit to the agent.
   assert.deepEqual(
     deriveShellModeTransition(true, ""),
     { mode: true },
@@ -66,8 +64,7 @@ test("recursive call after setText is a no-op (idempotent)", () => {
   const first = deriveShellModeTransition(false, "!ls");
   assert.equal(first.mode, true);
   assert.equal(first.replaceText, "ls");
-  // Second onChange runs with the *old* mode (caller hasn't applied the
-  // transition yet) — must still be a no-op for the stripped text.
+  // Second call runs with the *old* mode — caller hasn't applied the transition yet.
   const second = deriveShellModeTransition(false, first.replaceText!);
   assert.deepEqual(second, { mode: false });
 });
@@ -85,7 +82,6 @@ test("classifySubmit: shellMode routes non-empty text to the shell", () => {
 });
 
 test("classifySubmit: shellMode wins over slash prefix", () => {
-  // In shell mode, `/foo` is a shell argument, not a slash command.
   assert.deepEqual(
     classifySubmit("/foo", true),
     { kind: "shell", line: "/foo" },

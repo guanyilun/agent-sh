@@ -1,12 +1,6 @@
-/**
- * Pure transition for the `!`-triggered shell mode in the editor.
- *
- * Called from `editor.onChange`. Returning a `replaceText` means the caller
- * must call `editor.setText(replaceText)` to strip the `!` (which will
- * re-enter this function with the stripped text, hitting the no-op branch).
- */
 export interface ShellModeTransition {
   mode: boolean;
+  /** When set, caller must `editor.setText(replaceText)` to strip the `!`. */
   replaceText?: string;
 }
 
@@ -17,20 +11,12 @@ export function deriveShellModeTransition(
   if (!mode && text.startsWith("!")) {
     return { mode: true, replaceText: text.slice(1) };
   }
-  // Sticky: shell mode is exited explicitly via Backspace-on-empty (caught
-  // by the TUI input listener, not onChange). Auto-exiting on empty text
-  // would also exit on pi-tui's pre-emptive onChange("") fired before
-  // onSubmit, breaking the routing decision in the same handler.
+  // Sticky on purpose. Exit is via the Backspace-on-empty intercept at the
+  // TUI input listener — auto-exiting on empty text would also fire on
+  // pi-tui's pre-emptive onChange("") inside Editor.submitValue().
   return { mode };
 }
 
-/**
- * Classify an editor submit into the action the frontend should dispatch.
- *
- * Pure so callers must capture `shellMode` *before* any state mutation —
- * notably before `editor.setText("")`, which fires `onChange("")` and can
- * flip the mode off mid-handler.
- */
 export type SubmitAction =
   | { kind: "noop" }
   | { kind: "shell"; line: string }

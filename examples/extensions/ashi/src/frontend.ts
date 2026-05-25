@@ -210,15 +210,13 @@ export function mountAshi(
   };
 
   editor.onChange = (text) => {
-    // onChange (not keydown) so paste/IME inserting `!` also flips the mode.
+    // onChange (not keydown) so paste also flips the mode.
     const t = deriveShellModeTransition(shellMode, text);
     if (t.replaceText !== undefined) editor.setText(t.replaceText);
     if (t.mode !== shellMode) setShellMode(t.mode);
   };
 
   editor.onSubmit = (text) => {
-    // Classify before clearing — setText("") fires onChange("") which can
-    // flip shellMode off mid-handler.
     const action = classifySubmit(text, shellMode);
     if (action.kind === "noop") return;
     editor.setText("");
@@ -604,8 +602,8 @@ export function mountAshi(
     tui.requestRender();
   });
 
-  // User-typed `!` shell commands. Agent-invoked bash already renders via
-  // agent:tool-*; agentShellActive gates against double-rendering.
+  // Skip rendering while the agent is running its own bash tool — that
+  // path is already covered by the agent:tool-* listeners above.
   let agentShellActive = false;
   bus.on("shell:agent-exec-start", () => { agentShellActive = true; });
   bus.on("shell:agent-exec-done", () => { agentShellActive = false; });
@@ -643,9 +641,8 @@ export function mountAshi(
     chat.addChild(new Spacer(1));
     refreshFooterStats();
     refreshBranch();
-    // Drain queued shell lines first so the next agent turn (if any) sees
-    // their results in <shell_events>. Each line is its own PTY write; the
-    // shell serializes them via its input buffer.
+    // Drain shell queue before agent queue so the next turn's <shell_events>
+    // includes their output.
     while (queuedShellLines.length > 0) {
       bus.emit("shell:pty-write", { data: queuedShellLines.shift()! + "\n" });
     }
@@ -873,8 +870,7 @@ export function mountAshi(
       return { consume: true };
     }
     if (matchesKey(data, "backspace") && shellMode && editor.getText().length === 0) {
-      // Editor's own backspace is a no-op on empty buffer and never fires
-      // onChange, so we have to catch it here to let the user exit shell mode.
+      // Editor swallows backspace-on-empty silently; intercept here so it can exit shell mode.
       setShellMode(false);
       return { consume: true };
     }

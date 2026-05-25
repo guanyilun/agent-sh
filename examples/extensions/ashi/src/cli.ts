@@ -12,9 +12,7 @@ import type { Terminal } from "agent-sh/shell/terminal";
 import activateShellContext from "agent-sh/shell/context";
 import type { AppConfig } from "agent-sh/types";
 
-/** No-op terminal: ashi renders via pi-tui; we only need the Shell so
- *  user-typed `!` commands have a PTY to run on and the output parser
- *  can feed shell:command-* events to ashi and shell-context. */
+/** No-op: ashi renders via pi-tui, the PTY only needs to exist. */
 function headlessTerminal(): Terminal {
   return {
     write() {},
@@ -155,16 +153,9 @@ async function main(): Promise<void> {
   const ctx = core.extensionContext({ quit: cleanup });
 
   activateAgent(ctx);
-  // shell-context records shell:command-done into an in-memory ring and
-  // advises query-context:build to emit <cwd> and <shell_events> — so the
-  // agent learns what `!`-typed commands did on its next turn. Needs to
-  // run before any agent query happens.
   activateShellContext(ctx);
   await loadBuiltinExtensions(ctx);
 
-  // Headless shell on the shared bus: `shell:pty-write` from the `!`
-  // editor mode runs here; output is parsed into shell:command-start/done
-  // which ashi renders and shell-context records.
   const shell = new Shell({
     bus: core.bus,
     handlers: { define: ctx.define, call: ctx.call },
