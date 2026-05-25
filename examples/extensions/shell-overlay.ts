@@ -14,11 +14,6 @@
  *
  * Requires @xterm/headless (installed by the terminal-buffer extension's
  * dependencies, or directly).
- *
- * NOTE: Host viewport size on unmount is read via process.stdout because
- * FloatingPanel doesn't expose its RenderSurface — once the panel-surface
- * accessor lands as part of the PR #193 Terminal-abstraction follow-up,
- * this fallback should go through it.
  */
 import type { ExtensionContext } from "agent-sh/types";
 import { FloatingPanel } from "agent-sh/utils/floating-panel";
@@ -54,8 +49,7 @@ export default function activate(ctx: ExtensionContext): void {
   };
 
   const restoreHostSize = (): void => {
-    const cols = process.stdout.columns || 80;
-    const rows = process.stdout.rows || 24;
+    const { cols, rows } = panel.computeGeometry();
     bus.emit("shell:pty-resize", { cols, rows });
     tb.resize(cols, rows);
     lastCols = 0;
@@ -80,7 +74,7 @@ export default function activate(ctx: ExtensionContext): void {
   panel.handlers.define(`${PREFIX}:render-content`, (rc) => {
     syncSize(rc.width, rc.height);
     tb.flush();
-    const lines = tb.getScreenLines(rc.height);
+    const lines = tb.getStyledLines(rc.height);
     const cur = tb.getCursor();
     return {
       lines,

@@ -15,7 +15,7 @@
 // file transitively but never instantiate a buffer; they shouldn't pay
 // the xterm parse cost at startup.
 import { createRequire } from "module";
-import type { Terminal, IBuffer } from "@xterm/headless";
+import type { Terminal, IBuffer, IBufferCell, IBufferLine } from "@xterm/headless";
 import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { EventBus } from "../core/event-bus.js";
 
@@ -73,6 +73,64 @@ export function formatScreenContext(
     : "<terminal_buffer>";
   const section = `${header}\n${capped}\n</terminal_buffer>`;
   return baseContext ? baseContext + "\n" + section : section;
+}
+
+// ── Styled-line helpers ─────────────────────────────────────────
+
+/**
+ * Walk a buffer line and produce a string with ANSI SGR sequences
+ * preserved. Emits a transition (`\x1b[0m` + new SGR) only when the
+ * computed style changes, so long runs of same-style cells stay cheap.
+ * Wide-character trailing cells (width 0) are skipped.
+ */
+function styleLine(line: IBufferLine, cell: IBufferCell): string {
+  let out = "";
+  let prev = "";
+  for (let x = 0; x < line.length; x++) {
+    const c = line.getCell(x, cell);
+    if (!c || c.getWidth() === 0) continue;
+    const sgr = cellSgr(c);
+    if (sgr !== prev) {
+      out += "\x1b[0m" + sgr;
+      prev = sgr;
+    }
+    out += c.getChars() || " ";
+  }
+  if (prev !== "") out += "\x1b[0m";
+  return out;
+}
+
+function cellSgr(c: IBufferCell): string {
+  const parts: string[] = [];
+  if (c.isBold()) parts.push("1");
+  if (c.isDim()) parts.push("2");
+  if (c.isItalic()) parts.push("3");
+  if (c.isUnderline()) parts.push("4");
+  if (c.isInverse()) parts.push("7");
+  if (c.isStrikethrough()) parts.push("9");
+
+  if (!c.isFgDefault()) {
+    const v = c.getFgColor();
+    if (c.isFgRGB()) {
+      parts.push(`38;2;${(v >> 16) & 0xff};${(v >> 8) & 0xff};${v & 0xff}`);
+    } else if (c.isFgPalette()) {
+      if (v < 8) parts.push(String(30 + v));
+      else if (v < 16) parts.push(String(90 + v - 8));
+      else parts.push(`38;5;${v}`);
+    }
+  }
+  if (!c.isBgDefault()) {
+    const v = c.getBgColor();
+    if (c.isBgRGB()) {
+      parts.push(`48;2;${(v >> 16) & 0xff};${(v >> 8) & 0xff};${v & 0xff}`);
+    } else if (c.isBgPalette()) {
+      if (v < 8) parts.push(String(40 + v));
+      else if (v < 16) parts.push(String(100 + v - 8));
+      else parts.push(`48;5;${v}`);
+    }
+  }
+
+  return parts.length === 0 ? "" : `\x1b[${parts.join(";")}m`;
 }
 
 // ── TerminalBuffer ──────────────────────────────────────────────
@@ -160,6 +218,25 @@ export class TerminalBuffer {
   getScreenLines(rows?: number): string[] {
     const targetRows = rows ?? (process.stdout.rows || 24);
     return this.readViewportLines(this.term.buffer.active, targetRows);
+  }
+
+  /**
+   * Get terminal screen lines with ANSI styling preserved — colors, bold,
+   * italic, underline, inverse, etc. Padded to exactly `rows` lines. Use
+   * this when painting the cell grid into a renderer (e.g. shell-overlay).
+   * For agent-facing text consumption use `getScreenLines` instead.
+   */
+  getStyledLines(rows?: number): string[] {
+    const buf = this.term.buffer.active;
+    const targetRows = rows ?? (process.stdout.rows || 24);
+    const base = buf.baseY ?? 0;
+    const cell = buf.getNullCell();
+    const lines: string[] = [];
+    for (let y = 0; y < targetRows; y++) {
+      const line = buf.getLine(base + y);
+      lines.push(line ? styleLine(line, cell) : "");
+    }
+    return lines;
   }
 
   /** Read visible viewport lines from a buffer. */
