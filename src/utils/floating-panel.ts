@@ -226,10 +226,14 @@ export class FloatingPanel {
    *   - `{prefix}:render-border-bottom(ctx: FrameContext) -> string`
    *   - `{prefix}:composite-row(content: string, bgLine: string|null, boxLeft: number, boxW: number, cols: number) -> string`
    *   - `{prefix}:submit(query: string) -> void`
+   *   - `{prefix}:open() -> void`    (fresh open; phase just transitioned to input)
    *   - `{prefix}:hide() -> void`    (screen down; conversation state preserved)
    *   - `{prefix}:reset() -> void`   (conversation state cleared)
    *   - `{prefix}:show() -> void`
-   *   - `{prefix}:input(data: string) -> boolean`
+   *   - `{prefix}:input(data: string) -> boolean` — in active phase, runs
+   *       before the panel's built-in routing; a truthy return claims the key
+   *       (used by raw-forward extensions); falsy falls through to the
+   *       default Ctrl+C / Esc-hide / scroll handling.
    *   - `{prefix}:build-row(content: string, width: number) -> string`
    */
   readonly handlers: HandlerRegistry;
@@ -399,6 +403,7 @@ export class FloatingPanel {
     });
 
     this.handlers.define(`${p}:submit`, (_query: string) => {});
+    this.handlers.define(`${p}:open`, () => {});
     this.handlers.define(`${p}:hide`, () => {});
     this.handlers.define(`${p}:reset`, () => {});
     this.handlers.define(`${p}:show`, () => {});
@@ -572,6 +577,7 @@ export class FloatingPanel {
     this.prevFrame = [];
 
     this.enterScreen();
+    this.handlers.call(`${this.prefix}:open`);
   }
 
   /** Hide the panel without destroying conversation state. */
@@ -850,14 +856,17 @@ export class FloatingPanel {
         return consumed;
 
       case "active":
+        // Trigger always hides — uniform UX, not delegable.
+        if (this.isTrigger(data)) { this.hide(); return consumed; }
+        // Extension input handler gets first crack. Truthy return claims
+        // the key (raw-forward extensions); falsy falls through to defaults.
+        if (this.handlers.call(`${this.prefix}:input`, data)) return consumed;
         if (data === "\x03") {
           this.bus.emit("agent:cancel-request", {});
-        } else if (data === "\x1b" || this.isTrigger(data)) {
+        } else if (data === "\x1b") {
           this.hide();
-        } else if (this.handleScroll(data)) {
-          // scroll handled
         } else {
-          this.handlers.call(`${this.prefix}:input`, data);
+          this.handleScroll(data);
         }
         return consumed;
 
