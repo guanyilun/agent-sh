@@ -1,7 +1,7 @@
 /**
  * Shell overlay extension.
  *
- * Press Ctrl+\ to summon a floating terminal over the agent UI. The
+ * Press Ctrl+] to summon a floating terminal over the agent UI. The
  * overlay renders the user's interactive shell pty (the same one that
  * normally writes to the bottom of the screen) via the headless xterm
  * already wired into the kernel. Keystrokes inside the overlay forward
@@ -9,8 +9,9 @@
  * because xterm-headless interprets their sequences and the panel just
  * paints the resulting cell grid.
  *
- * Trigger key (Ctrl+\) closes the overlay; every other key (including
- * Esc, Ctrl+C, arrows, page keys) is forwarded to the pty.
+ * Trigger key (Ctrl+]) closes the overlay; every other key (including
+ * Esc, Ctrl+C, arrows, page keys) is forwarded to the pty. The trigger
+ * differs from overlay-agent's Ctrl+\ so both overlays can coexist.
  *
  * Requires @xterm/headless (installed by the terminal-buffer extension's
  * dependencies, or directly).
@@ -27,7 +28,7 @@ export default function activate(ctx: ExtensionContext): void {
   if (!tb) return;
 
   const panel = new FloatingPanel(bus, {
-    trigger: "\x1c", // Ctrl+\
+    trigger: "\x1d", // Ctrl+]
     width: "100%",
     height: "100%",
     dimBackground: false, // we render the shell ourselves
