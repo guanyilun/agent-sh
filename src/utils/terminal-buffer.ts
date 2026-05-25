@@ -225,11 +225,14 @@ export class TerminalBuffer {
    * italic, underline, inverse, etc. Padded to exactly `rows` lines. Use
    * this when painting the cell grid into a renderer (e.g. shell-overlay).
    * For agent-facing text consumption use `getScreenLines` instead.
+   *
+   * `fromY` is the absolute Y of the top row to read; lines below `baseY`
+   * are in scrollback. Defaults to the active viewport's top (`baseY`).
    */
-  getStyledLines(rows?: number): string[] {
+  getStyledLines(rows?: number, fromY?: number): string[] {
     const buf = this.term.buffer.active;
     const targetRows = rows ?? (process.stdout.rows || 24);
-    const base = buf.baseY ?? 0;
+    const base = fromY ?? buf.baseY ?? 0;
     const cell = buf.getNullCell();
     const lines: string[] = [];
     for (let y = 0; y < targetRows; y++) {
@@ -237,6 +240,14 @@ export class TerminalBuffer {
       lines.push(line ? styleLine(line, cell) : "");
     }
     return lines;
+  }
+
+  /**
+   * Absolute Y of the active viewport's top row. Scrollback occupies
+   * rows [0, baseY); viewport occupies [baseY, baseY+rows).
+   */
+  getViewportBaseY(): number {
+    return this.term.buffer.active.baseY ?? 0;
   }
 
   /** Read visible viewport lines from a buffer. */
