@@ -77,15 +77,28 @@ test("classifySubmit: empty text is noop", () => {
 test("classifySubmit: shellMode routes non-empty text to the shell", () => {
   assert.deepEqual(
     classifySubmit("ls -la", true),
-    { kind: "shell", line: "ls -la" },
+    { kind: "shell", line: "ls -la", private: false },
   );
 });
 
 test("classifySubmit: shellMode wins over slash prefix", () => {
   assert.deepEqual(
     classifySubmit("/foo", true),
-    { kind: "shell", line: "/foo" },
+    { kind: "shell", line: "/foo", private: false },
   );
+});
+
+test("classifySubmit: leading `!` in shellMode strips and marks private", () => {
+  // User typed `!!cmd` — entry-strip consumed the first `!`, the second is
+  // the signal that this submit should be excluded from <shell_events>.
+  assert.deepEqual(
+    classifySubmit("!ls -la", true),
+    { kind: "shell", line: "ls -la", private: true },
+  );
+});
+
+test("classifySubmit: bare `!` in shellMode is noop (no command yet)", () => {
+  assert.deepEqual(classifySubmit("!", true), { kind: "noop" });
 });
 
 test("classifySubmit: slash command parses name and args", () => {
@@ -109,6 +122,6 @@ test("classifySubmit: plain text becomes an agent submit", () => {
 test("classifySubmit: leading/trailing whitespace is trimmed", () => {
   assert.deepEqual(
     classifySubmit("  ls  ", true),
-    { kind: "shell", line: "ls" },
+    { kind: "shell", line: "ls", private: false },
   );
 });

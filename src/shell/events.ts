@@ -13,6 +13,9 @@ declare module "../core/event-bus.js" {
     "shell:agent-exec-start": Record<string, never>;
     "shell:agent-exec-done": Record<string, never>;
 
+    /** Mark the next user-emitted shell command as excluded from <shell_events>. */
+    "shell:user-exec-exclude-next": Record<string, never>;
+
     "shell:pty-data": { raw: string };
     "shell:pty-write": { data: string };
     "shell:pty-resize": { cols: number; rows: number };

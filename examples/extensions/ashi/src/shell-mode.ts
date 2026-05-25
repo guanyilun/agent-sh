@@ -19,14 +19,23 @@ export function deriveShellModeTransition(
 
 export type SubmitAction =
   | { kind: "noop" }
-  | { kind: "shell"; line: string }
+  | { kind: "shell"; line: string; private: boolean }
   | { kind: "command"; name: string; args: string }
   | { kind: "agent"; query: string };
 
 export function classifySubmit(text: string, shellMode: boolean): SubmitAction {
   const query = text.trim();
   if (!query) return { kind: "noop" };
-  if (shellMode) return { kind: "shell", line: query };
+  if (shellMode) {
+    // Second `!` (we stripped the first on entry) opts into private — the
+    // exchange runs but is omitted from <shell_events>.
+    if (query.startsWith("!")) {
+      const line = query.slice(1).trim();
+      if (!line) return { kind: "noop" };
+      return { kind: "shell", line, private: true };
+    }
+    return { kind: "shell", line: query, private: false };
+  }
   if (query.startsWith("/")) {
     const sp = query.indexOf(" ");
     const name = sp === -1 ? query : query.slice(0, sp);

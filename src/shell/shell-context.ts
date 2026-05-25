@@ -18,7 +18,7 @@ interface ShellExchange {
   exitCode: number | null;
   outputLines: number;
   outputBytes: number;
-  source: "user" | "agent";
+  source: "user" | "agent" | "user-excluded";
   spillPath?: string;
 }
 
@@ -29,6 +29,7 @@ export default function activate(ctx: ExtensionContext): void {
   let nextId = 1;
   let currentCwd = process.cwd();
   let agentShellActive = false;
+  let nextUserExcluded = false;
   let lastSeq = 0;
 
   bus.on("shell:command-done", (e) => {
@@ -50,6 +51,13 @@ export default function activate(ctx: ExtensionContext): void {
       }
     }
 
+    const source: ShellExchange["source"] = agentShellActive
+      ? "agent"
+      : nextUserExcluded
+        ? "user-excluded"
+        : "user";
+    if (nextUserExcluded) nextUserExcluded = false;
+
     exchanges.push({
       id: nextId++,
       timestamp: Date.now(),
@@ -59,7 +67,7 @@ export default function activate(ctx: ExtensionContext): void {
       exitCode: e.exitCode,
       outputLines: lines.length,
       outputBytes: e.output.length,
-      source: agentShellActive ? "agent" : "user",
+      source,
       spillPath,
     });
   });
@@ -67,6 +75,7 @@ export default function activate(ctx: ExtensionContext): void {
   bus.on("shell:cwd-change", (e) => { currentCwd = e.cwd; });
   bus.on("shell:agent-exec-start", () => { agentShellActive = true; });
   bus.on("shell:agent-exec-done", () => { agentShellActive = false; });
+  bus.on("shell:user-exec-exclude-next", () => { nextUserExcluded = true; });
 
   // Override core's process.cwd() default with the PTY-tracked value.
   ctx.advise("cwd", () => currentCwd);
@@ -78,7 +87,7 @@ export default function activate(ctx: ExtensionContext): void {
     const part = (() => {
       const cwdTag = `<cwd>${currentCwd}</cwd>`;
       const fresh = exchanges.filter(
-        (ex) => ex.id > lastSeq && ex.source !== "agent",
+        (ex) => ex.id > lastSeq && ex.source === "user",
       );
       if (fresh.length === 0) return cwdTag;
       lastSeq = exchanges[exchanges.length - 1]!.id;

@@ -183,10 +183,10 @@ export function mountAshi(
   const chat = new Container();
   const footerSlot = new Container();
   const queueSlot = new Container();
-  const shellLabelSlot = new Container();
   const editor = new Editor(tui, editorTheme(), { paddingX: 1 });
 
   let shellMode = false;
+  let pendingPrivate = false;
   const baseAutocomplete = new BusAutocompleteProvider(bus);
   editor.setAutocompleteProvider({
     getSuggestions: async (lines, line, col) =>
@@ -196,17 +196,27 @@ export function mountAshi(
 
   const defaultBorderColor = editor.borderColor;
   const shellBorderColor = (t: string): string => theme.fg("bashMode", t);
-  const renderShellLabel = (): void => {
-    shellLabelSlot.clear();
-    if (shellMode) shellLabelSlot.addChild(new Text(theme.fg("bashMode", "▸ shell mode"), 1, 0));
+  const privateBorderColor = (t: string): string => theme.fg("warning", t);
+  const refreshShellChrome = (): void => {
+    editor.borderColor = shellMode
+      ? (pendingPrivate ? privateBorderColor : shellBorderColor)
+      : defaultBorderColor;
+    editor.invalidate();
+    statusFooter.update({
+      shellMode: shellMode ? (pendingPrivate ? "private" : "on") : "off",
+    });
+    tui.requestRender();
   };
   const setShellMode = (on: boolean): void => {
     if (shellMode === on) return;
     shellMode = on;
-    editor.borderColor = on ? shellBorderColor : defaultBorderColor;
-    editor.invalidate();
-    renderShellLabel();
-    tui.requestRender();
+    if (!on) pendingPrivate = false;
+    refreshShellChrome();
+  };
+  const setPendingPrivate = (on: boolean): void => {
+    if (pendingPrivate === on) return;
+    pendingPrivate = on;
+    refreshShellChrome();
   };
 
   editor.onChange = (text) => {
@@ -214,6 +224,8 @@ export function mountAshi(
     const t = deriveShellModeTransition(shellMode, text);
     if (t.replaceText !== undefined) editor.setText(t.replaceText);
     if (t.mode !== shellMode) setShellMode(t.mode);
+    // Live signal: in shell mode, a leading `!` means the next submit is private.
+    if (shellMode) setPendingPrivate(text.trimStart().startsWith("!"));
   };
 
   editor.onSubmit = (text) => {
@@ -222,7 +234,8 @@ export function mountAshi(
     editor.setText("");
     switch (action.kind) {
       case "shell":
-        submitShell(action.line);
+        submitShell(action.line, { private: action.private });
+        if (pendingPrivate) setPendingPrivate(false);
         return;
       case "command":
         bus.emit("command:execute", { name: action.name, args: action.args });
@@ -260,7 +273,6 @@ export function mountAshi(
   tui.addChild(chat);
   tui.addChild(footerSlot);
   tui.addChild(queueSlot);
-  tui.addChild(shellLabelSlot);
   tui.addChild(editor);
   tui.addChild(statusFooter);
   tui.setFocus(editor);
@@ -290,14 +302,18 @@ export function mountAshi(
   let loader: Loader | null = null;
   let processing = false;
   const queuedQueries: string[] = [];
-  const queuedShellLines: string[] = [];
+  const queuedShellLines: { line: string; private: boolean }[] = [];
+  // FIFO of privacy flags for in-flight user shell commands; consumed by the
+  // shell:command-start handler in the order pty-writes were emitted.
+  const pendingUserBlockPrivacy: boolean[] = [];
 
   const renderQueueSlot = (): void => {
     queueSlot.clear();
-    for (const line of queuedShellLines) {
-      const oneLine = line.replace(/\s+/g, " ");
+    for (const item of queuedShellLines) {
+      const oneLine = item.line.replace(/\s+/g, " ");
       const preview = oneLine.length > 80 ? oneLine.slice(0, 77) + "…" : oneLine;
-      queueSlot.addChild(new InfoLine(`↳ shell: ${preview}`));
+      const tag = item.private ? "shell·private" : "shell";
+      queueSlot.addChild(new InfoLine(`↳ ${tag}: ${preview}`));
     }
     for (const q of queuedQueries) {
       const oneLine = q.replace(/\s+/g, " ");
@@ -306,13 +322,15 @@ export function mountAshi(
     }
   };
 
-  const submitShell = (line: string): void => {
+  const submitShell = (line: string, opts?: { private?: boolean }): void => {
     if (processing) {
-      queuedShellLines.push(line);
+      queuedShellLines.push({ line, private: !!opts?.private });
       renderQueueSlot();
       tui.requestRender();
       return;
     }
+    pendingUserBlockPrivacy.push(!!opts?.private);
+    if (opts?.private) bus.emit("shell:user-exec-exclude-next", {});
     bus.emit("shell:pty-write", { data: line + "\n" });
   };
   let hideThinking = true;
@@ -605,16 +623,20 @@ export function mountAshi(
   // Skip rendering while the agent is running its own bash tool — that
   // path is already covered by the agent:tool-* listeners above.
   let agentShellActive = false;
+  let shellForegroundBusy = false;
   bus.on("shell:agent-exec-start", () => { agentShellActive = true; });
   bus.on("shell:agent-exec-done", () => { agentShellActive = false; });
+  bus.on("shell:foreground-busy", ({ busy }) => { shellForegroundBusy = busy; });
 
   let activeUserShell: ToolPair | null = null;
   bus.on("shell:command-start", ({ command }) => {
     if (agentShellActive) return;
     finalizeThinking();
     if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
+    const isPrivate = pendingUserBlockPrivacy.shift() ?? false;
+    const title = isPrivate ? "bash (private)" : "bash";
     const pair = renderToolPair({
-      toolCallId: `user-shell-${Date.now()}`, name: "bash", title: "bash",
+      toolCallId: `user-shell-${Date.now()}`, name: "bash", title,
       kind: "bash", displayDetail: command, rawInput: { command },
     });
     activeUserShell = pair;
@@ -644,7 +666,10 @@ export function mountAshi(
     // Drain shell queue before agent queue so the next turn's <shell_events>
     // includes their output.
     while (queuedShellLines.length > 0) {
-      bus.emit("shell:pty-write", { data: queuedShellLines.shift()! + "\n" });
+      const item = queuedShellLines.shift()!;
+      pendingUserBlockPrivacy.push(item.private);
+      if (item.private) bus.emit("shell:user-exec-exclude-next", {});
+      bus.emit("shell:pty-write", { data: item.line + "\n" });
     }
     const next = queuedQueries.shift();
     if (next !== undefined) {
@@ -840,9 +865,17 @@ export function mountAshi(
 
   tui.addInputListener((data) => {
     if (isKeyRelease(data) || isKeyRepeat(data)) return;
-    if (matchesKey(data, "escape") && processing) {
-      bus.emit("agent:cancel-request", {});
-      return { consume: true };
+    if (matchesKey(data, "escape")) {
+      if (processing) {
+        bus.emit("agent:cancel-request", {});
+        return { consume: true };
+      }
+      if (shellForegroundBusy) {
+        // Real ctrl-c byte. PTY in cooked mode translates to SIGINT to the
+        // foreground process group — same behavior as typing ^C in the shell.
+        bus.emit("shell:pty-write", { data: "\x03" });
+        return { consume: true };
+      }
     }
     if (activeSessionPicker && matchesKey(data, "d")) {
       const selected = activeSessionPicker.getSelectedItem();
