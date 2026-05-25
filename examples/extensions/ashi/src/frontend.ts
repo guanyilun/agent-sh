@@ -27,7 +27,7 @@ import {
 import type { ToolCallView, ToolResultView } from "./hooks.js";
 import { createToolHookResolver } from "./hooks.js";
 import { loadGroupMaxVisible } from "./display-config.js";
-import { classifySubmit, deriveShellModeTransition } from "./shell-mode.js";
+import { classifySubmit, deriveChangeHandlerResult } from "./shell-mode.js";
 
 const GROUPABLE_KINDS = new Set(["read", "search"]);
 const TOOL_KIND: Record<string, string> = {
@@ -221,14 +221,13 @@ export function mountAshi(
 
   editor.onChange = (text) => {
     // onChange (not keydown) so paste also flips the mode.
-    const t = deriveShellModeTransition(shellMode, text);
+    const r = deriveChangeHandlerResult(shellMode, text);
     // Flip mode BEFORE setText — setText fires onChange synchronously, and
     // we want the recursive call to see shellMode=true so it sticks rather
     // than re-stripping. Without this, pasting `!!cmd` strips twice.
-    if (t.mode !== shellMode) setShellMode(t.mode);
-    if (t.replaceText !== undefined) editor.setText(t.replaceText);
-    const effective = t.replaceText ?? text;
-    if (shellMode) setPendingPrivate(effective.trimStart().startsWith("!"));
+    if (r.mode !== shellMode) setShellMode(r.mode);
+    if (r.replaceText !== undefined) editor.setText(r.replaceText);
+    setPendingPrivate(r.pendingPrivate);
   };
 
   editor.onSubmit = (text) => {

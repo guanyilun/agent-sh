@@ -17,6 +17,27 @@ export function deriveShellModeTransition(
   return { mode };
 }
 
+export interface ChangeHandlerResult extends ShellModeTransition {
+  /** Whether the next submit (if in shell mode) would be private. */
+  pendingPrivate: boolean;
+}
+
+/**
+ * Combine the mode transition with the private-indicator derivation so
+ * onChange logic is one pure function. `pendingPrivate` is computed from
+ * the post-strip text — using the raw input would treat the entry `!` as
+ * a private signal.
+ */
+export function deriveChangeHandlerResult(
+  mode: boolean,
+  text: string,
+): ChangeHandlerResult {
+  const trans = deriveShellModeTransition(mode, text);
+  const effective = trans.replaceText ?? text;
+  const pendingPrivate = trans.mode && effective.trimStart().startsWith("!");
+  return { ...trans, pendingPrivate };
+}
+
 export type SubmitAction =
   | { kind: "noop" }
   | { kind: "shell"; line: string; private: boolean }

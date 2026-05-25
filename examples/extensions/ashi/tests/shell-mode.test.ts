@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifySubmit, deriveShellModeTransition } from "../src/shell-mode.js";
+import { classifySubmit, deriveChangeHandlerResult, deriveShellModeTransition } from "../src/shell-mode.js";
 
 test("entering: leading `!` flips on and strips the prefix", () => {
   assert.deepEqual(
@@ -123,5 +123,68 @@ test("classifySubmit: leading/trailing whitespace is trimmed", () => {
   assert.deepEqual(
     classifySubmit("  ls  ", true),
     { kind: "shell", line: "ls", private: false },
+  );
+});
+
+// ── deriveChangeHandlerResult (onChange integration) ──
+
+test("change: cold `!` enters mode WITHOUT flipping private (regression)", () => {
+  // Bug: live-private was reading the raw input `!` instead of the post-strip
+  // text, so cold entry wrongly flipped pendingPrivate=true.
+  assert.deepEqual(
+    deriveChangeHandlerResult(false, "!"),
+    { mode: true, replaceText: "", pendingPrivate: false },
+  );
+});
+
+test("change: cold `!cmd` paste enters mode, no private signal", () => {
+  assert.deepEqual(
+    deriveChangeHandlerResult(false, "!cmd"),
+    { mode: true, replaceText: "cmd", pendingPrivate: false },
+  );
+});
+
+test("change: cold `!!cmd` paste leaves one `!` for at-submit private", () => {
+  // Critical: only ONE strip on entry. The remaining `!` is the signal that
+  // classifySubmit reads to mark the submit private — keeps editor display,
+  // private indicator, and submit intent in sync.
+  assert.deepEqual(
+    deriveChangeHandlerResult(false, "!!cmd"),
+    { mode: true, replaceText: "!cmd", pendingPrivate: true },
+  );
+});
+
+test("change: in-mode typing `!` sets private indicator", () => {
+  assert.deepEqual(
+    deriveChangeHandlerResult(true, "!"),
+    { mode: true, pendingPrivate: true },
+  );
+});
+
+test("change: in-mode `!ls` sets private indicator", () => {
+  assert.deepEqual(
+    deriveChangeHandlerResult(true, "!ls"),
+    { mode: true, pendingPrivate: true },
+  );
+});
+
+test("change: in-mode delete-to-empty clears private (mode sticks)", () => {
+  assert.deepEqual(
+    deriveChangeHandlerResult(true, ""),
+    { mode: true, pendingPrivate: false },
+  );
+});
+
+test("change: in-mode typing `ls` keeps private off", () => {
+  assert.deepEqual(
+    deriveChangeHandlerResult(true, "ls"),
+    { mode: true, pendingPrivate: false },
+  );
+});
+
+test("change: out of shell mode never sets private", () => {
+  assert.deepEqual(
+    deriveChangeHandlerResult(false, "what is git?"),
+    { mode: false, pendingPrivate: false },
   );
 });
