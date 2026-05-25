@@ -43,16 +43,13 @@ export class StatusFooter extends Container {
     const contentWidth = width > 0 ? Math.max(1, width - 2) : 0;
     const right = this.buildRight();
     const rightWidth = visibleWidth(right);
-    const join = (left: string): string => {
-      if (!right) return left;
-      const leftWidth = visibleWidth(left);
-      const gap = Math.max(1, contentWidth - leftWidth - rightWidth);
-      return `${left}${" ".repeat(gap)}${right}`;
-    };
-    const full = this.buildLine("full");
-    const fullFits = contentWidth === 0
-      || visibleWidth(full) + (right ? rightWidth + 1 : 0) <= contentWidth;
-    this.text.setText(fullFits ? join(full) : join(this.buildLine("basename")));
+    const left = this.buildLine();
+    if (!right) {
+      this.text.setText(left);
+      return;
+    }
+    const gap = Math.max(1, contentWidth - visibleWidth(left) - rightWidth);
+    this.text.setText(`${left}${" ".repeat(gap)}${right}`);
   }
 
   private buildRight(): string {
@@ -62,7 +59,7 @@ export class StatusFooter extends Container {
     return "";
   }
 
-  private buildLine(cwdMode: "full" | "basename"): string {
+  private buildLine(): string {
     const { model, provider, contextWindow, cwd, branch, leaf, tokens, compactions, thinking } = this.fields;
     const sep = theme.fg("dim", " | ");
     const parts: string[] = [];
@@ -73,7 +70,7 @@ export class StatusFooter extends Container {
     } else if (provider) {
       parts.push(theme.fg("muted", `@${provider}`));
     }
-    if (cwd) parts.push(theme.fg("muted", formatCwd(cwd, cwdMode)));
+    if (cwd) parts.push(theme.fg("muted", basename(cwd) || cwd));
     if (branch) parts.push(theme.fg("muted", `⎇ ${branch}`));
     if (leaf != null && leaf > 0) parts.push(theme.fg("muted", `#${leaf}`));
     if (tokens != null) {
@@ -84,14 +81,6 @@ export class StatusFooter extends Container {
     if (compactions && compactions > 0) parts.push(theme.fg("muted", `⊟ ${compactions}`));
     return parts.length === 0 ? "" : parts.join(sep);
   }
-}
-
-function formatCwd(cwd: string, mode: "full" | "basename"): string {
-  if (mode === "basename") return basename(cwd) || cwd;
-  const home = process.env.HOME;
-  if (home && cwd.startsWith(`${home}/`)) return `~/${cwd.slice(home.length + 1)}`;
-  if (home && cwd === home) return "~";
-  return cwd;
 }
 
 function fmtTokens(n: number): string {
