@@ -165,3 +165,29 @@ test("output capture is capped — a runaway program does not grow the buffer un
   // Cap is 128 KB; the captured output must not exceed that meaningfully.
   assert.ok(done!.payload.output.length <= 128 * 1024);
 });
+
+// ── zsh PROMPT_SP marker ────────────────────────────────────────
+
+test("zsh PROMPT_SP inverse-`%` marker is stripped from command-done output", () => {
+  const { parser, events } = makeParser();
+  parser.onCommandEntered("printf hi", "/work");
+  // zsh prints PROMPT_EOL_MARK wrapped in inverse-video + padding + \r
+  // before the prompt OSC marker when output didn't end at column 0.
+  parser.processData("hi\x1b[7m%\x1b[27m" + " ".repeat(40) + "\r");
+  parser.processData(osc(9999, OWN, "PROMPT"));
+  const done = events.find((e) => e.name === "shell:command-done") as
+    | { payload: { output: string } }
+    | undefined;
+  assert.equal(done?.payload.output, "hi");
+});
+
+test("legitimate trailing `%` in output is preserved (no inverse-video wrapper)", () => {
+  const { parser, events } = makeParser();
+  parser.onCommandEntered("printf 'done %%'", "/work");
+  parser.processData("done %");
+  parser.processData(osc(9999, OWN, "PROMPT"));
+  const done = events.find((e) => e.name === "shell:command-done") as
+    | { payload: { output: string } }
+    | undefined;
+  assert.equal(done?.payload.output, "done %");
+});

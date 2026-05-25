@@ -124,7 +124,8 @@ export class OutputParser {
         this.bus.emit("shell:foreground-busy", { busy: false });
       }
       if (this.lastCommand) {
-        const output = stripAnsi(this.currentOutputCapture).trim();
+        const raw = stripZshPromptSp(this.currentOutputCapture);
+        const output = stripAnsi(raw).trim();
         const cleaned = this.removeEchoedCommand(output, this.lastCommand);
         this.bus.emit("shell:command-done", {
           command: this.lastCommand,
@@ -166,4 +167,21 @@ export class OutputParser {
     }
     return output;
   }
+}
+
+/**
+ * Strip zsh's PROMPT_SP marker. When the last command's output doesn't end
+ * at column 0, zsh prints PROMPT_EOL_MARK (default `%`) wrapped in inverse
+ * video, plus padding spaces and \r, so the next prompt starts on a fresh
+ * line. The agent-sh CLI hides this because the user sees the raw PTY (the
+ * actual zsh prompt overwrites the marker), but downstream consumers reading
+ * `shell:command-done.output` see the stray glyph.
+ *
+ * Match against the inverse-video wrapper, not the bare `%`, so a command
+ * whose real output legitimately contains `%` is untouched. Runs before
+ * stripAnsi so the SGR codes are still present to identify the marker.
+ */
+const PROMPT_SP_RE = /\x1b\[7m.\x1b\[(?:0|27)m/g;
+function stripZshPromptSp(raw: string): string {
+  return raw.replace(PROMPT_SP_RE, "");
 }
