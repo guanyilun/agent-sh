@@ -18,24 +18,33 @@ export function deriveShellModeTransition(
 }
 
 export interface ChangeHandlerResult extends ShellModeTransition {
-  /** Whether the next submit (if in shell mode) would be private. */
+  /** Whether the next submit (if in shell mode) is marked private. */
   pendingPrivate: boolean;
 }
 
 /**
- * Combine the mode transition with the private-indicator derivation so
- * onChange logic is one pure function. `pendingPrivate` is computed from
- * the post-strip text — using the raw input would treat the entry `!` as
- * a private signal.
+ * Pure onChange transition.
+ *
+ * Strips `!` (entry), `!!` (entry + private), and in-mode leading `!`
+ * (upgrade to private). pendingPrivate is sticky while shell mode is on
+ * — auto-clearing on empty text would fire during the entry-strip's
+ * recursive onChange("") and lose the signal.
  */
 export function deriveChangeHandlerResult(
   mode: boolean,
+  pendingPrivate: boolean,
   text: string,
 ): ChangeHandlerResult {
-  const trans = deriveShellModeTransition(mode, text);
-  const effective = trans.replaceText ?? text;
-  const pendingPrivate = trans.mode && effective.trimStart().startsWith("!");
-  return { ...trans, pendingPrivate };
+  if (!mode && text.startsWith("!!")) {
+    return { mode: true, replaceText: text.slice(2), pendingPrivate: true };
+  }
+  if (!mode && text.startsWith("!")) {
+    return { mode: true, replaceText: text.slice(1), pendingPrivate: false };
+  }
+  if (mode && text.startsWith("!")) {
+    return { mode: true, replaceText: text.slice(1), pendingPrivate: true };
+  }
+  return { mode, pendingPrivate: pendingPrivate && mode };
 }
 
 export type SubmitAction =
@@ -44,19 +53,14 @@ export type SubmitAction =
   | { kind: "command"; name: string; args: string }
   | { kind: "agent"; query: string };
 
-export function classifySubmit(text: string, shellMode: boolean): SubmitAction {
+export function classifySubmit(
+  text: string,
+  shellMode: boolean,
+  pendingPrivate: boolean,
+): SubmitAction {
   const query = text.trim();
   if (!query) return { kind: "noop" };
-  if (shellMode) {
-    // Second `!` (we stripped the first on entry) opts into private — the
-    // exchange runs but is omitted from <shell_events>.
-    if (query.startsWith("!")) {
-      const line = query.slice(1).trim();
-      if (!line) return { kind: "noop" };
-      return { kind: "shell", line, private: true };
-    }
-    return { kind: "shell", line: query, private: false };
-  }
+  if (shellMode) return { kind: "shell", line: query, private: pendingPrivate };
   if (query.startsWith("/")) {
     const sp = query.indexOf(" ");
     const name = sp === -1 ? query : query.slice(0, sp);

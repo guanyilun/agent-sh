@@ -221,23 +221,23 @@ export function mountAshi(
 
   editor.onChange = (text) => {
     // onChange (not keydown) so paste also flips the mode.
-    const r = deriveChangeHandlerResult(shellMode, text);
-    // Flip mode BEFORE setText — setText fires onChange synchronously, and
-    // we want the recursive call to see shellMode=true so it sticks rather
-    // than re-stripping. Without this, pasting `!!cmd` strips twice.
+    const r = deriveChangeHandlerResult(shellMode, pendingPrivate, text);
+    // Apply mode + private state BEFORE setText. setText fires onChange
+    // synchronously; the recursive call must see the new values or it
+    // re-runs the entry transition and may clobber the just-set state.
     if (r.mode !== shellMode) setShellMode(r.mode);
-    if (r.replaceText !== undefined) editor.setText(r.replaceText);
     setPendingPrivate(r.pendingPrivate);
+    if (r.replaceText !== undefined) editor.setText(r.replaceText);
   };
 
   editor.onSubmit = (text) => {
-    const action = classifySubmit(text, shellMode);
+    const action = classifySubmit(text, shellMode, pendingPrivate);
     if (action.kind === "noop") return;
     editor.setText("");
     switch (action.kind) {
       case "shell":
         submitShell(action.line, { private: action.private });
-        if (pendingPrivate) setPendingPrivate(false);
+        setPendingPrivate(false);
         return;
       case "command":
         bus.emit("command:execute", { name: action.name, args: action.args });
@@ -905,8 +905,10 @@ export function mountAshi(
       return { consume: true };
     }
     if (matchesKey(data, "backspace") && shellMode && editor.getText().length === 0) {
-      // Editor swallows backspace-on-empty silently; intercept here so it can exit shell mode.
-      setShellMode(false);
+      // Editor swallows backspace-on-empty silently; intercept it so the user
+      // can exit. Two-step: first clear the private signal if set, then exit mode.
+      if (pendingPrivate) setPendingPrivate(false);
+      else setShellMode(false);
       return { consume: true };
     }
     if (matchesKey(data, "ctrl+c")) {
