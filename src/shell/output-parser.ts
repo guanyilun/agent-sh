@@ -115,11 +115,12 @@ export class OutputParser {
       }
       if (this.lastCommand) {
         const raw = this.cleanOutput(this.currentOutputCapture);
-        const output = stripAnsi(raw).trim();
-        const cleaned = this.removeEchoedCommand(output, this.lastCommand);
+        const output = this.removeEchoedCommand(stripAnsi(raw).trim(), this.lastCommand);
+        const outputRaw = this.removeEchoedCommand(raw.trim(), this.lastCommand);
         this.bus.emit("shell:command-done", {
           command: this.lastCommand,
-          output: cleaned,
+          output,
+          outputRaw,
           cwd: this.cwd,
           exitCode: null,
         });
@@ -147,7 +148,7 @@ export class OutputParser {
 
   private removeEchoedCommand(output: string, command: string): string {
     const lines = output.split("\n");
-    if (lines.length > 0 && lines[0]!.includes(command.slice(0, 20))) {
+    if (lines.length > 0 && stripAnsi(lines[0]!).includes(command.slice(0, 20))) {
       return lines.slice(1).join("\n").trim();
     }
     return output;

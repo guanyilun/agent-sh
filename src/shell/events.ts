@@ -5,6 +5,7 @@ declare module "../core/event-bus.js" {
     "shell:command-done": {
       command: string;
       output: string;
+      outputRaw: string;
       cwd: string;
       exitCode: number | null;
     };
