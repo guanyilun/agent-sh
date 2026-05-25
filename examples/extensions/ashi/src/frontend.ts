@@ -7,6 +7,7 @@ import {
   Loader,
   SelectList,
   Spacer,
+  Text,
   type Component,
   type SelectItem,
   getImageDimensions,
@@ -182,17 +183,29 @@ export function mountAshi(
   const chat = new Container();
   const footerSlot = new Container();
   const queueSlot = new Container();
+  const shellLabelSlot = new Container();
   const editor = new Editor(tui, editorTheme(), { paddingX: 1 });
-  editor.setAutocompleteProvider(new BusAutocompleteProvider(bus));
+
+  let shellMode = false;
+  const baseAutocomplete = new BusAutocompleteProvider(bus);
+  editor.setAutocompleteProvider({
+    getSuggestions: async (lines, line, col) =>
+      shellMode ? null : baseAutocomplete.getSuggestions(lines, line, col),
+    applyCompletion: baseAutocomplete.applyCompletion.bind(baseAutocomplete),
+  });
 
   const defaultBorderColor = editor.borderColor;
   const shellBorderColor = (t: string): string => theme.fg("bashMode", t);
-  let shellMode = false;
+  const renderShellLabel = (): void => {
+    shellLabelSlot.clear();
+    if (shellMode) shellLabelSlot.addChild(new Text(theme.fg("bashMode", "▸ shell mode"), 1, 0));
+  };
   const setShellMode = (on: boolean): void => {
     if (shellMode === on) return;
     shellMode = on;
     editor.borderColor = on ? shellBorderColor : defaultBorderColor;
     editor.invalidate();
+    renderShellLabel();
     tui.requestRender();
   };
 
@@ -249,6 +262,7 @@ export function mountAshi(
   tui.addChild(chat);
   tui.addChild(footerSlot);
   tui.addChild(queueSlot);
+  tui.addChild(shellLabelSlot);
   tui.addChild(editor);
   tui.addChild(statusFooter);
   tui.setFocus(editor);
