@@ -335,14 +335,17 @@ class SchemaCallComponent extends Container {
     const icon = iconString(display.titleIcon);
     const title = segmentsToString(display.title);
     const status = statusSuffix(display.status);
-    let middle = "";
-    let right = "";
     if (display.titleRight && display.titleRight.length > 0) {
-      right = segmentsToString(display.titleRight);
-      const used = visibleWidth(icon) + visibleWidth(title) + visibleWidth(right) + visibleWidth(status);
-      middle = " ".repeat(Math.max(2, this.handle.cell.env.width - used));
+      const right = segmentsToString(display.titleRight);
+      // Text component pads 1 column on each side (paddingX=1), so the usable
+      // width is env.width - 2. Tag floats to the right; status stays attached
+      // to the title so the ✓ sits next to the command.
+      const used = visibleWidth(icon) + visibleWidth(title) + visibleWidth(status) + visibleWidth(right);
+      const pad = " ".repeat(Math.max(2, this.handle.cell.env.width - 2 - used));
+      this.line.setText(`${icon}${title}${status}${pad}${right}`);
+    } else {
+      this.line.setText(`${icon}${title}${status}`);
     }
-    this.line.setText(`${icon}${title}${middle}${right}${status}`);
   }
 }
 

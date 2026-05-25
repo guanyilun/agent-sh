@@ -62,12 +62,13 @@ const bashModel: RenderModel<BashInit> = {
   },
 };
 
-/** User-typed `!` shell commands. Right tag mirrors the status-footer
- *  shell indicator (`▸ shell`, `▸ shell · private`) so the visual language
- *  stays consistent across the editor and the chat. */
+/** User-typed `!` shell commands. `▸ ` prefix mirrors the status-footer
+ *  glyph for instant left-side recognition; right-aligned tag carries the
+ *  full label so private vs public is unambiguous on scrollback. */
 function makeUserBashModel(opts: { private: boolean }): RenderModel<BashInit> {
   const color: Color = opts.private ? "warning" : "bashMode";
-  const tagText = opts.private ? "▸ shell · private" : "▸ shell";
+  const prefixSeg: Segment = { text: "▸ ", style: { bold: true, color } };
+  const tagText = opts.private ? "shell · private" : "shell";
   const tagSeg: Segment = { text: tagText, style: { color, dim: true } };
   return {
     initial: ({ rawInput }) => {
@@ -75,7 +76,7 @@ function makeUserBashModel(opts: { private: boolean }): RenderModel<BashInit> {
       return { command: str(r.command) ?? "…", timeout: num(r.timeout) };
     },
     view: (s, env): ToolDisplay => ({
-      title: [{ text: env.expanded ? s.command : compact(s.command), highlight: "bash" }],
+      title: [prefixSeg, { text: env.expanded ? s.command : compact(s.command), highlight: "bash" }],
       titleRight: [tagSeg],
       status: s.status,
       body: { kind: "stream", text: s.output },
