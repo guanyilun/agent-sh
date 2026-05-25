@@ -1,7 +1,7 @@
 import type { Component } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
 import { AssistantMessage, ThinkingBlock, UserMessage } from "./components.js";
-import { entryFor, loadToolDisplayConfig, type ToolResultMode } from "./display-config.js";
+import { loadDisplayResolver, type ToolResultMode } from "./display-config.js";
 import { isRenderModel, mountCall, mountResult, type RenderModel } from "./schema.js";
 
 export interface RenderState {
@@ -85,7 +85,7 @@ export interface ToolHookResolver {
 export function createToolHookResolver(
   ctx: ExtensionContext,
 ): ToolHookResolver & { refresh: () => void } {
-  const config = loadToolDisplayConfig();
+  const resolver = loadDisplayResolver();
   let registered = new Set(ctx.list());
 
   const schemaModel = (name: string): RenderModel<unknown> => {
@@ -105,7 +105,7 @@ export function createToolHookResolver(
       registered = new Set(ctx.list());
     },
     modeFor(name: string) {
-      const e = entryFor(config, name);
+      const e = resolver.resolve(name, schemaModel(name).display);
       return { mode: e.result, previewLines: e.previewLines };
     },
     call(args) {

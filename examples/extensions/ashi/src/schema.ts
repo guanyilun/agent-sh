@@ -8,9 +8,12 @@
 // buffer policy, diff reflow on resize, expand/collapse — everything that used
 // to leak into renderer subclasses.
 
-import { Container, Text } from "@earendil-works/pi-tui";
+import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ThemeColor } from "./theme.js";
+import type { ToolEntryConfig } from "./display-config.js";
+
+export type { ToolEntryConfig, ToolResultMode } from "./display-config.js";
 
 export type Color = ThemeColor;
 
@@ -89,6 +92,7 @@ export interface RenderModel<S = Record<string, never>> {
    *  reducers here only for tool-specific state transitions. */
   reducers?: Record<string, Reducer<ViewState<S>, never>>;
   view: (state: ViewState<S>, env: Env) => ToolDisplay;
+  display?: Partial<ToolEntryConfig>;
 }
 
 export function isRenderModel(v: unknown): v is RenderModel<unknown> {
@@ -312,6 +316,7 @@ class SchemaCallComponent extends Container {
   constructor(private handle: RenderHandle<unknown>) {
     super();
     this.line = new Text("", 1, 0);
+    this.addChild(new Spacer(1));
     this.addChild(this.line);
     handle.cell.callView = this;
     this.repaint();
@@ -319,12 +324,6 @@ class SchemaCallComponent extends Container {
 
   setStatus(opts: { exitCode: number | null; elapsedMs: number; summary?: string }): void {
     this.handle.dispatch("status", opts);
-  }
-
-  toggleExpanded(): void {
-    this.handle.cell.env = { ...this.handle.cell.env, expanded: !this.handle.cell.env.expanded };
-    this.repaint();
-    this.handle.cell.resultView?.repaint();
   }
 
   repaint(): void {

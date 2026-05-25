@@ -122,11 +122,11 @@ Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
 {
   "ashi": {
     "display": {
-      "default": { "result": "preview", "previewLines": 8 },
+      "default": { "result": "preview", "previewLines": 5 },
       "read":    { "result": "hidden" },
       "ls":      { "result": "hidden" },
       "grep":    { "result": "summary" },
-      "bash":    { "result": "preview", "previewLines": 12 },
+      "bash":    { "result": "preview" },
       "edit":    { "result": "preview" },
       "write":   { "result": "preview" }
     }
@@ -138,7 +138,7 @@ Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
 
 - `"hidden"` — call line only while streaming; line count (`↳ 42 lines`) after completion.
 - `"summary"` — 2-line tail while streaming; line count after completion.
-- `"preview"` — last `previewLines` lines of output (default 8), with a `... (N more lines)` hint when content overflows.
+- `"preview"` — last `previewLines` lines of output (default 5), with a `... (N more lines)` hint when content overflows.
 
 For `edit_file` / `write_file`, the diff frame is treated as the output and follows the same gating: shown for `preview`, hidden for `hidden`/`summary` (the call line already carries `+12 -3` stats). The line-count hint is suppressed for diff-producing tools so edits stay quiet.
 
@@ -188,6 +188,15 @@ export default function activate(ctx) {
 `view(state, env)` is a pure function returning a `ToolDisplay`. Ashi owns the pi-tui mapping, theming, streaming buffer policy (preview / summary / hidden modes from `ashi.display`), diff width memoization, and the Ctrl+O expand toggle. The framework auto-tracks `state.status`, `state.output` (streaming chunks), and `state.hasDiff` (for edit/write) — renderers read these without wiring their own reducers.
 
 `ToolDisplay` body kinds: `text`, `code` (with syntax highlighting via `lang`), `stream` (preview/summary/hidden policy applied by ashi), `diff` (closure pushed by the frontend orchestrator), `lines`, `compound`. Custom state transitions can be declared via an optional `reducers` map.
+
+To ship a default display policy with your renderer (e.g. "this tool's output is large, default to `summary`"), set `display` on the model. User `settings.json` still wins:
+
+```ts
+const myModel: RenderModel<...> = {
+  initial, view,
+  display: { result: "summary", previewLines: 3 },
+};
+```
 
 For non-render concerns (commands, settings, tools, providers) use the standard `agent-sh` extension API. See the [agent-sh extension docs](https://github.com/guanyilun/agent-sh/blob/main/docs/extensions.md).
 
