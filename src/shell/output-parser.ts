@@ -7,27 +7,28 @@ const PROMPT_RE = /\x1b\]9999;(?:id=([a-f0-9]+);)?PROMPT\x07/;
 const PREEXEC_RE = /\x1b\]9997;(?:id=([a-f0-9]+);)?([^\x07]*)\x07/;
 const READY_RE = /\x1b\]9998;(?:id=([a-f0-9]+);)?READY\x07/;
 
-/**
- * Parses PTY output to detect command boundaries, track cwd,
- * and emit shell events. Owns the command lifecycle state.
- */
+export interface OutputParserOpts {
+  /** Optional shell-specific cleanup applied to raw output before stripAnsi. */
+  cleanOutput?(raw: string): string;
+}
+
 export class OutputParser {
   private bus: EventBus;
   private cwd: string;
   private ownTag: string;
+  private cleanOutput: (raw: string) => string;
   private currentOutputCapture = "";
   private lastCommand = "";
   private foregroundBusy = false;
   private promptReady = false;
 
-  constructor(bus: EventBus, initialCwd: string, ownTag: string) {
+  constructor(bus: EventBus, initialCwd: string, ownTag: string, opts: OutputParserOpts = {}) {
     this.bus = bus;
     this.cwd = initialCwd;
-    // Strip the "id=" prefix; we compare the value alone.
     this.ownTag = ownTag.startsWith("id=") ? ownTag.slice(3) : ownTag;
+    this.cleanOutput = opts.cleanOutput ?? ((raw) => raw);
   }
 
-  /** Process a chunk of PTY output data. */
   processData(data: string): void {
     this.parseOSC7(data);
     data = this.handlePreexec(data);
@@ -35,7 +36,6 @@ export class OutputParser {
     this.parsePromptEnd(data);
   }
 
-  /** Called when user presses Enter on a non-empty line. */
   onCommandEntered(command: string, cwd: string): void {
     this.lastCommand = command;
     this.currentOutputCapture = "";
@@ -46,7 +46,6 @@ export class OutputParser {
     }
   }
 
-  /** Whether the shell's prompt is fully rendered and ready for input. */
   isPromptReady(): boolean {
     return this.promptReady;
   }
@@ -59,14 +58,9 @@ export class OutputParser {
     return this.cwd;
   }
 
-  // ── Parsing ─────────────────────────────────────────────────
-
-  /**
-   * Detect preexec marker (OSC 9997) emitted by the shell's preexec hook.
-   * This carries the actual command text from the shell — more reliable than
-   * the InputHandler's lineBuffer which can't track history recall or tab
-   * completion. Returns data with the OSC stripped out.
-   */
+  /** Pulls the actual command from the shell's OSC 9997 preexec marker —
+   *  more reliable than the InputHandler's lineBuffer, which can't track
+   *  history recall or tab completion. Returns data with the OSC stripped. */
   private handlePreexec(data: string): string {
     const match = PREEXEC_RE.exec(data);
     if (!match) return data;
@@ -78,7 +72,8 @@ export class OutputParser {
 
     const command = match[2]!;
     this.lastCommand = command;
-    this.currentOutputCapture = ""; // discard echo accumulated before preexec
+    // Discard echo accumulated before preexec.
+    this.currentOutputCapture = "";
 
     if (!this.foregroundBusy) {
       this.foregroundBusy = true;
@@ -100,21 +95,16 @@ export class OutputParser {
     }
   }
 
-  /**
-   * Detect our custom prompt marker (OSC 9999) in the PTY stream.
-   * Each time a prompt appears, we finalize the previous command's output.
-   */
+  /** OSC 9999 marker — each occurrence finalizes the previous command's output. */
   private parsePromptMarker(data: string): void {
     const match = PROMPT_RE.exec(data);
     if (match) {
       if (match[1] !== this.ownTag) {
-        // Nested instance or untagged foreign emission — treat as opaque
-        // foreground output, do not finalize our own command.
+        // Nested or untagged emission: keep as opaque foreground output.
         this.currentOutputCapture += data;
         return;
       }
       const markerIdx = match.index;
-      // Capture any output that arrived in the same chunk before the marker
       if (markerIdx > 0) {
         this.currentOutputCapture += data.slice(0, markerIdx);
       }
@@ -124,7 +114,7 @@ export class OutputParser {
         this.bus.emit("shell:foreground-busy", { busy: false });
       }
       if (this.lastCommand) {
-        const raw = stripZshPromptSp(this.currentOutputCapture);
+        const raw = this.cleanOutput(this.currentOutputCapture);
         const output = stripAnsi(raw).trim();
         const cleaned = this.removeEchoedCommand(output, this.lastCommand);
         this.bus.emit("shell:command-done", {
@@ -137,11 +127,9 @@ export class OutputParser {
       this.lastCommand = "";
       this.currentOutputCapture = "";
     } else {
-      // Cap capture buffer to avoid unbounded growth when a foreground
-      // program (tmux, vim, etc.) produces output without prompt markers.
-      // Keep only the tail — the final output is what matters for
-      // command-done context.
-      const MAX_CAPTURE = 128 * 1024; // 128 KB
+      // Cap to the tail so a long-running foreground program (tmux, vim)
+      // emitting output without prompt markers can't grow this unboundedly.
+      const MAX_CAPTURE = 128 * 1024;
       this.currentOutputCapture += data;
       if (this.currentOutputCapture.length > MAX_CAPTURE) {
         this.currentOutputCapture = this.currentOutputCapture.slice(-MAX_CAPTURE);
@@ -149,10 +137,7 @@ export class OutputParser {
     }
   }
 
-  /**
-   * Detect end-of-prompt marker (OSC 9998). The prompt is fully rendered
-   * and the shell is ready for input.
-   */
+  /** OSC 9998 — prompt is fully rendered and the shell is ready for input. */
   private parsePromptEnd(data: string): void {
     const match = READY_RE.exec(data);
     if (!match) return;
@@ -167,15 +152,4 @@ export class OutputParser {
     }
     return output;
   }
-}
-
-/**
- * Strip zsh's PROMPT_SP marker (inverse-video PROMPT_EOL_MARK, default `%`)
- * that zsh prints before a prompt when prior output didn't end at column 0.
- * Match the inverse-video wrapper rather than the bare glyph so legitimate
- * trailing `%` survives. Must run before stripAnsi removes the SGR codes.
- */
-const PROMPT_SP_RE = /\x1b\[7m.\x1b\[(?:0|27)m/g;
-function stripZshPromptSp(raw: string): string {
-  return raw.replace(PROMPT_SP_RE, "");
 }

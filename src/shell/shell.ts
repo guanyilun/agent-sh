@@ -120,7 +120,9 @@ export class Shell implements InputContext {
 
     this.bus = opts.bus;
     this.handlers = opts.handlers;
-    this.outputParser = new OutputParser(opts.bus, opts.cwd, instanceTag);
+    this.outputParser = new OutputParser(opts.bus, opts.cwd, instanceTag, {
+      cleanOutput: this.strategy.cleanOutput?.bind(this.strategy),
+    });
 
     // Ensure temp dir cleanup on abnormal exit (SIGKILL won't fire this,
     // but it covers uncaught exceptions and normal process.exit paths)
