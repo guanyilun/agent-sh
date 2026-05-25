@@ -9,9 +9,14 @@
  * because xterm-headless interprets their sequences and the panel just
  * paints the resulting cell grid.
  *
- * Trigger key (Ctrl+]) closes the overlay; every other key (including
- * Esc, Ctrl+C, arrows, page keys) is forwarded to the pty. The trigger
- * differs from overlay-agent's Ctrl+\ so both overlays can coexist.
+ * Trigger key (default Ctrl+], i.e. "") closes the overlay;
+ * every other key (including Esc, Ctrl+C, arrows, page keys) is
+ * forwarded to the pty. Override via ~/.agent-sh/settings.json:
+ *   { "shell-overlay": { "trigger": "" } }     // Ctrl+\
+ *   { "shell-overlay": { "trigger": "" } }     // Ctrl+^
+ *   { "shell-overlay": { "trigger": "" } } // double-Esc
+ * If your terminal doesn't send the byte you expect, run `cat -v` and
+ * press the key — what prints is what you put in `trigger`.
  *
  * Scrollback: while the shell is on the normal screen, PgUp/PgDn and
  * mouse-wheel navigate the shell's history. Any other key snaps back
@@ -33,8 +38,10 @@ export default function activate(ctx: ExtensionContext): void {
   const tb = ctx.call("terminal-buffer") as TerminalBuffer | null;
   if (!tb) return;
 
+  const { trigger } = ctx.getExtensionSettings("shell-overlay", { trigger: "\x1d" });
+
   const panel = new FloatingPanel(bus, {
-    trigger: "\x1d", // Ctrl+]
+    trigger,
     width: "100%",
     height: "100%",
     dimBackground: false, // we render the shell ourselves
