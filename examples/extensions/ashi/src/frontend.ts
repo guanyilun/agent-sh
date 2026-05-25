@@ -26,6 +26,7 @@ import {
 import type { ToolCallView, ToolResultView } from "./hooks.js";
 import { createToolHookResolver } from "./hooks.js";
 import { loadGroupMaxVisible } from "./display-config.js";
+import { classifySubmit, deriveShellModeTransition } from "./shell-mode.js";
 
 const GROUPABLE_KINDS = new Set(["read", "search"]);
 const TOOL_KIND: Record<string, string> = {
@@ -183,24 +184,48 @@ export function mountAshi(
   const queueSlot = new Container();
   const editor = new Editor(tui, editorTheme(), { paddingX: 1 });
   editor.setAutocompleteProvider(new BusAutocompleteProvider(bus));
+
+  const defaultBorderColor = editor.borderColor;
+  const shellBorderColor = (t: string): string => theme.fg("bashMode", t);
+  let shellMode = false;
+  const setShellMode = (on: boolean): void => {
+    if (shellMode === on) return;
+    shellMode = on;
+    editor.borderColor = on ? shellBorderColor : defaultBorderColor;
+    editor.invalidate();
+    tui.requestRender();
+  };
+
+  editor.onChange = (text) => {
+    // onChange (not keydown) so paste/IME inserting `!` also flips the mode.
+    const t = deriveShellModeTransition(shellMode, text);
+    if (t.replaceText !== undefined) editor.setText(t.replaceText);
+    if (t.mode !== shellMode) setShellMode(t.mode);
+  };
+
   editor.onSubmit = (text) => {
-    const query = text.trim();
-    if (!query) return;
+    // Classify before clearing — setText("") fires onChange("") which can
+    // flip shellMode off mid-handler.
+    const action = classifySubmit(text, shellMode);
+    if (action.kind === "noop") return;
     editor.setText("");
-    if (query.startsWith("/")) {
-      const sp = query.indexOf(" ");
-      const name = sp === -1 ? query : query.slice(0, sp);
-      const args = sp === -1 ? "" : query.slice(sp + 1).trim();
-      bus.emit("command:execute", { name, args });
-      return;
+    switch (action.kind) {
+      case "shell":
+        submitShell(action.line);
+        return;
+      case "command":
+        bus.emit("command:execute", { name: action.name, args: action.args });
+        return;
+      case "agent":
+        if (processing) {
+          queuedQueries.push(action.query);
+          renderQueueSlot();
+          tui.requestRender();
+          return;
+        }
+        bus.emit("agent:submit", { query: action.query });
+        return;
     }
-    if (processing) {
-      queuedQueries.push(query);
-      renderQueueSlot();
-      tui.requestRender();
-      return;
-    }
-    bus.emit("agent:submit", { query });
   };
 
   const statusFooter = new StatusFooter();
@@ -253,14 +278,30 @@ export function mountAshi(
   let loader: Loader | null = null;
   let processing = false;
   const queuedQueries: string[] = [];
+  const queuedShellLines: string[] = [];
 
   const renderQueueSlot = (): void => {
     queueSlot.clear();
+    for (const line of queuedShellLines) {
+      const oneLine = line.replace(/\s+/g, " ");
+      const preview = oneLine.length > 80 ? oneLine.slice(0, 77) + "…" : oneLine;
+      queueSlot.addChild(new InfoLine(`↳ shell: ${preview}`));
+    }
     for (const q of queuedQueries) {
       const oneLine = q.replace(/\s+/g, " ");
       const preview = oneLine.length > 80 ? oneLine.slice(0, 77) + "…" : oneLine;
       queueSlot.addChild(new InfoLine(`↳ queued: ${preview}`));
     }
+  };
+
+  const submitShell = (line: string): void => {
+    if (processing) {
+      queuedShellLines.push(line);
+      renderQueueSlot();
+      tui.requestRender();
+      return;
+    }
+    bus.emit("shell:pty-write", { data: line + "\n" });
   };
   let hideThinking = true;
 
@@ -549,6 +590,37 @@ export function mountAshi(
     tui.requestRender();
   });
 
+  // User-typed `!` shell commands. Agent-invoked bash already renders via
+  // agent:tool-*; agentShellActive gates against double-rendering.
+  let agentShellActive = false;
+  bus.on("shell:agent-exec-start", () => { agentShellActive = true; });
+  bus.on("shell:agent-exec-done", () => { agentShellActive = false; });
+
+  let activeUserShell: ToolPair | null = null;
+  bus.on("shell:command-start", ({ command }) => {
+    if (agentShellActive) return;
+    finalizeThinking();
+    if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
+    const pair = renderToolPair({
+      toolCallId: `user-shell-${Date.now()}`, name: "bash", title: "bash",
+      kind: "bash", displayDetail: command, rawInput: { command },
+    });
+    activeUserShell = pair;
+    chat.addChild(pair.call);
+    chat.addChild(pair.result);
+    tui.requestRender();
+  });
+
+  bus.on("shell:command-done", ({ output, exitCode }) => {
+    const pair = activeUserShell;
+    if (!pair) return;
+    if (output) pair.result.appendChunk(output);
+    pair.call.setStatus({ exitCode, elapsedMs: Date.now() - pair.startedAt });
+    pair.result.finalize({ exitCode });
+    activeUserShell = null;
+    tui.requestRender();
+  });
+
   bus.on("agent:processing-done", () => {
     processing = false;
     stopLoader();
@@ -557,10 +629,18 @@ export function mountAshi(
     chat.addChild(new Spacer(1));
     refreshFooterStats();
     refreshBranch();
+    // Drain queued shell lines first so the next agent turn (if any) sees
+    // their results in <shell_events>. Each line is its own PTY write; the
+    // shell serializes them via its input buffer.
+    while (queuedShellLines.length > 0) {
+      bus.emit("shell:pty-write", { data: queuedShellLines.shift()! + "\n" });
+    }
     const next = queuedQueries.shift();
     if (next !== undefined) {
       renderQueueSlot();
       bus.emit("agent:submit", { query: next });
+    } else {
+      renderQueueSlot();
     }
     tui.requestRender();
   });
@@ -776,6 +856,12 @@ export function mountAshi(
       renderQueueSlot();
       editor.setText(last);
       tui.requestRender();
+      return { consume: true };
+    }
+    if (matchesKey(data, "backspace") && shellMode && editor.getText().length === 0) {
+      // Editor's own backspace is a no-op on empty buffer and never fires
+      // onChange, so we have to catch it here to let the user exit shell mode.
+      setShellMode(false);
       return { consume: true };
     }
     if (matchesKey(data, "ctrl+c")) {
