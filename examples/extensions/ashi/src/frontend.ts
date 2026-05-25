@@ -636,9 +636,9 @@ export function mountAshi(
     finalizeThinking();
     if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
     const isPrivate = pendingUserBlockPrivacy.shift() ?? false;
-    const title = isPrivate ? "bash (private)" : "bash";
+    const name = isPrivate ? "user_bash_private" : "user_bash";
     const pair = renderToolPair({
-      toolCallId: `user-shell-${Date.now()}`, name: "bash", title,
+      toolCallId: `user-shell-${Date.now()}`, name, title: name,
       kind: "bash", displayDetail: command, rawInput: { command },
     });
     activeUserShell = pair;

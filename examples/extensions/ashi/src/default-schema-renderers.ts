@@ -4,7 +4,7 @@
 // variety.
 
 import type { ExtensionContext } from "agent-sh/types";
-import type { RenderModel, Segment, ToolDisplay, TitleIcon } from "./schema.js";
+import type { RenderModel, Segment, ToolDisplay, TitleIcon, Color } from "./schema.js";
 
 function parseRaw(raw: unknown): Record<string, unknown> {
   if (typeof raw === "string") {
@@ -61,6 +61,30 @@ const bashModel: RenderModel<BashInit> = {
     };
   },
 };
+
+/** User-typed `!` shell commands. Same body as bash, distinct prefix + color
+ *  so they're easy to tell apart from agent-invoked bash on scrollback. */
+function makeUserBashModel(opts: { private: boolean }): RenderModel<BashInit> {
+  const color: Color = opts.private ? "warning" : "bashMode";
+  const prefixSeg: Segment = { text: "▸ ", style: { bold: true, color } };
+  const suffix: Segment[] = opts.private ? [{ text: " · private", style: { color } }] : [];
+  return {
+    initial: ({ rawInput }) => {
+      const r = parseRaw(rawInput);
+      return { command: str(r.command) ?? "…", timeout: num(r.timeout) };
+    },
+    view: (s, env): ToolDisplay => ({
+      title: [
+        prefixSeg,
+        { text: env.expanded ? s.command : compact(s.command), highlight: "bash" },
+        ...suffix,
+      ],
+      status: s.status,
+      body: { kind: "stream", text: s.output },
+      expandable: true,
+    }),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // read — file path + optional offset:limit range.
@@ -216,6 +240,8 @@ const defaultModel: RenderModel<DefaultInit> = {
 
 export function registerDefaultSchemaRenderers(ctx: ExtensionContext): void {
   ctx.define("ashi:render-tool:bash", () => bashModel);
+  ctx.define("ashi:render-tool:user_bash", () => makeUserBashModel({ private: false }));
+  ctx.define("ashi:render-tool:user_bash_private", () => makeUserBashModel({ private: true }));
   ctx.define("ashi:render-tool:read_file", () => readModel);
   ctx.define("ashi:render-tool:read", () => readModel);
   ctx.define("ashi:render-tool:grep", () => grepModel);
