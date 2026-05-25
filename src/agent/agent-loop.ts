@@ -257,18 +257,22 @@ export class AgentLoop implements AgentBackend {
       const modes = this.pullModes();
       const prev = this.activeMode;
       const fresh = modes.find((m) => m.model === prev.model && m.provider === prev.provider);
+      let identityChanged = false;
       if (fresh) {
         this.activeMode = fresh;
         if (fresh.providerConfig && fresh.providerConfig !== prev.providerConfig) {
           this.llmClient.reconfigure({ ...fresh.providerConfig, model: fresh.model });
         }
+        identityChanged = fresh.model !== prev.model
+          || fresh.provider !== prev.provider
+          || fresh.contextWindow !== prev.contextWindow;
       } else if (prev.provider) {
         // Ghost: keep prev active so mid-turn stream() doesn't switch models.
         this.bus.emit("ui:info", {
           message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
         });
       }
-      this.emitIdentity();
+      if (identityChanged) this.emitIdentity();
       this.bus.emit("config:changed", {});
     });
     onPipe("config:get-models", () => {

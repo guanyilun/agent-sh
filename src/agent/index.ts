@@ -330,6 +330,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     if (!resolved) return;
     bus.emit("agent:modes-changed", {});
     if (!ashActive) return;
+    if (buildModes().some((m) => m.model === llmClient.model)) return;
     const pendingProvider = getSettings().defaultProvider;
     if (!pendingProvider) return;
     const p = resolvedProviders.get(pendingProvider);
