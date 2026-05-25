@@ -4,7 +4,6 @@
 // variety.
 
 import type { ExtensionContext } from "agent-sh/types";
-import { visibleWidth } from "@earendil-works/pi-tui";
 import type { RenderModel, Segment, ToolDisplay, TitleIcon, Color } from "./schema.js";
 
 function parseRaw(raw: unknown): Record<string, unknown> {
@@ -63,41 +62,25 @@ const bashModel: RenderModel<BashInit> = {
   },
 };
 
-/** User-typed `!` shell commands. Same body as bash, distinct prefix + color
- *  so they're easy to tell apart from agent-invoked bash on scrollback.
- *  Private variant right-aligns a dim `private` tag so it stays low-key. */
+/** User-typed `!` shell commands. Right tag mirrors the status-footer
+ *  shell indicator (`▸ shell`, `▸ shell · private`) so the visual language
+ *  stays consistent across the editor and the chat. */
 function makeUserBashModel(opts: { private: boolean }): RenderModel<BashInit> {
   const color: Color = opts.private ? "warning" : "bashMode";
-  const prefixText = "▸ ";
-  const prefixSeg: Segment = { text: prefixText, style: { bold: true, color } };
-  const tag = "private";
-  // Status suffix is appended outside the title segments and varies in width;
-  // ~12 chars covers `  ✓ 1.2s` plus a little breathing room.
-  const STATUS_RESERVE = 12;
+  const tagText = opts.private ? "▸ shell · private" : "▸ shell";
+  const tagSeg: Segment = { text: tagText, style: { color, dim: true } };
   return {
     initial: ({ rawInput }) => {
       const r = parseRaw(rawInput);
       return { command: str(r.command) ?? "…", timeout: num(r.timeout) };
     },
-    view: (s, env): ToolDisplay => {
-      const cmdText = env.expanded ? s.command : compact(s.command);
-      const segments: Segment[] = [
-        prefixSeg,
-        { text: cmdText, highlight: "bash" },
-      ];
-      if (opts.private) {
-        const used = visibleWidth(prefixText) + visibleWidth(cmdText);
-        const pad = Math.max(2, env.width - used - tag.length - STATUS_RESERVE);
-        segments.push({ text: " ".repeat(pad) });
-        segments.push({ text: tag, style: { color, dim: true } });
-      }
-      return {
-        title: segments,
-        status: s.status,
-        body: { kind: "stream", text: s.output },
-        expandable: true,
-      };
-    },
+    view: (s, env): ToolDisplay => ({
+      title: [{ text: env.expanded ? s.command : compact(s.command), highlight: "bash" }],
+      titleRight: [tagSeg],
+      status: s.status,
+      body: { kind: "stream", text: s.output },
+      expandable: true,
+    }),
   };
 }
 

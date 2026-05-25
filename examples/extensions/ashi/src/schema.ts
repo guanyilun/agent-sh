@@ -8,7 +8,7 @@
 // buffer policy, diff reflow on resize, expand/collapse — everything that used
 // to leak into renderer subclasses.
 
-import { Container, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ThemeColor } from "./theme.js";
 import type { ToolEntryConfig } from "./display-config.js";
@@ -50,6 +50,10 @@ export type TitleIcon = "read" | "search" | "edit" | "shell" | "generic" | "sche
 export interface ToolDisplay {
   titleIcon?: TitleIcon;
   title: Segment[];
+  /** Optional segments right-aligned on the title line. The framework
+   *  inserts padding between `title` and `titleRight`, reserving space
+   *  for the trailing status suffix. Renderers don't compute widths. */
+  titleRight?: Segment[];
   status?: DisplayStatus;
   body?: Body;
   expandable?: boolean;
@@ -330,7 +334,15 @@ class SchemaCallComponent extends Container {
     const display = this.handle.model.view(this.handle.cell.state as ViewState<unknown>, this.handle.cell.env);
     const icon = iconString(display.titleIcon);
     const title = segmentsToString(display.title);
-    this.line.setText(`${icon}${title}${statusSuffix(display.status)}`);
+    const status = statusSuffix(display.status);
+    let middle = "";
+    let right = "";
+    if (display.titleRight && display.titleRight.length > 0) {
+      right = segmentsToString(display.titleRight);
+      const used = visibleWidth(icon) + visibleWidth(title) + visibleWidth(right) + visibleWidth(status);
+      middle = " ".repeat(Math.max(2, this.handle.cell.env.width - used));
+    }
+    this.line.setText(`${icon}${title}${middle}${right}${status}`);
   }
 }
 
