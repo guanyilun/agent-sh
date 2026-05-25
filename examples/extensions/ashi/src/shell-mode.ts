@@ -17,7 +17,10 @@ export function deriveShellModeTransition(
   if (!mode && text.startsWith("!")) {
     return { mode: true, replaceText: text.slice(1) };
   }
-  if (mode && text === "") return { mode: false };
+  // Sticky: shell mode is exited explicitly via Backspace-on-empty (caught
+  // by the TUI input listener, not onChange). Auto-exiting on empty text
+  // would also exit on pi-tui's pre-emptive onChange("") fired before
+  // onSubmit, breaking the routing decision in the same handler.
   return { mode };
 }
 

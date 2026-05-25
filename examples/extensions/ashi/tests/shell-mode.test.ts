@@ -37,10 +37,14 @@ test("plain text out of shell mode is a no-op", () => {
   );
 });
 
-test("exiting: empty buffer in shell mode flips off", () => {
+test("sticky: empty buffer in shell mode does NOT auto-exit", () => {
+  // pi-tui's Editor.submitValue() fires onChange("") before onSubmit; if
+  // empty-text exited, that pre-emptive onChange would flip shellMode off
+  // and the subsequent onSubmit would route to the agent. Backspace-on-
+  // empty is handled explicitly at the TUI input-listener level.
   assert.deepEqual(
     deriveShellModeTransition(true, ""),
-    { mode: false },
+    { mode: true },
   );
 });
 

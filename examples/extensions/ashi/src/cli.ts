@@ -7,7 +7,23 @@ import { loadBuiltinExtensions } from "agent-sh/extensions";
 import { loadExtensions } from "agent-sh/extension-loader";
 import { activateAgent } from "agent-sh/agent";
 import { getSettings } from "agent-sh/settings";
+import { Shell } from "agent-sh/shell";
+import type { Terminal } from "agent-sh/shell/terminal";
+import activateShellContext from "agent-sh/shell/context";
 import type { AppConfig } from "agent-sh/types";
+
+/** No-op terminal: ashi renders via pi-tui; we only need the Shell so
+ *  user-typed `!` commands have a PTY to run on and the output parser
+ *  can feed shell:command-* events to ashi and shell-context. */
+function headlessTerminal(): Terminal {
+  return {
+    write() {},
+    onInput: () => () => {},
+    onResize: () => () => {},
+    cols: () => 100,
+    rows: () => 30,
+  };
+}
 
 import { mountAshi } from "./frontend.js";
 import { MultiSessionStore } from "./multi-session-store.js";
@@ -125,8 +141,10 @@ async function main(): Promise<void> {
 
   let stopFrontend: (() => void) | null = null;
 
+  let shellRef: { kill(): void } | null = null;
   const cleanup = (): void => {
     try { stopFrontend?.(); } catch { /* ignore */ }
+    try { shellRef?.kill(); } catch { /* ignore */ }
     try { core.kill(); } catch { /* ignore */ }
     if (process.stdin.isTTY) {
       try { process.stdin.setRawMode(false); } catch { /* ignore */ }
@@ -137,7 +155,27 @@ async function main(): Promise<void> {
   const ctx = core.extensionContext({ quit: cleanup });
 
   activateAgent(ctx);
+  // shell-context records shell:command-done into an in-memory ring and
+  // advises query-context:build to emit <cwd> and <shell_events> — so the
+  // agent learns what `!`-typed commands did on its next turn. Needs to
+  // run before any agent query happens.
+  activateShellContext(ctx);
   await loadBuiltinExtensions(ctx);
+
+  // Headless shell on the shared bus: `shell:pty-write` from the `!`
+  // editor mode runs here; output is parsed into shell:command-start/done
+  // which ashi renders and shell-context records.
+  const shell = new Shell({
+    bus: core.bus,
+    handlers: { define: ctx.define, call: ctx.call },
+    cols: 100,
+    rows: 30,
+    shell: process.env.SHELL ?? "/bin/bash",
+    cwd: process.cwd(),
+    instanceId: ctx.instanceId,
+    terminal: headlessTerminal(),
+  });
+  shellRef = shell;
 
   const loaded = await loadExtensions(ctx, config.extensions);
   core.bus.emit("core:extensions-loaded", { names: loaded });

@@ -49,6 +49,10 @@
       "types": "./dist/shell/terminal.d.ts",
       "default": "./dist/shell/terminal.js"
     },
+    "./shell/context": {
+      "types": "./dist/shell/shell-context.d.ts",
+      "default": "./dist/shell/shell-context.js"
+    },
     "./utils/stream-transform": {
       "types": "./dist/utils/stream-transform.d.ts",
       "default": "./dist/utils/stream-transform.js"
