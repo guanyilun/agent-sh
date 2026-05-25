@@ -37,7 +37,7 @@ const TOOL_KIND: Record<string, string> = {
 import { BusAutocompleteProvider } from "./autocomplete.js";
 import { StatusFooter } from "./status-footer.js";
 import type { MultiSessionStore } from "./multi-session-store.js";
-import type { SessionEntry } from "./session-store.js";
+import { stripContextWrappers, type SessionEntry } from "./session-store.js";
 import { formatSessionRow } from "./session-commands.js";
 import { resumeSession } from "./session-commands.js";
 import { applyBranchMessages } from "./commands.js";
@@ -418,11 +418,25 @@ export function mountAshi(
       chat.addChild(new InfoLine(`▼ compacted (firstKept=${entry.firstKeptId.slice(0, 6)}, ${entry.tokensBefore} tokens)`));
       return;
     }
+    if (entry.type === "shell-exchange") {
+      const name = entry.private ? "user_bash_private" : "user_bash";
+      const pair = renderToolPair({
+        toolCallId: `user-shell-replay-${entry.id}`, name, title: name,
+        kind: "bash", displayDetail: entry.command, rawInput: { command: entry.command },
+      });
+      chat.addChild(pair.call);
+      chat.addChild(pair.result);
+      if (entry.output) pair.result.appendChunk(entry.output);
+      pair.result.finalize({ exitCode: entry.exitCode });
+      pair.call.setStatus({ exitCode: entry.exitCode, elapsedMs: 0 });
+      chat.addChild(new Spacer(1));
+      return;
+    }
     const m = entry.message;
     if (m.role === "user") {
-      const text = typeof m.content === "string" ? m.content : "";
-      if (text.startsWith("[Compacted conversation summary]")) return;
-      chat.addChild(renderUserMessage(text));
+      const raw = typeof m.content === "string" ? m.content : "";
+      if (raw.startsWith("[Compacted conversation summary]")) return;
+      chat.addChild(renderUserMessage(stripContextWrappers(raw)));
     } else if (m.role === "assistant") {
       const reasoning = readReasoning(m);
       if (reasoning) {
@@ -630,7 +644,7 @@ export function mountAshi(
   bus.on("shell:agent-exec-done", () => { agentShellActive = false; });
   bus.on("shell:foreground-busy", ({ busy }) => { shellForegroundBusy = busy; });
 
-  let activeUserShell: ToolPair | null = null;
+  let activeUserShell: { pair: ToolPair; command: string; isPrivate: boolean } | null = null;
   bus.on("shell:command-start", ({ command }) => {
     if (agentShellActive) return;
     finalizeThinking();
@@ -641,20 +655,29 @@ export function mountAshi(
       toolCallId: `user-shell-${Date.now()}`, name, title: name,
       kind: "bash", displayDetail: command, rawInput: { command },
     });
-    activeUserShell = pair;
+    activeUserShell = { pair, command, isPrivate };
     chat.addChild(pair.call);
     chat.addChild(pair.result);
     tui.requestRender();
   });
 
-  bus.on("shell:command-done", ({ output, exitCode }) => {
-    const pair = activeUserShell;
-    if (!pair) return;
+  bus.on("shell:command-done", ({ output, cwd, exitCode }) => {
+    const active = activeUserShell;
+    if (!active) return;
+    const { pair, command, isPrivate } = active;
     if (output) pair.result.appendChunk(output);
     pair.call.setStatus({ exitCode, elapsedMs: Date.now() - pair.startedAt });
     pair.result.finalize({ exitCode });
     activeUserShell = null;
+    // Matches the trailing gap that agent:processing-done adds, so the
+    // composer doesn't sit flush against the shell output.
+    chat.addChild(new Spacer(1));
     tui.requestRender();
+    void getStore().current().appendShellExchange({
+      command, output: output ?? "", exitCode, cwd,
+      ...(isPrivate ? { private: true } : {}),
+    });
+    getStore().markLastSession();
   });
 
   bus.on("agent:processing-done", () => {
@@ -964,7 +987,13 @@ function pickerLabel(e: SessionEntry, isActive: boolean): string {
   const short = e.id.slice(0, 6);
   if (e.type === "session") return `${marker} ${short} session start`;
   if (e.type === "compaction") return `${marker} ${short} ▼ compacted (firstKept=${e.firstKeptId.slice(0, 6)})`;
+  if (e.type === "shell-exchange") {
+    const cmd = e.command.slice(0, 60).replace(/\n/g, " ");
+    return `${marker} ${short} ${e.private ? "shell·private" : "shell"}: ${cmd}`;
+  }
   const m = e.message;
-  const text = typeof m.content === "string" ? m.content.slice(0, 70).replace(/\n/g, " ") : "";
+  const raw = typeof m.content === "string" ? m.content : "";
+  const cleaned = m.role === "user" ? stripContextWrappers(raw) : raw;
+  const text = cleaned.slice(0, 70).replace(/\n/g, " ");
   return `${marker} ${short} ${m.role}: ${text}`;
 }

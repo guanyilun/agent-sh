@@ -44,7 +44,27 @@ export interface CompactionEntry {
   tokensBefore: number;
 }
 
-export type SessionEntry = SessionHeaderEntry | MessageEntry | CompactionEntry;
+/** UI-only entry: a `!`-mode shell command the user ran. Omitted from
+ *  buildMessages because the agent already saw it through <shell_events>
+ *  at the time it ran (or didn't, if private). Replayed by the frontend
+ *  on resume so scrollback matches the live session. */
+export interface ShellExchangeEntry {
+  type: "shell-exchange";
+  id: string;
+  parentId: string;
+  timestamp: number;
+  command: string;
+  output: string;
+  exitCode: number | null;
+  cwd?: string;
+  private?: boolean;
+}
+
+export type SessionEntry =
+  | SessionHeaderEntry
+  | MessageEntry
+  | CompactionEntry
+  | ShellExchangeEntry;
 
 export interface SessionMeta {
   name?: string;
@@ -94,6 +114,19 @@ export function summarizeMessage(m: AgentMessage): string {
     return `user: ${snippet(extractText(m.content), 1000)}`;
   }
   return `${role}: ${snippet(extractText(m.content), 500)}`;
+}
+
+/** Strip the agent-loop's `<query_context>` (frozen at send time) and
+ *  `<dynamic_context>` (wrapped at request time) envelopes from a message's
+ *  content. Loops because both can stack at the head. The wrapped form is
+ *  what the LLM saw — the unwrapped form is what the user actually typed. */
+export function stripContextWrappers(content: string): string {
+  let out = content;
+  for (;;) {
+    const next = out.replace(/^\s*<(query_context|dynamic_context)>[\s\S]*?<\/\1>\s*/, "");
+    if (next === out) return out;
+    out = next;
+  }
 }
 
 export function renderEvictedSummary(evicted: AgentMessage[]): string {
@@ -198,6 +231,32 @@ export class SessionStore {
     return newIds;
   }
 
+  async appendShellExchange(e: {
+    command: string;
+    output: string;
+    exitCode: number | null;
+    cwd?: string;
+    private?: boolean;
+  }): Promise<string> {
+    this.flushHeader();
+    const entry: ShellExchangeEntry = {
+      type: "shell-exchange",
+      id: newEntryId(),
+      parentId: this.activeLeaf,
+      timestamp: Date.now(),
+      command: e.command,
+      output: e.output,
+      exitCode: e.exitCode,
+      ...(e.cwd !== undefined ? { cwd: e.cwd } : {}),
+      ...(e.private ? { private: true } : {}),
+    };
+    this.entries.set(entry.id, entry);
+    this.activeLeaf = entry.id;
+    await fsp.appendFile(this.entriesPath, JSON.stringify(entry) + "\n");
+    this.persistLeaf();
+    return entry.id;
+  }
+
   async appendCompaction(firstKeptId: string, tokensBefore: number, summary?: string): Promise<string> {
     if (!this.entries.has(firstKeptId)) throw new Error(`firstKeptId unknown: ${firstKeptId}`);
     this.flushHeader();
@@ -270,7 +329,8 @@ export class SessionStore {
   getPreview(): string {
     for (const e of this.entries.values()) {
       if (e.type === "message" && e.message.role === "user") {
-        const txt = typeof e.message.content === "string" ? e.message.content : "";
+        const raw = typeof e.message.content === "string" ? e.message.content : "";
+        const txt = stripContextWrappers(raw);
         if (txt) return txt.slice(0, 80);
       }
     }
