@@ -222,10 +222,13 @@ export function mountAshi(
   editor.onChange = (text) => {
     // onChange (not keydown) so paste also flips the mode.
     const t = deriveShellModeTransition(shellMode, text);
-    if (t.replaceText !== undefined) editor.setText(t.replaceText);
+    // Flip mode BEFORE setText — setText fires onChange synchronously, and
+    // we want the recursive call to see shellMode=true so it sticks rather
+    // than re-stripping. Without this, pasting `!!cmd` strips twice.
     if (t.mode !== shellMode) setShellMode(t.mode);
-    // Live signal: in shell mode, a leading `!` means the next submit is private.
-    if (shellMode) setPendingPrivate(text.trimStart().startsWith("!"));
+    if (t.replaceText !== undefined) editor.setText(t.replaceText);
+    const effective = t.replaceText ?? text;
+    if (shellMode) setPendingPrivate(effective.trimStart().startsWith("!"));
   };
 
   editor.onSubmit = (text) => {
