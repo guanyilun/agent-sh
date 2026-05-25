@@ -12,6 +12,15 @@ import type { Terminal } from "agent-sh/shell/terminal";
 import activateShellContext from "agent-sh/shell/context";
 import type { AppConfig } from "agent-sh/types";
 
+declare module "agent-sh/event-bus" {
+  interface BusEvents {
+    /** Emitted once mountAshi has constructed the TUI and registered
+     *  the "ashi:tui" handler. Extensions that want to attach to the
+     *  TUI (overlays, listeners) should subscribe here. */
+    "ashi:ready": Record<string, never>;
+  }
+}
+
 /** No-op: ashi renders via pi-tui, the PTY only needs to exist. */
 function headlessTerminal(): Terminal {
   return {
@@ -188,6 +197,12 @@ async function main(): Promise<void> {
 
   const handle = mountAshi(ctx, getStore, capture);
   stopFrontend = handle.stop;
+
+  // Expose the TUI so ashi-integrated extensions (overlays, status add-ons)
+  // can attach. Emit `ashi:ready` so late-attaching extensions know when
+  // ctx.call("ashi:tui") will resolve.
+  ctx.define("ashi:tui", () => handle.tui);
+  core.bus.emit("ashi:ready", {});
 
   registerForkCommands(ctx, getStore, handle.openTreePicker, handle.rebuildChat, capture);
   registerSessionCommands(ctx, getStore, capture, {

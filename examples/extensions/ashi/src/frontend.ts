@@ -968,6 +968,8 @@ export function mountAshi(
 
   tui.addInputListener((data) => {
     if (isKeyRelease(data) || isKeyRepeat(data)) return;
+    // Defer entirely to focused overlays — their components own input.
+    if (tui.hasOverlay()) return;
     if (matchesKey(data, "escape")) {
       if (processing) {
         bus.emit("agent:cancel-request", {});
