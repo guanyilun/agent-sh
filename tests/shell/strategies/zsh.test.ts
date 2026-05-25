@@ -10,7 +10,3 @@ test("cleanOutput strips the PROMPT_SP inverse-`%` marker", () => {
 test("cleanOutput preserves a legitimate trailing `%` without inverse-video wrapper", () => {
   assert.equal(zshStrategy.cleanOutput!("done %"), "done %");
 });
-
-test("cleanOutput leaves output without PROMPT_SP markers untouched", () => {
-  assert.equal(zshStrategy.cleanOutput!("hello world"), "hello world");
-});

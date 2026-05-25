@@ -1,30 +1,16 @@
-export interface ShellModeTransition {
+export interface ChangeHandlerResult {
   mode: boolean;
   /** When set, caller must `editor.setText(replaceText)` to strip the `!`. */
   replaceText?: string;
-}
-
-export function deriveShellModeTransition(
-  mode: boolean,
-  text: string,
-): ShellModeTransition {
-  if (!mode && text.startsWith("!")) {
-    return { mode: true, replaceText: text.slice(1) };
-  }
-  // Sticky: exit only via the Backspace-on-empty intercept. Auto-exit on
-  // empty text would fire during pi-tui's pre-emptive onChange("") in
-  // Editor.submitValue() and misroute the submit.
-  return { mode };
-}
-
-export interface ChangeHandlerResult extends ShellModeTransition {
   /** Whether the next submit (if in shell mode) is marked private. */
   pendingPrivate: boolean;
 }
 
 /** Strips `!` (entry), `!!` (entry + private), in-mode `!` (upgrade to private).
- *  pendingPrivate is sticky while in shell mode — clearing on empty text would
- *  fire during the entry-strip's recursive onChange("") and lose the signal. */
+ *  Shell mode is sticky — exit only via the Backspace-on-empty intercept;
+ *  auto-exit on empty text would fire during pi-tui's pre-emptive onChange("")
+ *  inside Editor.submitValue() and misroute the submit. pendingPrivate is
+ *  sticky for the same reason. */
 export function deriveChangeHandlerResult(
   mode: boolean,
   pendingPrivate: boolean,
