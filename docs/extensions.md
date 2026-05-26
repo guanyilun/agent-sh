@@ -62,6 +62,15 @@ agent-sh list                       # show all loadable extensions (extensions d
 
 For directory-style extensions with declared dependencies, `install` runs `npm install` in the target automatically.
 
+### Single-file vs directory
+
+The two layouts have different contracts, not just different ergonomics:
+
+- **Single-file `.ts`** lives bare in `~/.agent-sh/extensions/`. No `package.json`, no `npm install`. Runtime resolution walks up from that path looking for `node_modules/`, and on a fresh user there's nothing to find. So a single-file extension can only use `ctx` and **type-only** imports (`import type { AgentContext } from "agent-sh/types"`) — these are erased by tsx before execution. A *runtime* `import { foo } from "agent-sh/bar"` throws `Cannot find module` at load.
+- **Directory extension** ships with its own `package.json` declaring `agent-sh` (and any other runtime deps). `install` runs `npm install`, so bare imports resolve normally. Use this layout whenever you need runtime utilities the ctx surface doesn't provide.
+
+Decision rule: if everything you need is on `ctx` (and the surfaces that hang off it — `ctx.agent.*`, `ctx.shell.*`, `ctx.call(...)`), stay single-file. If you find yourself reaching for `agent-sh/utils/*` or `agent-sh/agent/*` at runtime, either there's a missing ctx primitive worth adding, or you should promote the extension to a directory layout.
+
 ## ExtensionContext API
 
 The context is layered: substrate primitives + slash-command registration at the top, host-specific surfaces nested under `ctx.agent` and `ctx.shell`. Both nested surfaces are **optional** — they're attached by their hosts during activation, and headless backends (ACP server, bridges) may skip a host's activation entirely:
@@ -464,7 +473,7 @@ export default function activate(ctx: AgentContext): void {
 | Field | Description |
 |---|---|
 | `id` | Provider name (used as the key in settings, `auth`, `/model`) |
-| `apiKey` | API key; omit for `noAuth` providers, otherwise resolved via `resolveApiKey(id)` |
+| `apiKey` | API key; omit for `noAuth` providers, otherwise resolve via `ctx.call("provider:resolve-api-key", id)` which returns `{ key, source }` (settings → keys.json → env) |
 | `baseURL` | OpenAI-compatible base URL |
 | `defaultModel` | Selected by default when this provider is active |
 | `models` | Catalog. Either `string[]` or `Array<{ id, contextWindow?, reasoning?, echoReasoning? }>` for per-model capabilities |

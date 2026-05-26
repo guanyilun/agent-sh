@@ -3,7 +3,6 @@
  * `agent-sh auth login ollama-cloud` or OLLAMA_API_KEY). Local host
  * overridable via OLLAMA_HOST.
  */
-import { resolveApiKey } from "agent-sh/auth";
 import type { AgentContext } from "agent-sh/types";
 
 const ECHO_REASONING_PATTERNS: RegExp[] = [/deepseek/i];
@@ -14,7 +13,9 @@ function reasoningParams(level: string): Record<string, unknown> {
 }
 
 export default function activate(ctx: AgentContext): void {
-  const cloudKey = resolveApiKey("ollama-cloud").key ?? process.env.OLLAMA_API_KEY;
+  const cloudKey =
+    (ctx.call("provider:resolve-api-key", "ollama-cloud") as { key: string | null }).key ??
+    process.env.OLLAMA_API_KEY;
   const cloudHost = "https://ollama.com";
   const cloudBaseURL = `${cloudHost}/v1`;
   ctx.agent.providers.configure("ollama-cloud", { reasoningParams });
