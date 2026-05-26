@@ -15,6 +15,7 @@ export const BUILTIN_EXTENSIONS: Array<{
 }> = [
   { name: "slash-commands",    load: () => import("./slash-commands/index.js").then(m => m.default) },
   { name: "file-autocomplete", load: () => import("./file-autocomplete.js").then(m => m.default) },
+  { name: "rolling-history",  load: () => import("../agent/extensions/rolling-history/index.js").then(m => m.default) },
 ];
 
 /**

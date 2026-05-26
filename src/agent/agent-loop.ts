@@ -877,6 +877,7 @@ export class AgentLoop implements AgentBackend {
     });
     h.define("conversation:estimate-tokens", () => this.conversation.estimateTokens());
     h.define("conversation:estimate-prompt-tokens", () => this.conversation.estimatePromptTokens());
+    h.define("conversation:link", (index: number, entryId: string) => this.conversation.link(index, entryId));
 
     // ── Nucleation (advisable) ─────────────────────────────────────
     // Turn a raw message into a one-line NuclearEntry. Advisors enrich
