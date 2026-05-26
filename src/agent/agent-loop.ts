@@ -21,8 +21,6 @@ import { contentText, type AgentBackend, type SkillView, type ToolDefinition, ty
 import { ToolRegistry } from "./tool-registry.js";
 import { normalizeToolArgs } from "./normalize-args.js";
 import { LiveView, type CompactResult } from "./live-view.js";
-import { HistoryFile, type HistoryAdapter } from "./history-file.js";
-import { nucleate, formatNuclearLine, isReadOnly, type NuclearEntry } from "./nuclear-form.js";
 import { STATIC_SYSTEM_PROMPT, buildStaticByCwd, formatSkillsBlock, loadGlobalAgentsMd } from "./system-prompt.js";
 import type { Compositor } from "../utils/compositor.js";
 import { createToolUI } from "../utils/tool-interactive.js";
@@ -72,13 +70,11 @@ export interface AgentLoopConfig {
   compositor?: Compositor;
   /** Instance ID from core — ensures history entries match the ID in prompts. */
   instanceId?: string;
-  history?: HistoryAdapter;
 }
 
 export class AgentLoop implements AgentBackend {
   private abortController: AbortController | null = null;
   private toolRegistry: ToolRegistry;
-  private history: HistoryAdapter;
   private conversation: LiveView;
   private fileReadCache: FileReadCache;
   private activeMode: AgentMode;
@@ -134,11 +130,6 @@ export class AgentLoop implements AgentBackend {
     this.toolRegistry = new ToolRegistry(this.handlers);
     this.fileReadCache = this.handlers.call("agent:file-read-cache") as FileReadCache;
 
-    // Shell-history-shaped log. Default writes go through the advisable
-    // `history:append` handler registered below; extensions swap the
-    // backend without touching this wiring.
-    const filePath = process.env.AGENT_SH_HISTORY_FILE || getSettings().historyFilePath;
-    this.history = config.history ?? new HistoryFile({ instanceId: this.instanceId, filePath });
     this.conversation = new LiveView(this.handlers, this.instanceId);
 
     this.activeMode = config.initialMode ?? { model: config.llmClient.model };
@@ -878,42 +869,6 @@ export class AgentLoop implements AgentBackend {
     h.define("conversation:estimate-tokens", () => this.conversation.estimateTokens());
     h.define("conversation:estimate-prompt-tokens", () => this.conversation.estimatePromptTokens());
     h.define("conversation:link", (index: number, entryId: string) => this.conversation.link(index, entryId));
-
-    // ── Nucleation (advisable) ─────────────────────────────────────
-    // Turn a raw message into a one-line NuclearEntry. Advisors enrich
-    // (e.g. `[why: ...]` extraction, adaptive summary lengths).
-    h.define("conversation:nucleate-user",
-      (text: string, iid: string, seq: number) => nucleate("user", text, iid, seq));
-    h.define("conversation:nucleate-agent",
-      (text: string, iid: string, seq: number) => nucleate("agent", text, iid, seq));
-    h.define("conversation:nucleate-tool",
-      (toolName: string, args: Record<string, unknown>, content: string, isError: boolean, iid: string, seq: number) =>
-        nucleate(isError ? "error" : "tool", toolName, args, content, isError, iid, seq));
-    // ── History file I/O (advisable) ───────────────────────────────
-    // Default is the append-only JSONL at ~/.agent-sh/history; advisors
-    // swap the backend without touching nucleation.
-    h.define("history:append", (entries: NuclearEntry[]) => {
-      if (!entries || entries.length === 0) return;
-      const writable = entries.filter((e) => !isReadOnly(e));
-      if (writable.length > 0) this.history.append(writable).catch(() => {});
-    });
-    h.define("history:search", async (query: string) => this.history.search(query));
-    h.define("history:find-by-seq", async (seq: number) => this.history.findBySeq(seq));
-    h.define("history:read-recent", async (max?: number) => this.history.readRecent(max));
-    h.define("history:get-branch", async (leafSeq: number) =>
-      this.history.getBranch ? this.history.getBranch(leafSeq) : this.history.readRecent());
-    h.define("history:get-tree", async () =>
-      this.history.getTree ? this.history.getTree() : this.history.readRecent());
-    h.define("history:set-leaf", (seq: number) => {
-      this.history.setLeaf?.(seq);
-    });
-
-    // Prior-session preamble renderer. Default: flat chronological list.
-    h.define("conversation:format-prior-history", (entries: NuclearEntry[]) => {
-      if (!entries || entries.length === 0) return null;
-      const lines = entries.map(formatNuclearLine);
-      return `[Prior session history \u2014 loaded from ~/.agent-sh/history]\n${lines.join("\n")}`;
-    });
 
     h.define("conversation:compact", (opts: {
       target?: number;

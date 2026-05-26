@@ -2,7 +2,7 @@
 /**
  * ashi — ash (agent-sh's built-in agent) in an interactive TUI.
  */
-import { createCore, NoopHistory } from "agent-sh/core";
+import { createCore } from "agent-sh/core";
 import { loadBuiltinExtensions } from "agent-sh/extensions";
 import { loadExtensions } from "agent-sh/extension-loader";
 import { activateAgent } from "agent-sh/agent";
@@ -134,7 +134,7 @@ async function main(): Promise<void> {
   const store = new MultiSessionStore(sessionsDir, cwd, { resumeSessionId: resumeId });
   const getStore = (): MultiSessionStore => store;
 
-  const core = createCore({ ...config, history: new NoopHistory() });
+  const core = createCore(config);
 
   let stopFrontend: (() => void) | null = null;
 
@@ -153,7 +153,7 @@ async function main(): Promise<void> {
 
   activateAgent(ctx);
   activateShellContext(ctx);
-  await loadBuiltinExtensions(ctx);
+  await loadBuiltinExtensions(ctx, ["rolling-history"]);
 
   const shell = new Shell({
     bus: core.bus,
@@ -183,7 +183,6 @@ async function main(): Promise<void> {
   registerRenderDefaults(ctx);
   registerDefaultSchemaRenderers(ctx);
 
-  ctx.advise("conversation:format-prior-history", () => null);
   ctx.advise("system-prompt:build", (next) => `${next()}\n\n<cwd>${process.cwd()}</cwd>`);
 
   const handle = mountAshi(ctx, getStore, capture);
