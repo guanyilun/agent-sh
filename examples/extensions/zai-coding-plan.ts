@@ -4,7 +4,6 @@
  * Auth:  agent-sh auth login zai-coding-plan
  * Usage: agent-sh -e ./examples/extensions/zai-coding-plan.ts
  */
-import { resolveApiKey } from "agent-sh/auth";
 import type { AgentContext } from "agent-sh/types";
 
 const BASE_URL = "https://api.z.ai/api/coding/paas/v4";
@@ -24,7 +23,7 @@ function buildReasoningParams(level: string, _model?: string): Record<string, un
 }
 
 export default function activate(ctx: AgentContext): void {
-  const { key } = resolveApiKey(ID);
+  const { key } = ctx.call("provider:resolve-api-key", ID) as { key: string | null };
   ctx.agent.providers.configure(ID, { reasoningParams: buildReasoningParams });
   ctx.agent.providers.register({
     id: ID,

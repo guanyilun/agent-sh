@@ -31,7 +31,6 @@
  */
 
 import type { AgentContext } from "agent-sh/types";
-import { resolveApiKey } from "agent-sh/auth";
 
 // ── Constants ──────────────────────────────────────────────────────
 
@@ -180,7 +179,7 @@ function buildReasoningParams(level: string): Record<string, unknown> {
 export default function activate(ctx: AgentContext): void {
   const apiKey =
     process.env.OPENCODE_API_KEY ??
-    resolveApiKey("opencode").key ?? undefined;
+    (ctx.call("provider:resolve-api-key", "opencode") as { key: string | null }).key ?? undefined;
 
   // ── Phase 1: register both providers synchronously with fallback models ──
 

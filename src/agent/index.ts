@@ -12,6 +12,7 @@ import { createLlmFacade } from "./llm-facade.js";
 import type { ToolDefinition, ToolSchemaView } from "./types.js";
 import { registerReadOnlyTool, unregisterReadOnlyTool } from "./nuclear-form.js";
 import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../core/settings.js";
+import { resolveApiKey } from "../cli/auth/keys.js";
 import { discoverSkills } from "./skills.js";
 import activateOpenrouter from "./providers/openrouter.js";
 import activateOpenai from "./providers/openai.js";
@@ -213,6 +214,8 @@ export default function agentBackend(ctx: ExtensionContext): void {
     },
   };
   (ctx as { agent?: AgentSurface }).agent = agentSurface;
+
+  ctx.define("provider:resolve-api-key", (id: string) => resolveApiKey(id));
 
   // Core tools register at activate — before extensions load — so
   // extensions that look them up at activate time (e.g. scheme.ts) find them.
