@@ -87,7 +87,7 @@ export interface Settings {
    * that boot agent-sh as a library against a specific working tree).
    */
   historyFilePath?: string;
-  /** Auto-compact threshold as fraction of conversation budget (0-1, default 0.5). */
+  autoCompact?: boolean;
   autoCompactThreshold?: number;
 
   // ── Display ───────────────────────────────────────────────
@@ -162,6 +162,7 @@ const DEFAULTS: Required<Settings> = {
   historyMaxBytes: 104857600, // 100MB — history is only accessed via search/expand, never loaded wholesale
   historyStartupEntries: 100,
   historyFilePath: undefined as unknown as string,
+  autoCompact: true,
   autoCompactThreshold: 0.5,
   maxCommandOutputLines: 3,
   readOutputMaxLines: 10,
@@ -176,6 +177,40 @@ const DEFAULTS: Required<Settings> = {
 };
 
 let cached: Settings | null = null;
+let envOverrides: Partial<Settings> | null = null;
+let sessionOverlay: Partial<Settings> = {};
+
+export type SettingSource = "session" | "env" | "file" | "default";
+
+function parseBoolEnv(raw: string | undefined, key: string): boolean | undefined {
+  if (raw === undefined) return undefined;
+  const v = raw.trim().toLowerCase();
+  if (v === "on" || v === "true" || v === "1") return true;
+  if (v === "off" || v === "false" || v === "0") return false;
+  console.error(`[agent-sh] Warning: ${key}="${raw}" is not a boolean (off|on|true|false|0|1); ignoring.`);
+  return undefined;
+}
+
+function parseUnitFloatEnv(raw: string | undefined, key: string): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > 1) {
+    console.error(`[agent-sh] Warning: ${key}="${raw}" is not a number in [0, 1]; ignoring.`);
+    return undefined;
+  }
+  return n;
+}
+
+function loadEnvOverrides(): Partial<Settings> {
+  if (envOverrides) return envOverrides;
+  const out: Partial<Settings> = {};
+  const ac = parseBoolEnv(process.env.AGENT_SH_AUTO_COMPACT, "AGENT_SH_AUTO_COMPACT");
+  if (ac !== undefined) out.autoCompact = ac;
+  const th = parseUnitFloatEnv(process.env.AGENT_SH_AUTO_COMPACT_THRESHOLD, "AGENT_SH_AUTO_COMPACT_THRESHOLD");
+  if (th !== undefined) out.autoCompactThreshold = th;
+  envOverrides = out;
+  return envOverrides;
+}
 
 /** Load settings from disk (cached after first call). */
 export function getSettings(): Settings & typeof DEFAULTS {
@@ -190,7 +225,28 @@ export function getSettings(): Settings & typeof DEFAULTS {
       cached = {};
     }
   }
-  return { ...DEFAULTS, ...cached };
+  return { ...DEFAULTS, ...cached, ...loadEnvOverrides(), ...sessionOverlay };
+}
+
+export function setSessionOverlay(patch: Partial<Settings>): void {
+  sessionOverlay = { ...sessionOverlay, ...patch };
+}
+
+export function clearSessionOverlay(...keys: (keyof Settings)[]): void {
+  if (keys.length === 0) {
+    sessionOverlay = {};
+    return;
+  }
+  const next = { ...sessionOverlay };
+  for (const k of keys) delete next[k];
+  sessionOverlay = next;
+}
+
+export function getSettingSource(key: keyof Settings): SettingSource {
+  if (key in sessionOverlay) return "session";
+  if (key in loadEnvOverrides()) return "env";
+  if (cached && key in cached) return "file";
+  return "default";
 }
 
 /**
@@ -218,6 +274,8 @@ export function getExtensionSettings<T extends Record<string, unknown>>(
 /** Reset cached settings (for testing or after external edit). */
 export function reloadSettings(): void {
   cached = null;
+  envOverrides = null;
+  sessionOverlay = {};
 }
 
 /**
