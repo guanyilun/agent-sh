@@ -173,7 +173,7 @@ export async function loadExtensions(
     specifiers.push(...settings.extensions);
   }
 
-  const userSpecifiers = await discoverUserExtensions();
+  const userSpecifiers = await discoverUserExtensions(ctx);
   specifiers.push(...userSpecifiers);
 
   const seen = new Set<string>();
@@ -187,19 +187,30 @@ export async function loadExtensions(
   return loaded;
 }
 
-async function discoverUserExtensions(): Promise<string[]> {
+async function discoverUserExtensions(ctx: ExtensionContext): Promise<string[]> {
   const specifiers: string[] = [];
   const disabled = new Set(getSettings().disabledExtensions ?? []);
-  try {
-    const entries = await fs.readdir(EXT_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-      // Disable check: directory name for dir-extensions, or basename sans
-      // extension for file-extensions. Lets settings.json turn one off
-      // without renaming it.
-      const nameForDisable = entry.name.replace(/\.[^.]+$/, "");
-      if (disabled.has(nameForDisable)) continue;
 
-      const fullPath = path.join(EXT_DIR, entry.name);
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(EXT_DIR, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return specifiers;
+    ctx.bus.emit("ui:error", {
+      message: `Failed to read extensions directory ${EXT_DIR}: ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return specifiers;
+  }
+
+  for (const entry of entries) {
+    // Disable check: directory name for dir-extensions, or basename sans
+    // extension for file-extensions. Lets settings.json turn one off
+    // without renaming it.
+    const nameForDisable = entry.name.replace(/\.[^.]+$/, "");
+    if (disabled.has(nameForDisable)) continue;
+
+    const fullPath = path.join(EXT_DIR, entry.name);
+    try {
       const isDir = entry.isDirectory() ||
         (entry.isSymbolicLink() && (await fs.stat(fullPath)).isDirectory());
       if (isDir) {
@@ -208,9 +219,11 @@ async function discoverUserExtensions(): Promise<string[]> {
       } else if (SCRIPT_EXTS.some((ext) => entry.name.endsWith(ext))) {
         specifiers.push(fullPath);
       }
+    } catch (err) {
+      ctx.bus.emit("ui:error", {
+        message: `Failed to inspect extension ${fullPath}: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
-  } catch {
-    // Directory doesn't exist — no user extensions
   }
   return specifiers;
 }
@@ -266,7 +279,7 @@ async function loadSpecifiers(
  * Tears down old registrations, busts the module cache, and re-activates.
  */
 export async function reloadExtensions(ctx: ExtensionContext): Promise<string[]> {
-  const specifiers = await discoverUserExtensions();
+  const specifiers = await discoverUserExtensions(ctx);
   return loadSpecifiers(specifiers, ctx, true);
 }
 
