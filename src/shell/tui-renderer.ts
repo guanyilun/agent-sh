@@ -494,10 +494,13 @@ export default function activate(ctx: ExtensionContext): void {
   bus.on("ui:info", (e) => {
     stopCurrentSpinner();
     showInfo(e.message);
-    // Restart spinner if agent is still processing
+    bus.emit("input:redraw", {});
     if (s.renderer) startThinkingSpinner();
   });
-  bus.on("ui:error", (e) => showError(e.message));
+  bus.on("ui:error", (e) => {
+    showError(e.message);
+    bus.emit("input:redraw", {});
+  });
   bus.on("ui:suggestion", (e) => {
     compositor.surface("status").writeLine(`${p.dim}💡 ${e.text}${p.reset}`);
   });

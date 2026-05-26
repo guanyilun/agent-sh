@@ -52,6 +52,7 @@ declare module "../core/event-bus.js" {
     "input-mode:register": import("./host-types.js").InputModeConfig;
     "input:keypress": { key: string };
     "input:intercept": { data: string; consumed: boolean };
+    "input:redraw": Record<string, never>;
 
     "compositor:write": { stream: string; text: string };
 
