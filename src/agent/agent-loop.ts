@@ -144,9 +144,11 @@ export class AgentLoop implements AgentBackend {
     this.activeMode = config.initialMode ?? { model: config.llmClient.model };
 
     // Tool protocol — controls how tools are presented to the LLM
+    const { names: fromExtensions } = this.bus.emitPipe("agent:core-tools:collect", { names: [] });
+    const coreTools = Array.from(new Set([...(getSettings().coreTools ?? []), ...fromExtensions]));
     this.toolProtocol = createToolProtocol(
       getSettings().toolMode ?? "api",
-      getSettings().coreTools ?? [],
+      coreTools,
     );
 
     // Register core tools
