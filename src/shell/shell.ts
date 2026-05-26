@@ -6,7 +6,8 @@ import { InputHandler, type InputContext } from "./input-handler.js";
 import { OutputParser } from "./output-parser.js";
 import { getSettings } from "../core/settings.js";
 import { clearOpost } from "../utils/tty.js";
-import { processTerminal, type Terminal } from "./terminal.js";
+import { processTerminal, surfaceFromTerminal, type Terminal } from "./terminal.js";
+import { TuiInputView } from "./tui-input-view.js";
 import {
   pickStrategy,
   FALLBACK_STRATEGY,
@@ -138,6 +139,7 @@ export class Shell implements InputContext {
       bus: opts.bus,
       handlers: opts.handlers,
       onShowAgentInfo: opts.onShowAgentInfo ?? (() => ({ info: "" })),
+      view: new TuiInputView(surfaceFromTerminal(this.terminal)),
     });
 
     this.setupOutput();
