@@ -352,8 +352,12 @@ export default function agentBackend(ctx: ExtensionContext): void {
     resolvedProviders = computeResolvedProviders();
 
     const settings = getSettings();
-    const providerName = config.provider ?? settings.defaultProvider
-      ?? (resolvedProviders.size > 0 ? resolvedProviders.keys().next().value : undefined);
+    // Built-ins register unconditionally so `auth list` can enumerate them;
+    // the fallback must skip keyless entries or it lands on openrouter and
+    // bails at the `!effectiveApiKey` guard below.
+    const providerName = config.provider
+      ?? settings.defaultProvider
+      ?? [...resolvedProviders].find(([, p]) => p.apiKey)?.[0];
     const activeProvider = providerName ? resolvedProviders.get(providerName) ?? null : null;
 
     // Persisted defaultModel wins over openrouter's hardcoded DEFAULT_MODELS[0].
