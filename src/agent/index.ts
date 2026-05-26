@@ -11,7 +11,15 @@ import { LlmClient } from "./llm-client.js";
 import { createLlmFacade } from "./llm-facade.js";
 import type { ToolDefinition, ToolSchemaView } from "./types.js";
 import { registerReadOnlyTool, unregisterReadOnlyTool } from "./nuclear-form.js";
-import { resolveProvider, getProviderNames, getSettings, type ResolvedProvider } from "../core/settings.js";
+import {
+  resolveProvider,
+  getProviderNames,
+  getSettings,
+  setSessionOverlay,
+  clearSessionOverlay,
+  getSettingSource,
+  type ResolvedProvider,
+} from "../core/settings.js";
 import { resolveApiKey } from "../cli/auth/keys.js";
 import { discoverSkills } from "./skills.js";
 import activateOpenrouter from "./providers/openrouter.js";
@@ -409,8 +417,50 @@ export default function agentBackend(ctx: ExtensionContext): void {
         ashActive = true;
         bus.emit("command:register", {
           name: "/compact",
-          description: "Compact conversation via the active compaction strategy",
-          handler: () => bus.emit("agent:compact-request", {}),
+          description: "Compact now, or: off | on | threshold <0..1> | status",
+          handler: (args: string) => {
+            const trimmed = args.trim();
+            if (!trimmed) {
+              bus.emit("agent:compact-request", {});
+              return;
+            }
+            const [sub, ...rest] = trimmed.split(/\s+/);
+            if (sub === "off" || sub === "on") {
+              setSessionOverlay({ autoCompact: sub === "on" });
+              bus.emit("ui:info", { message: `auto-compact: ${sub} (session)` });
+              return;
+            }
+            if (sub === "threshold") {
+              const raw = rest[0];
+              const n = Number(raw);
+              if (!raw || !Number.isFinite(n) || n < 0 || n > 1) {
+                bus.emit("ui:error", { message: "usage: /compact threshold <0.0..1.0>" });
+                return;
+              }
+              setSessionOverlay({ autoCompactThreshold: n });
+              bus.emit("ui:info", { message: `auto-compact threshold: ${n} (session)` });
+              return;
+            }
+            if (sub === "reset") {
+              clearSessionOverlay("autoCompact", "autoCompactThreshold");
+              bus.emit("ui:info", { message: "auto-compact: session overrides cleared" });
+              return;
+            }
+            if (sub === "status") {
+              const s = getSettings();
+              const enabledSrc = getSettingSource("autoCompact");
+              const thSrc = getSettingSource("autoCompactThreshold");
+              bus.emit("ui:info", {
+                message:
+                  `auto-compact: ${s.autoCompact ? "on" : "off"} (${enabledSrc}), ` +
+                  `threshold: ${s.autoCompactThreshold} (${thSrc})`,
+              });
+              return;
+            }
+            bus.emit("ui:error", {
+              message: `unknown subcommand: ${sub}. usage: /compact [off|on|threshold <0..1>|reset|status]`,
+            });
+          },
         });
         bus.emit("command:register", {
           name: "/context",

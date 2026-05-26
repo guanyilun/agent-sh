@@ -1140,10 +1140,11 @@ export class AgentLoop implements AgentBackend {
       // Auto-compact when total context approaches the window limit.
       const totalEstimate = this.conversation.estimatePromptTokens();
       const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+      const s = getSettings();
       const threshold = Math.floor(
-        (contextWindow - RESPONSE_RESERVE) * getSettings().autoCompactThreshold,
+        (contextWindow - RESPONSE_RESERVE) * s.autoCompactThreshold,
       );
-      if (totalEstimate > threshold) {
+      if (s.autoCompact && totalEstimate > threshold) {
         // Compact deeply — shallow targets buy only 1–2 turns of runway on
         // tool-heavy workloads.
         const target = Math.floor(threshold * 0.25);
