@@ -44,8 +44,6 @@ export class LiveView {
     this.cachedMessagesJson = null;
   }
 
-  // ── Message API ──────────────────────────────────────────────
-
   addUserMessage(text: string): void {
     this.messages.push({ role: "user", content: text });
     this.invalidateMessagesCache();
@@ -98,7 +96,6 @@ export class LiveView {
     this.flushPendingMessages();
   }
 
-  /** Add tool results as a user message (for inline tool protocol). */
   addToolResultInline(content: string): void {
     this.messages.push({ role: "user", content });
     this.invalidateMessagesCache();
@@ -249,8 +246,7 @@ export class LiveView {
     });
   }
 
-  /** Wholesale replace. Invalidates the API token baseline since the
-   *  new array's count is unknown. */
+  /** Invalidates the API token baseline since the new array's count is unknown. */
   replaceMessages(messages: ChatCompletionMessageParam[]): void {
     this.messages = messages;
     this.invalidateMessagesCache();
@@ -258,7 +254,6 @@ export class LiveView {
     this.lastApiMessageCount = 0;
     this.flushPendingMessages();
   }
-
 
   updateApiTokenCount(promptTokens: number): void {
     this.lastApiTokenCount = promptTokens;
