@@ -66,6 +66,48 @@ export function processTerminal(): Terminal {
 }
 
 /**
+ * No-op terminal for non-rendering hosts (tests, agent-only embeds).
+ * Writes are discarded; input/resize never fire.
+ */
+export function headlessTerminal(cols = 100, rows = 30): Terminal {
+  return {
+    write() {},
+    onInput: () => () => {},
+    onResize: () => () => {},
+    cols: () => cols,
+    rows: () => rows,
+  };
+}
+
+/**
+ * Pipe-based terminal for embedders that own their own renderer (web hubs
+ * via xterm.js, electron windows, recording harnesses). Bytes from the
+ * Shell flow through `onWrite`; the host drives `pushInput`/`pushResize`
+ * to forward keystrokes and viewport changes back.
+ */
+export class BridgedTerminal implements Terminal {
+  private inputCbs = new Set<(d: string) => void>();
+  private resizeCbs = new Set<(c: number, r: number) => void>();
+  private _cols: number;
+  private _rows: number;
+  constructor(private readonly onWrite: (data: string) => void, cols = 100, rows = 30) {
+    this._cols = cols;
+    this._rows = rows;
+  }
+  write(data: string): void { this.onWrite(data); }
+  onInput(cb: (d: string) => void): () => void { this.inputCbs.add(cb); return () => { this.inputCbs.delete(cb); }; }
+  onResize(cb: (c: number, r: number) => void): () => void { this.resizeCbs.add(cb); return () => { this.resizeCbs.delete(cb); }; }
+  cols(): number { return this._cols; }
+  rows(): number { return this._rows; }
+  pushInput(data: string): void { for (const cb of this.inputCbs) cb(data); }
+  pushResize(cols: number, rows: number): void {
+    this._cols = cols;
+    this._rows = rows;
+    for (const cb of this.resizeCbs) cb(cols, rows);
+  }
+}
+
+/**
  * Adapt a Terminal to a RenderSurface (the compositor's sink type). Adds
  * the OPOST-cleared `\n` → `\r\n` translation that StdoutSurface applies,
  * since the PTY has OPOST disabled.

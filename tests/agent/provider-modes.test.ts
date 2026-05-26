@@ -187,16 +187,15 @@ test("persisted default not in initial catalog → stub used as initial active m
   assert.deepEqual(result.modes!.map((m) => m.model), ["existing/m1"], "registry has only the real catalog");
 });
 
-test("late catalog containing persisted default emits config:switch-model when active differs", async () => {
+test("late catalog containing persisted default does not switch away from active override", async () => {
   const settings = {
     defaultProvider: "openrouter",
     providers: { openrouter: { apiKey: "x", defaultModel: "persisted/m" } },
   };
 
   const result = await runDriver(settings, {
-    // config.model forces llmClient.model != persistedModel so reconcile fires when the catalog arrives.
     config: { model: "override/m" },
-    capture: ["config:switch-model", "agent:modes-changed"],
+    capture: ["config:switch-model", "agent:info"],
     steps: [
       { kind: "providers.register", payload: { id: "openrouter", apiKey: "x", defaultModel: "override/m", models: ["override/m"] } },
       { kind: "core:extensions-loaded" },
@@ -207,6 +206,8 @@ test("late catalog containing persisted default emits config:switch-model when a
   });
 
   const switches = pickEvents(result.events, "config:switch-model");
-  assert.equal(switches.length, 1, `expected one config:switch-model; got ${JSON.stringify(switches)}`);
-  assert.equal(switches[0].model, "persisted/m");
+  assert.equal(switches.length, 0, `expected no config:switch-model; got ${JSON.stringify(switches)}`);
+
+  const infos = pickEvents(result.events, "agent:info");
+  assert.equal(infos[infos.length - 1].model, "override/m", "active model stays on the override");
 });

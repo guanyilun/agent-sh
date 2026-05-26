@@ -41,6 +41,10 @@
       "types": "./dist/shell/shell.d.ts",
       "default": "./dist/shell/shell.js"
     },
+    "./shell/host": {
+      "types": "./dist/shell/index.d.ts",
+      "default": "./dist/shell/index.js"
+    },
     "./shell/strategies": {
       "types": "./dist/shell/strategies/index.d.ts",
       "default": "./dist/shell/strategies/index.js"
