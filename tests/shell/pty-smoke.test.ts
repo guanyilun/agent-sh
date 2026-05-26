@@ -129,4 +129,94 @@ for (const spec of SHELLS) {
     assert.ok(preexecOk, `PREEXEC (OSC 9997) never observed\n${detail}`);
     assert.ok(readyOk, `READY (OSC 9998) never observed\n${detail}`);
   });
+
+  /**
+   * Regression: bash's DEBUG-trap integration used to fire PREEXEC during
+   * rcfile sourcing (before readline loaded history), emitting `9997;;` with
+   * an empty body. zsh/fish use native preexec hooks that only fire on real
+   * commands. This test forces HISTFILE=/dev/null so bash's `history 1`
+   * returns empty — without the strategy guard, the spurious marker leaks
+   * out and the count below comes in at 2 instead of 1.
+   */
+  test(`${spec.strategy.name}: no PREEXEC before user enters a command`, { timeout: 20000, skip: skipReason }, async () => {
+    const counts = await preexecCountRun(bin!, spec.strategy, 15000);
+    assert.equal(
+      counts.beforeCommand, 0,
+      `expected zero PREEXEC before any command, got ${counts.beforeCommand}\n--- captured ---\n${counts.data.slice(0, 1024)}`,
+    );
+    assert.equal(
+      counts.total, 1,
+      `expected exactly one PREEXEC after \`true\`, got ${counts.total}\n--- captured ---\n${counts.data.slice(0, 1024)}`,
+    );
+  });
+}
+
+interface PreexecCounts { beforeCommand: number; total: number; data: string }
+
+/** Wait for READY, drain an idle window, count PREEXECs at that point, then
+ *  send `true` and wait for a new PREEXEC. The pre-command count isolates
+ *  spurious emissions from the legitimate one. */
+function preexecCountRun(shellBin: string, strategy: ShellStrategy, timeoutMs: number): Promise<PreexecCounts> {
+  const tmpDirRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-sh-pty-preexec-"));
+  const userHome = process.env.HOME || os.homedir();
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined) env[k] = v;
+  }
+  // Force an empty history list so the bash bug — `history 1` returning ""
+  // and yielding an empty PREEXEC body — actually triggers under CI/local
+  // shells that have populated history files. Harmless on zsh/fish.
+  env.HISTFILE = "/dev/null";
+  env.HISTSIZE = "0";
+  env.HISTFILESIZE = "0";
+
+  const cfg = strategy.prepareSpawn({
+    tmpDirRoot, instanceTag: "id=preexec", showIndicator: false, userHome, env,
+  });
+  Object.assign(env, cfg.envOverrides);
+
+  const term = pty.spawn(shellBin, cfg.args, {
+    name: "xterm-256color", cols: 80, rows: 24, cwd: userHome, env,
+  });
+
+  return new Promise((resolve) => {
+    let data = "";
+    let beforeCommand = -1;
+    let commandSent = false;
+    let done = false;
+    const PREEXEC = /\x1b\]9997;id=preexec;[^\x07]*\x07/g;
+    const READY = /\x1b\]9998;id=preexec;READY\x07/;
+    let idleTimer: NodeJS.Timeout | null = null;
+
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(killTimer);
+      if (idleTimer) clearTimeout(idleTimer);
+      try { term.kill(); } catch { /* noop */ }
+      fs.rmSync(tmpDirRoot, { recursive: true, force: true });
+      if (cfg.tmpDir && cfg.tmpDir !== tmpDirRoot) {
+        try { fs.rmSync(cfg.tmpDir, { recursive: true, force: true }); } catch { /* noop */ }
+      }
+      resolve({ beforeCommand: Math.max(0, beforeCommand), total: (data.match(PREEXEC) ?? []).length, data });
+    };
+    const killTimer = setTimeout(finish, timeoutMs);
+
+    term.onData((chunk) => {
+      data += chunk;
+      // First READY = prompt rendered. Drain 800ms idle to let any spurious
+      // emissions arrive, then snapshot the count before sending.
+      if (beforeCommand < 0 && READY.test(data)) {
+        idleTimer = setTimeout(() => {
+          beforeCommand = (data.match(PREEXEC) ?? []).length;
+          commandSent = true;
+          term.write("true\r");
+        }, 800);
+      }
+      if (commandSent && (data.match(PREEXEC) ?? []).length > beforeCommand) {
+        finish();
+      }
+    });
+    term.onExit(() => finish());
+  });
 }

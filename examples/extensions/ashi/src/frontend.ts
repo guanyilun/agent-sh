@@ -636,6 +636,9 @@ export function mountAshi(
   let activeUserShell: { pair: ToolPair; command: string; isPrivate: boolean } | null = null;
   bus.on("shell:command-start", ({ command }) => {
     if (agentShellActive) return;
+    // Defensive: bash DEBUG-trap integrations have been observed firing
+    // before any user input, with an empty command body.
+    if (!command.trim()) return;
     finalizeThinking();
     if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
     const isPrivate = pendingUserBlockPrivacy.shift() ?? false;
