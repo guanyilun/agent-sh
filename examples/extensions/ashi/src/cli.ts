@@ -8,7 +8,7 @@ import { loadExtensions } from "agent-sh/extension-loader";
 import { activateAgent } from "agent-sh/agent";
 import { getSettings } from "agent-sh/settings";
 import { Shell } from "agent-sh/shell";
-import type { Terminal } from "agent-sh/shell/terminal";
+import { headlessTerminal } from "agent-sh/shell/terminal";
 import activateShellContext from "agent-sh/shell/context";
 import type { AppConfig } from "agent-sh/types";
 
@@ -19,17 +19,6 @@ declare module "agent-sh/event-bus" {
      *  TUI (overlays, listeners) should subscribe here. */
     "ashi:ready": Record<string, never>;
   }
-}
-
-/** No-op: ashi renders via pi-tui, the PTY only needs to exist. */
-function headlessTerminal(): Terminal {
-  return {
-    write() {},
-    onInput: () => () => {},
-    onResize: () => () => {},
-    cols: () => 100,
-    rows: () => 30,
-  };
 }
 
 import { mountAshi } from "./frontend.js";
