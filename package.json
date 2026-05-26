@@ -1,6 +1,6 @@
 {
   "name": "agent-sh",
-  "version": "0.14.7",
+  "version": "0.14.8",
   "description": "A shell-first terminal where AI is one keystroke away",
   "type": "module",
   "workspaces": [
