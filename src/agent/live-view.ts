@@ -1,6 +1,7 @@
 import type { ChatCompletionMessageParam, AgentShMessage } from "./llm-client.js";
 import { stripMeta } from "./llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
+import type { ImageContent } from "./types.js";
 
 export interface CompactResult {
   before: number;
@@ -9,19 +10,7 @@ export interface CompactResult {
   [extra: string]: unknown;
 }
 
-export interface LiveView {
-  get(): AgentShMessage[];
-  forLLM(): ChatCompletionMessageParam[];
-  replace(msgs: AgentShMessage[]): void;
-  estimateTokens(): number;
-  /** Full prompt estimate (conversation + system + tools + dynamic
-   *  context). Falls back to estimateTokens() before the first API
-   *  call establishes an overhead baseline. */
-  estimatePromptTokens(): number;
-  link(index: number, entryId: string): void;
-}
-
-export class InMemoryLiveView implements LiveView {
+export class LiveView {
   private messages: ChatCompletionMessageParam[] = [];
   private messagesDirty = true;
   private cachedMessagesJson: string | null = null;
@@ -93,8 +82,18 @@ export class InMemoryLiveView implements LiveView {
     this.invalidateMessagesCache();
   }
 
-  addToolResult(toolCallId: string, content: string, _isError = false): void {
-    this.messages.push({ role: "tool", tool_call_id: toolCallId, content });
+  addToolResult(toolCallId: string, content: string | ImageContent[], isError = false): void {
+    if (typeof content === "string") {
+      this.messages.push({ role: "tool", tool_call_id: toolCallId, content });
+    } else {
+      const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [];
+      for (const img of content) {
+        parts.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.data}` } });
+      }
+      const label = isError ? `Error: [${content.length} image(s)]` : `[${content.length} image(s)]`;
+      parts.unshift({ type: "text", text: label });
+      this.messages.push({ role: "tool", tool_call_id: toolCallId, content: parts } as unknown as ChatCompletionMessageParam);
+    }
     this.invalidateMessagesCache();
     this.flushPendingMessages();
   }
@@ -176,7 +175,7 @@ export class InMemoryLiveView implements LiveView {
 
   link(index: number, entryId: string): void {
     const m = this.messages[index];
-    if (!m) throw new Error(`InMemoryLiveView.link: no message at index ${index}`);
+    if (!m) throw new Error(`LiveView.link: no message at index ${index}`);
     const am = m as AgentShMessage;
     am.meta = { ...am.meta, entryId };
   }

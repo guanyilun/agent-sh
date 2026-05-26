@@ -12,7 +12,7 @@
 import type { EventBus } from "../core/event-bus.js";
 import type { LlmClient } from "./llm-client.js";
 import { contentText, type ToolDefinition } from "./types.js";
-import { ConversationState } from "./conversation-state.js";
+import { LiveView } from "./live-view.js";
 import { normalizeToolArgs } from "./normalize-args.js";
 import { wrapTrailingWithDynamicContext } from "../utils/message-utils.js";
 
@@ -93,7 +93,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     },
   }));
 
-  const conversation = new ConversationState();
+  const conversation = new LiveView();
   conversation.addUserMessage(task);
 
   let fullResponseText = "";
@@ -193,7 +193,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
 async function streamOnce(
   llmClient: LlmClient,
   systemPrompt: string,
-  conversation: ConversationState,
+  conversation: LiveView,
   apiTools: any[],
   model: string | undefined,
   signal: AbortSignal | undefined,

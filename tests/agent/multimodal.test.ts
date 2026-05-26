@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentText, type ImageContent } from "../../src/agent/types.js";
-import { ConversationState } from "../../src/agent/conversation-state.js";
+import { LiveView } from "../../src/agent/live-view.js";
 
 const DRIVER = fileURLToPath(new URL("../fixtures/multimodal-driver.ts", import.meta.url));
 
@@ -122,10 +122,10 @@ test("read_file on text file returns string unchanged", async () => {
   }
 });
 
-// ── ConversationState.addToolResult ──────────────────────────────────
+// ── LiveView.addToolResult ──────────────────────────────────
 
-test("ConversationState.addToolResult with string produces plain tool message", () => {
-  const conv = new ConversationState();
+test("LiveView.addToolResult with string produces plain tool message", () => {
+  const conv = new LiveView();
   conv.addAssistantMessage(null, [{ id: "call_1", function: { name: "read_file", arguments: "{}" } }]);
   conv.addToolResult("call_1", "file content");
 
@@ -135,8 +135,8 @@ test("ConversationState.addToolResult with string produces plain tool message", 
   assert.equal(toolMsg.content, "file content");
 });
 
-test("ConversationState.addToolResult with ImageContent[] produces vision content parts", () => {
-  const conv = new ConversationState();
+test("LiveView.addToolResult with ImageContent[] produces vision content parts", () => {
+  const conv = new LiveView();
   conv.addAssistantMessage(null, [{ id: "call_1", function: { name: "read_file", arguments: "{}" } }]);
   conv.addToolResult("call_1", [{ type: "image", data: "Zm9v", mimeType: "image/png" }]);
 
@@ -154,8 +154,8 @@ test("ConversationState.addToolResult with ImageContent[] produces vision conten
   assert.equal(imagePart.image_url.url, "data:image/png;base64,Zm9v");
 });
 
-test("ConversationState.addToolResult with error ImageContent[] still marks error", () => {
-  const conv = new ConversationState();
+test("LiveView.addToolResult with error ImageContent[] still marks error", () => {
+  const conv = new LiveView();
   conv.addAssistantMessage(null, [{ id: "call_1", function: { name: "read_file", arguments: "{}" } }]);
   conv.addToolResult("call_1", [{ type: "image", data: "Zm9v", mimeType: "image/png" }], true);
 
@@ -163,29 +163,6 @@ test("ConversationState.addToolResult with error ImageContent[] still marks erro
   const toolMsg = msgs.find((m) => m.role === "tool") as any;
   assert.ok(Array.isArray(toolMsg.content));
   assert.ok(toolMsg.content[0].text.startsWith("Error:"));
-});
-
-// ── eagerNucleateTools ──────────────────────────────────────────────
-
-test("eagerNucleateTools with ImageContent[] stores text summary in recall archive", () => {
-  const conv = new ConversationState({
-    call: (name: string, ...args: unknown[]) => {
-      if (name === "conversation:nucleate-tool") {
-        const [, , text] = args as [string, Record<string, unknown>, string, boolean, string, number];
-        return { seq: 1, type: "tool", summary: text, body: text, tool: "read_file" };
-      }
-      if (name === "history:append") return undefined;
-      return undefined;
-    },
-  } as any);
-
-  conv.eagerNucleateTools([
-    { toolName: "read_file", args: { path: "x.png" }, content: [{ type: "image", data: "Zm9v", mimeType: "image/png" }], isError: false },
-  ]);
-
-  const entries = conv.getNuclearEntries();
-  assert.equal(entries.length, 1);
-  assert.ok(entries[0].body.includes("[1 image(s)]"), "nuclear entry body should contain image count summary");
 });
 
 // ── System prompt ───────────────────────────────────────────────────
