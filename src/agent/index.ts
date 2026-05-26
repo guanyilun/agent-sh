@@ -411,7 +411,6 @@ export default function agentBackend(ctx: ExtensionContext): void {
           initialMode,
           compositor: ctx.shell?.compositor,
           instanceId: ctx.instanceId,
-          history: config.history,
         });
         agentLoop.wire();
         ashActive = true;

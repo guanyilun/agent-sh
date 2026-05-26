@@ -64,6 +64,10 @@ export class InputHandler {
       if (this.activeMode) this.drawPrompt();
     });
 
+    this.bus.on("input:redraw", () => {
+      if (this.activeMode) this.renderModeInput();
+    });
+
     this.bus.on("input-mode:register", (config) => {
       this.registerMode(config);
     });

@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createCore, NoopHistory } from "../../src/core/index.js";
+import { createCore } from "../../src/core/index.js";
 import activateShellContext from "../../src/shell/shell-context.js";
 
 function setup(): { core: ReturnType<typeof createCore> } {
-  const core = createCore({ history: new NoopHistory() });
+  const core = createCore({});
   const ctx = core.extensionContext({ quit: () => {} });
   activateShellContext(ctx);
   return { core };

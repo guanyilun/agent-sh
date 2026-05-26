@@ -1,5 +1,4 @@
 import type { CoreConfig, CoreContext } from "../core/types.js";
-import type { HistoryAdapter } from "./history-file.js";
 import type { SkillView, ToolDefinition, ToolExecutionContext, ToolSchemaView } from "./types.js";
 
 // ── LLM port ─────────────────────────────────────────────────────
@@ -176,8 +175,6 @@ export interface AgentConfigSurface {
   provider?: string;
   /** Default model id. */
   model?: string;
-  /** Conversation history backend. Defaults to the on-disk HistoryFile. */
-  history?: HistoryAdapter;
 }
 
 export type AgentConfig = CoreConfig & AgentConfigSurface;

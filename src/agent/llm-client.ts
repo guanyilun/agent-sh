@@ -19,7 +19,7 @@ export type AgentShMessage = ChatCompletionMessageParam & {
   meta?: Record<string, unknown>;
 };
 
-function stripMeta(m: ChatCompletionMessageParam): ChatCompletionMessageParam {
+export function stripMeta(m: ChatCompletionMessageParam): ChatCompletionMessageParam {
   if (!("meta" in m)) return m;
   const { meta: _meta, ...rest } = m as ChatCompletionMessageParam & { meta?: unknown };
   return rest as ChatCompletionMessageParam;
