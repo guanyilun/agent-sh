@@ -2058,6 +2058,10 @@ export default function activate(ctx: AgentContext): void {
     for (const name of HIDDEN_IN_SCHEME_ONLY) {
       try { ctx.agent.unregisterTool(name); } catch { /* not registered — fine */ }
     }
+    ctx.bus.onPipe("agent:core-tools:collect", (ev) => ({
+      ...ev,
+      names: [...ev.names, "scheme_eval"],
+    }));
   }
 
   ctx.agent.registerTool({

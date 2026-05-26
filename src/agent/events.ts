@@ -13,6 +13,9 @@ export interface AgentIdentity {
 
 declare module "../core/event-bus.js" {
   interface BusEvents {
+    /** Sync pipe: extensions append core tool names; unioned with settings.coreTools. */
+    "agent:core-tools:collect": { names: string[] };
+
     "agent:providers": { providers: ProviderRegistration[] };
     "agent:providers:changed": Record<string, never>;
     "provider:configure": {
