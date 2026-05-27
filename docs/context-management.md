@@ -141,7 +141,7 @@ There's no dedicated shell-recall tool: the spill file is just a normal file. Th
 
 ### Conversation — `conversation_recall` tool
 
-Registered by the built-in agent:
+Registered by the built-in `rolling-history` extension (only present when that extension is active; bridges and embedded uses don't ship it):
 
 - `conversation_recall {"action": "browse"}` — list in-context nuclear entries + the 25 most recent history-file entries
 - `conversation_recall {"action": "search", "query": "..."}` — regex search across the in-session archive and the history file (both one-line summaries and full bodies)
@@ -164,6 +164,7 @@ Common override patterns: LLM-summarized compaction (summarize evicted turns bef
 |---|---|
 | `/compact` | Fire the `conversation:compact` handler (effective behavior depends on active advisors) |
 | `/context` | Show context budget usage (active tokens, total tokens, budget) |
+| `/history [on\|off\|status]` | Pause/resume writes to the rolling-history store for this session. Recall stays available; the tool and instruction stay registered, so toggling doesn't perturb the tools array or system prompt (LLM prompt cache is preserved). |
 
 There's no `/clear` — history is continuous by design.
 
@@ -189,5 +190,6 @@ All settings live in `~/.agent-sh/settings.json`:
 | `src/agent/conversation-state.ts` | Messages array, eager nucleation, priority-based compaction, in-memory recall archive |
 | `src/agent/nuclear-form.ts` | One-line-summary primitives (nucleate, serialize, priority classification) |
 | `src/agent/history-file.ts` | Append-only `~/.agent-sh/history` with chunked search/tail-read + front-truncation |
-| `src/agent/agent-loop.ts` | Auto-compact trigger, `conversation:compact` advisor chain, registers the `conversation_recall` tool |
+| `src/agent/agent-loop.ts` | Auto-compact trigger, `conversation:compact` advisor chain |
+| `src/agent/extensions/rolling-history/index.ts` | Rolling-history extension: registers the `conversation_recall` tool, the summary strategy, and the `/history` slash command |
 | `src/agent/index.ts` | `/compact` and `/context` slash commands registered when the ash backend starts |

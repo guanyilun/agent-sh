@@ -4,6 +4,7 @@ import { activateAgent } from "../agent/index.js";
 import { createCore } from "../core/index.js";
 import { palette as p } from "../utils/palette.js";
 import { loadBuiltinExtensions } from "../extensions/index.js";
+import activateRollingHistory from "../agent/extensions/rolling-history/index.js";
 import { loadExtensions } from "../core/extension-loader.js";
 import { getSettings } from "../core/settings.js";
 import { dispatchSubcommand } from "./subcommands.js";
@@ -125,7 +126,9 @@ async function main(): Promise<void> {
   activateAgent(extCtx);
 
   // Load before spawning the shell so PS1 lands below the banner.
-  await loadBuiltinExtensions(extCtx, getSettings().disabledBuiltins);
+  const settings = getSettings();
+  await loadBuiltinExtensions(extCtx, settings.disabledBuiltins);
+  activateRollingHistory(extCtx);
   const loadExtensionsTimeoutMs = 10000;
   let loadedExtensions: string[] = [];
   await Promise.race([
@@ -158,7 +161,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const settings = getSettings();
   if (settings.startupBanner !== false) {
     const termW = process.stdout.columns || 80;
     const bannerW = Math.min(termW, 60);
