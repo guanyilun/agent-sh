@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-import { SessionStore, type AgentMessage } from "./session-store.js";
+import { SessionStore, type AgentShMessage as AgentMessage } from "agent-sh/session-store";
 
 export interface SessionInfo {
   id: string;
@@ -55,18 +55,30 @@ export class MultiSessionStore {
       for (const name of names) {
         if (!name.endsWith(".jsonl")) continue;
         const id = name.slice(0, -".jsonl".length);
-        try {
-          const raw = fs.readFileSync(path.join(dir, `${id}.jsonl.meta`), "utf-8");
-          const meta = JSON.parse(raw) as { createdAt?: number };
-          if (typeof meta.createdAt === "number" && (!best || meta.createdAt > best.createdAt)) {
-            best = { id, createdAt: meta.createdAt };
-          }
-        } catch { /* skip unreadable meta */ }
+        const createdAt = readHeaderTimestamp(path.join(dir, name));
+        if (createdAt !== null && (!best || createdAt > best.createdAt)) {
+          best = { id, createdAt };
+        }
       }
       if (best) return best.id;
     }
 
     return undefined;
+  }
+
+  setName(id: string, name: string): void {
+    fs.writeFileSync(this.metaFile(id), JSON.stringify({ name }));
+  }
+
+  private readName(id: string): string | undefined {
+    try {
+      const m = JSON.parse(fs.readFileSync(this.metaFile(id), "utf-8")) as { name?: string };
+      return typeof m.name === "string" ? m.name : undefined;
+    } catch { return undefined; }
+  }
+
+  private metaFile(id: string): string {
+    return path.join(this.dir, `${id}.jsonl.meta`);
   }
 
   /** One-time import from the previous storage format (sessions stored as
@@ -140,12 +152,12 @@ export class MultiSessionStore {
       const filePath = path.join(this.dir, name);
       try {
         const store = new SessionStore(filePath);
-        const meta = store.getMeta();
+        const root = store.getEntry(store.getRootId());
         result.push({
           id,
           filePath,
-          createdAt: meta.createdAt,
-          name: meta.name,
+          createdAt: root?.timestamp ?? 0,
+          name: this.readName(id),
           preview: store.getPreview(),
           entryCount: store.getAllEntries().length,
         });
@@ -172,6 +184,17 @@ function newSessionFileId(): string {
   return `${ts}_${suffix}`;
 }
 
+function readHeaderTimestamp(filePath: string): number | null {
+  try {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const nl = raw.indexOf("\n");
+    const firstLine = nl < 0 ? raw : raw.slice(0, nl);
+    const e = JSON.parse(firstLine) as { type?: string; timestamp?: number };
+    if (e.type === "session" && typeof e.timestamp === "number") return e.timestamp;
+  } catch { /* unreadable */ }
+  return null;
+}
+
 function writeImportedSession(
   newFile: string,
   id: string,
@@ -191,5 +214,5 @@ function writeImportedSession(
   }
   fs.writeFileSync(newFile, lines.join("\n") + "\n");
   fs.writeFileSync(newFile + ".leaf", parent);
-  fs.writeFileSync(newFile + ".meta", JSON.stringify({ createdAt: ts, ...(name ? { name } : {}) }));
+  if (name) fs.writeFileSync(newFile + ".meta", JSON.stringify({ name }));
 }

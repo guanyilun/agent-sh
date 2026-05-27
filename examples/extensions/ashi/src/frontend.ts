@@ -37,7 +37,7 @@ const TOOL_KIND: Record<string, string> = {
 import { BusAutocompleteProvider } from "./autocomplete.js";
 import { StatusFooter } from "./status-footer.js";
 import type { MultiSessionStore } from "./multi-session-store.js";
-import { stripContextWrappers, type SessionEntry } from "./session-store.js";
+import { stripContextWrappers, type SessionEntry } from "agent-sh/session-store";
 import { formatSessionRow } from "./session-commands.js";
 import { resumeSession } from "./session-commands.js";
 import { applyBranchMessages } from "./commands.js";
@@ -442,21 +442,22 @@ export function mountAshi(
       }
       if (m.tool_calls) {
         for (const tc of m.tool_calls) {
+          if (tc.type !== "function") continue;
           const id = tc.id ?? "";
-          const name = tc.function?.name ?? "tool";
+          const name = tc.function.name ?? "tool";
           const kind = TOOL_KIND[name];
           if (kind && GROUPABLE_KINDS.has(kind)) {
             const mergeable = findMergeableGroup(kind);
             const group = mergeable
               ?? (() => { const g = new ToolGroup(kind, groupMaxVisible); chat.addChild(g); return g; })();
-            group.addCall(id, name, detailFromArgs(tc.function?.arguments));
+            group.addCall(id, name, detailFromArgs(tc.function.arguments));
             if (id) toolMap.set(id, { kind: "group", group, name });
             continue;
           }
           const pair = renderToolPair({
             toolCallId: id, name, title: name, kind: undefined,
-            displayDetail: detailFromArgs(tc.function?.arguments),
-            rawInput: tc.function?.arguments,
+            displayDetail: detailFromArgs(tc.function.arguments),
+            rawInput: tc.function.arguments,
           });
           chat.addChild(pair.call);
           chat.addChild(pair.result);

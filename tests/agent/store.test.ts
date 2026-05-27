@@ -1,6 +1,5 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,7 +8,6 @@ import {
   type Entry,
   InMemoryStore,
   NoopStore,
-  FileStore,
   SharedFileStore,
   isTreeStore,
   newEntryId,
@@ -97,69 +95,6 @@ describe("InMemoryStore", () => {
     const root = makeEntry("session");
     const s = new InMemoryStore({ root });
     assert.throws(() => s.setLeaf("missing"), /unknown entry/);
-  });
-});
-
-describe("FileStore", () => {
-  test("writes JSONL and reads back round-trip", async () => {
-    const file = path.join(tmpDir, "tree.jsonl");
-    const root = makeEntry("session");
-    const s = new FileStore({ filePath: file, root });
-    const c1 = makeEntry("message", { message: { role: "user", content: "hi" } }, root.id);
-    await s.append([c1]);
-    s.setLeaf(c1.id);
-
-    const reopened = new FileStore({ filePath: file });
-    assert.equal(reopened.getLeaf(), c1.id);
-    const branch = await reopened.getBranch();
-    assert.deepEqual(branch.map((e) => e.id), [root.id, c1.id]);
-  });
-
-  test("ephemeral appends are not persisted", async () => {
-    const file = path.join(tmpDir, "tree.jsonl");
-    const root = makeEntry("session");
-    const s = new FileStore({ filePath: file, root });
-    const ephemeral = makeEntry("recall-cache", { fullMessage: "x" }, root.id);
-    await s.append([ephemeral], { ephemeral: true });
-
-    // In-memory: visible immediately.
-    assert.notEqual(await s.findById(ephemeral.id), null);
-
-    // On disk after reopen: gone.
-    const reopened = new FileStore({ filePath: file });
-    assert.equal(await reopened.findById(ephemeral.id), null);
-  });
-
-  test("getBranch walks back to root from leaf", async () => {
-    const file = path.join(tmpDir, "tree.jsonl");
-    const root = makeEntry("session");
-    const s = new FileStore({ filePath: file, root });
-    const a = makeEntry("message", {}, root.id);
-    const b = makeEntry("message", {}, a.id);
-    const c = makeEntry("message", {}, b.id);
-    await s.append([a, b, c]);
-    s.setLeaf(c.id);
-    const branch = await s.getBranch();
-    assert.deepEqual(branch.map((e) => e.id), [root.id, a.id, b.id, c.id]);
-  });
-
-  test("forks: two children of the same parent each form their own branch", async () => {
-    const file = path.join(tmpDir, "tree.jsonl");
-    const root = makeEntry("session");
-    const s = new FileStore({ filePath: file, root });
-    const trunk = makeEntry("message", {}, root.id);
-    await s.append([trunk]);
-    const branchA = makeEntry("message", { tag: "A" }, trunk.id);
-    const branchB = makeEntry("message", { tag: "B" }, trunk.id);
-    await s.append([branchA, branchB]);
-
-    s.setLeaf(branchA.id);
-    const ba = await s.getBranch();
-    assert.deepEqual(ba.map((e) => e.id), [root.id, trunk.id, branchA.id]);
-
-    s.setLeaf(branchB.id);
-    const bb = await s.getBranch();
-    assert.deepEqual(bb.map((e) => e.id), [root.id, trunk.id, branchB.id]);
   });
 });
 

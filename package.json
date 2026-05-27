@@ -77,6 +77,10 @@
       "types": "./dist/agent/store.d.ts",
       "default": "./dist/agent/store.js"
     },
+    "./session-store": {
+      "types": "./dist/agent/session-store.d.ts",
+      "default": "./dist/agent/session-store.js"
+    },
     "./entry-format": {
       "types": "./dist/agent/entry-format.d.ts",
       "default": "./dist/agent/entry-format.js"

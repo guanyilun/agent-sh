@@ -2,20 +2,8 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-
-export interface ToolCall {
-  id?: string;
-  function?: { name: string; arguments?: string };
-}
-
-export interface AgentMessage {
-  role: "system" | "user" | "assistant" | "tool";
-  content?: unknown;
-  tool_calls?: ToolCall[];
-  tool_call_id?: string;
-  name?: string;
-  meta?: Record<string, unknown>;
-}
+import type { AgentShMessage } from "./llm-client.js";
+export type { AgentShMessage } from "./llm-client.js";
 
 export interface SessionHeaderEntry {
   type: "session";
@@ -31,7 +19,7 @@ export interface MessageEntry {
   id: string;
   parentId: string;
   timestamp: number;
-  message: AgentMessage;
+  message: AgentShMessage;
 }
 
 export interface CompactionEntry {
@@ -39,13 +27,12 @@ export interface CompactionEntry {
   id: string;
   parentId: string;
   timestamp: number;
-  summary?: string;
   firstKeptId: string;
   tokensBefore: number;
+  summary?: string;
 }
 
-/** Omitted from buildMessages — the agent already saw it via <shell_events>
- *  (or didn't, if private). The frontend replays it for scrollback fidelity. */
+/** Omitted from buildMessages — the agent already saw it via <shell_events>. */
 export interface ShellExchangeEntry {
   type: "shell-exchange";
   id: string;
@@ -63,11 +50,6 @@ export type SessionEntry =
   | MessageEntry
   | CompactionEntry
   | ShellExchangeEntry;
-
-export interface SessionMeta {
-  name?: string;
-  createdAt: number;
-}
 
 export function newEntryId(): string {
   return crypto.randomBytes(4).toString("hex");
@@ -91,17 +73,20 @@ function snippet(text: string, max: number): string {
   return cleaned.slice(0, max) + "…";
 }
 
-export function summarizeMessage(m: AgentMessage): string {
+export function summarizeMessage(m: AgentShMessage): string {
   const role = m.role ?? "?";
-  if (role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
-    const tools = m.tool_calls.map((tc) => {
-      const name = tc.function?.name ?? "tool";
-      const args = tc.function?.arguments;
-      return args ? `${name}(${snippet(args, 200)})` : name;
-    }).join(", ");
-    const text = extractText(m.content);
-    const prefix = text ? `${snippet(text, 400)} → ` : "";
-    return `assistant: ${prefix}called ${tools}`;
+  if (role === "assistant") {
+    const tc = (m as { tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> }).tool_calls;
+    if (Array.isArray(tc) && tc.length > 0) {
+      const tools = tc.map((t) => {
+        const name = t.function?.name ?? "tool";
+        const args = t.function?.arguments;
+        return args ? `${name}(${snippet(args, 200)})` : name;
+      }).join(", ");
+      const text = extractText(m.content);
+      const prefix = text ? `${snippet(text, 400)} → ` : "";
+      return `assistant: ${prefix}called ${tools}`;
+    }
   }
   if (role === "tool") {
     const text = typeof m.content === "string" ? m.content : extractText(m.content);
@@ -124,28 +109,23 @@ export function stripContextWrappers(content: string): string {
   }
 }
 
-export function renderEvictedSummary(evicted: AgentMessage[]): string {
+export function renderEvictedSummary(evicted: AgentShMessage[]): string {
   const lines = evicted.map((m) => `- ${summarizeMessage(m)}`);
   return `${lines.length} message(s) elided\n${lines.join("\n")}`;
 }
 
-/** Tree is implicit via parentId pointers; entries are kept in memory after load. */
 export class SessionStore {
   private entriesPath: string;
   private leafPath: string;
-  private metaPath: string;
   private entries = new Map<string, SessionEntry>();
   private rootId = "";
   private activeLeaf = "";
-  private meta: SessionMeta;
   private pendingHeader: SessionHeaderEntry | null = null;
   readonly id: string;
 
   constructor(filePath: string, opts?: { create?: { cwd: string; sessionId: string } }) {
     this.entriesPath = filePath;
     this.leafPath = filePath + ".leaf";
-    this.metaPath = filePath + ".meta";
-    this.meta = { createdAt: 0 };
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
     if (opts?.create) {
@@ -161,7 +141,6 @@ export class SessionStore {
       this.entries.set(header.id, header);
       this.rootId = header.id;
       this.activeLeaf = header.id;
-      this.meta = { createdAt: header.timestamp };
       this.pendingHeader = header;
     } else {
       this.id = "";
@@ -171,12 +150,12 @@ export class SessionStore {
     }
   }
 
+  /** Deferred so an opened-but-unused session leaves no files on disk. */
   private flushHeader(): void {
     if (!this.pendingHeader) return;
     const headerLine = JSON.stringify(this.pendingHeader) + "\n";
     this.pendingHeader = null;
     fs.writeFileSync(this.entriesPath, headerLine);
-    this.persistMeta();
     this.persistLeaf();
   }
 
@@ -188,16 +167,9 @@ export class SessionStore {
   }
   getRootId(): string { return this.rootId; }
   getEntry(id: string): SessionEntry | undefined { return this.entries.get(id); }
-  getAllEntries(): SessionEntry[] {
-    return [...this.entries.values()];
-  }
-  getMeta(): SessionMeta { return { ...this.meta }; }
-  setName(name: string): void {
-    this.meta.name = name;
-    this.persistMeta();
-  }
+  getAllEntries(): SessionEntry[] { return [...this.entries.values()]; }
 
-  async appendMessages(messages: AgentMessage[]): Promise<string[]> {
+  async appendMessages(messages: AgentShMessage[]): Promise<string[]> {
     if (messages.length === 0) return [];
     this.flushHeader();
     let parent = this.activeLeaf;
@@ -267,7 +239,7 @@ export class SessionStore {
     return e.id;
   }
 
-  /** Oldest-first walk from leaf to root. */
+  /** Returns oldest-first. */
   getBranch(leafId: string = this.activeLeaf): SessionEntry[] {
     const out: SessionEntry[] = [];
     const seen = new Set<string>();
@@ -282,35 +254,43 @@ export class SessionStore {
     return out.reverse();
   }
 
-  /** Honors the latest compaction on the branch (summary + kept tail). */
-  buildMessages(leafId: string = this.activeLeaf): AgentMessage[] {
+  /** Latest compaction on the branch replaces the evicted prefix with
+   *  its stored summary, or a rendered one if no summary was stored. */
+  buildMessages(leafId: string = this.activeLeaf): AgentShMessage[] {
+    return this.buildBranchWithIds(leafId).messages;
+  }
+
+  /** Parallel entryIds array — null for the synthetic compaction-summary
+   *  slot — so callers can map message indices back to on-disk ids. */
+  buildBranchWithIds(leafId: string = this.activeLeaf): { messages: AgentShMessage[]; entryIds: (string | null)[] } {
     const branch = this.getBranch(leafId);
     let compactionIdx = -1;
     for (let i = branch.length - 1; i >= 0; i--) {
       if (branch[i]!.type === "compaction") { compactionIdx = i; break; }
     }
-    if (compactionIdx < 0) {
-      return branch
-        .filter((e): e is MessageEntry => e.type === "message")
-        .map((e) => e.message);
+    const messages: AgentShMessage[] = [];
+    const entryIds: (string | null)[] = [];
+    let startIdx = 0;
+    if (compactionIdx >= 0) {
+      const c = branch[compactionIdx] as CompactionEntry;
+      const firstKeptIdx = branch.findIndex((e) => e.id === c.firstKeptId);
+      startIdx = firstKeptIdx >= 0 ? firstKeptIdx : 0;
+      const summary = c.summary ?? renderEvictedSummary(
+        branch.slice(0, startIdx)
+          .filter((e): e is MessageEntry => e.type === "message")
+          .map((e) => e.message),
+      );
+      messages.push({ role: "user", content: `[Compacted conversation summary]\n${summary}` });
+      entryIds.push(null);
     }
-    const c = branch[compactionIdx] as CompactionEntry;
-    const firstKeptIdx = branch.findIndex((e) => e.id === c.firstKeptId);
-    const keepFrom = firstKeptIdx >= 0 ? firstKeptIdx : 0;
-    const summary = c.summary ?? renderEvictedSummary(
-      branch.slice(0, keepFrom)
-        .filter((e): e is MessageEntry => e.type === "message")
-        .map((e) => e.message),
-    );
-    const out: AgentMessage[] = [{
-      role: "user",
-      content: `[Compacted conversation summary]\n${summary}`,
-    }];
-    for (let i = keepFrom; i < branch.length; i++) {
+    for (let i = startIdx; i < branch.length; i++) {
       const e = branch[i]!;
-      if (e.type === "message") out.push(e.message);
+      if (e.type === "message") {
+        messages.push(e.message);
+        entryIds.push(e.id);
+      }
     }
-    return out;
+    return { messages, entryIds };
   }
 
   getPreview(): string {
@@ -325,9 +305,6 @@ export class SessionStore {
   }
 
   private load(): void {
-    try {
-      this.meta = JSON.parse(fs.readFileSync(this.metaPath, "utf-8")) as SessionMeta;
-    } catch { this.meta = { createdAt: 0 }; }
     let raw: string;
     try { raw = fs.readFileSync(this.entriesPath, "utf-8"); }
     catch { return; }
@@ -355,9 +332,5 @@ export class SessionStore {
   private persistLeaf(): void {
     if (this.pendingHeader) return;
     fs.writeFileSync(this.leafPath, this.activeLeaf);
-  }
-  private persistMeta(): void {
-    if (this.pendingHeader) return;
-    fs.writeFileSync(this.metaPath, JSON.stringify(this.meta));
   }
 }

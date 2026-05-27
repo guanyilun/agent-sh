@@ -1,14 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { findCutPoint, isSafeCutPoint, estimateMessageTokens, pickBudget } from "../src/compaction.js";
-import type { AgentMessage } from "../src/session-store.js";
+import type { AgentShMessage as AgentMessage } from "agent-sh/session-store";
 
 const userMsg = (text: string): AgentMessage => ({ role: "user", content: text });
 const assistantMsg = (text: string): AgentMessage => ({ role: "assistant", content: text });
 const assistantCall = (callId: string, name: string, args = ""): AgentMessage => ({
   role: "assistant",
   content: "",
-  tool_calls: [{ id: callId, function: { name, arguments: args } }],
+  tool_calls: [{ id: callId, type: "function", function: { name, arguments: args } }],
 });
 const toolResult = (callId: string, text: string): AgentMessage => ({
   role: "tool",
