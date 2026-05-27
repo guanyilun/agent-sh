@@ -2,7 +2,7 @@ import * as path from "node:path";
 import type { ExtensionContext } from "../../../shell/host-types.js";
 import type { AgentShMessage } from "../../llm-client.js";
 import { contentText, type ToolDefinition } from "../../types.js";
-import { SharedFileStore } from "../../store.js";
+import { SharedFileStore, type Store } from "../../store.js";
 import {
   activate as activateSummaryStrategy,
   readSummaryLines,
@@ -30,12 +30,18 @@ export default function activate(ctx: ExtensionContext): void {
     maxBytes,
   });
 
-  // `/history off` gates only store.append; the tool + instruction stay
-  // registered so toggling never perturbs the tools array or system prompt
-  // (i.e. never invalidates the LLM cache).
+  // `/history off` gates only writes — store.append and the linkMessage
+  // back-stamp. Everything else (meta.tool stamping, compact's reorg,
+  // recall reads) runs identically on both sides. Tool + instruction stay
+  // registered either way so toggling never perturbs the tools array or
+  // system prompt (LLM prompt cache is preserved).
   let enabled = true;
-  const gatedStore: typeof summaryStore = Object.create(summaryStore);
-  gatedStore.append = (entries, opts) => enabled ? summaryStore.append(entries, opts) : Promise.resolve();
+  const gatedStore: Store = {
+    append: (entries, opts) => enabled ? summaryStore.append(entries, opts) : Promise.resolve(),
+    findById: (id) => summaryStore.findById(id),
+    readRecent: (n) => summaryStore.readRecent(n),
+    search: (q) => summaryStore.search(q),
+  };
 
   const summaryCtx: SummaryCtx = {
     store: gatedStore,
@@ -46,7 +52,7 @@ export default function activate(ctx: ExtensionContext): void {
     replaceMessages: (msgs) => { ctx.call("conversation:replace-messages", msgs); },
     estimateTokens: () => (ctx.call("conversation:estimate-tokens") as number | undefined) ?? 0,
     estimatePromptTokens: () => (ctx.call("conversation:estimate-prompt-tokens") as number | undefined) ?? 0,
-    linkMessage: (index, entryId) => { ctx.call("conversation:link", index, entryId); },
+    linkMessage: (index, entryId) => { if (enabled) ctx.call("conversation:link", index, entryId); },
   };
   activateSummaryStrategy(summaryCtx);
 
@@ -67,7 +73,7 @@ export default function activate(ctx: ExtensionContext): void {
           description: "browse: list evicted turns, search: regex search, expand: show full turn",
         },
         query: { type: "string", description: "Search query (for action=search)" },
-        turn_id: { type: "number", description: "Turn ID to expand (for action=expand)" },
+        turn_id: { type: "string", description: "Turn ID to expand (for action=expand)" },
       },
       required: ["action"],
     },
@@ -130,7 +136,6 @@ export default function activate(ctx: ExtensionContext): void {
 
   if (prefetchEntries > 0) {
     Promise.resolve().then(async () => {
-      if (!enabled) return;
       const lines = await readSummaryLines(summaryStore, prefetchEntries);
       if (lines.length === 0) return;
       const current = (ctx.call("conversation:get-messages") as AgentShMessage[] | undefined) ?? [];
