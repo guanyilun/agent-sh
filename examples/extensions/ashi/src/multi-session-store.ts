@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-import { SessionStore, type AgentMessage } from "./session-store.js";
+import { SessionStore, type AgentShMessage as AgentMessage } from "agent-sh/session-store";
 
 export interface SessionInfo {
   id: string;

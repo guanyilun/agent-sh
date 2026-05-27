@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "agent-sh/types";
 import type { MultiSessionStore } from "./multi-session-store.js";
-import type { AgentMessage } from "./session-store.js";
+import type { AgentShMessage as AgentMessage } from "agent-sh/session-store";
 
 /** Maintains an `(entryId | null)[]` parallel to the live messages array;
  *  null slots are synthetics like compaction summaries that have no entry. */

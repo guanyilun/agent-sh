@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "agent-sh/types";
 import type { MultiSessionStore } from "./multi-session-store.js";
 import type { Capture } from "./capture.js";
-import type { AgentMessage } from "./session-store.js";
+import type { AgentShMessage as AgentMessage } from "agent-sh/session-store";
 
 const KEEP_RECENT_TOKEN_BUDGET = 20_000;
 const FORCE_KEEP_RECENT_TOKEN_BUDGET = 4_000;
@@ -81,6 +81,10 @@ export function isSafeCutPoint(messages: AgentMessage[], idx: number): boolean {
 export function estimateMessageTokens(m: AgentMessage): number {
   let chars = 0;
   if (typeof m.content === "string") chars += m.content.length;
-  if (m.tool_calls) for (const t of m.tool_calls) chars += (t.function?.arguments?.length ?? 0);
+  if (m.role === "assistant" && m.tool_calls) {
+    for (const t of m.tool_calls) {
+      if (t.type === "function") chars += t.function.arguments.length;
+    }
+  }
   return Math.ceil(chars * APPROX_TOKENS_PER_CHAR) + 20;
 }
