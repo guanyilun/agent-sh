@@ -227,7 +227,6 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   // Core tools register at activate — before extensions load — so
   // extensions that look them up at activate time (e.g. scheme.ts) find them.
-  // conversation_recall stays in AgentLoop (needs session state).
   const fileReadCache: FileReadCache = new Map();
   ctx.define("agent:file-read-cache", () => fileReadCache);
   const getCwd = () => ctx.call("cwd") as string;
