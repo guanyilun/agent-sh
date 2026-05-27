@@ -376,6 +376,9 @@ export class SessionStore {
     if (this.pendingHeader) return;
     fs.writeFileSync(this.leafPath, this.activeLeaf);
   }
+  /** Read-then-write preserves fields written by external processes (e.g.
+   *  ashub's hub.ts updates lastModified on a separate path); our in-memory
+   *  meta is treated as a partial overlay rather than the full document. */
   private persistMeta(): void {
     if (this.pendingHeader) return;
     let existing: Record<string, unknown> = {};
