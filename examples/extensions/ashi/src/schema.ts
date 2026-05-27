@@ -224,7 +224,7 @@ function statusSuffix(s?: DisplayStatus): string {
   return `  ${mark}${elapsed}${sum}`;
 }
 
-function renderBody(body: Body, env: Env, diff: DiffSlot, exitCode?: number | null): string {
+function renderBody(body: Body, env: Env, diff: DiffSlot): string {
   switch (body.kind) {
     case "text":
       return segmentsToString(body.segments);
@@ -236,7 +236,7 @@ function renderBody(body: Body, env: Env, diff: DiffSlot, exitCode?: number | nu
       return body.text;
     }
     case "stream":
-      return renderStream(body.text, env, exitCode);
+      return renderStream(body.text, env);
     case "lines":
       return body.lines.map(segmentsToString).join("\n");
     case "diff": {
@@ -248,24 +248,24 @@ function renderBody(body: Body, env: Env, diff: DiffSlot, exitCode?: number | nu
       return diff.cached.join("\n");
     }
     case "compound":
-      return body.parts.map((p) => renderBody(p, env, diff, exitCode)).join("\n\n");
+      return body.parts.map((p) => renderBody(p, env, diff)).join("\n\n");
   }
 }
 
 // Host-wide preview/summary/hidden policy inherited by every kind:"stream" body.
-function renderStream(buffer: string, env: Env, exitCode: number | null | undefined): string {
+function renderStream(buffer: string, env: Env): string {
   const display = buffer.replace(/\n+$/, "");
   if (env.expanded) return theme.fg("toolOutput", display);
   if (env.mode === "hidden") {
     if (!env.finalized) return "";
-    return lineCountHint(buffer, exitCode);
+    return lineCountHint(buffer);
   }
   if (env.mode === "summary") {
     if (!env.finalized) {
       const tail = display.split("\n").slice(-2).join("\n");
       return theme.fg("muted", tail);
     }
-    return lineCountHint(buffer, exitCode);
+    return lineCountHint(buffer);
   }
   if (!display) return "";
   const lines = display.split("\n");
@@ -277,12 +277,10 @@ function renderStream(buffer: string, env: Env, exitCode: number | null | undefi
   return `${theme.fg("toolOutput", trimmed)}${overflow}`;
 }
 
-function lineCountHint(buffer: string, exitCode: number | null | undefined): string {
+function lineCountHint(buffer: string): string {
   const lines = buffer.split("\n").filter((l) => l.length > 0);
   const label = lines.length === 1 ? "1 line" : `${lines.length} lines`;
-  const ok = exitCode === null || exitCode === 0;
-  const arrow = ok ? theme.fg("muted", "↳ ") : theme.fg("error", "↳ ");
-  return `${arrow}${theme.fg("muted", label)}`;
+  return theme.fg("muted", label);
 }
 
 // Components that satisfy the legacy ToolCallView / ToolResultView contracts.
@@ -365,7 +363,21 @@ class SchemaResultComponent extends Container {
       this.body.setText("");
       return;
     }
-    this.body.setText(renderBody(display.body, env, this.handle.cell.diff, display.status?.exitCode));
+    // Indent aligns body under the call-line title; reduced width keeps
+    // pre-fit renderers (diff) from overflowing past it.
+    const indent = "   ";
+    const bodyEnv: Env = { ...env, width: Math.max(1, env.width - indent.length) };
+    const rendered = renderBody(display.body, bodyEnv, this.handle.cell.diff);
+    if (!rendered.trim()) {
+      this.body.setText("");
+      return;
+    }
+    const ok = display.status?.exitCode === null || display.status?.exitCode === 0;
+    const arrow = ok ? theme.fg("muted", "└") : theme.fg("error", "└");
+    const lines = rendered.split("\n");
+    lines[0] = ` ${arrow} ${lines[0]}`;
+    for (let i = 1; i < lines.length; i++) lines[i] = `${indent}${lines[i]}`;
+    this.body.setText(lines.join("\n"));
   }
 }
 
