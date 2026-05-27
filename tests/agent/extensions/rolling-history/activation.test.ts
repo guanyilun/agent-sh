@@ -22,7 +22,7 @@ async function bootWithRollingHistory(storeDir: string): Promise<{
   core: ReturnType<typeof createCore>;
   commands: Map<string, CommandReg["handler"]>;
 }> {
-  const core = createCore({ defaultBackend: "ash", historyDir: storeDir } as AppConfig & { historyDir?: string });
+  const core = createCore({ defaultBackend: "ash" } as AppConfig);
   const ctx = core.extensionContext({ quit: () => {} });
   // Pin getStoragePath("rolling-history") to a tmpdir.
   (ctx as { getStoragePath: (ns: string) => string }).getStoragePath = () => storeDir;
