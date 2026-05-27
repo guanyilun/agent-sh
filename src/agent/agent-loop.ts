@@ -142,9 +142,6 @@ export class AgentLoop implements AgentBackend {
       coreTools,
     );
 
-    // Register core tools
-    this.registerCoreTools();
-
     // Register any protocol-provided tools (e.g. load_tool for deferred-lookup).
     const protocolTools = this.toolProtocol.getProtocolTools?.() ?? [];
     for (const t of protocolTools) this.registerTool(t);
@@ -642,79 +639,6 @@ export class AgentLoop implements AgentBackend {
     // Generic with context
     const context = provider ? ` (${provider}, model: ${model})` : ` (model: ${model})`;
     return `${raw}${context}`;
-  }
-
-  private registerCoreTools(): void {
-    // Stateless core tools register in agentBackend; conversation_recall
-    // stays here because it needs this.conversation.
-    this.toolRegistry.register({
-      name: "conversation_recall",
-      displayName: "recall",
-      description:
-        "Browse, search, or expand evicted conversation turns. " +
-        "Use when you need context from earlier in the conversation that was compacted away. " +
-        "Search is regex-based and covers both summaries and full body text. " +
-        "If search doesn't find what you expect, try broader/shorter terms or browse to scan the timeline.",
-      input_schema: {
-        type: "object",
-        properties: {
-          action: {
-            type: "string",
-            enum: ["browse", "search", "expand"],
-            description: "browse: list evicted turns, search: regex search, expand: show full turn",
-          },
-          query: {
-            type: "string",
-            description: "Search query (for action=search)",
-          },
-          turn_id: {
-            type: "number",
-            description: "Turn ID to expand (for action=expand)",
-          },
-        },
-        required: ["action"],
-      },
-      execute: async (args) => {
-        const action = args.action as string;
-        let content: string;
-        if (action === "search") {
-          content = (await this.handlers.call("recall:search", (args.query as string) ?? "")) as string ?? "No results — no recall strategy registered.";
-        } else if (action === "expand") {
-          content = (await this.handlers.call("recall:expand", args.turn_id)) as string ?? "No expanded content — no recall strategy registered.";
-        } else {
-          content = (await this.handlers.call("recall:browse")) as string ?? "No conversation history — no recall strategy registered.";
-        }
-        return { content, exitCode: 0, isError: false };
-      },
-      formatResult: (args, result) => {
-        const action = args.action as string;
-        const text = contentText(result.content);
-        if (result.isError) return { summary: "error" };
-        if (action === "search") {
-          if (text.startsWith("No results")) return { summary: "0 matches" };
-          const m = text.match(/^Found (\d+)/);
-          return { summary: m ? `${m[1]} matches` : "search done" };
-        }
-        if (action === "browse") {
-          if (text.startsWith("No conversation")) return { summary: "empty" };
-          return { summary: "browsed" };
-        }
-        if (text.includes("no expanded content")) return { summary: "not found" };
-        return { summary: "expanded" };
-      },
-      getDisplayInfo: () => ({ kind: "search", icon: "\u27F2" }),
-    });
-
-    this.registerInstruction(
-      "recall-guidance",
-      "When starting a task that may have been discussed before (conventions, preferences, corrections, prior examples), " +
-      "use conversation_recall to search history for relevant prior entries. " +
-      "Treat recurring user guidance as standing preferences. " +
-      "If a search returns nothing useful, try: shorter queries, alternate terms, or browse to scan the full timeline. " +
-      "Recall only covers this and recent sessions — for older context, also search the filesystem (grep, glob).",
-      "core",
-    );
-
   }
 
   /**

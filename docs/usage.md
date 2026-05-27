@@ -300,6 +300,7 @@ This means you can run a failing command, then type `> fix this` and the agent k
 | `/thinking [level]` | Set reasoning effort (off, low, medium, high) |
 | `/compact` | Compact conversation (free up context space) |
 | `/context` | Show context budget usage (active tokens vs. budget) |
+| `/history [on\|off\|status]` | Pause/resume cross-session history writes for this session (no cache invalidation) |
 | `/reload` | Reload user extensions from `~/.agent-sh/extensions/` |
 
 See [Context Management](context-management.md) for how `/compact` and `/context` work, and [Extensions: Custom Agent Backends](extensions.md#custom-agent-backends) for `/backend`.
