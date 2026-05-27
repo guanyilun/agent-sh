@@ -1,10 +1,3 @@
-/**
- * Per-session conversation store. Single-writer JSONL with a `.leaf`
- * sidecar for the active tip and a `.meta` sidecar for mutable session
- * metadata (name, title, ...). Entries are typed (`session` / `message` /
- * `compaction` / `shell-exchange`) and form a tree via `parentId`, so a
- * session can fork and a leaf-walk yields one linear branch.
- */
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
@@ -39,8 +32,7 @@ export interface CompactionEntry {
   summary?: string;
 }
 
-/** Omitted from buildMessages — the agent already saw it via <shell_events>
- *  (or didn't, if private). Frontends replay it for scrollback fidelity. */
+/** Omitted from buildMessages — the agent already saw it via <shell_events>. */
 export interface ShellExchangeEntry {
   type: "shell-exchange";
   id: string;
@@ -58,14 +50,6 @@ export type SessionEntry =
   | MessageEntry
   | CompactionEntry
   | ShellExchangeEntry;
-
-/** Open record — `createdAt` is the only required field. Consumers extend
- *  it freely (ashub adds title/model/provider; ashi keeps to name). */
-export interface SessionMeta {
-  createdAt: number;
-  name?: string;
-  [k: string]: unknown;
-}
 
 export function newEntryId(): string {
   return crypto.randomBytes(4).toString("hex");
@@ -130,31 +114,19 @@ export function renderEvictedSummary(evicted: AgentShMessage[]): string {
   return `${lines.length} message(s) elided\n${lines.join("\n")}`;
 }
 
-export interface SessionStoreOpts {
-  create?: { cwd: string; sessionId: string };
-  /** Override the default `<filePath>.meta` location (ashub uses this to
-   *  keep mutable session metadata in a sibling directory). */
-  metaPath?: string;
-}
-
 export class SessionStore {
   private entriesPath: string;
   private leafPath: string;
-  private metaPath: string;
   private entries = new Map<string, SessionEntry>();
   private rootId = "";
   private activeLeaf = "";
-  private meta: SessionMeta;
   private pendingHeader: SessionHeaderEntry | null = null;
   readonly id: string;
 
-  constructor(filePath: string, opts?: SessionStoreOpts) {
+  constructor(filePath: string, opts?: { create?: { cwd: string; sessionId: string } }) {
     this.entriesPath = filePath;
     this.leafPath = filePath + ".leaf";
-    this.metaPath = opts?.metaPath ?? filePath + ".meta";
-    this.meta = { createdAt: 0 };
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    if (opts?.metaPath) fs.mkdirSync(path.dirname(opts.metaPath), { recursive: true });
 
     if (opts?.create) {
       this.id = opts.create.sessionId;
@@ -169,7 +141,6 @@ export class SessionStore {
       this.entries.set(header.id, header);
       this.rootId = header.id;
       this.activeLeaf = header.id;
-      this.meta = { createdAt: header.timestamp, cwd: opts.create.cwd };
       this.pendingHeader = header;
     } else {
       this.id = "";
@@ -179,14 +150,12 @@ export class SessionStore {
     }
   }
 
-  /** Defer writing the header until the first real append, so an opened-but-
-   *  unused session leaves no files on disk. */
+  /** Deferred so an opened-but-unused session leaves no files on disk. */
   private flushHeader(): void {
     if (!this.pendingHeader) return;
     const headerLine = JSON.stringify(this.pendingHeader) + "\n";
     this.pendingHeader = null;
     fs.writeFileSync(this.entriesPath, headerLine);
-    this.persistMeta();
     this.persistLeaf();
   }
 
@@ -199,13 +168,6 @@ export class SessionStore {
   getRootId(): string { return this.rootId; }
   getEntry(id: string): SessionEntry | undefined { return this.entries.get(id); }
   getAllEntries(): SessionEntry[] { return [...this.entries.values()]; }
-
-  getMeta(): SessionMeta { return { ...this.meta }; }
-  setName(name: string): void { this.setMeta({ name }); }
-  setMeta(patch: Partial<SessionMeta>): void {
-    this.meta = { ...this.meta, ...patch };
-    this.persistMeta();
-  }
 
   async appendMessages(messages: AgentShMessage[]): Promise<string[]> {
     if (messages.length === 0) return [];
@@ -277,7 +239,7 @@ export class SessionStore {
     return e.id;
   }
 
-  /** Oldest-first walk from leaf to root. */
+  /** Returns oldest-first. */
   getBranch(leafId: string = this.activeLeaf): SessionEntry[] {
     const out: SessionEntry[] = [];
     const seen = new Set<string>();
@@ -292,16 +254,14 @@ export class SessionStore {
     return out.reverse();
   }
 
-  /** Honors the latest compaction on the branch (summary + kept tail).
-   *  When `summary` was stored, uses it verbatim; otherwise renders one
-   *  from the evicted slice. */
+  /** Latest compaction on the branch replaces the evicted prefix with
+   *  its stored summary, or a rendered one if no summary was stored. */
   buildMessages(leafId: string = this.activeLeaf): AgentShMessage[] {
     return this.buildBranchWithIds(leafId).messages;
   }
 
-  /** Same as `buildMessages` but also returns the parallel entry-id
-   *  array (null for the synthetic compaction-summary slot), which
-   *  capture/compaction need to map live indices back to on-disk ids. */
+  /** Parallel entryIds array — null for the synthetic compaction-summary
+   *  slot — so callers can map message indices back to on-disk ids. */
   buildBranchWithIds(leafId: string = this.activeLeaf): { messages: AgentShMessage[]; entryIds: (string | null)[] } {
     const branch = this.getBranch(leafId);
     let compactionIdx = -1;
@@ -345,9 +305,6 @@ export class SessionStore {
   }
 
   private load(): void {
-    try {
-      this.meta = JSON.parse(fs.readFileSync(this.metaPath, "utf-8")) as SessionMeta;
-    } catch { this.meta = { createdAt: 0 }; }
     let raw: string;
     try { raw = fs.readFileSync(this.entriesPath, "utf-8"); }
     catch { return; }
@@ -375,14 +332,5 @@ export class SessionStore {
   private persistLeaf(): void {
     if (this.pendingHeader) return;
     fs.writeFileSync(this.leafPath, this.activeLeaf);
-  }
-  /** Read-then-write preserves fields written by external processes (e.g.
-   *  ashub's hub.ts updates lastModified on a separate path); our in-memory
-   *  meta is treated as a partial overlay rather than the full document. */
-  private persistMeta(): void {
-    if (this.pendingHeader) return;
-    let existing: Record<string, unknown> = {};
-    try { existing = JSON.parse(fs.readFileSync(this.metaPath, "utf-8")); } catch { /* none yet */ }
-    fs.writeFileSync(this.metaPath, JSON.stringify({ ...existing, ...this.meta }));
   }
 }

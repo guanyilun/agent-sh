@@ -111,32 +111,6 @@ describe("SessionStore", () => {
     assert.equal(built[1]!.content, "done");
   });
 
-  test("setMeta persists and reloads", async () => {
-    const file = path.join(tmpDir, "meta.jsonl");
-    const s = new SessionStore(file, { create: { cwd: "/x", sessionId: "root" } });
-    await s.appendMessages([{ role: "user", content: "anchor" }]);
-    s.setMeta({ name: "demo", title: "Demo Session", model: "gpt-x" });
-
-    const reopened = new SessionStore(file);
-    const meta = reopened.getMeta();
-    assert.equal(meta.name, "demo");
-    assert.equal(meta.title, "Demo Session");
-    assert.equal(meta.model, "gpt-x");
-  });
-
-  test("metaPath option redirects the meta sidecar", async () => {
-    const entries = path.join(tmpDir, "entries.jsonl");
-    const meta = path.join(tmpDir, "elsewhere", "session.meta");
-    const s = new SessionStore(entries, {
-      create: { cwd: "/x", sessionId: "root" },
-      metaPath: meta,
-    });
-    await s.appendMessages([{ role: "user", content: "x" }]);
-    s.setName("named");
-    assert.equal(fs.existsSync(meta), true);
-    assert.equal(fs.existsSync(entries + ".meta"), false);
-  });
-
   test("getPreview returns first user message, stripping context wrappers", async () => {
     const file = path.join(tmpDir, "preview.jsonl");
     const s = new SessionStore(file, { create: { cwd: "/x", sessionId: "root" } });

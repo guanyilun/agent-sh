@@ -35,7 +35,7 @@ export function registerSessionCommands(
       bus.emit("ui:error", { message: "name: expected a name" });
       return;
     }
-    getStore().current().setName(name);
+    getStore().setName(getStore().current().id, name);
     bus.emit("ui:info", { message: `session named: ${name}` });
   });
 
