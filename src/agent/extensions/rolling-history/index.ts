@@ -1,10 +1,14 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionContext } from "../../../shell/host-types.js";
 import type { AgentShMessage } from "../../llm-client.js";
 import { contentText, type ToolDefinition } from "../../types.js";
-import { SharedFileStore, type Store } from "../../store.js";
+import { SharedFileStore, newEntryId, type Store, type Entry } from "../../store.js";
+import { CONFIG_DIR, getSettings } from "../../../core/settings.js";
+import { deserializeEntry, isReadOnly } from "../../nuclear-form.js";
 import {
   activate as activateSummaryStrategy,
+  nuclearToEntry,
   readSummaryLines,
   type SummaryCtx,
 } from "./strategy.js";
@@ -19,12 +23,59 @@ const INSTRUCTION_TEXT =
   "If a search returns nothing useful, try: shorter queries, alternate terms, or browse to scan the full timeline. " +
   "Recall only covers this and recent sessions — for older context, also search the filesystem (grep, glob).";
 
+/** One-time migration: old ~/.agent-sh/history → rolling-history store. */
+export function migrateFromLegacy(
+  storeDir: string,
+  legacyPath: string,
+  ctx: Pick<ExtensionContext, "bus">,
+): void {
+  const sentinel = path.join(storeDir, ".migrated");
+  if (fs.existsSync(sentinel)) return;
+
+  const newFile = path.join(storeDir, "history.jsonl");
+  if (fs.existsSync(newFile) && fs.statSync(newFile).size > 0) {
+    try { fs.writeFileSync(sentinel, ""); } catch { /* ignore */ }
+    return;
+  }
+
+  if (!fs.existsSync(legacyPath)) {
+    try { fs.writeFileSync(sentinel, ""); } catch { /* ignore */ }
+    return;
+  }
+
+  let migrated = 0;
+  try {
+    const lines = fs.readFileSync(legacyPath, "utf-8").split("\n").filter(Boolean);
+    const entries: Entry[] = [];
+    for (const line of lines) {
+      const ne = deserializeEntry(line);
+      if (!ne) continue;
+      if (isReadOnly(ne)) continue;
+      entries.push(nuclearToEntry(ne, newEntryId()));
+    }
+    if (entries.length > 0) {
+      fs.writeFileSync(newFile, entries.map((e) => JSON.stringify(e) + "\n").join(""));
+      migrated = entries.length;
+    }
+  } catch {
+    return; // retry next start
+  }
+
+  try { fs.writeFileSync(sentinel, ""); } catch { /* ignore */ }
+  if (migrated > 0) {
+    ctx.bus.emit("ui:info", { message: `history: migrated ${migrated} entries from legacy ~/.agent-sh/history` });
+  }
+}
+
 export default function activate(ctx: ExtensionContext): void {
   const { maxBytes, prefetchEntries } = ctx.getExtensionSettings("rolling-history", {
     maxBytes: undefined as number | undefined,
     prefetchEntries: 50,
   });
   const storeDir = ctx.getStoragePath("rolling-history");
+  const settings = getSettings();
+  const legacyPath = settings.historyFilePath ?? path.join(CONFIG_DIR, "history");
+  migrateFromLegacy(storeDir, legacyPath, ctx);
   const summaryStore = new SharedFileStore({
     filePath: path.join(storeDir, "history.jsonl"),
     maxBytes,
