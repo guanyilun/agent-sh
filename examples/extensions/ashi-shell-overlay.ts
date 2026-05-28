@@ -36,6 +36,7 @@ import type { TerminalBuffer } from "agent-sh/utils/terminal-buffer";
 // Type-only — pi-tui isn't a direct dep of agent-sh root; the TUI
 // instance is handed over by ashi at runtime via ctx.call("ashi:tui").
 import type { TUI, Component, OverlayHandle } from "@earendil-works/pi-tui";
+import { matchesKey, isKeyRelease, isKeyRepeat } from "@earendil-works/pi-tui";
 
 // Pi-tui's APC cursor marker (tui.d.ts:54). Stable across versions.
 const CURSOR_MARKER = "_pi:c";
@@ -47,7 +48,7 @@ export default function activate(ctx: ExtensionContext): void {
   const tb = ctx.call("terminal-buffer") as TerminalBuffer | null;
   if (!tb) return;
 
-  const { trigger } = ctx.getExtensionSettings("ashi-shell-overlay", { trigger: "\x1d" });
+  const { trigger } = ctx.getExtensionSettings("ashi-shell-overlay", { trigger: "ctrl+]" });
 
   let attached = false;
   const attach = (): void => {
@@ -76,18 +77,23 @@ function attachOverlay(
 ): void {
   let handle: OverlayHandle | null = null;
   let component: ShellOverlayComponent | null = null;
-  let restore: { cols: number; rows: number } | null = null;
+  let restore: { cols: number; rows: number; hardwareCursor: boolean } | null = null;
   const onPtyData = (): void => tui.requestRender();
 
   const show = (): void => {
     if (handle) return;
-    restore = { cols: tui.terminal.columns, rows: tui.terminal.rows };
+    restore = {
+      cols: tui.terminal.columns,
+      rows: tui.terminal.rows,
+      hardwareCursor: tui.getShowHardwareCursor(),
+    };
     component = new ShellOverlayComponent(tb, bus, tui, hide, trigger);
     handle = tui.showOverlay(component, {
       width: "100%",
       maxHeight: "100%",
       anchor: "top-left",
     });
+    tui.setShowHardwareCursor(true);
     bus.on("shell:pty-data", onPtyData);
     tui.requestRender();
   };
@@ -99,6 +105,7 @@ function attachOverlay(
     component = null;
     bus.off("shell:pty-data", onPtyData);
     if (restore) {
+      tui.setShowHardwareCursor(restore.hardwareCursor);
       bus.emit("shell:pty-resize", { cols: restore.cols, rows: restore.rows });
       tb.resize(restore.cols, restore.rows);
       restore = null;
@@ -109,8 +116,9 @@ function attachOverlay(
   // listener early-returns under hasOverlay, ours runs after). When the
   // overlay is open the component's handleInput handles the trigger.
   const onInput = (data: string): { consume?: boolean } | undefined => {
+    if (isKeyRelease(data) || isKeyRepeat(data)) return;
     if (handle) return;
-    if (data === trigger) { show(); return { consume: true }; }
+    if (matchesKey(data, trigger)) { show(); return { consume: true }; }
     return undefined;
   };
   const unsubInput = tui.addInputListener(onInput);
@@ -154,7 +162,7 @@ class ShellOverlayComponent implements Component {
 
     const lines = this.tb.getStyledLines(height, this.anchorY ?? undefined);
 
-    if (this.anchorY === null && this.focused) {
+    if (this.anchorY === null) {
       const cur = this.tb.getCursor();
       const cy = Math.max(0, Math.min(lines.length - 1, cur.y));
       const cx = Math.max(0, Math.min(width - 1, cur.x));
@@ -165,7 +173,7 @@ class ShellOverlayComponent implements Component {
   }
 
   handleInput(data: string): void {
-    if (data === this.trigger) { this.onClose(); return; }
+    if (matchesKey(data, this.trigger)) { this.onClose(); return; }
 
     if (!this.tb.altScreen) {
       const page = Math.max(1, (this.lastRows || 24) - 1);
@@ -184,7 +192,7 @@ class ShellOverlayComponent implements Component {
       this.anchorY = null;
       this.tui.requestRender();
     }
-    this.bus.emit("shell:pty-write", { data });
+    this.bus.emit("shell:pty-write", { data: toPtyBytes(data) });
   }
 
   private syncSize(cols: number, rows: number): void {
@@ -210,6 +218,49 @@ class ShellOverlayComponent implements Component {
     this.tui.requestRender();
     return true;
   }
+}
+
+/**
+ * Convert a pi-tui-encoded keystroke back to the legacy byte sequence a PTY
+ * expects. Pi-tui negotiates Kitty CSI-u (`\x1b[<cp>;<mod>u`) or xterm
+ * modifyOtherKeys (`\x1b[27;<mod>;<cp>~`) at startup, so Ctrl+B arrives as
+ * `\x1b[98;5u`, not `\x02`. The shell doesn't understand those forms and
+ * would echo the raw bytes. We undo the encoding for the common Ctrl+printable
+ * case; other sequences pass through (legacy CSI like arrows already works,
+ * plain printables come through as-is).
+ */
+function toPtyBytes(data: string): string {
+  // Kitty CSI-u: \x1b[<cp>[:<shifted>[:<base>]][;<mod>[:<event>][;<text>]]u
+  let m = /^\x1b\[(\d+)(?::(\d+))?(?::\d+)?(?:;(\d+)(?::\d+)?(?:;\d+)?)?u$/.exec(data);
+  if (m) {
+    return encodeKey(Number(m[1]), m[2] ? Number(m[2]) : undefined, m[3] ? Number(m[3]) - 1 : 0) ?? data;
+  }
+  // xterm modifyOtherKeys: \x1b[27;<mod>;<keycode>~
+  m = /^\x1b\[27;(\d+);(\d+)~$/.exec(data);
+  if (m) return encodeKey(Number(m[2]), undefined, Number(m[1]) - 1) ?? data;
+  return data;
+}
+
+function encodeKey(codepoint: number, shifted: number | undefined, modifier: number): string | null {
+  const SHIFT = 1, ALT = 2, CTRL = 4;
+  // Ctrl+printable → legacy ctrl byte
+  if ((modifier & CTRL) && !(modifier & ALT)) {
+    if (codepoint === 0x20) return "\x00";
+    if (codepoint >= 0x40 && codepoint <= 0x7e) return String.fromCharCode(codepoint & 0x1f);
+    if (codepoint >= 0x61 && codepoint <= 0x7a) return String.fromCharCode(codepoint - 0x60);
+  }
+  // Plain or shift-only → emit the codepoint as a char. Covers Enter (13), Tab (9),
+  // Escape (27), Backspace (127), printables, and shift+letter (uses shifted_codepoint
+  // when kitty supplies it, else uppercases ASCII letters).
+  if (!(modifier & ~SHIFT)) {
+    let cp = codepoint;
+    if ((modifier & SHIFT) && typeof shifted === "number") cp = shifted;
+    else if ((modifier & SHIFT) && cp >= 0x61 && cp <= 0x7a) cp -= 0x20;
+    if (Number.isFinite(cp) && cp < 0xE000) {
+      try { return String.fromCodePoint(cp); } catch { return null; }
+    }
+  }
+  return null;
 }
 
 /**
