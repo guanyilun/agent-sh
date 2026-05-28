@@ -335,6 +335,8 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
 
   const pairs = findChangePairs(hunk);
   const renderedAsPartOfPair = new Set<number>();
+  const bgWidth = Math.max(1, textWidth - noW - 3);
+  const gutter = (n: string): string => `${p.dim}${n} │${p.reset} `;
 
   for (let i = 0; i < hunk.lines.length; i++) {
     const line = hunk.lines[i];
@@ -345,7 +347,7 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
     if (line.type === "context") {
       const raw = truncateText(line.text, lineTextW);
       const text = lang ? highlightLine(raw, lang) : raw;
-      out.push(`  ${p.dim}${no} │${p.reset} ${p.dim}${text}${p.reset}`);
+      out.push(`${gutter(no)}  ${p.dim}${text}${p.reset}`);
       continue;
     }
 
@@ -369,16 +371,16 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
       }
 
       if (useTrueColor) {
-        out.push(padToWidth(`${p.errorBg}${p.error}- ${no} │ ${preserveBg(removedText, p.errorBg)}`, textWidth) + p.reset);
+        out.push(gutter(no) + padToWidth(`${p.errorBg}${p.error}- ${preserveBg(removedText, p.errorBg)}`, bgWidth) + p.reset);
       } else {
-        out.push(`${p.error}- ${no} │ ${removedText}${p.reset}`);
+        out.push(`${gutter(no)}${p.error}- ${removedText}${p.reset}`);
       }
 
       if (addedText !== null && addedNo !== null) {
         if (useTrueColor) {
-          out.push(padToWidth(`${p.successBg}${p.success}+ ${addedNo} │ ${preserveBg(addedText, p.successBg)}`, textWidth) + p.reset);
+          out.push(gutter(addedNo) + padToWidth(`${p.successBg}${p.success}+ ${preserveBg(addedText, p.successBg)}`, bgWidth) + p.reset);
         } else {
-          out.push(`${p.success}+ ${addedNo} │ ${addedText}${p.reset}`);
+          out.push(`${gutter(addedNo)}${p.success}+ ${addedText}${p.reset}`);
         }
       }
       continue;
@@ -389,9 +391,9 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
       const raw = truncateText(line.text, lineTextW);
       const text = lang ? highlightLine(raw, lang) : raw;
       if (useTrueColor) {
-        out.push(padToWidth(`${p.successBg}${p.success}+ ${no} │ ${preserveBg(text, p.successBg)}`, textWidth) + p.reset);
+        out.push(gutter(no) + padToWidth(`${p.successBg}${p.success}+ ${preserveBg(text, p.successBg)}`, bgWidth) + p.reset);
       } else {
-        out.push(`${p.success}+ ${no} │ ${text}${p.reset}`);
+        out.push(`${gutter(no)}${p.success}+ ${text}${p.reset}`);
       }
     }
   }
