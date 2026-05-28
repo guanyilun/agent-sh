@@ -143,7 +143,7 @@ function nucleateFromMessage(m: AgentShMessage, iid: string): NuclearEntry | nul
   return null;
 }
 
-function nuclearToEntry(ne: NuclearEntry, id: string): Entry {
+export function nuclearToEntry(ne: NuclearEntry, id: string): Entry {
   const { seq: _seq, ts, kind, ...rest } = ne;
   return { id, ts, kind, payload: rest };
 }
