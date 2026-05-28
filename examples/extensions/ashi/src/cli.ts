@@ -10,6 +10,7 @@ import { getSettings } from "agent-sh/settings";
 import { Shell } from "agent-sh/shell";
 import { headlessTerminal } from "agent-sh/shell/terminal";
 import activateShellContext from "agent-sh/shell/context";
+import { TerminalBuffer } from "agent-sh/utils/terminal-buffer";
 import type { AppConfig } from "agent-sh/types";
 
 declare module "agent-sh/event-bus" {
@@ -151,6 +152,10 @@ async function main(): Promise<void> {
 
   activateAgent(ctx);
   activateShellContext(ctx);
+  // Eager — buffer must subscribe to shell:pty-data before `new Shell(...)`
+  // spawns the PTY, otherwise the initial prompt is dropped.
+  const terminalBuffer = TerminalBuffer.createWired(ctx.bus);
+  ctx.define("terminal-buffer", () => terminalBuffer);
   await loadBuiltinExtensions(ctx);
 
   const shell = new Shell({
