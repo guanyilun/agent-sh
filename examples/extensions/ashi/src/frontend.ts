@@ -28,6 +28,7 @@ import type { ToolCallView, ToolResultView } from "./hooks.js";
 import { createToolHookResolver } from "./hooks.js";
 import { loadGroupMaxVisible } from "./display-config.js";
 import { classifySubmit, deriveChangeHandlerResult } from "./shell-mode.js";
+import { UserShellIntents } from "./user-shell-intents.js";
 
 const GROUPABLE_KINDS = new Set(["read", "search"]);
 const TOOL_KIND: Record<string, string> = {
@@ -300,8 +301,7 @@ export function mountAshi(
   let processing = false;
   const queuedQueries: string[] = [];
   const queuedShellLines: { line: string; private: boolean }[] = [];
-  /** FIFO matching pty-writes to their shell:command-start events. */
-  const pendingUserBlockPrivacy: boolean[] = [];
+  const pendingUserShell = new UserShellIntents();
 
   const renderQueueSlot = (): void => {
     queueSlot.clear();
@@ -325,7 +325,7 @@ export function mountAshi(
       tui.requestRender();
       return;
     }
-    pendingUserBlockPrivacy.push(!!opts?.private);
+    pendingUserShell.push({ private: !!opts?.private });
     if (opts?.private) bus.emit("shell:user-exec-exclude-next", {});
     bus.emit("shell:pty-write", { data: line + "\n" });
   };
@@ -637,12 +637,11 @@ export function mountAshi(
   let activeUserShell: { pair: ToolPair; command: string; isPrivate: boolean } | null = null;
   bus.on("shell:command-start", ({ command }) => {
     if (agentShellActive) return;
-    // Defensive: bash DEBUG-trap integrations have been observed firing
-    // before any user input, with an empty command body.
-    if (!command.trim()) return;
+    const intent = pendingUserShell.consume();
+    if (!intent) return;
     finalizeThinking();
     if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
-    const isPrivate = pendingUserBlockPrivacy.shift() ?? false;
+    const isPrivate = intent.private;
     const name = isPrivate ? "user_bash_private" : "user_bash";
     const pair = renderToolPair({
       toolCallId: `user-shell-${Date.now()}`, name, title: name,
@@ -682,7 +681,7 @@ export function mountAshi(
     // Shell queue drains first so its output lands in the next turn's <shell_events>.
     while (queuedShellLines.length > 0) {
       const item = queuedShellLines.shift()!;
-      pendingUserBlockPrivacy.push(item.private);
+      pendingUserShell.push({ private: item.private });
       if (item.private) bus.emit("shell:user-exec-exclude-next", {});
       bus.emit("shell:pty-write", { data: item.line + "\n" });
     }
