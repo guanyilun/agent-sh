@@ -969,6 +969,22 @@ export function mountAshi(
     void rebuildChat();
   };
 
+  const jobControl = process.platform !== "win32";
+  let suspended = false;
+  const resumeFromSuspend = (): void => {
+    if (!suspended) return;
+    suspended = false;
+    tui.start();
+    tui.requestRender(true);
+  };
+  const suspendToShell = (): void => {
+    if (suspended) return;
+    suspended = true;
+    tui.stop();
+    process.kill(process.pid, "SIGSTOP");
+  };
+  if (jobControl) process.on("SIGCONT", resumeFromSuspend);
+
   tui.addInputListener((data) => {
     if (isKeyRelease(data) || isKeyRepeat(data)) return;
     if (matchesKey(data, "escape")) {
@@ -1022,6 +1038,10 @@ export function mountAshi(
       ctx.quit();
       return { consume: true };
     }
+    if (jobControl && matchesKey(data, "ctrl+z")) {
+      suspendToShell();
+      return { consume: true };
+    }
     if (matchesKey(data, "ctrl+t")) {
       toggleThinking();
       return { consume: true };
@@ -1055,7 +1075,10 @@ export function mountAshi(
 
   return {
     tui,
-    stop: () => { tui.stop(); },
+    stop: () => {
+      process.off("SIGCONT", resumeFromSuspend);
+      tui.stop();
+    },
     openTreePicker,
     openSessionPicker,
     rebuildChat,
