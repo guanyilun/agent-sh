@@ -319,6 +319,36 @@ function format(v: unknown): string {
 }
 
 // ── evaluator ─────────────────────────────────────────────────────
+// LIPS 0.20.x has no character type, so a `#\…` literal reads as an unbound
+// symbol. preprocessSchemeSource expands each to a 1-char string instead.
+const NAMED_CHARS: Record<string, string> = {
+  newline: "\n", linefeed: "\n", nl: "\n",
+  space: " ", tab: "\t", return: "\r",
+  null: "\u0000", nul: "\u0000",
+  delete: "\u007f", rubout: "\u007f",
+  escape: "\u001b", altmode: "\u001b",
+  backspace: "\u0008", alarm: "\u0007", page: "\u000c",
+};
+
+// The char after `#\` as a 1-char string + its span, or null for an unknown
+// multi-char name (left untranslated so it surfaces as an error).
+function resolveCharLiteral(source: string, start: number): { ch: string; span: number } | null {
+  let j = start;
+  while (j < source.length && /[A-Za-z0-9]/.test(source[j])) j++;
+  const run = source.slice(start, j);
+  if (run.length <= 1) {
+    const ch = source[start];
+    return ch === undefined ? null : { ch, span: 1 };
+  }
+  const hex = /^[xX]([0-9a-fA-F]+)$/.exec(run);
+  if (hex) {
+    const cp = parseInt(hex[1], 16);
+    if (cp >= 0 && cp <= 0x10ffff) return { ch: String.fromCodePoint(cp), span: run.length };
+  }
+  const named = NAMED_CHARS[run.toLowerCase()];
+  return named === undefined ? null : { ch: named, span: run.length };
+}
+
 // LIPS implements string literals via JSON.parse, which rejects backslash
 // escapes outside JSON's tiny set (\" \\ \/ \b \f \n \r \t \uXXXX). Models
 // routinely write \s \w \d etc. in regex strings. Pre-process: promote any
@@ -339,6 +369,14 @@ function preprocessSchemeSource(source: string): string {
     if (!inStr) {
       if (c === ";") { inComment = true; out += c; continue; }
       if (c === '"') { inStr = true; out += c; continue; }
+      if (c === "#" && source[i + 1] === "\\") {
+        const lit = resolveCharLiteral(source, i + 2);
+        if (lit) {
+          out += JSON.stringify(lit.ch);
+          i += 1 + lit.span; // skip '\' + the name/char; loop's i++ skips '#'
+          continue;
+        }
+      }
       out += c;
       continue;
     }
@@ -518,6 +556,11 @@ async function evaluate(env: any, source: string, timeoutMs: number) {
       msg = formatParenDiagnostic(source, msg);
     } else if (/Bad escaped character in JSON|Unexpected.*JSON|JSON at position/.test(msg)) {
       msg = formatStringEscapeDiagnostic(source, msg);
+    } else if (msg.includes("Unbound variable `#\\")) {
+      msg += "\n  This runtime has no character type — characters are 1-char strings." +
+        " `#\\newline`, `#\\space`, `#\\tab`, `#\\return`, `#\\xNN`, and `#\\<char>`" +
+        " are accepted (read as strings); other `#\\<name>` forms are not." +
+        " Use a string literal instead, e.g. \"\\n\".";
     }
     return { ok: false as const, error: msg };
   } finally {
@@ -1370,6 +1413,25 @@ function installStdShims(env: any): void {
   });
   defineIfMissing("char-upcase",   (c: any) => String(c).toUpperCase());
   defineIfMissing("char-downcase", (c: any) => String(c).toLowerCase());
+  // Characters are 1-char strings; char? therefore can't tell a char from a
+  // length-1 string.
+  const charStr = (c: any) => (typeof c === "string" ? c : String(c));
+  const codeOf = (c: any) => charStr(c).codePointAt(0) ?? 0;
+  defineIfMissing("char->integer", (c: any) => codeOf(c));
+  defineIfMissing("integer->char", (n: any) => String.fromCodePoint(Math.max(0, Math.floor(Number(n) || 0))));
+  defineIfMissing("char?", (x: any) => typeof x === "string" && Array.from(x).length === 1);
+  defineIfMissing("char=?",  (a: any, b: any) => charStr(a) === charStr(b));
+  defineIfMissing("char<?",  (a: any, b: any) => codeOf(a) <  codeOf(b));
+  defineIfMissing("char>?",  (a: any, b: any) => codeOf(a) >  codeOf(b));
+  defineIfMissing("char<=?", (a: any, b: any) => codeOf(a) <= codeOf(b));
+  defineIfMissing("char>=?", (a: any, b: any) => codeOf(a) >= codeOf(b));
+  defineIfMissing("char-ci=?", (a: any, b: any) => charStr(a).toLowerCase() === charStr(b).toLowerCase());
+  defineIfMissing("char-alphabetic?", (c: any) => /^\p{L}$/u.test(charStr(c)));
+  defineIfMissing("char-numeric?",    (c: any) => /^\p{Nd}$/u.test(charStr(c)));
+  defineIfMissing("char-whitespace?", (c: any) => /^\s$/.test(charStr(c)));
+  defineIfMissing("char-upper-case?", (c: any) => { const s = charStr(c); return s.length === 1 && s === s.toUpperCase() && s !== s.toLowerCase(); });
+  defineIfMissing("char-lower-case?", (c: any) => { const s = charStr(c); return s.length === 1 && s === s.toLowerCase() && s !== s.toUpperCase(); });
+  defineIfMissing("digit-value", (c: any) => { const s = charStr(c); return /^[0-9]$/.test(s) ? Number(s) : false; });
   defineIfMissing("string-normalize-spaces", (s: any, sep?: any, repl?: any) => {
     const str = String(s).trim();
     const splitOn = sep === undefined ? /\s+/ : (sep instanceof RegExp ? sep : new RegExp(String(sep)));
@@ -1500,9 +1562,9 @@ function installStdShims(env: any): void {
 }
 
 // Canonical names we claim coverage for. R = R7RS small base; S = SRFI-1;
-// K = Racket racket/base/list/string/format. Continuations, ports, bytevectors,
-// and char predicates are intentionally omitted — they'd be misleading
-// "coverage" without real functionality.
+// K = Racket racket/base/list/string/format. Continuations, ports, and
+// bytevectors are intentionally omitted — they'd be misleading "coverage"
+// without real functionality. Characters are modeled as 1-char strings.
 const COVERAGE_CHECKLIST: string[] = [
   // R7RS § 6.1 equivalence
   "eq?", "eqv?", "equal?",
@@ -1584,6 +1646,10 @@ const COVERAGE_CHECKLIST: string[] = [
   // Racket strings & chars (gaps)
   "string-titlecase", "string-pad", "string-pad-right",
   "char-upcase", "char-downcase",
+  "char->integer", "integer->char", "char?",
+  "char=?", "char<?", "char>?", "char<=?", "char>=?", "char-ci=?",
+  "char-alphabetic?", "char-numeric?", "char-whitespace?",
+  "char-upper-case?", "char-lower-case?", "digit-value",
   "string-normalize-spaces", "build-string",
   // Racket hash
   "make-hash", "hash", "hash?", "hash-ref", "hash-set!", "hash-set",
@@ -1841,6 +1907,10 @@ function installBindings(
   env.set("string-contains", stringContains);
   env.set("string-append", (...parts: unknown[]) =>
     parts.map((p) => (p === undefined || p === null ? "" : String(p))).join(""));
+  // LIPS' native `string` returns only its first argument; override to actually
+  // concatenate (chars are 1-char strings here, so that's the right semantics).
+  env.set("string", (...parts: unknown[]) =>
+    parts.map((p) => (p === undefined || p === null ? "" : String(p))).join(""));
   env.set("number->string", (n: unknown) => String(n));
   env.set("string->number", (s: unknown) => {
     if (typeof s !== "string") return false;
@@ -1949,6 +2019,10 @@ const DESCRIPTION = [
   "  - R7RS truthy semantics: anything that isn't `#f` is true. `(if str …)`,",
   "    `(if 0 …)`, `(if '() …)` all take the then-branch.",
   "  - `#t`/`#f` work as expected. `equal?`, `eq?`, `eqv?`, `string=?` all work.",
+  "  - Characters are 1-char strings (no separate char type). `#\\newline`,",
+  "    `#\\space`, `#\\tab`, `#\\return`, `#\\xNN`, and `#\\<char>` literals read as",
+  "    the equivalent string; `char->integer`/`integer->char`/`char?`/`char=?`/",
+  "    `char-whitespace?` etc. operate on them. A bare newline is just \"\\n\".",
   "  - SRFI-1: `member`, `assq`/`assv`/`assoc`, `delete-duplicates`, `first`",
   "    through `fifth`, `last`, `take`, `drop`, `iota`, `any`, `every`, `count`,",
   "    `find`, `filter-map`, `append-map`, `concatenate`, `partition`, `remove`,",
