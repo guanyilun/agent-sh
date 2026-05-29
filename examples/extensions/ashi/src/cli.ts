@@ -36,8 +36,8 @@ import * as path from "node:path";
 
 function parseArgs(argv: string[]): AppConfig & { extensions?: string[]; continueLast: boolean } {
   let model: string | undefined;
-  let apiKey: string | undefined = process.env.OPENAI_API_KEY ?? process.env.OPENROUTER_API_KEY;
-  let baseURL: string | undefined = process.env.OPENAI_BASE_URL;
+  let apiKey: string | undefined;
+  let baseURL: string | undefined;
   let provider: string | undefined;
   let backend: string | undefined;
   let continueLast = false;

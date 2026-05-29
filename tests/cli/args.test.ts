@@ -15,23 +15,26 @@ test("parseArgs returns defaults when given an empty argv and env", () => {
   assert.equal(cfg.extensions, undefined);
 });
 
-test("parseArgs picks up SHELL, OPENAI_API_KEY, OPENAI_BASE_URL from env", () => {
+test("parseArgs picks up SHELL from env", () => {
+  const cfg = parseArgs([], { SHELL: "/bin/zsh" });
+  assert.equal(cfg.shell, "/bin/zsh");
+});
+
+test("parseArgs does not inject env API keys into config (resolved per-provider)", () => {
   const cfg = parseArgs([], {
-    SHELL: "/bin/zsh",
     OPENAI_API_KEY: "sk-env",
     OPENAI_BASE_URL: "https://api.example.test/v1",
   });
-  assert.equal(cfg.shell, "/bin/zsh");
-  assert.equal(cfg.apiKey, "sk-env");
-  assert.equal(cfg.baseURL, "https://api.example.test/v1");
+  assert.equal(cfg.apiKey, undefined);
+  assert.equal(cfg.baseURL, undefined);
 });
 
-test("--api-key overrides OPENAI_API_KEY from env", () => {
+test("--api-key sets apiKey; env is ignored", () => {
   const cfg = parseArgs(["--api-key", "sk-flag"], { OPENAI_API_KEY: "sk-env" });
   assert.equal(cfg.apiKey, "sk-flag");
 });
 
-test("--base-url overrides OPENAI_BASE_URL from env", () => {
+test("--base-url sets baseURL; env is ignored", () => {
   const cfg = parseArgs(["--base-url", "https://flag/v1"], {
     OPENAI_BASE_URL: "https://env/v1",
   });

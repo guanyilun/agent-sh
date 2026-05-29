@@ -57,8 +57,8 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
   let backend: string | undefined;
   let shell = env.SHELL || "/bin/bash";
 
-  let apiKey: string | undefined = env.OPENAI_API_KEY;
-  let baseURL: string | undefined = env.OPENAI_BASE_URL;
+  let apiKey: string | undefined;
+  let baseURL: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
