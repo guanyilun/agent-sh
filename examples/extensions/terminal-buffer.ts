@@ -206,7 +206,9 @@ export default function activate(ctx: ExtensionContext): void {
       "  - Doom/Spacemacs leader sequences (e.g. <SPC> f f) need timing — set inter_key_ms=50 " +
       "    or higher so the leader timer can resolve each chord.\n" +
       "  - For complex Emacs operations, prefer `emacsclient -e '(...)'` over typing keys.\n\n" +
-      "Always call terminal_read after sending keys to verify the result.",
+      "This tool snapshots the screen before sending, sends the keys, then returns the resulting " +
+      "screen plus a diff — no separate terminal_read is needed to see the effect. For multi-step " +
+      "interactions, send small sequences and check the returned screen between them.",
     input_schema: {
       type: "object",
       properties: {
@@ -272,7 +274,7 @@ export default function activate(ctx: ExtensionContext): void {
       const before = tb.readScreen();
 
       bus.emit("shell:stdout-show", {});
-      process.stdout.write("\n");
+      bus.emit("shell:host-write", { data: "\n" });
 
       for (let i = 0; i < chords.length; i++) {
         bus.emit("shell:pty-write", { data: chords[i] });
