@@ -26,6 +26,9 @@ import activateOpenrouter from "./providers/openrouter.js";
 import activateOpenai from "./providers/openai.js";
 import activateOpenaiCompatible from "./providers/openai-compatible.js";
 import activateDeepseek from "./providers/deepseek.js";
+import activateOllama from "./providers/ollama.js";
+import activateZaiCodingPlan from "./providers/zai-coding-plan.js";
+import activateOpencode from "./providers/opencode.js";
 import { findBash } from "../utils/executor.js";
 import { createBashTool } from "./tools/bash.js";
 import { createPwshTool } from "./tools/pwsh.js";
@@ -530,4 +533,7 @@ export function activateAgent(ctx: ExtensionContext): void {
   activateOpenai(agentCtx);
   if (process.env.OPENAI_BASE_URL) activateOpenaiCompatible(agentCtx);
   activateDeepseek(agentCtx);
+  activateOllama(agentCtx);
+  activateZaiCodingPlan(agentCtx);
+  activateOpencode(agentCtx);
 }
