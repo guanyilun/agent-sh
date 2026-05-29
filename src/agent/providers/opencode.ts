@@ -68,7 +68,7 @@ function resolveModel(id: string, meta: ModelsDevEntry | undefined): ModelDef {
 }
 
 function reasoningParams(level: string): Record<string, unknown> {
-  if (level === "off") return {};
+  if (level === "off") return { reasoning_effort: "none" };
   return { reasoning_effort: level === "xhigh" ? "high" : level };
 }
 

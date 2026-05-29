@@ -20,6 +20,7 @@ export default function activate(ctx: AgentContext): void {
   const id = cloudKey ? "ollama-cloud" : "ollama";
 
   const sdkKey = cloudKey || "no-key";
+  const noAuth = !cloudKey;
   const baseURL = `${host}/v1`;
   const headers: Record<string, string> = {};
   if (cloudKey) headers.Authorization = `Bearer ${cloudKey}`;
@@ -31,7 +32,7 @@ export default function activate(ctx: AgentContext): void {
     },
   });
 
-  ctx.agent.providers.register({ id, apiKey: sdkKey, baseURL, models: [] });
+  ctx.agent.providers.register({ id, apiKey: sdkKey, baseURL, models: [], noAuth });
 
   fetchCatalog(host, headers).then((models) => {
     if (models.length === 0) return;
@@ -41,6 +42,7 @@ export default function activate(ctx: AgentContext): void {
       baseURL,
       defaultModel: models[0]!.id,
       models,
+      noAuth,
     });
   }).catch(() => {});
 }

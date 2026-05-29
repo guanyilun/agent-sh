@@ -19,6 +19,7 @@ import type { AgentContext } from "agent-sh/types";
 import * as path from "path";
 import * as fs from "fs/promises";
 import { homedir } from "os";
+import { fileURLToPath } from "url";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -246,12 +247,7 @@ async function fetchPDF(bibcode: string, sourceKey: PDFSource): Promise<ArrayBuf
 
 export default function activate(ctx: AgentContext): void {
   // Register the ADS query syntax skill — grouped with our tools in the system prompt
-  const skillPath = path.join(
-    path.dirname(
-      import.meta.url.replace(/^file:\/\//, "").replace(/^\/\/\//, "/")
-    ),
-    "SKILL.md",
-  );
+  const skillPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "SKILL.md");
   ctx.agent.registerSkill(
     "ads",
     "Full ADS query syntax reference and search strategy. Load before composing ADS queries — the tool descriptions only cover basic field prefixes.",
@@ -285,7 +281,7 @@ export default function activate(ctx: AgentContext): void {
         },
         doctype: {
           type: "string",
-          enum: ["article", "proceedings", "thesis", "book", "catalog", "software", "proposal"],
+          enum: ["article", "eprint", "inproceedings", "proceedings", "inbook", "book", "phdthesis", "mastersthesis", "catalog", "software", "proposal"],
           description: "Filter by document type.",
         },
         refereed: {
