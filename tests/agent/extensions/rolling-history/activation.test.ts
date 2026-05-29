@@ -18,6 +18,12 @@ async function flush(n = 12): Promise<void> {
   for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r));
 }
 
+// Poll for the async write to land; a fixed flush() count races a loaded CI disk.
+async function waitUntil(cond: () => boolean, attempts = 200): Promise<boolean> {
+  for (let i = 0; i < attempts && !cond(); i++) await new Promise((r) => setTimeout(r, 5));
+  return cond();
+}
+
 async function bootWithRollingHistory(storeDir: string): Promise<{
   core: ReturnType<typeof createCore>;
   commands: Map<string, CommandReg["handler"]>;
@@ -81,9 +87,12 @@ test("/history off gates writes; /history on resumes", async () => {
     // Turn 1 — writes on (default).
     messages.push({ role: "user", content: "first turn while on" });
     core.bus.emit("conversation:message-appended", { role: "user", content: "first turn while on" });
-    await flush();
-    const sizeAfterFirst = fs.existsSync(historyFile) ? fs.statSync(historyFile).size : 0;
-    assert.ok(sizeAfterFirst > 0, "first turn should have produced disk writes");
+    assert.ok(
+      await waitUntil(() =>
+        fs.existsSync(historyFile) && fs.readFileSync(historyFile, "utf-8").includes("first turn while on")),
+      "first turn should have produced disk writes",
+    );
+    const sizeAfterFirst = fs.statSync(historyFile).size;
 
     // /history off.
     const toggle = commands.get("history")!;
@@ -104,10 +113,12 @@ test("/history off gates writes; /history on resumes", async () => {
     await toggle("on");
     messages.push({ role: "user", content: "third turn after re-enable" });
     core.bus.emit("conversation:message-appended", { role: "user", content: "third turn after re-enable" });
-    await flush();
-    assert.ok(fs.statSync(historyFile).size > sizeAfterOff,
-      "file should grow once writes resume");
-    assert.ok(fs.readFileSync(historyFile, "utf-8").includes("third turn after re-enable"));
+    assert.ok(
+      await waitUntil(() =>
+        fs.existsSync(historyFile) && fs.readFileSync(historyFile, "utf-8").includes("third turn after re-enable")),
+      "file should grow once writes resume",
+    );
+    assert.ok(fs.statSync(historyFile).size > sizeAfterOff, "file should grow once writes resume");
   } finally {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   }
