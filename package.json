@@ -1,7 +1,7 @@
 {
   "name": "agent-sh",
   "version": "0.14.10",
-  "description": "A shell-first terminal where AI is one keystroke away",
+  "description": "A composable agent runtime — pair any frontend with any agent backend over one shared extension layer",
   "type": "module",
   "workspaces": [
     "examples/extensions/*"

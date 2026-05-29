@@ -1,6 +1,6 @@
 # Architecture
 
-agent-sh is a shell with a pluggable AI backend. The shell is the product — the agent is a bus-driven component that self-wires to events.
+agent-sh is a composable agent runtime: a pure kernel that any frontend can drive and any agent backend can plug into, over one shared extension layer. Frontends and backends are both bus-driven components that self-wire to events — the bundled shell is just one frontend among several.
 
 ## Design Philosophy: Pure Kernel + Everything Is an Extension
 
