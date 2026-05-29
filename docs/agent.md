@@ -238,7 +238,7 @@ The agent retries transient failures with exponential backoff:
 
 The agent supports configurable thinking/reasoning levels for models that support `reasoning_effort`:
 
-- Levels: `off` (default), `low`, `medium`, `high`
+- Levels: `off` (default), `low`, `medium`, `high`, `xhigh` (`xhigh` falls back to `high` on providers that don't support it)
 - Set via the `config:set-thinking` event (wired to `/thinking` slash command)
 - Query current state via `config:get-thinking` pipe
 - The agent validates that the current model/provider supports reasoning before enabling

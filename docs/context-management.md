@@ -28,7 +28,7 @@ Captured and owned by the `shell-context` built-in (`src/shell/shell-context.ts`
 
 Agent tool outputs are **not** here — those live in the conversation stream. The boundary is strict: if the user typed it at the PTY, it goes into shell context; if the agent called a tool, it goes into the conversation.
 
-Frontends without a PTY (e.g. agent-sh-hub) simply don't load this extension — the agent runs cwd-aware via the default `cwd` handler (`process.cwd()`) and no `<cwd>` / `<shell_events>` envelope is emitted.
+Frontends without a PTY (e.g. ashi, asHub) simply don't load this extension — the agent runs cwd-aware via the default `cwd` handler (`process.cwd()`) and no `<cwd>` / `<shell_events>` envelope is emitted.
 
 ### Conversation — "what has the agent been working on?"
 
