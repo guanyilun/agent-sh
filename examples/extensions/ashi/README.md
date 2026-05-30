@@ -73,6 +73,8 @@ Ctrl+O       Expand/collapse all tool calls and results in chat
 
 The current thinking level is shown in the footer as `[level]` next to the model name.
 
+Typing `/` (commands) or `@` (files) opens a suggestion popup: ↑/↓ to move, Tab or Enter to accept, Esc to dismiss.
+
 ## Sessions
 
 Many sessions per cwd, fresh by default:
@@ -188,7 +190,7 @@ export default function activate(ctx) {
 }
 ```
 
-`view(state, env)` is a pure function returning a `ToolDisplay`. Ashi owns the pi-tui mapping, theming, streaming buffer policy (preview / summary / hidden modes from `ashi.display`), diff width memoization, and the Ctrl+O expand toggle. The framework auto-tracks `state.status`, `state.output` (streaming chunks), and `state.hasDiff` (for edit/write) — renderers read these without wiring their own reducers.
+`view(state, env)` is a pure function returning a `ToolDisplay`. Ashi owns the mapping to the active renderer, theming, streaming buffer policy (preview / summary / hidden modes from `ashi.display`), diff width memoization, and the Ctrl+O expand toggle. The framework auto-tracks `state.status`, `state.output` (streaming chunks), and `state.hasDiff` (for edit/write) — renderers read these without wiring their own reducers.
 
 `ToolDisplay` body kinds: `text`, `code` (with syntax highlighting via `lang`), `stream` (preview/summary/hidden policy applied by ashi), `diff` (closure pushed by the frontend orchestrator), `lines`, `compound`. Custom state transitions can be declared via an optional `reducers` map.
 
@@ -232,8 +234,8 @@ export default function activate(ctx) {
 So a persistent setup is `ashi install my-tui-renderer` once + `"ashi": { "renderer":
 "my-tui" }` in settings — no per-command flags. The contract has two halves —
 content-node factories (`text` / `markdown` / `image` / `container` / `spacer`) and
-an app shell (`mount()` → scrollback / footer / queue / input / status, plus select
-lists, loader, and key events) — together with `mountToolCall` / `mountToolResult`
+an app shell (`mount()` → scrollback / footer / queue / input / `belowInput` / status,
+plus select lists, loader, and key events) — together with `mountToolCall` / `mountToolResult`
 and a `capabilities` list so a renderer can declare gaps and the substrate degrades
 rather than crashes. This is how you build a different TUI frontend (Ink, a
 remote/web bridge…) without forking ashi.
@@ -247,6 +249,10 @@ renderer can mount as-is (both pi-tui and Ink do) or ignore and draw the model
 however it likes. Grouping is a presentation policy, not a mandate: a renderer
 that omits `mountToolGroup` opts out entirely, and the substrate renders those
 calls individually through the schema mount.
+
+Autocomplete works the same way: the substrate owns the popup and mounts the
+suggestion list in the `belowInput` slot; the renderer only draws it, so the
+slash-command / `@`-file popup behaves identically in every renderer.
 
 The substrate also owns terminal setup so renderers don't each rediscover it.
 agent-sh's shell clears OPOST on boot (pi-tui emits its own `\r`); ashi reads
