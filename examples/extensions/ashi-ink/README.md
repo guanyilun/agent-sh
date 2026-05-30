@@ -84,6 +84,20 @@ un-written.
 It implements the full `Renderer` contract from `@guanyilun/ashi/renderer` and is
 verified headlessly with `ink-testing-library` (`npm test`).
 
+### Inspecting the render flow
+
+Set `ASHI_INSPECT` to debug render loops (the kind that surface as React's
+"Maximum update depth exceeded"). It writes append-only JSONL of: the warning and
+its stack, any **re-entrant store bump** (a bump fired during a flush — the
+setState-in-effect loop signature), and **render bursts** (many commits in a tight
+window, via a `Profiler`). Off unless set; disables Ink's console patching while on
+so the warning reaches the inspector.
+
+```bash
+ASHI_INSPECT=1 ASHI_RENDERER=ink npm run dev -- -e ashi-ink   # → $TMPDIR/ashi-inspect.log
+ASHI_INSPECT=/tmp/ashi.log ASHI_RENDERER=ink npm run dev -- -e ashi-ink
+```
+
 ## Capability notes (vs pi-tui)
 
 This is a demonstration renderer; some shell affordances degrade:

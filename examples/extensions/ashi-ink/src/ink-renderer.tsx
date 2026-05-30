@@ -45,6 +45,9 @@ import type {
   ToolResultView,
 } from "@guanyilun/ashi/renderer";
 import { renderToolGroupLines } from "@guanyilun/ashi/renderer";
+import { INSPECT_FILE, inspectConsole, inspectReentrantBump, makeCommitWatcher } from "./inspect.js";
+
+const commitWatcher = INSPECT_FILE ? makeCommitWatcher() : null;
 
 interface SelectState {
   items: SelectItem[];
@@ -140,6 +143,7 @@ interface Store {
 function createStore(): Store {
   let version = 0;
   let scheduled = false;
+  let flushing = false;
   const listeners = new Set<() => void>();
   // Coalesce bumps to one notification per tick. Streaming fires req() many times
   // a tick (chunk text + status + loader); a synchronous bump on each one advances
@@ -150,10 +154,17 @@ function createStore(): Store {
   const flush = (): void => {
     scheduled = false;
     version++;
+    flushing = true;
     for (const l of [...listeners]) l();
+    flushing = false;
   };
   return {
-    bump: () => { if (scheduled) return; scheduled = true; queueMicrotask(flush); },
+    bump: () => {
+      if (INSPECT_FILE && flushing) inspectReentrantBump();
+      if (scheduled) return;
+      scheduled = true;
+      queueMicrotask(flush);
+    },
     subscribe: (l) => { listeners.add(l); return () => { listeners.delete(l); }; },
     get: () => version,
   };
@@ -428,7 +439,7 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
   const cc = Math.min(state.committedCount, sbChildren.length);
   const committed = sbChildren.slice(0, cc);
   const live = sbChildren.slice(cc);
-  return (
+  const tree = (
     <Box flexDirection="column">
       <Static items={committed}>
         {(child, i) => <Box key={i}>{renderVNode(child, i)}</Box>}
@@ -454,6 +465,9 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
       {renderVNode(state.status)}
     </Box>
   );
+  return commitWatcher
+    ? <React.Profiler id="ashi" onRender={commitWatcher}>{tree}</React.Profiler>
+    : tree;
 }
 
 function containerView(v: VNode, req: () => void): ContainerView {
@@ -534,7 +548,14 @@ function makeApp(store: Store, req: () => void): { app: App; element: React.Reac
     // tree — it doesn't re-run Root, so width-dependent content (band, tables,
     // markdown reflow, status, tool output) wouldn't recompute. Bump the store
     // on resize to force a render at the new width.
-    start: () => { if (ink) return; process.stdout.on("resize", req); ink = inkRender(element); },
+    start: () => {
+      if (ink) return;
+      if (INSPECT_FILE) inspectConsole();
+      process.stdout.on("resize", req);
+      // Inspecting needs React's warning to reach our console wrapper, not Ink's
+      // log interceptor — so disable patchConsole only then.
+      ink = inkRender(element, INSPECT_FILE ? { patchConsole: false } : undefined);
+    },
     stop: () => { process.stdout.off("resize", req); ink?.unmount(); ink = null; },
     onKey: (handler) => { state.keyHandlers.push(handler); },
     createSelectList: (items): SelectView => {
