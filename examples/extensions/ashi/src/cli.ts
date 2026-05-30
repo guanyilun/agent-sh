@@ -231,6 +231,8 @@ async function main(): Promise<void> {
   const handle = mountAshi(ctx, getStore, capture, renderer);
   stopFrontend = handle.stop;
 
+  (core.bus.emit as (event: string, payload: unknown) => void)("ashi:ready", {});
+
   registerForkCommands(ctx, getStore, handle.openTreePicker, handle.rebuildChat, capture);
   registerSessionCommands(ctx, getStore, capture, {
     openSessionPicker: handle.openSessionPicker,

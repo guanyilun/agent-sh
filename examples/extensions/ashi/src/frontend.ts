@@ -2,6 +2,7 @@ import type { ExtensionContext } from "agent-sh/types";
 import { theme } from "./theme.js";
 import type {
   KeyEvent,
+  KeyHandler,
   LoaderView,
   RenderNode,
   Renderer,
@@ -970,6 +971,7 @@ export function mountAshi(
 
   const jobControl = process.platform !== "win32";
   let suspended = false;
+  let terminalYielded = false;
   const resumeFromSuspend = (): void => {
     if (!suspended) return;
     suspended = false;
@@ -978,12 +980,33 @@ export function mountAshi(
     app.requestRender(true);
   };
   const suspendToShell = (): void => {
-    if (suspended) return;
+    if (suspended || terminalYielded) return;
     suspended = true;
     app.stop();
     process.kill(process.pid, "SIGSTOP");
   };
   if (jobControl) process.on("SIGCONT", resumeFromSuspend);
+
+  ctx.define("ashi:terminal:yield", async (run: () => unknown | Promise<unknown>) => {
+    if (terminalYielded || suspended) return;
+    terminalYielded = true;
+    const wasRaw = process.stdin.isRaw;
+    app.stop();
+    applyOutputMode(true);
+    process.stdin.setRawMode?.(true);
+    process.stdin.resume();
+    try {
+      return await run();
+    } finally {
+      process.stdin.setRawMode?.(wasRaw);
+      applyOutputMode(renderer.capabilities.rawOutput);
+      app.start();
+      app.requestRender(true);
+      terminalYielded = false;
+    }
+  });
+
+  ctx.define("ashi:on-key", (handler: KeyHandler) => app.onKey(handler));
 
   app.onKey((key: KeyEvent) => {
     if (key.isRelease() || key.isRepeat()) return;
