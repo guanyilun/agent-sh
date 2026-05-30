@@ -41,9 +41,6 @@ import type {
   ToolGroupView,
   ToolResultView,
 } from "@guanyilun/ashi/renderer";
-import { INSPECT_FILE, inspectBump, inspectConsole, inspectReentrantBump, makeCommitWatcher } from "./inspect.js";
-
-const commitWatcher = INSPECT_FILE ? makeCommitWatcher() : null;
 
 interface SelectState {
   items: SelectItem[];
@@ -210,23 +207,19 @@ interface Store {
 function createStore(): Store {
   let version = 0;
   let scheduled = false;
-  let flushing = false;
   const listeners = new Set<() => void>();
   let lastFlush = 0;
   const flush = (): void => {
     scheduled = false;
     lastFlush = performance.now();
     version++;
-    flushing = true;
     for (const l of [...listeners]) l();
-    flushing = false;
   };
   return {
     // Timer-throttle to ~60fps. Bursty per-microtask bumps would chain renders past
     // React's nested-update limit ("Maximum update depth"); a macrotask flush
     // collapses a whole burst into one render so the chain can't form.
     bump: () => {
-      if (INSPECT_FILE) { inspectBump(); if (flushing) inspectReentrantBump(); }
       if (scheduled) return;
       scheduled = true;
       const h = setTimeout(flush, Math.max(0, 16 - (performance.now() - lastFlush)));
@@ -597,9 +590,7 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
       {renderVNode(state.status)}
     </Box>
   );
-  return commitWatcher
-    ? <React.Profiler id="ashi" onRender={commitWatcher}>{tree}</React.Profiler>
-    : tree;
+  return tree;
 }
 
 function containerView(v: VNode, req: () => void): ContainerView {
@@ -740,13 +731,11 @@ function makeApp(store: Store, req: () => void): {
     commitScrollback: () => { state.committedCount = scrollbackChildren.length; req(); },
     start: () => {
       if (ink) return;
-      if (INSPECT_FILE) inspectConsole();
       // ProcessTerminal owns raw stdin: it sets raw mode, runs the kitty-keyboard
       // handshake (so Shift+Enter and Alt+B arrive as distinct sequences), segments
       // input into single key events, and re-emits resize as our render bump.
       terminal.start(dispatch, req);
-      // patchConsole off only while inspecting, so React's warning reaches our wrapper.
-      ink = inkRender(element, INSPECT_FILE ? { patchConsole: false } : undefined);
+      ink = inkRender(element);
     },
     stop: () => { terminal.stop(); ink?.unmount(); ink = null; },
     onKey: (handler) => { state.keyHandlers.push(handler); },
