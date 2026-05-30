@@ -32,7 +32,7 @@ Frontends without a PTY (e.g. ashi, asHub) simply don't load this extension — 
 
 ### Conversation — "what has the agent been working on?"
 
-Owned by `ConversationState`. This is the OpenAI-shaped messages array (`user` / `assistant` / `tool`) the LLM actually sees. Contains:
+Owned by `LiveView` (`src/agent/live-view.ts`). This is the OpenAI-shaped messages array (`user` / `assistant` / `tool`) the LLM actually sees. Contains:
 
 - User messages (queries the user sent to the agent)
 - Assistant messages (the LLM's replies)
@@ -44,7 +44,7 @@ The two streams merge at one point: when the user submits a new query, the curre
 
 Each exchange (a shell command + output) gets a sequential `id` as it's captured. The shell-context extension keeps an internal `lastSeq` cursor — the highest id it has already sent to the model.
 
-Shell context is registered as a per-query context producer (`ctx.agent.registerContextProducer("shell-context", …, { mode: "per-query" })`):
+Shell context contributes to the per-query `query-context:build` handler (the `shell-context` extension advises it directly; extensions can equivalently use `ctx.agent.registerContextProducer(name, fn, { mode: "per-query" })`):
 
 1. The producer always emits `<cwd>...</cwd>` with the live PTY-tracked cwd, so every user message anchors where the agent is right now (immune to compaction confusion over historical cwds).
 2. If there are exchanges with id > `lastSeq`, it appends `<shell_events>...</shell_events>` with the deltas; the cursor then advances to the new high-water mark.
@@ -75,43 +75,43 @@ The session directory is removed on process exit (including `SIGINT` / `SIGTERM`
 
 ## Conversation compaction
 
-Unlike shell context — which is a per-query delta and stays small — the conversation grows every turn. Without an active strategy it would eventually blow past the model's window. agent-sh uses a three-tier scheme designed to feel like shell history.
+Unlike shell context — which is a per-query delta and stays small — the conversation grows every turn. Without an active strategy it would eventually blow past the model's window. The kernel owns the *trigger*; the **built-in `rolling-history` extension** owns the *strategy* and the *store*. The result is a three-tier scheme designed to feel like shell history. (Headless or bridge backends that don't load the extension keep the live array and the kernel trigger, but have no summary store, recall, or cross-restart history.)
 
-### Tier 1 — eager nucleation
+### Tier 1 — eager capture
 
-As soon as any message is added to the conversation, it's *nucleated*: a one-line summary is computed immediately (via the advisable `conversation:nucleate-{user,agent,tool}` handlers) and appended to `~/.agent-sh/history` through the `history:append` handler.
+Every time a message is appended to the conversation, the kernel emits a `conversation:message-appended` event. The rolling-history extension listens and, for each message:
 
-#### The history file on disk
+1. Nucleates it into a one-line summary (`nucleate()` in `src/agent/nuclear-form.ts`) and appends that as a persisted `Entry` to its summary **Store**.
+2. Appends an *ephemeral* `recall-cache` child entry holding the full message, so the verbatim text stays expandable for the rest of the process without ever being written to disk.
+3. Links the live message back to its entry id (`conversation:link`, which stamps `meta.entryId`), so a later compaction won't re-summarize it.
 
-`~/.agent-sh/history` is a JSONL log — one serialized `NuclearEntry` per line, with fields like `seq`, `iid` (instance id), `role`, `sum` (one-line summary), and optional `body` (full content, roughly 4000 chars max). Each running agent-sh instance gets a random two-byte instance id that tags its entries for provenance.
+Read-only tool results (`read_file`, `grep`, `glob`, `ls`) are filtered out of the persisted summaries — the agent can just re-run those tools.
 
-- **Concurrency-safe.** Each line is short enough that POSIX `O_APPEND` writes are atomic, so multiple agent-sh instances can share one file without a lock. Only truncation (which rewrites the whole file) takes a lock — `~/.agent-sh/history.lock` via `O_EXCL`, with a 10-second stale-lock timeout to recover from crashes.
-- **Read-only tool results are filtered at write time.** Entries tagged read-only (`read_file`, `grep`, `glob`, `ls`) never touch disk — the agent can re-run those tools if needed. The reader applies the same filter defensively.
-- **Front-truncation.** After each append, the file is checked against `historyMaxBytes` (default 100MB). If it's 150%+ over the limit, the oldest lines are dropped and the remainder rewritten atomically via a temp-file + `rename`. The 150% overshoot prevents frequent rewrites.
-- **Reverse-chunked reads.** Search, `readRecent`, and `findBySeq` stream the file backward in 1MB chunks, stitching lines across chunk boundaries at the byte level so UTF-8 codepoints never split. Search caps at a 20MB scan budget to bound cost on large files.
+#### The summary store on disk
 
-The `history:*` handlers (`append`, `search`, `find-by-seq`, `read-recent`) are all advisable, so extensions can swap the backend (e.g. SQLite, remote store) without changing nucleation.
+The store (`SharedFileStore` in `src/agent/store.ts`) is an append-only JSONL log at `~/.agent-sh/rolling-history/history.jsonl` (`~/.agent-sh` is the config dir, overridable via `AGENT_SH_HOME`). One serialized `Entry` per line — `{ id, parentId?, ts, kind, payload }`, where a summary's payload carries `sum` (the one-liner), optional `body` (full content, capped per kind), and `iid` (the writing instance's id).
+
+- **Concurrency-safe.** Lines are short enough that POSIX `O_APPEND` writes are atomic, so multiple agent-sh instances can share one file without a lock. Only front-truncation (which rewrites the file) takes a lock — `history.jsonl.lock` via `O_EXCL`, with a 10-second stale-lock timeout to recover from crashes.
+- **Ephemeral entries never touch disk.** The `recall-cache` full-body entries are appended with `{ ephemeral: true }`, a no-op on the file store — they live only in the current process.
+- **Front-truncation.** After each append, the file is checked against the extension's `maxBytes` (default 50MB). Past 150% of the cap, the oldest lines are dropped and the rest rewritten atomically via temp-file + `rename`; the overshoot avoids frequent rewrites.
+- **Reverse-chunked reads.** `readRecent`, `findById`, and `search` stream the file backward in 1MB chunks, stitching lines across boundaries at the byte level so UTF-8 codepoints never split. Search caps at a 20MB scan budget to bound cost on large files.
+
+The store sits behind a generic `Store` interface (`append` / `findById` / `readRecent` / `search`), so an extension can swap in a different backend (SQLite, remote service) without changing capture or recall.
 
 ### Tier 2 — active context
 
-The in-memory conversation holds three things at once:
-
-- Full messages for each live turn (verbatim)
-- A rolling in-context "nuclear block" (the one-liners) that gives the agent high-level orientation
-- An in-memory recall archive keyed by sequence id, so evicted content stays searchable within the session
+The live `LiveView` array holds full messages for every turn the LLM currently sees. Alongside it, the rolling-history extension keeps two id-keyed views: the summary Store (one-liners, persisted) and the per-process `recall-cache` (full bodies, ephemeral). So once a turn is evicted from the live array, its summary stays browsable and its full text stays expandable for the rest of the session.
 
 ### Tier 3 — compaction
 
-The kernel watches estimated prompt size against `autoCompactThreshold × (contextWindow − responseReserve)`. When that threshold is crossed (or `/compact` is invoked explicitly, or the API returns a context-overflow error), it fires the `conversation:compact` handler.
+The kernel watches estimated prompt size against `autoCompactThreshold × (contextWindow − RESPONSE_RESERVE)` (default threshold `0.5`). When it's crossed (or `/compact` is invoked, or the API returns a context-overflow error), the kernel calls the advisable `conversation:compact` handler with a token target. The rolling-history extension's advisor implements the strategy:
 
-Built-in strategy:
+1. Parse the live array into turns (a turn starts at each user message).
+2. Pin the first turn and the most recent turns — the newest kept verbatim, a band just behind it "slimmed" (read-only tool calls dropped, long tool/assistant bodies trimmed).
+3. Score the remaining middle turns by *priority × recency* (user messages and errors rank highest; large read-only tool results lowest) and evict lowest-first until the estimate is under target.
+4. Replace the evicted span in place with one synthetic block — `[Conversation history — use conversation_recall to expand any entry]` — built from the recent summary lines, topping up summaries for any messages that missed eager capture.
 
-1. Keep the first turn verbatim (earliest user intent usually matters)
-2. Keep the last `keepRecent` turns verbatim (the live focus)
-3. Score the remaining middle turns by *priority × recency* and evict lowest-priority first
-4. Evicted turns collapse in place to their one-line nuclear summaries
-
-On startup, the most recent `historyStartupEntries` entries from `~/.agent-sh/history` are injected as a `[Prior session history]` preamble — so context carries across restarts the way shell history does.
+On startup, if `prefetchEntries > 0` (default 50) the extension reads the most recent summary lines from the Store and injects them as a `[Prior session history]` message — so context carries across restarts the way shell history does.
 
 ### Token accounting
 
@@ -126,7 +126,7 @@ People often conflate shell output truncation and conversation compaction. They'
 | **Stream** | Shell context (`<shell_events>` deltas) | Conversation messages array |
 | **When** | Once, at the moment each exchange is captured | On threshold crossing, `/compact`, or overflow retry |
 | **State change** | Permanent: `ex.output` becomes head+tail+path | Permanent: evicted turns collapse to one-liners |
-| **Full-text location** | Tempfile on disk | In-memory archive + `~/.agent-sh/history` |
+| **Full-text location** | Tempfile on disk | Ephemeral recall cache + summary store (`~/.agent-sh/rolling-history/history.jsonl`) |
 | **Recovery tool** | `read_file` on the spill path | `conversation_recall` |
 
 They fire independently. An exchange with a huge output spills as soon as it's captured; conversation compaction may not trigger until many turns later, for unrelated reasons.
@@ -143,9 +143,9 @@ There's no dedicated shell-recall tool: the spill file is just a normal file. Th
 
 Registered by the built-in `rolling-history` extension (only present when that extension is active; bridges and embedded uses don't ship it):
 
-- `conversation_recall {"action": "browse"}` — list in-context nuclear entries + the 25 most recent history-file entries
-- `conversation_recall {"action": "search", "query": "..."}` — regex search across the in-session archive and the history file (both one-line summaries and full bodies)
-- `conversation_recall {"action": "expand", "turn_id": 42}` — full content of a specific turn
+- `conversation_recall {"action": "browse"}` — list the 25 most recent summary entries from the store
+- `conversation_recall {"action": "search", "query": "..."}` — regex search across stored entries (one-line summaries plus the ephemeral full-body cache), returning each hit's header and a first-match excerpt
+- `conversation_recall {"action": "expand", "turn_id": "#a1b2c3d4"}` — full content of a specific entry, by the `#id` shown in browse/search output
 
 Extensions that install a custom compaction strategy can reuse `conversation_recall` or advise it with their own semantics.
 
@@ -178,8 +178,13 @@ All settings live in `~/.agent-sh/settings.json`:
 | `shellHeadLines` | 10 | Lines kept from the top when an output is spilled |
 | `shellTailLines` | 10 | Lines kept from the bottom when an output is spilled |
 | `autoCompactThreshold` | 0.5 | Fraction of available context window that triggers auto-compact |
-| `historyMaxBytes` | 104857600 | Max size of `~/.agent-sh/history` before front-truncation (100MB) |
-| `historyStartupEntries` | 100 | Prior history entries injected as `[Prior session history]` on startup |
+
+The `rolling-history` extension reads its own settings, namespaced under `"rolling-history"`:
+
+| Setting | Default | Description |
+|---|---|---|
+| `maxBytes` | 52428800 | Max size of the summary store before front-truncation (50MB) |
+| `prefetchEntries` | 50 | Summary entries injected as `[Prior session history]` on startup (0 disables) |
 
 ## Key files
 
@@ -187,9 +192,9 @@ All settings live in `~/.agent-sh/settings.json`:
 |---|---|
 | `src/shell/shell-context.ts` | Built-in: shell exchange capture, spill-to-tempfile on long outputs, `<shell_events>` per-query producer, `cwd` handler advisor |
 | `src/utils/shell-output-spill.ts` | Per-pid session dir, cleanup on exit + signals, stale-dir sweep for crashed sessions |
-| `src/agent/conversation-state.ts` | Messages array, eager nucleation, priority-based compaction, in-memory recall archive |
+| `src/agent/live-view.ts` | The live messages array the LLM sees; estimate/replace/link + API-grounded token accounting |
 | `src/agent/nuclear-form.ts` | One-line-summary primitives (nucleate, serialize, priority classification) |
-| `src/agent/history-file.ts` | Append-only `~/.agent-sh/history` with chunked search/tail-read + front-truncation |
-| `src/agent/agent-loop.ts` | Auto-compact trigger, `conversation:compact` advisor chain |
-| `src/agent/extensions/rolling-history/index.ts` | Rolling-history extension: registers the `conversation_recall` tool, the summary strategy, and the `/history` slash command |
+| `src/agent/store.ts` | `Store` interface + `SharedFileStore`: append-only JSONL with chunked search/tail-read + front-truncation |
+| `src/agent/agent-loop.ts` | Auto-compact trigger, `conversation:*` handler definitions, `conversation:message-appended` emits |
+| `src/agent/extensions/rolling-history/` | The built-in rolling-history extension: eager capture (`strategy.ts`), `conversation:compact` advisor, `conversation_recall` (`recall.ts`), `/history` command (`index.ts`) |
 | `src/agent/index.ts` | `/compact` and `/context` slash commands registered when the ash backend starts |
