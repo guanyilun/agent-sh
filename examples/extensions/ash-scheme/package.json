@@ -5,7 +5,7 @@
   "type": "module",
   "main": "index.ts",
   "dependencies": {
-    "@jcubic/lips": "^0.20.3",
+    "@jcubic/lips": "1.0.0-beta.20",
     "agent-sh": "^0.14.0"
   }
 }

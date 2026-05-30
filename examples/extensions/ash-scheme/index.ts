@@ -5,9 +5,13 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 import type { AgentContext } from "agent-sh/types";
 import { getSettings } from "agent-sh/settings";
-import lips from "@jcubic/lips";
+// LIPS 1.0's ESM build exposes named exports with no default; older builds (and
+// the CJS interop path) put everything under `default`. Accept both.
+import * as lipsNs from "@jcubic/lips";
+const lips: any = (lipsNs as any).default ?? lipsNs;
 
 type ToolResult = {
   content: string; exitCode: number | null; isError: boolean;
@@ -41,64 +45,11 @@ async function withDisplay(
 // the TUI still renders diffs.
 const HIDDEN_IN_SCHEME_ONLY = ["bash", "pwsh", "read_file", "write_file", "edit_file", "ls", "glob", "grep"];
 
-const { Pair, nil, LSymbol, LNumber, Macro, evaluate: lipsEvaluate } = lips as any;
+const { Pair, nil, LSymbol, LNumber, Macro, bootstrap, LString } = lips as any;
 
-// LIPS' `define` discards the promise returned by async host bindings.
-// With `(define x (read-file …)) x` the exec() advances before `env.set`
-// fires, so `x` is reported unbound. Reinstall to return the promise.
-function installFixedDefine(env: any): void {
-  const fixed = Macro.defmacro("define", function (this: any, code: any, eval_args: any) {
-    const target = this;
-    if (code.car instanceof Pair && code.car.car instanceof LSymbol) {
-      return new Pair(
-        new LSymbol("define"),
-        new Pair(
-          code.car.car,
-          new Pair(
-            new Pair(new LSymbol("lambda"), new Pair(code.car.cdr, code.cdr)),
-            nil,
-          ),
-        ),
-      );
-    } else if (eval_args.macro_expand) {
-      return;
-    }
-    if (eval_args.dynamic_scope) eval_args.dynamic_scope = target;
-    eval_args.env = target;
-    let value = code.cdr.car;
-    if (value instanceof Pair) {
-      value = lipsEvaluate(value, eval_args);
-    } else if (value instanceof LSymbol) {
-      value = target.get(value);
-    }
-    if (code.car instanceof LSymbol) {
-      const name = code.car;
-      if (value && typeof value.then === "function") {
-        return value.then((v: any) => { target.set(name, v); });
-      }
-      target.set(name, value);
-    }
-  });
-  env.set("define", fixed);
-}
-
-// LIPS' `if` is strict-boolean: `(if "hello" …)` errors. R7RS, Racket, Chicken
-// — essentially every Scheme model is trained on — treat any non-#f as true.
-// Reinstall a lenient `if`.
-function installLenientIf(env: any): void {
-  const lenient = new Macro("if", function (this: any, code: any, opts: any) {
-    const target = this;
-    const dynScope = opts.dynamic_scope ? target : undefined;
-    const choose = (cond: any) => {
-      const branch = cond !== false ? code.cdr.car : code.cdr.cdr.car;
-      return lipsEvaluate(branch, { env: target, dynamic_scope: dynScope, error: opts.error });
-    };
-    const condVal = lipsEvaluate(code.car, { env: target, dynamic_scope: dynScope, error: opts.error });
-    if (condVal && typeof condVal.then === "function") return condVal.then(choose);
-    return choose(condVal);
-  });
-  env.set("if", lenient);
-}
+// LIPS 1.0 boxes string literals as LString; unbox to a JS primitive so the gap
+// shims and host bridge (which assume JS strings) operate on them correctly.
+const toJsStr = (x: any): any => (x instanceof LString ? x.toString() : x);
 
 const LOG_PATH = path.join(os.homedir(), ".agent-sh", "scheme-eval.log");
 const SCHEME_DEFINE_DIR = path.join(os.homedir(), ".agent-sh", "scheme-define");
@@ -175,7 +126,7 @@ async function loadPersistedDefines(
       const fp = path.join(SCHEME_DEFINE_DIR, f);
       try {
         const src = fs.readFileSync(fp, "utf-8");
-        await (lips as any).exec(src, env);
+        await (lips as any).exec(src, { env });
       } catch (e) {
         logErr("scheme-define load", e, { file: fp });
       }
@@ -310,6 +261,7 @@ function stripPagination(raw: string): string[] {
 
 function format(v: unknown): string {
   if (v === undefined || v === null) return "";
+  if (v instanceof LString) v = v.toString();
   if (typeof v === "string") return JSON.stringify(v);
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   if (v && typeof (v as any).toString === "function") {
@@ -319,40 +271,9 @@ function format(v: unknown): string {
 }
 
 // ── evaluator ─────────────────────────────────────────────────────
-// LIPS 0.20.x has no character type, so a `#\…` literal reads as an unbound
-// symbol. preprocessSchemeSource expands each to a 1-char string instead.
-const NAMED_CHARS: Record<string, string> = {
-  newline: "\n", linefeed: "\n", nl: "\n",
-  space: " ", tab: "\t", return: "\r",
-  null: "\u0000", nul: "\u0000",
-  delete: "\u007f", rubout: "\u007f",
-  escape: "\u001b", altmode: "\u001b",
-  backspace: "\u0008", alarm: "\u0007", page: "\u000c",
-};
-
-// The char after `#\` as a 1-char string + its span, or null for an unknown
-// multi-char name (left untranslated so it surfaces as an error).
-function resolveCharLiteral(source: string, start: number): { ch: string; span: number } | null {
-  let j = start;
-  while (j < source.length && /[A-Za-z0-9]/.test(source[j])) j++;
-  const run = source.slice(start, j);
-  if (run.length <= 1) {
-    const ch = source[start];
-    return ch === undefined ? null : { ch, span: 1 };
-  }
-  const hex = /^[xX]([0-9a-fA-F]+)$/.exec(run);
-  if (hex) {
-    const cp = parseInt(hex[1], 16);
-    if (cp >= 0 && cp <= 0x10ffff) return { ch: String.fromCodePoint(cp), span: run.length };
-  }
-  const named = NAMED_CHARS[run.toLowerCase()];
-  return named === undefined ? null : { ch: named, span: run.length };
-}
-
-// LIPS implements string literals via JSON.parse, which rejects backslash
-// escapes outside JSON's tiny set (\" \\ \/ \b \f \n \r \t \uXXXX). Models
-// routinely write \s \w \d etc. in regex strings. Pre-process: promote any
-// invalid \X to \\X so LIPS parses it as a literal backslash + X.
+// LIPS' string lexer accepts only JSON-style escapes (\" \\ \/ \b \f \n \r \t
+// \uXXXX), but models routinely write \s \w \d etc. in regex strings. Promote
+// any other \X to \\X so it parses as a literal backslash + X.
 function preprocessSchemeSource(source: string): string {
   const JSON_ESC = new Set(["\\", "/", '"', "b", "f", "n", "r", "t"]);
   let out = "";
@@ -369,14 +290,6 @@ function preprocessSchemeSource(source: string): string {
     if (!inStr) {
       if (c === ";") { inComment = true; out += c; continue; }
       if (c === '"') { inStr = true; out += c; continue; }
-      if (c === "#" && source[i + 1] === "\\") {
-        const lit = resolveCharLiteral(source, i + 2);
-        if (lit) {
-          out += JSON.stringify(lit.ch);
-          i += 1 + lit.span; // skip '\' + the name/char; loop's i++ skips '#'
-          continue;
-        }
-      }
       out += c;
       continue;
     }
@@ -393,16 +306,16 @@ function preprocessSchemeSource(source: string): string {
       i++;
       continue;
     }
-    // Any other \X — promote so JSON.parse sees \\X → literal
+    // Any other \X — promote to \\X so it parses as a literal backslash
     out += "\\\\" + next;
     i++;
   }
   return out;
 }
 
-// If LIPS reports a JSON-parse failure, localize the invalid escapes so the
-// agent gets actionable line/col info instead of a raw offset. Only triggers
-// when preprocessing didn't catch everything.
+// If LIPS rejects a string literal, localize the invalid escapes so the agent
+// gets actionable line/col info instead of a raw offset. Only triggers when
+// preprocessing didn't catch everything.
 function formatStringEscapeDiagnostic(source: string, baseMsg: string): string {
   const JSON_ESC = new Set(["\\", "/", '"', "b", "f", "n", "r", "t"]);
   let line = 1, col = 1;
@@ -535,7 +448,7 @@ async function evaluate(env: any, source: string, timeoutMs: number) {
   });
   try {
     const results = await Promise.race<any>([
-      (lips as any).exec(preprocessed, env),
+      (lips as any).exec(preprocessed, { env }),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error(`scheme_eval timed out after ${timeoutMs}ms`)), timeoutMs),
       ),
@@ -554,13 +467,11 @@ async function evaluate(env: any, source: string, timeoutMs: number) {
     let msg = e?.message ?? String(e);
     if (/[Uu]nbalanced parenthes/.test(msg)) {
       msg = formatParenDiagnostic(source, msg);
-    } else if (/Bad escaped character in JSON|Unexpected.*JSON|JSON at position/.test(msg)) {
+    } else if (/Invalid string literal|Bad escaped character|Unexpected.*JSON|JSON at position/.test(msg)) {
       msg = formatStringEscapeDiagnostic(source, msg);
     } else if (msg.includes("Unbound variable `#\\")) {
-      msg += "\n  This runtime has no character type — characters are 1-char strings." +
-        " `#\\newline`, `#\\space`, `#\\tab`, `#\\return`, `#\\xNN`, and `#\\<char>`" +
-        " are accepted (read as strings); other `#\\<name>` forms are not." +
-        " Use a string literal instead, e.g. \"\\n\".";
+      msg += "\n  Unknown character literal. Supported: #\\newline #\\space #\\tab" +
+        " #\\return #\\null #\\delete #\\escape, #\\xNN, and #\\<char>.";
     }
     return { ok: false as const, error: msg };
   } finally {
@@ -570,11 +481,10 @@ async function evaluate(env: any, source: string, timeoutMs: number) {
 }
 
 // ── standard-library shims ───────────────────────────────────────
-// LIPS ships a small subset of R7RS and almost no SRFI-1. Models trained on
-// Racket/Chicken/Guile reach for the canonical names (equal?, member, take,
-// iota, etc.) and hit "Unbound variable" — costing a retry round trip per
-// gap. We pre-populate the most common ones so the model's first attempt
-// works regardless of which Scheme dialect it learned from.
+// Fill the gaps the bootstrapped std library leaves: SRFI-1 helpers, Racket
+// spellings, and cross-dialect aliases. std covers R7RS base, but a model
+// trained on Racket/Chicken/Guile still reaches for names std doesn't bind.
+// defineIfMissing so anything std already provides wins.
 function installStdShims(env: any): void {
   const defineIfMissing = (name: string, fn: any) => {
     if ((env as any).get(name, { throwError: false }) === undefined) env.set(name, fn);
@@ -610,31 +520,6 @@ function installStdShims(env: any): void {
     }
     return false;
   };
-  defineIfMissing("equal?", lipsEqual);
-  defineIfMissing("eqv?", atomEqual);
-
-  // ── R7RS list/member ─────────────────────────────────────
-  defineIfMissing("list?", (v: any) => v === nil || v instanceof Pair);
-  const memberLike = (eq: (a: any, b: any) => boolean) => (item: any, lst: any) => {
-    let p = lst;
-    while (p instanceof Pair) {
-      if (eq(p.car, item)) return p;
-      p = p.cdr;
-    }
-    return false;
-  };
-  defineIfMissing("member", memberLike(lipsEqual));
-  defineIfMissing("memq", memberLike((a, b) => a === b));
-  defineIfMissing("memv", memberLike((a, b) => a === b));
-  defineIfMissing("assv", (item: any, lst: any) => {
-    let p = lst;
-    while (p instanceof Pair) {
-      const e = p.car;
-      if (e instanceof Pair && e.car === item) return e;
-      p = p.cdr;
-    }
-    return false;
-  });
 
   // ── SRFI-1 list helpers ──────────────────────────────────
   defineIfMissing("first",  (lst: any) => pairToArray(lst)[0]);
@@ -643,8 +528,6 @@ function installStdShims(env: any): void {
   defineIfMissing("fourth", (lst: any) => pairToArray(lst)[3]);
   defineIfMissing("fifth",  (lst: any) => pairToArray(lst)[4]);
   defineIfMissing("last",   (lst: any) => { const a = pairToArray(lst); return a[a.length - 1]; });
-  defineIfMissing("take",   (lst: any, n: any) => toSchemeList(pairToArray(lst).slice(0, Number(n))));
-  defineIfMissing("drop",   (lst: any, n: any) => toSchemeList(pairToArray(lst).slice(Number(n))));
   defineIfMissing("take-while", (pred: any, lst: any) => {
     const out: any[] = [];
     for (const x of pairToArray(lst)) { if (!truthy(pred(x))) break; out.push(x); }
@@ -662,7 +545,6 @@ function installStdShims(env: any): void {
     return toSchemeList(Array.from({ length: n }, (_, i) => s + i * k));
   });
   defineIfMissing("any",   (pred: any, lst: any) => pairToArray(lst).some((x) => truthy(pred(x))));
-  defineIfMissing("every", (pred: any, lst: any) => pairToArray(lst).every((x) => truthy(pred(x))));
   defineIfMissing("count", (pred: any, lst: any) => pairToArray(lst).filter((x) => truthy(pred(x))).length);
   defineIfMissing("filter-map", (f: any, lst: any) => {
     const out: any[] = [];
@@ -688,44 +570,9 @@ function installStdShims(env: any): void {
     for (const x of pairToArray(lst)) (truthy(pred(x)) ? t : f).push(x);
     return new Pair(toSchemeList(t), toSchemeList(f));
   });
-  defineIfMissing("fold-right", (f: any, init: any, lst: any) => {
-    const a = pairToArray(lst); let acc = init;
-    for (let i = a.length - 1; i >= 0; i--) acc = f(a[i], acc);
-    return acc;
-  });
-  defineIfMissing("zip", (a: any, b: any) => {
-    const xs = pairToArray(a); const ys = pairToArray(b);
-    const n = Math.min(xs.length, ys.length);
-    return toSchemeList(Array.from({ length: n }, (_, i) => toSchemeList([xs[i], ys[i]])));
-  });
-
-  // ── R7RS numeric predicates / ops ────────────────────────
-  defineIfMissing("zero?",     (n: any) => Number(n) === 0);
-  defineIfMissing("positive?", (n: any) => Number(n) > 0);
-  defineIfMissing("negative?", (n: any) => Number(n) < 0);
-  defineIfMissing("odd?",      (n: any) => Math.abs(Number(n)) % 2 === 1);
-  defineIfMissing("even?",     (n: any) => Number(n) % 2 === 0);
-  defineIfMissing("modulo",    (a: any, b: any) => { const m = Number(a) % Number(b); return (m < 0) === (Number(b) < 0) ? m : m + Number(b); });
-  defineIfMissing("quotient",  (a: any, b: any) => Math.trunc(Number(a) / Number(b)));
-  defineIfMissing("remainder", (a: any, b: any) => Number(a) % Number(b));
-  defineIfMissing("expt",      (a: any, b: any) => Math.pow(Number(a), Number(b)));
-  defineIfMissing("ceiling",   (n: any) => Math.ceil(Number(n)));
 
   // ── R7RS string ops ──────────────────────────────────────
-  defineIfMissing("string=?",  (a: any, b: any) => String(a) === String(b));
-  defineIfMissing("string<?",  (a: any, b: any) => String(a) < String(b));
-  defineIfMissing("string>?",  (a: any, b: any) => String(a) > String(b));
-  defineIfMissing("string-upcase",   (s: any) => String(s).toUpperCase());
-  defineIfMissing("string-downcase", (s: any) => String(s).toLowerCase());
-  defineIfMissing("string->list",    (s: any) => toSchemeList(Array.from(String(s))));
-  defineIfMissing("list->string",    (lst: any) => pairToArray(lst).map(String).join(""));
-  defineIfMissing("string-ref",      (s: any, i: any) => {
-    const str = String(s);
-    const idx = Math.floor(Number(i));
-    return idx >= 0 && idx < str.length ? str[idx] : false;
-  });
   defineIfMissing("string-trim-both", (s: any) => String(s).trim());
-  defineIfMissing("identity", (x: any) => x);
   // Pattern can be string or (regexp "pat"). Racket (?i:…) / (?m:…) inline
   // flag groups are translated to JS RegExp flags.
   const compileRegex = (pat: any): RegExp => {
@@ -741,6 +588,7 @@ function installStdShims(env: any): void {
   };
   defineIfMissing("regexp", (pat: any) => compileRegex(pat));
   const regexpMatch = (pat: any, s: any) => {
+    s = toJsStr(s);
     if (typeof s !== "string") return false;
     const m = s.match(compileRegex(pat));
     return m ? toSchemeList(Array.from(m)) : false;
@@ -763,6 +611,7 @@ function installStdShims(env: any): void {
     return false;
   });
   defineIfMissing("regexp-match-positions", (pat: any, s: any) => {
+    s = toJsStr(s);
     if (typeof s !== "string") return false;
     const m = s.match(compileRegex(pat));
     if (!m) return false;
@@ -772,13 +621,6 @@ function installStdShims(env: any): void {
   });
 
   // ── Racket spellings ─────────────────────────────────────
-  defineIfMissing("string-split", (s: any, sep: any) => {
-    if (typeof s !== "string") return nil;
-    if (sep === undefined) return toSchemeList(s.split(/\s+/).filter(Boolean));
-    return toSchemeList(s.split(String(sep)));
-  });
-  defineIfMissing("string-join", (lst: any, sep: any) =>
-    pairToArray(lst).map(String).join(sep === undefined ? " " : String(sep)));
   defineIfMissing("displayln", function (this: any, x: any) {
     const display = (env as any).get("display", { throwError: false });
     if (display) { display(x); display("\n"); }
@@ -797,75 +639,11 @@ function installStdShims(env: any): void {
   });
 
   // ── R7RS numbers (gaps) ────────────────────────────────────
-  defineIfMissing("abs",       (n: any) => Math.abs(Number(n)));
-  defineIfMissing("floor",     (n: any) => Math.floor(Number(n)));
-  defineIfMissing("round",     (n: any) => Math.round(Number(n)));
-  defineIfMissing("truncate",  (n: any) => Math.trunc(Number(n)));
-  defineIfMissing("sqrt",      (n: any) => Math.sqrt(Number(n)));
-  defineIfMissing("log",       (n: any, base: any) =>
-    base === undefined ? Math.log(Number(n)) : Math.log(Number(n)) / Math.log(Number(base)));
-  defineIfMissing("exp",       (n: any) => Math.exp(Number(n)));
-  defineIfMissing("sin",       (n: any) => Math.sin(Number(n)));
-  defineIfMissing("cos",       (n: any) => Math.cos(Number(n)));
-  defineIfMissing("tan",       (n: any) => Math.tan(Number(n)));
-  defineIfMissing("asin",      (n: any) => Math.asin(Number(n)));
-  defineIfMissing("acos",      (n: any) => Math.acos(Number(n)));
-  defineIfMissing("atan",      (a: any, b: any) =>
-    b === undefined ? Math.atan(Number(a)) : Math.atan2(Number(a), Number(b)));
-  defineIfMissing("gcd", (...args: any[]) => {
-    const gcd2 = (a: number, b: number): number => b === 0 ? Math.abs(a) : gcd2(b, a % b);
-    return args.length === 0 ? 0 : args.map(Number).reduce(gcd2);
-  });
-  defineIfMissing("lcm", (...args: any[]) => {
-    const gcd2 = (a: number, b: number): number => b === 0 ? Math.abs(a) : gcd2(b, a % b);
-    const lcm2 = (a: number, b: number): number => a && b ? Math.abs(a * b) / gcd2(a, b) : 0;
-    return args.length === 0 ? 1 : args.map(Number).reduce(lcm2);
-  });
-  defineIfMissing("exact",         (n: any) => Math.round(Number(n)));
-  defineIfMissing("inexact",       (n: any) => Number(n));
-  defineIfMissing("exact->inexact", (n: any) => Number(n));
-  defineIfMissing("inexact->exact", (n: any) => Math.round(Number(n)));
-  defineIfMissing("exact-integer?", (n: any) => Number.isInteger(Number(n)));
-  defineIfMissing("exact?",   (n: any) => Number.isInteger(Number(n)));
-  defineIfMissing("inexact?", (n: any) => !Number.isInteger(Number(n)));
-  defineIfMissing("=", (...args: any[]) => {
-    if (args.length < 2) return true;
-    const first = Number(args[0]);
-    for (let i = 1; i < args.length; i++) if (Number(args[i]) !== first) return false;
-    return true;
-  });
-  defineIfMissing("finite?",        (n: any) => Number.isFinite(Number(n)));
-  defineIfMissing("infinite?",      (n: any) => !Number.isFinite(Number(n)) && !Number.isNaN(Number(n)));
-  defineIfMissing("nan?",           (n: any) => Number.isNaN(Number(n)));
   defineIfMissing("add1", (n: any) => Number(n) + 1);
   defineIfMissing("sub1", (n: any) => Number(n) - 1);
   defineIfMissing("sqr",  (n: any) => Number(n) * Number(n));
 
-  // ── R7RS predicates ────────────────────────────────────────
-  defineIfMissing("boolean?",   (x: any) => x === true || x === false);
-  defineIfMissing("boolean=?",  (a: any, b: any) => a === b && (a === true || a === false));
-  defineIfMissing("procedure?", (x: any) => typeof x === "function");
-  defineIfMissing("symbol?",    (x: any) => x instanceof LSymbol);
-  defineIfMissing("symbol=?",   (a: any, b: any) =>
-    a instanceof LSymbol && b instanceof LSymbol && (a as any).name === (b as any).name);
-  defineIfMissing("string->symbol", (s: any) => new LSymbol(String(s)));
-  defineIfMissing("integer?", (x: any) => typeof x === "number" ? Number.isInteger(x)
-    : (x && typeof x.valueOf === "function" && Number.isInteger(Number(x.valueOf()))));
-
   // ── R7RS strings (gaps) ────────────────────────────────────
-  defineIfMissing("substring", (s: any, start: any, end: any) => {
-    const str = String(s);
-    const a = Math.max(0, Math.floor(Number(start) || 0));
-    const b = end === undefined ? str.length : Math.min(str.length, Math.floor(Number(end)));
-    return str.slice(a, b);
-  });
-  defineIfMissing("string-copy", (s: any) => String(s));
-  defineIfMissing("make-string", (n: any, ch?: any) => {
-    const len = Math.max(0, Math.floor(Number(n) || 0));
-    const c = ch === undefined ? " " : String(ch);
-    return c.length === 1 ? c.repeat(len) : (c + "").repeat(len).slice(0, len);
-  });
-  defineIfMissing("string-foldcase", (s: any) => String(s).toLowerCase());
   defineIfMissing("string-trim",       (s: any) => String(s).trim());
   defineIfMissing("string-trim-left",  (s: any) => String(s).replace(/^\s+/, ""));
   defineIfMissing("string-trim-right", (s: any) => String(s).replace(/\s+$/, ""));
@@ -873,34 +651,16 @@ function installStdShims(env: any): void {
     String(s).startsWith(String(prefix)));
   defineIfMissing("string-suffix?", (suffix: any, s: any) =>
     String(s).endsWith(String(suffix)));
-  defineIfMissing("non-empty-string?", (x: any) =>
-    typeof x === "string" && x.length > 0);
+  defineIfMissing("non-empty-string?", (x: any) => {
+    x = toJsStr(x);
+    return typeof x === "string" && x.length > 0;
+  });
   defineIfMissing("string-index", (s: any, needle: any) => {
     const i = String(s).indexOf(String(needle));
     return i < 0 ? false : i;
   });
-  defineIfMissing("string-ci=?", (a: any, b: any) =>
-    String(a).toLowerCase() === String(b).toLowerCase());
-  defineIfMissing("string-ci<?", (a: any, b: any) =>
-    String(a).toLowerCase() < String(b).toLowerCase());
-  defineIfMissing("string-ci>?", (a: any, b: any) =>
-    String(a).toLowerCase() > String(b).toLowerCase());
-  defineIfMissing("string<=?",   (a: any, b: any) => String(a) <= String(b));
-  defineIfMissing("string>=?",   (a: any, b: any) => String(a) >= String(b));
 
   // ── R7RS / SRFI-1 list gaps ────────────────────────────────
-  defineIfMissing("list-tail", (lst: any, n: any) => {
-    let k = Math.floor(Number(n) || 0);
-    let cur: any = lst;
-    while (k-- > 0 && cur instanceof Pair) cur = cur.cdr;
-    return cur;
-  });
-  defineIfMissing("list-ref", (lst: any, n: any) => {
-    let k = Math.floor(Number(n) || 0);
-    let cur: any = lst;
-    while (k-- > 0 && cur instanceof Pair) cur = cur.cdr;
-    return cur instanceof Pair ? cur.car : false;
-  });
   defineIfMissing("list-index", (pred: any, lst: any) => {
     let i = 0, cur: any = lst;
     while (cur instanceof Pair) {
@@ -934,13 +694,6 @@ function installStdShims(env: any): void {
     return toSchemeList(out);
   });
   defineIfMissing("cons*", (...args: any[]) => {
-    if (args.length === 0) return nil;
-    if (args.length === 1) return args[0];
-    let tail: any = args[args.length - 1];
-    for (let i = args.length - 2; i >= 0; i--) tail = new Pair(args[i], tail);
-    return tail;
-  });
-  defineIfMissing("list*", (...args: any[]) => {
     if (args.length === 0) return nil;
     if (args.length === 1) return args[0];
     let tail: any = args[args.length - 1];
@@ -987,26 +740,6 @@ function installStdShims(env: any): void {
       else out.push(e);
       cur = cur.cdr;
     }
-    return toSchemeList(out);
-  });
-  // LIPS' `range` is single-arg only; override (not defineIfMissing) so the
-  // 1/2/3-arg Racket form wins.
-  env.set("range", (a: any, b: any, step: any) => {
-    let start: number, end: number, st: number;
-    if (b === undefined) { start = 0; end = Number(a); st = 1; }
-    else { start = Number(a); end = Number(b); st = step === undefined ? 1 : Number(step); }
-    const out: number[] = [];
-    if (st > 0) for (let i = start; i < end; i += st) out.push(i);
-    else if (st < 0) for (let i = start; i > end; i += st) out.push(i);
-    return toSchemeList(out);
-  });
-  defineIfMissing("flatten", (lst: any) => {
-    const out: any[] = [];
-    const walk = (x: any) => {
-      if (x instanceof Pair) { let c: any = x; while (c instanceof Pair) { walk(c.car); c = c.cdr; } }
-      else if (x !== nil) out.push(x);
-    };
-    walk(lst);
     return toSchemeList(out);
   });
   defineIfMissing("index-of", (lst: any, x: any) => {
@@ -1074,10 +807,12 @@ function installStdShims(env: any): void {
   };
   defineIfMissing("regexp?", (x: any) => x instanceof RegExp);
   defineIfMissing("regexp-replace", (pat: any, s: any, repl: any) => {
+    s = toJsStr(s);
     if (typeof s !== "string") return s;
     return s.replace(reCompile(pat), String(repl));
   });
   defineIfMissing("regexp-replace*", (pat: any, s: any, repl: any) => {
+    s = toJsStr(s);
     if (typeof s !== "string") return s;
     const re = reCompile(pat);
     const global = re.flags.includes("g") ? re : new RegExp(re.source, re.flags + "g");
@@ -1085,8 +820,10 @@ function installStdShims(env: any): void {
   });
   defineIfMissing("regexp-quote", (s: any) =>
     String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  defineIfMissing("regexp-split", (pat: any, s: any) =>
-    typeof s === "string" ? toSchemeList(s.split(reCompile(pat))) : nil);
+  defineIfMissing("regexp-split", (pat: any, s: any) => {
+    s = toJsStr(s);
+    return typeof s === "string" ? toSchemeList(s.split(reCompile(pat))) : nil;
+  });
 
   // ── Format (Racket) ────────────────────────────────────────
   // format: simple ~a ~s ~v ~n support — covers most logging/inspection
@@ -1189,13 +926,11 @@ function installStdShims(env: any): void {
     arr.sort((a, b) => (truthy(less(a, b)) ? -1 : truthy(less(b, a)) ? 1 : 0));
     return toSchemeList(arr);
   };
-  defineIfMissing("sort",  sortImpl);
   defineIfMissing("sort!", sortImpl);
   // SRFI-132 / R7RS-large flips the argument order.
   defineIfMissing("list-sort", (less: any, lst: any) => sortImpl(lst, less));
 
   // ── Racket list aliases & gaps ─────────────────────────────
-  defineIfMissing("empty?", (v: any) => v === nil);
   defineIfMissing("empty",  nil);
   defineIfMissing("cons?",  (v: any) => v instanceof Pair);
   defineIfMissing("andmap", (pred: any, lst: any) => pairToArray(lst).every((x) => truthy(pred(x))));
@@ -1212,11 +947,6 @@ function installStdShims(env: any): void {
       cur = cur.cdr;
     }
     return false;
-  });
-  defineIfMissing("make-list", (n: any, v: any) => {
-    const count = Math.max(0, Math.floor(Number(n) || 0));
-    const fill = v === undefined ? nil : v;
-    return toSchemeList(Array(count).fill(fill));
   });
   defineIfMissing("build-list", (n: any, proc: any) => {
     const count = Math.max(0, Math.floor(Number(n) || 0));
@@ -1238,14 +968,6 @@ function installStdShims(env: any): void {
     const a = pairToArray(lst);
     const k = Math.max(0, Math.floor(Number(n) || 0));
     return new Pair(toSchemeList(a.slice(0, k)), toSchemeList(a.slice(k)));
-  });
-  defineIfMissing("shuffle", (lst: any) => {
-    const a = pairToArray(lst).slice();
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return toSchemeList(a);
   });
   defineIfMissing("add-between", (lst: any, sep: any) => {
     const a = pairToArray(lst);
@@ -1371,13 +1093,6 @@ function installStdShims(env: any): void {
   // ── Racket numbers (gaps) ──────────────────────────────────
   defineIfMissing("pi", Math.PI);
   // Racket overloads: (random) 0≤x<1, (random k) 0≤i<k, (random lo hi).
-  defineIfMissing("random", (a: any, b: any) => {
-    if (a === undefined) return Math.random();
-    if (b === undefined) return Math.floor(Math.random() * Math.max(0, Math.floor(Number(a))));
-    const lo = Math.floor(Number(a));
-    const hi = Math.floor(Number(b));
-    return lo + Math.floor(Math.random() * Math.max(0, hi - lo));
-  });
   defineIfMissing("exact-floor",    (n: any) => Math.floor(Number(n)));
   defineIfMissing("exact-ceiling",  (n: any) => Math.ceil(Number(n)));
   defineIfMissing("exact-round",    (n: any) => Math.round(Number(n)));
@@ -1411,27 +1126,6 @@ function installStdShims(env: any): void {
     const c = ch === undefined ? " " : String(ch).charAt(0) || " ";
     return str.length >= w ? str : str + c.repeat(w - str.length);
   });
-  defineIfMissing("char-upcase",   (c: any) => String(c).toUpperCase());
-  defineIfMissing("char-downcase", (c: any) => String(c).toLowerCase());
-  // Characters are 1-char strings; char? therefore can't tell a char from a
-  // length-1 string.
-  const charStr = (c: any) => (typeof c === "string" ? c : String(c));
-  const codeOf = (c: any) => charStr(c).codePointAt(0) ?? 0;
-  defineIfMissing("char->integer", (c: any) => codeOf(c));
-  defineIfMissing("integer->char", (n: any) => String.fromCodePoint(Math.max(0, Math.floor(Number(n) || 0))));
-  defineIfMissing("char?", (x: any) => typeof x === "string" && Array.from(x).length === 1);
-  defineIfMissing("char=?",  (a: any, b: any) => charStr(a) === charStr(b));
-  defineIfMissing("char<?",  (a: any, b: any) => codeOf(a) <  codeOf(b));
-  defineIfMissing("char>?",  (a: any, b: any) => codeOf(a) >  codeOf(b));
-  defineIfMissing("char<=?", (a: any, b: any) => codeOf(a) <= codeOf(b));
-  defineIfMissing("char>=?", (a: any, b: any) => codeOf(a) >= codeOf(b));
-  defineIfMissing("char-ci=?", (a: any, b: any) => charStr(a).toLowerCase() === charStr(b).toLowerCase());
-  defineIfMissing("char-alphabetic?", (c: any) => /^\p{L}$/u.test(charStr(c)));
-  defineIfMissing("char-numeric?",    (c: any) => /^\p{Nd}$/u.test(charStr(c)));
-  defineIfMissing("char-whitespace?", (c: any) => /^\s$/.test(charStr(c)));
-  defineIfMissing("char-upper-case?", (c: any) => { const s = charStr(c); return s.length === 1 && s === s.toUpperCase() && s !== s.toLowerCase(); });
-  defineIfMissing("char-lower-case?", (c: any) => { const s = charStr(c); return s.length === 1 && s === s.toLowerCase() && s !== s.toUpperCase(); });
-  defineIfMissing("digit-value", (c: any) => { const s = charStr(c); return /^[0-9]$/.test(s) ? Number(s) : false; });
   defineIfMissing("string-normalize-spaces", (s: any, sep?: any, repl?: any) => {
     const str = String(s).trim();
     const splitOn = sep === undefined ? /\s+/ : (sep instanceof RegExp ? sep : new RegExp(String(sep)));
@@ -1552,7 +1246,6 @@ function installStdShims(env: any): void {
     const match = (n: string) => re ? re.test(n) : n.includes(needle);
     return toSchemeList(collectEnvNames().filter(match).map((n) => new LSymbol(n)));
   };
-  defineIfMissing("apropos",      aproposImpl);
   defineIfMissing("apropos-list", aproposImpl);
 
   // ── Misc Racket ────────────────────────────────────────────
@@ -1564,7 +1257,7 @@ function installStdShims(env: any): void {
 // Canonical names we claim coverage for. R = R7RS small base; S = SRFI-1;
 // K = Racket racket/base/list/string/format. Continuations, ports, and
 // bytevectors are intentionally omitted — they'd be misleading "coverage"
-// without real functionality. Characters are modeled as 1-char strings.
+// without real functionality.
 const COVERAGE_CHECKLIST: string[] = [
   // R7RS § 6.1 equivalence
   "eq?", "eqv?", "equal?",
@@ -1739,7 +1432,7 @@ function installBindings(
   glob: ToolExecutor | null,
 ): void {
   const runBash = async (command: string, timeoutSec?: number) => {
-    const args: Record<string, unknown> = { command };
+    const args: Record<string, unknown> = { command: toJsStr(command) };
     if (typeof timeoutSec === "number") args.timeout = timeoutSec;
     const result = await bash(args);
     let content = typeof result.content === "string" ? result.content : String(result.content ?? "");
@@ -1786,7 +1479,7 @@ function installBindings(
   });
 
   env.set("read-file", async (filePath: string, offset?: any, limit?: any) => {
-    const args: Record<string, unknown> = { path: filePath, bypass_cache: true };
+    const args: Record<string, unknown> = { path: toJsStr(filePath), bypass_cache: true };
     if (offset !== undefined && offset !== null) {
       const n = Number(offset);
       if (!isNaN(n)) args.offset = n;
@@ -1800,6 +1493,7 @@ function installBindings(
   });
 
   env.set("write-file", async (filePath: string, content: string) => {
+    filePath = toJsStr(filePath); content = toJsStr(content);
     // Re-emit tool lifecycle events so the TUI shows diffs.
     const result = await withDisplay(
       bus, "write_file", "write", { path: filePath, content }, filePath,
@@ -1810,6 +1504,7 @@ function installBindings(
 
   if (editFile) {
     env.set("edit-file", async (filePath: string, oldStr: string, newStr: string, replaceAll?: any) => {
+      filePath = toJsStr(filePath); oldStr = toJsStr(oldStr); newStr = toJsStr(newStr);
       const toolArgs: Record<string, unknown> = { path: filePath, old_text: oldStr, new_text: newStr };
       if (unwrapSchemeBool(replaceAll) === true) toolArgs.replace_all = true;
       const result = await withDisplay(
@@ -1846,8 +1541,9 @@ function installBindings(
     };
 
     env.set("%grep", async (pattern: string, p?: string, third?: any) => {
+      const pStr = toJsStr(p);
       const args: Record<string, unknown> = { pattern: normalizePattern(String(pattern ?? "")), output_mode: "content" };
-      if (typeof p === "string") args.path = p;
+      if (typeof pStr === "string") args.path = pStr;
       if (third instanceof Pair) {
         Object.assign(args, readOptions(third, GREP_KEYMAP, GREP_NUMERIC));
       } else if (third !== undefined && third !== null) {
@@ -1860,15 +1556,16 @@ function installBindings(
       if (result.content === "No matches found.") return nil;
       const rows: unknown[] = [];
       for (const line of stripPagination(result.content)) {
-        const parsed = parseGrepLine(line, typeof p === "string" ? p : undefined);
+        const parsed = parseGrepLine(line, typeof pStr === "string" ? pStr : undefined);
         if (parsed) rows.push(parsed);
       }
       return toSchemeList(rows);
     });
 
     env.set("%grep-files", async (pattern: string, p?: string, opts?: any) => {
+      const pStr = toJsStr(p);
       const args: Record<string, unknown> = { pattern: normalizePattern(String(pattern ?? "")), output_mode: "files_with_matches" };
-      if (typeof p === "string") args.path = p;
+      if (typeof pStr === "string") args.path = pStr;
       if (opts instanceof Pair) Object.assign(args, readOptions(opts, GREP_KEYMAP, GREP_NUMERIC));
       const result = await grep(args);
       if (result.isError || result.content === "No matches found.") return nil;
@@ -1880,8 +1577,9 @@ function installBindings(
     // Strip leading "./" so glob paths match grep's — otherwise eq? on the
     // file field fails across the two.
     env.set("glob", async (pattern: string, p?: string) => {
-      const args: Record<string, unknown> = { pattern };
-      if (typeof p === "string") args.path = p;
+      const pStr = toJsStr(p);
+      const args: Record<string, unknown> = { pattern: toJsStr(pattern) };
+      if (typeof pStr === "string") args.path = pStr;
       const result = await glob(args);
       if (result.isError || result.content === "No files matched.") return nil;
       const paths = stripPagination(result.content).map((l) =>
@@ -1898,44 +1596,24 @@ function installBindings(
   env.set("success?",     (r: unknown) => lookup(r, "success") === true);
 
   // R7RS / string helpers LIPS doesn't ship.
-  env.set("string-length", (s: unknown) => (typeof s === "string" ? s.length : 0));
-  const stringContains = (s: unknown, needle: unknown) =>
-    typeof s === "string" && typeof needle === "string" && s.includes(needle);
+  const stringContains = (s: unknown, needle: unknown) => {
+    s = toJsStr(s); needle = toJsStr(needle);
+    return typeof s === "string" && typeof needle === "string" && s.includes(needle);
+  };
   env.set("string-contains?", stringContains);
   // Racket spells it without the `?`. Bind both so the model isn't punished
   // for guessing dialect.
   env.set("string-contains", stringContains);
-  env.set("string-append", (...parts: unknown[]) =>
-    parts.map((p) => (p === undefined || p === null ? "" : String(p))).join(""));
-  // LIPS' native `string` returns only its first argument; override to actually
-  // concatenate (chars are 1-char strings here, so that's the right semantics).
-  env.set("string", (...parts: unknown[]) =>
-    parts.map((p) => (p === undefined || p === null ? "" : String(p))).join(""));
-  env.set("number->string", (n: unknown) => String(n));
-  env.set("string->number", (s: unknown) => {
-    if (typeof s !== "string") return false;
-    const n = Number(s);
-    return Number.isNaN(n) ? false : n;
-  });
-  env.set("symbol->string", (sym: any) => (sym && sym.name) ? sym.name : String(sym));
-  // LIPS doesn't ship max/min — useful enough that not having them breaks
-  // common idioms like `(max 1 (- n 5))` for line-bound clamping.
-  env.set("max", (...args: any[]) => args.reduce((a, b) => (Number(a) >= Number(b) ? a : b)));
-  env.set("min", (...args: any[]) => args.reduce((a, b) => (Number(a) <= Number(b) ? a : b)));
-  installStdShims(env);
-  // Global string substitution — LIPS' built-in `replace` with a string
-  // pattern only replaces the first match (it calls JS String.replace).
-  // This binding replaces every occurrence, sed-style.
+  // Global string substitution: `replace` with a string pattern replaces only
+  // the first match; this binding replaces every occurrence, sed-style.
   env.set("string-replace", (oldStr: unknown, newStr: unknown, s: unknown) => {
+    s = toJsStr(s);
     if (typeof s !== "string") return s;
     return s.split(String(oldStr ?? "")).join(String(newStr ?? ""));
   });
 
-  // LIPS' tokenizer doesn't recognize R7RS `#t`/`#f` — they parse as
-  // unbound symbols. Bind them so the natural R7RS reflex works.
-  env.set("#t", true);
-  env.set("#f", false);
   env.set("lines", (s: unknown) => {
+    s = toJsStr(s);
     if (typeof s !== "string" || s.length === 0) return nil;
     const parts = s.split("\n");
     if (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
@@ -2019,10 +1697,10 @@ const DESCRIPTION = [
   "  - R7RS truthy semantics: anything that isn't `#f` is true. `(if str …)`,",
   "    `(if 0 …)`, `(if '() …)` all take the then-branch.",
   "  - `#t`/`#f` work as expected. `equal?`, `eq?`, `eqv?`, `string=?` all work.",
-  "  - Characters are 1-char strings (no separate char type). `#\\newline`,",
-  "    `#\\space`, `#\\tab`, `#\\return`, `#\\xNN`, and `#\\<char>` literals read as",
-  "    the equivalent string; `char->integer`/`integer->char`/`char?`/`char=?`/",
-  "    `char-whitespace?` etc. operate on them. A bare newline is just \"\\n\".",
+  "  - Characters are a real R7RS type. `#\\A`, `#\\newline`, `#\\space`,",
+  "    `#\\tab`, `#\\return`, `#\\null`, `#\\delete`, `#\\xNN` literals read as",
+  "    characters; `char->integer`/`integer->char`/`char?`/`char=?`/",
+  "    `char-whitespace?` etc. operate on them.",
   "  - SRFI-1: `member`, `assq`/`assv`/`assoc`, `delete-duplicates`, `first`",
   "    through `fifth`, `last`, `take`, `drop`, `iota`, `any`, `every`, `count`,",
   "    `find`, `filter-map`, `append-map`, `concatenate`, `partition`, `remove`,",
@@ -2038,10 +1716,9 @@ const DESCRIPTION = [
   "Default timeout 15s; pass timeout_ms to override (max 60s).",
 ].join("\n");
 
-// Scheme prelude — R7RS forms LIPS doesn't ship. Evaluated after the JS
-// bindings (#t/#f, null?, etc.) are in place. `define-macro` is LIPS' own
-// macro form (defmacro-style); used here because `define-syntax` isn't
-// available either.
+// Scheme prelude (Lisp `define-macro`s), run after std is bootstrapped.
+// cond/when/unless/newline/assq for convenience; the grep/grep-files macros
+// auto-quote an alist-literal opts arg so callers can omit the leading quote.
 const PRELUDE = `
 (define-macro (cond . clauses)
   (if (null? clauses)
@@ -2091,8 +1768,6 @@ const PRELUDE = `
 
 export default function activate(ctx: AgentContext): void {
   const env = (lips as any).env.inherit("scheme-ext");
-  installFixedDefine(env);
-  installLenientIf(env);
   const defineRegistry: DefineRegistry = new Map();
   const defineLoading = { active: false };
   // Forward decl: assigned after baseInstruction is computed below.
@@ -2112,21 +1787,32 @@ export default function activate(ctx: AgentContext): void {
   try { glob = resolveExecutor(ctx, "glob"); } catch { /* optional */ }
   installBindings(env, ctx.bus, bash, readFile, writeFile, editFile, grep, glob);
 
-  // Fire-and-forget: exec is async but macros register in <1ms, well before
-  // any user call. Load persisted defines, then audit shim coverage.
-  void (lips as any).exec(PRELUDE, env)
-    .then(() => loadPersistedDefines(env, defineRegistry, defineLoading))
-    .then(() => {
-      const audit = auditShimCoverage(env);
-      if (audit.missing.length > 0) {
-        logErr("shim-audit", new Error("missing canonical names"), {
-          defined: audit.defined,
-          total: audit.defined + audit.missing.length,
-          missing: audit.missing,
-        });
-      }
-    })
-    .catch((e: any) => logErr("prelude", e));
+  // Bootstrap LIPS' compiled std library into the global env, then install the
+  // gap-filling shims (skipped where std already defines a name, so native
+  // R7RS wins), the prelude macros, and any persisted scheme-defines. Bootstrap
+  // must precede installStdShims so native bindings take priority.
+  void (async () => {
+    try {
+      const stdXcb = path.join(
+        path.dirname(createRequire(import.meta.url).resolve("@jcubic/lips")),
+        "std.xcb",
+      );
+      await bootstrap(stdXcb);
+    } catch (e) {
+      logErr("bootstrap", e);
+    }
+    installStdShims(env);
+    await (lips as any).exec(PRELUDE, { env });
+    await loadPersistedDefines(env, defineRegistry, defineLoading);
+    const audit = auditShimCoverage(env);
+    if (audit.missing.length > 0) {
+      logErr("shim-audit", new Error("missing canonical names"), {
+        defined: audit.defined,
+        total: audit.defined + audit.missing.length,
+        missing: audit.missing,
+      });
+    }
+  })().catch((e: any) => logErr("init", e));
 
   if (schemeOnly) {
     for (const name of HIDDEN_IN_SCHEME_ONLY) {
