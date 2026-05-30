@@ -79,7 +79,6 @@ function carrySgr(text: string): string {
   }).join("\n");
 }
 
-// Truncate to a visible width with a trailing …, closing any open SGR (no wrapping).
 function truncateVisible(s: string, width: number): string {
   if (width <= 1 || measureWidth(s) <= width) return s;
   let visible = 0;
@@ -106,7 +105,7 @@ const ASSISTANT_MARKER = "⏺ ";
 const CURSOR_ON = "\x1b[7m"; // inverse video — the text cursor block
 const CURSOR_OFF = "\x1b[27m";
 
-// Claude Code's dark-theme dot colors (differ from ashi's theme palette).
+// Fixed dark-theme dot colors, intentionally distinct from ashi's palette.
 const DOT_OK = "\x1b[38;2;78;186;101m";
 const DOT_ERR = "\x1b[38;2;255;107;128m";
 const DIM_ON = "\x1b[2m";
@@ -399,8 +398,6 @@ function makeToolMount(req: () => void, blink: Blink) {
   };
 }
 
-// Read/search group: a "Reading N files… (ctrl+o to expand)" summary with the
-// in-flight path(s) under ⎿; expand lists every call with its per-file summary.
 function summarizeGroup(kind: string, n: number, running: boolean): string {
   if (kind === "read") return `${running ? "Reading" : "Read"} ${n} file${n === 1 ? "" : "s"}`;
   if (kind === "search") return `${running ? "Searching for" : "Searched for"} ${n} pattern${n === 1 ? "" : "s"}`;
@@ -453,8 +450,7 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
     case "markdown": {
       const w = termWidth();
       if (v.userMsg) {
-        // Sent user turn: a faint full-width band (pad each line to the width). Strip
-        // ANSI first — marked-terminal's \x1b[0m resets would punch holes in the bg.
+        // Strip ANSI first — marked-terminal's \x1b[0m resets would punch holes in the band bg.
         const plain = renderMarkdown(v.source, w - 2).replace(ANSI, "");
         const banded = plain.split("\n").map((l, i) => {
           const marker = i === 0 ? USER_MARKER : "  ";
@@ -463,7 +459,6 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
         return <Text key={key} backgroundColor={USER_BG}>{banded}</Text>;
       }
       if (v.bullet) {
-        // Assistant response: a ⏺ bullet at column 0, content hanging-indented to 2.
         let md = renderMarkdownStreaming(v, w - 2);
         if (md.replace(ANSI, "").trim() === "") return null;
         if (v.color) md = md.split("\n").map(v.color).join("\n");
@@ -527,8 +522,6 @@ function renderBlock(child: VNode, globalIndex: number): React.ReactElement | nu
   return <Box key={globalIndex} flexDirection="column" marginTop={marginTop}>{el}</Box>;
 }
 
-// The input box: ❯ prompt + the editor's display text, with an inverse-video cursor
-// block when focused. Hanging-indents wrapped logical lines under the prompt.
 function paintInput(editor: LineEditor, focused: boolean): string {
   const text = editor.displayText;
   let body = text;
@@ -624,8 +617,7 @@ function makeApp(store: Store, req: () => void): {
   const element = <Root store={store} state={state} />;
   const terminal = new ProcessTerminal();
 
-  // Within a multi-line buffer ↑/↓ move between lines; at the top/bottom edge they
-  // page through input history. Returns whether anything moved.
+  // Multi-line buffer: ↑/↓ move between lines; at the top/bottom edge, page history.
   const moveVertical = (dir: number): boolean => {
     const lines = editor.text.split("\n");
     if (lines.length > 1) {
@@ -731,9 +723,8 @@ function makeApp(store: Store, req: () => void): {
     commitScrollback: () => { state.committedCount = scrollbackChildren.length; req(); },
     start: () => {
       if (ink) return;
-      // ProcessTerminal owns raw stdin: it sets raw mode, runs the kitty-keyboard
-      // handshake (so Shift+Enter and Alt+B arrive as distinct sequences), segments
-      // input into single key events, and re-emits resize as our render bump.
+      // ProcessTerminal owns raw stdin and runs the kitty-keyboard handshake, so
+      // Shift+Enter / Alt+B arrive as distinct sequences; it also drives our resize bump.
       terminal.start(dispatch, req);
       ink = inkRender(element);
     },
