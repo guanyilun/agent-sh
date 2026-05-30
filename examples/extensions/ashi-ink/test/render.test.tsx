@@ -36,6 +36,15 @@ test("preserves ANSI styling (not stripped) in the rendered frame", () => {
   assert.match(lastFrame() ?? "", /\x1b\[1m/);
 });
 
+test("a sent user turn gets a background band, a reply does not", () => {
+  const u = r.markdown({ osc133Zones: true });
+  u.setText("hi");
+  assert.match(render(__renderNode(u.node)).lastFrame() ?? "", /\x1b\[48;2;/);
+  const a = r.markdown();
+  a.setText("a reply");
+  assert.doesNotMatch(render(__renderNode(a.node)).lastFrame() ?? "", /\x1b\[48;2;/);
+});
+
 const bashModel: RenderModel<{ command: string }> = {
   initial: ({ rawInput }) => ({ command: (rawInput as { command?: string })?.command ?? "" }),
   view: (s) => ({
@@ -56,9 +65,8 @@ test("the app shell renders scrollback content, input and status together", () =
   const frame = strip(lastFrame() ?? "");
   assert.match(frame, /a chat line/);
   assert.match(frame, /model@provider/);
-  // Ink's distinct chrome: the banner and the bordered input.
-  assert.match(frame, /◆ ashi.*ink renderer/);
-  assert.match(frame, /[╭╰]/);
+  // Ink's flat prompt.
+  assert.match(frame, /❯/);
 });
 
 test("mounts a tool call + result through the renderer", () => {

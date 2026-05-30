@@ -51,8 +51,8 @@ interface SelectState {
 }
 
 type VNode =
-  | { kind: "text"; lines: string[]; fn: ((width: number) => string[]) | null }
-  | { kind: "markdown"; source: string; color?: (t: string) => string }
+  | { kind: "text"; lines: string[]; fn: ((width: number) => string[]) | null; paddingX?: number }
+  | { kind: "markdown"; source: string; color?: (t: string) => string; userMsg?: boolean; paddingX?: number }
   | { kind: "spacer"; rows: number }
   | { kind: "container"; children: VNode[] }
   | { kind: "loader"; label: string }
@@ -65,11 +65,32 @@ const ANSI = /\x1b\[[0-9;]*m/g;
 const measureWidth = (text: string): number => text.replace(ANSI, "").length;
 const termWidth = (): number => process.stdout.columns ?? 80;
 
-const marked = new Marked();
-marked.use(markedTerminal() as Parameters<typeof marked.use>[0]);
-function renderMarkdown(src: string): string {
+// Ink's signature accent: a soft violet (#c778dd), used for the prompt, the
+// tool gutter, user-turn markers, and the loader.
+const ACCENT = "\x1b[38;2;199;120;221m";
+const ACCENT_HEX = "#c778dd";
+const RESET = "\x1b[39m";
+const BOLD = "\x1b[1m";
+const BOLD_OFF = "\x1b[22m";
+const USER_BG = "#2b2b30"; // faint gray band behind a sent user turn (Claude Code style)
+const USER_MARKER = `${ACCENT}${BOLD}❯${BOLD_OFF}${RESET} `; // fg-only codes, safe inside the band
+
+// marked-terminal defaults to width 80 / no reflow, so prose never wraps to the
+// real terminal width. Reflow at the available width (cached per width) so the
+// caller can indent each wrapped line consistently.
+const markedCache = new Map<number, Marked>();
+function markedFor(width: number): Marked {
+  let m = markedCache.get(width);
+  if (!m) {
+    m = new Marked();
+    m.use(markedTerminal({ width, reflowText: true }) as Parameters<Marked["use"]>[0]);
+    markedCache.set(width, m);
+  }
+  return m;
+}
+function renderMarkdown(src: string, width: number): string {
   try {
-    return String(marked.parse(src)).replace(/\n+$/, "");
+    return String(markedFor(Math.max(20, width)).parse(src)).replace(/\n+$/, "");
   } catch {
     return src;
   }
@@ -92,8 +113,8 @@ function createStore(): Store {
 
 function makeNodes(req: () => void): RenderNodes {
   return {
-    text(): TextView {
-      const v: VNode = { kind: "text", lines: [], fn: null };
+    text(opts?: { paddingX?: number }): TextView {
+      const v: VNode = { kind: "text", lines: [], fn: null, paddingX: opts?.paddingX };
       return {
         node: asNode(v),
         setText: (s) => { if (v.kind === "text") { v.lines = s.split("\n"); v.fn = null; } req(); },
@@ -102,7 +123,8 @@ function makeNodes(req: () => void): RenderNodes {
       };
     },
     markdown(opts?: MarkdownOptions): MarkdownView {
-      const v: VNode = { kind: "markdown", source: "", color: opts?.color };
+      // osc133Zones is only set for user turns; use it to give them the band.
+      const v: VNode = { kind: "markdown", source: "", color: opts?.color, userMsg: opts?.osc133Zones, paddingX: opts?.paddingX };
       return {
         node: asNode(v),
         setText: (s) => { if (v.kind === "markdown") v.source = s; req(); },
@@ -123,10 +145,10 @@ function makeNodes(req: () => void): RenderNodes {
   };
 }
 
-// Ink's signature look: a solid magenta gutter channels each tool call/result,
-// instead of pi-tui's gray corner-arrow. Errors turn the gutter red.
-const OK_GUTTER = "\x1b[38;2;199;120;221m▌\x1b[39m ";
-const ERR_GUTTER = "\x1b[38;2;224;108;117m▌\x1b[39m ";
+// A solid gutter channels each tool call/result, instead of pi-tui's gray
+// corner-arrow. Errors turn the gutter red.
+const OK_GUTTER = `${ACCENT}▌${RESET} `;
+const ERR_GUTTER = `\x1b[38;2;224;108;117m▌${RESET} `;
 const GUTTER_W = 2;
 
 interface Cell {
@@ -221,16 +243,36 @@ function makeToolMount(req: () => void) {
   };
 }
 
-export function renderVNode(v: VNode, key?: React.Key): React.ReactElement {
+export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | null {
   switch (v.kind) {
     case "text": {
       const lines = v.fn ? v.fn(termWidth()) : v.lines;
-      return <Text key={key}>{lines.join("\n")}</Text>;
+      if (lines.every((l) => l === "")) return null; // empty node is 0 lines, like pi-tui
+      const pad = " ".repeat(v.paddingX ?? 0);
+      return <Text key={key}>{lines.map((l) => pad + l).join("\n")}</Text>;
     }
     case "markdown": {
-      let md = renderMarkdown(v.source);
+      const w = termWidth();
+      if (v.userMsg) {
+        // A sent user turn: a faint full-width band with a violet ❯ marker (the
+        // input prompt). Ink's <Text backgroundColor> colors padding too, so
+        // padding each line to the terminal width fills the row. marked-terminal
+        // emits \x1b[0m full resets that would reset the background mid-line, so
+        // strip ANSI — a user turn is plain text on the band; only the fg-only
+        // marker codes (safe over a background) are added back.
+        const plain = renderMarkdown(v.source, w - 2).replace(ANSI, "");
+        const banded = plain.split("\n").map((l, i) => {
+          const marker = i === 0 ? USER_MARKER : "  ";
+          return marker + l + " ".repeat(Math.max(0, w - 2 - l.length));
+        }).join("\n");
+        return <Text key={key} backgroundColor={USER_BG}>{banded}</Text>;
+      }
+      const pad = v.paddingX ?? 0;
+      let md = renderMarkdown(v.source, w - pad);
+      if (md.replace(ANSI, "").trim() === "") return null;
       if (v.color) md = md.split("\n").map(v.color).join("\n");
-      return <Text key={key}>{md}</Text>;
+      const indent = " ".repeat(pad);
+      return <Text key={key}>{md.split("\n").map((l) => indent + l).join("\n")}</Text>;
     }
     case "spacer":
       return <Box key={key} height={v.rows} />;
@@ -243,8 +285,8 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement {
     case "loader":
       return (
         <Box key={key}>
-          <Text color="magenta"><Spinner type="dots" /></Text>
-          <Text color="magenta">{" " + v.label}</Text>
+          <Text color={ACCENT_HEX}><Spinner type="dots" /></Text>
+          <Text color={ACCENT_HEX}>{" " + v.label}</Text>
         </Box>
       );
     case "select": {
@@ -304,15 +346,17 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
   });
   return (
     <Box flexDirection="column">
-      <Box borderStyle="round" borderColor="magenta" paddingX={1}>
-        <Text color="magenta" bold>◆ ashi</Text>
-        <Text color="magenta" dimColor>{"  ·  ink renderer"}</Text>
-      </Box>
       {renderVNode(state.scrollback)}
       {renderVNode(state.footer)}
       {renderVNode(state.queue)}
-      <Box borderStyle="round" borderColor={state.focus === "input" ? "magenta" : "gray"} paddingX={1}>
-        <Text color="magenta" bold>{"◆ "}</Text>
+      <Box
+        borderStyle="single"
+        borderLeft={false}
+        borderRight={false}
+        borderColor={state.focus === "input" ? ACCENT_HEX : "gray"}
+        paddingX={1}
+      >
+        <Text color={ACCENT_HEX} bold>{"❯ "}</Text>
         <TextInput
           value={state.input.text}
           focus={state.focus === "input"}
@@ -438,7 +482,7 @@ export function createInkRenderer(): Renderer {
 }
 
 /** Test helper: render one RenderNode tree to a frame. */
-export function __renderNode(node: RenderNode): React.ReactElement {
+export function __renderNode(node: RenderNode): React.ReactElement | null {
   return renderVNode(asV(node));
 }
 

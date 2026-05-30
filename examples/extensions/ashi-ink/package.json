@@ -7,7 +7,7 @@
   "scripts": {
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc",
-    "test": "node --import tsx --test $(find test -name '*.test.tsx' -type f)"
+    "test": "FORCE_COLOR=3 node --import tsx --test $(find test -name '*.test.tsx' -type f)"
   },
   "dependencies": {
     "@guanyilun/ashi": "^0.2.0",
