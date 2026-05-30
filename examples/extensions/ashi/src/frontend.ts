@@ -52,7 +52,7 @@ function buildDiffRenderer(
       // header (lines[0]); the line-numbered, bg-colored hunks are the body.
       const contentW = Math.max(20, width);
       const inner = diff.isNewFile
-        ? renderNewFilePreview(diff, 30, filePath)
+        ? renderNewFilePreview(diff, 30, filePath, true)
         : renderDiff(diff, {
             width: contentW, filePath, trueColor: true, maxLines: Number.MAX_SAFE_INTEGER, mode: "unified", claudeStyle: true,
           }).slice(1);
@@ -88,6 +88,7 @@ function renderNewFilePreview(
   diff: { hunks?: { lines: { type: string; text: string }[] }[] },
   maxLines: number,
   filePath: string,
+  claudeStyle = false,
 ): string[] {
   const lines = diff.hunks?.[0]?.lines.filter((l) => l.type === "added") ?? [];
   const shown = lines.slice(0, maxLines);
@@ -96,7 +97,11 @@ function renderNewFilePreview(
   const lang = detectLanguage(filePath);
   const body = shown.map((l, i) => {
     const no = String(i + 1).padStart(noW);
-    return `${theme.fg("muted", `${no} │`)} ${highlightLine(l.text, lang)}`;
+    const code = highlightLine(l.text, lang);
+    // A fresh file isn't a diff: Claude Code shows plain highlighted content with no
+    // markers or background. We keep a dim line number (no `│`) to match the edit
+    // context gutter; pi-tui's boxed style keeps the `│`.
+    return claudeStyle ? `\x1b[2m${no}\x1b[22m  ${code}` : `${theme.fg("muted", `${no} │`)} ${code}`;
   });
   if (overflow > 0) body.push(theme.fg("muted", `… ${overflow} more lines`));
   return ["", ...body, ""];
