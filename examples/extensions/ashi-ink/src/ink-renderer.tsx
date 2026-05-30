@@ -76,7 +76,7 @@ const ACCENT_HEX = "#c778dd";
 const RESET = "\x1b[39m";
 const BOLD = "\x1b[1m";
 const BOLD_OFF = "\x1b[22m";
-const USER_BG = "#2b2b30"; // faint gray band behind a sent user turn (Claude Code style)
+const USER_BG = "#3a3a42"; // subtle gray band behind a sent user turn (Claude Code style)
 const USER_MARKER = `${ACCENT}${BOLD}❯${BOLD_OFF}${RESET} `; // fg-only codes, safe inside the band
 
 // marked-terminal defaults to width 80 / no reflow, so prose never wraps to the
@@ -308,10 +308,12 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
         // emits \x1b[0m full resets that would reset the background mid-line, so
         // strip ANSI — a user turn is plain text on the band; only the fg-only
         // marker codes (safe over a background) are added back.
-        const plain = renderMarkdown(v.source, w - 2).replace(ANSI, "");
+        // A 1-space indent before the marker aligns the row with the reply's
+        // indent (` ❯ hi` ~ ` reply`). Marker column is 3 wide (" ❯ " / "   ").
+        const plain = renderMarkdown(v.source, w - 3).replace(ANSI, "");
         const banded = plain.split("\n").map((l, i) => {
-          const marker = i === 0 ? USER_MARKER : "  ";
-          return marker + l + " ".repeat(Math.max(0, w - 2 - l.length));
+          const marker = i === 0 ? ` ${USER_MARKER}` : "   ";
+          return marker + l + " ".repeat(Math.max(0, w - 3 - l.length));
         }).join("\n");
         return <Text key={key} backgroundColor={USER_BG}>{banded}</Text>;
       }
