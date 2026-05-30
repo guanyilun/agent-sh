@@ -505,7 +505,6 @@ export function mountAshi(
     const branch = getStore().current().getBranch();
     const toolMap = new Map<string, ReplayEntry>();
     for (const e of branch) replayEntry(e, toolMap);
-    appendEntry(renderer.spacer(1), { t: "plain" });
     app.commitScrollback?.(); // replayed history is settled — commit it to native scrollback
     app.requestRender();
   };
@@ -671,7 +670,6 @@ export function mountAshi(
     stopLoader();
     finalizeThinking();
     if (activeAssistant) activeAssistant.finalize();
-    appendEntry(renderer.spacer(1), { t: "plain" });
     refreshFooterStats();
     refreshBranch();
     // Shell queue drains first so its output lands in the next turn's <shell_events>.
