@@ -59,3 +59,23 @@ export function makeCommitWatcher(): (id: string, phase: string, actualMs: numbe
 export function inspectReentrantBump(): void {
   inspectLog("reentrant-bump", { jsStack: shortStack() });
 }
+
+// Producer-side capture: when bumps come faster than ~30 per 250ms, sample the
+// caller's stack once per burst — that names whoever is driving the render storm.
+let bumpWindowStart = 0;
+let bumpCount = 0;
+let bumpSampled = false;
+export function inspectBump(): void {
+  if (!INSPECT_FILE) return;
+  const now = performance.now();
+  if (now - bumpWindowStart > 250) {
+    bumpWindowStart = now;
+    bumpCount = 0;
+    bumpSampled = false;
+  }
+  bumpCount++;
+  if (bumpCount > 30 && !bumpSampled) {
+    bumpSampled = true;
+    inspectLog("bump-storm-source", { bumpsInWindow: bumpCount, jsStack: shortStack() });
+  }
+}

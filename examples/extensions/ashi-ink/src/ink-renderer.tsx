@@ -45,7 +45,7 @@ import type {
   ToolResultView,
 } from "@guanyilun/ashi/renderer";
 import { renderToolGroupLines } from "@guanyilun/ashi/renderer";
-import { INSPECT_FILE, inspectConsole, inspectReentrantBump, makeCommitWatcher } from "./inspect.js";
+import { INSPECT_FILE, inspectBump, inspectConsole, inspectReentrantBump, makeCommitWatcher } from "./inspect.js";
 
 const commitWatcher = INSPECT_FILE ? makeCommitWatcher() : null;
 
@@ -151,19 +151,27 @@ function createStore(): Store {
   // re-renders, re-checks, and runs away ("Maximum update depth"). Deferring to a
   // microtask collapses a burst into a single render whose snapshot is stable at
   // commit, so the re-check matches and the loop never forms.
+  let lastFlush = 0;
   const flush = (): void => {
     scheduled = false;
+    lastFlush = performance.now();
     version++;
     flushing = true;
     for (const l of [...listeners]) l();
     flushing = false;
   };
   return {
+    // Throttle to ~60fps via a timer (a macrotask). A fast stream emits chunk
+    // events microtask-paced; coalescing per-microtask still flushes once per
+    // chunk, and those flushes chain within one macrotask drain until React's
+    // nested-update limit trips ("Maximum update depth"). A timer flush runs at
+    // the macrotask boundary, so a whole burst collapses into one render and the
+    // chain can't form.
     bump: () => {
-      if (INSPECT_FILE && flushing) inspectReentrantBump();
+      if (INSPECT_FILE) { inspectBump(); if (flushing) inspectReentrantBump(); }
       if (scheduled) return;
       scheduled = true;
-      queueMicrotask(flush);
+      setTimeout(flush, Math.max(0, 16 - (performance.now() - lastFlush)));
     },
     subscribe: (l) => { listeners.add(l); return () => { listeners.delete(l); }; },
     get: () => version,
