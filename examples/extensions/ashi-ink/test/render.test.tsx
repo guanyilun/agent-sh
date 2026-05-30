@@ -56,6 +56,9 @@ test("the app shell renders scrollback content, input and status together", () =
   const frame = strip(lastFrame() ?? "");
   assert.match(frame, /a chat line/);
   assert.match(frame, /model@provider/);
+  // Ink's distinct chrome: the banner and the bordered input.
+  assert.match(frame, /◆ ashi.*ink renderer/);
+  assert.match(frame, /[╭╰]/);
 });
 
 test("mounts a tool call + result through the renderer", () => {
@@ -71,6 +74,8 @@ test("mounts a tool call + result through the renderer", () => {
   const f = frameOf(result.node);
   assert.match(f, /file1/);
   assert.match(f, /file2/);
+  // Output is channeled by Ink's magenta gutter bar, not a corner-arrow.
+  assert.match(f, /▌ file1/);
   // call line picks up the ✓ from the shared cell after finalize
-  assert.match(frameOf(call.node), /\$ ls -la\s+✓/);
+  assert.match(frameOf(call.node), /▌ .*\$ ls -la\s+✓/);
 });

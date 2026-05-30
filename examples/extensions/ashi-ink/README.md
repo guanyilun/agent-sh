@@ -35,6 +35,21 @@ ashi install ashi-ink            # auto-loads on every launch
 Selection precedence: `--renderer ink` > `ASHI_RENDERER=ink` > `ashi.renderer` in
 settings > `pi-tui` (default).
 
+## A deliberately distinct look
+
+So you can tell at a glance which renderer is active, Ink uses its own visual
+identity rather than mirroring pi-tui:
+
+- a full-width rounded **magenta banner** (`◆ ashi · ink renderer`),
+- a magenta **`▌` gutter bar** channeling each tool call and its output, in place
+  of pi-tui's flat gray `└` corner-arrow,
+- a rounded, accent-bordered **input box** with a `◆` prompt (pi-tui uses a flat
+  underline editor with a `›` prompt).
+
+The *content* (markdown, diffs, tool bodies) is the same ANSI the substrate
+produces — only the chrome and framing differ, which is exactly the seam a
+renderer owns.
+
 ## How it works
 
 ashi's substrate produces ANSI-styled content and drives renderers imperatively

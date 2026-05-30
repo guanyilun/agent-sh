@@ -123,14 +123,22 @@ function makeNodes(req: () => void): RenderNodes {
   };
 }
 
-const MUTED_ARROW = "\x1b[38;2;128;128;128m└\x1b[39m";
-const ERROR_ARROW = "\x1b[38;2;204;102;102m└\x1b[39m";
+// Ink's signature look: a solid magenta gutter channels each tool call/result,
+// instead of pi-tui's gray corner-arrow. Errors turn the gutter red.
+const OK_GUTTER = "\x1b[38;2;199;120;221m▌\x1b[39m ";
+const ERR_GUTTER = "\x1b[38;2;224;108;117m▌\x1b[39m ";
+const GUTTER_W = 2;
 
 interface Cell {
   state: ViewState<Record<string, unknown>>;
   env: Env;
   diff: DiffSlot;
   model: RenderModel<unknown>;
+}
+
+function gutterFor(display: ToolDisplay): string {
+  const ok = display.status?.exitCode === null || display.status?.exitCode === 0;
+  return ok ? OK_GUTTER : ERR_GUTTER;
 }
 
 function paintCall(cell: Cell, width: number): string {
@@ -141,10 +149,10 @@ function paintCall(cell: Cell, width: number): string {
   if (display.titleRight && display.titleRight.length > 0) {
     const right = segmentsToString(display.titleRight);
     const used = measureWidth(icon) + measureWidth(title) + measureWidth(status) + measureWidth(right);
-    const pad = " ".repeat(Math.max(2, width - 2 - used));
-    return `${icon}${title}${status}${pad}${right}`;
+    const pad = " ".repeat(Math.max(2, width - GUTTER_W - 2 - used));
+    return `${gutterFor(display)}${icon}${title}${status}${pad}${right}`;
   }
-  return `${icon}${title}${status}`;
+  return `${gutterFor(display)}${icon}${title}${status}`;
 }
 
 function paintResult(cell: Cell, width: number): string[] {
@@ -154,16 +162,11 @@ function paintResult(cell: Cell, width: number): string[] {
   if (display.body.kind === "diff" && !env.expanded && env.mode !== "preview") return [];
   const policied = display.body.kind === "stream" || display.body.kind === "diff";
   if (!policied && !env.expanded && !display.defaultExpanded) return [];
-  const indent = "   ";
-  const bodyEnv: Env = { ...env, width: Math.max(1, width - indent.length) };
+  const bodyEnv: Env = { ...env, width: Math.max(1, width - GUTTER_W) };
   const rendered = renderBody(display.body, bodyEnv, cell.diff);
   if (!rendered.trim()) return [];
-  const ok = display.status?.exitCode === null || display.status?.exitCode === 0;
-  const arrow = ok ? MUTED_ARROW : ERROR_ARROW;
-  const lines = rendered.split("\n");
-  lines[0] = ` ${arrow} ${lines[0]}`;
-  for (let i = 1; i < lines.length; i++) lines[i] = `${indent}${lines[i]}`;
-  return lines;
+  const gutter = gutterFor(display);
+  return rendered.split("\n").map((l) => `${gutter}${l}`);
 }
 
 function makeToolMount(req: () => void) {
@@ -240,8 +243,8 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement {
     case "loader":
       return (
         <Box key={key}>
-          <Text color="cyan"><Spinner type="dots" /></Text>
-          <Text>{" " + v.label}</Text>
+          <Text color="magenta"><Spinner type="dots" /></Text>
+          <Text color="magenta">{" " + v.label}</Text>
         </Box>
       );
     case "select": {
@@ -301,11 +304,15 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
   });
   return (
     <Box flexDirection="column">
+      <Box borderStyle="round" borderColor="magenta" paddingX={1}>
+        <Text color="magenta" bold>◆ ashi</Text>
+        <Text color="magenta" dimColor>{"  ·  ink renderer"}</Text>
+      </Box>
       {renderVNode(state.scrollback)}
       {renderVNode(state.footer)}
       {renderVNode(state.queue)}
-      <Box>
-        <Text color="gray">{state.focus === "input" ? "› " : "  "}</Text>
+      <Box borderStyle="round" borderColor={state.focus === "input" ? "magenta" : "gray"} paddingX={1}>
+        <Text color="magenta" bold>{"◆ "}</Text>
         <TextInput
           value={state.input.text}
           focus={state.focus === "input"}
