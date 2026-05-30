@@ -50,9 +50,9 @@ function buildDiffRenderer(
       // Drop renderDiff's header (lines[0]); file path is already on the call line.
       const contentW = Math.max(20, width);
       const inner = diff.isNewFile
-        ? renderNewFilePreview(diff, 30, filePath, true)
+        ? renderNewFilePreview(diff, 30, filePath, false)
         : renderDiff(diff, {
-            width: contentW, filePath, trueColor: true, maxLines: Number.MAX_SAFE_INTEGER, mode: "unified", claudeStyle: true,
+            width: contentW, filePath, trueColor: true, maxLines: Number.MAX_SAFE_INTEGER, mode: "unified", gutterLine: false,
           }).slice(1);
       return trimBlankEdges(inner);
     }
@@ -86,7 +86,7 @@ function renderNewFilePreview(
   diff: { hunks?: { lines: { type: string; text: string }[] }[] },
   maxLines: number,
   filePath: string,
-  claudeStyle = false,
+  gutterLine = true,
 ): string[] {
   const lines = diff.hunks?.[0]?.lines.filter((l) => l.type === "added") ?? [];
   const shown = lines.slice(0, maxLines);
@@ -96,7 +96,7 @@ function renderNewFilePreview(
   const body = shown.map((l, i) => {
     const no = String(i + 1).padStart(noW);
     const code = highlightLine(l.text, lang);
-    return claudeStyle ? `\x1b[2m${no}\x1b[22m  ${code}` : `${theme.fg("muted", `${no} │`)} ${code}`;
+    return gutterLine ? `${theme.fg("muted", `${no} │`)} ${code}` : `\x1b[2m${no}\x1b[22m  ${code}`;
   });
   if (overflow > 0) body.push(theme.fg("muted", `… ${overflow} more lines`));
   return ["", ...body, ""];

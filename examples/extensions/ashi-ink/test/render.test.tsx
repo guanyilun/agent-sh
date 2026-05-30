@@ -219,7 +219,7 @@ test("a read group: gerund + in-flight path while active, count when done, full 
   assert.doesNotMatch(expanded, /\(ctrl\+o to expand\)/);
 });
 
-test("a diff result hangs under the ⎿ gutter with no box frame (Claude Code style)", () => {
+test("a diff result hangs under the ⎿ gutter with no box frame (flush gutter)", () => {
   const env = { width: 80, mode: "preview" as const, previewLines: 50 };
   const args = { toolCallId: "d1", name: "edit_file", title: "edit", displayDetail: "src/app.ts", rawInput: {} };
   const diffModel: RenderModel<Record<string, never>> = {
