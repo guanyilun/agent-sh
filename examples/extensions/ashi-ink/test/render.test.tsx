@@ -232,12 +232,12 @@ test("a diff result hangs under the ⎿ gutter with no box frame (Claude Code st
     }),
   };
   const result = r.mountToolResult(diffModel as RenderModel<unknown>, args, env);
-  result.setDiffRenderer(() => ["1 │   const x = 1", "2 │ - const y = 2", "2 │ + const y = 3"]);
+  result.setDiffRenderer(() => ["1  const x = 1", "2 -const y = 2", "2 +const y = 3"]);
   result.finalize({ exitCode: 0 });
   const f = frameOf(result.node);
-  assert.match(f, /⎿  1 │   const x = 1/); // first hunk line under the gutter
-  assert.match(f, /- const y = 2/);
-  assert.match(f, /\+ const y = 3/);
+  assert.match(f, /⎿  1  const x = 1/); // first hunk line under the gutter
+  assert.match(f, /2 -const y = 2/);
+  assert.match(f, /2 \+const y = 3/);
   assert.doesNotMatch(f, /[╭╰╮╯┌┐└┘]/); // no box frame corners
 });
 

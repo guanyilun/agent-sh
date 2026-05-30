@@ -54,7 +54,7 @@ function buildDiffRenderer(
       const inner = diff.isNewFile
         ? renderNewFilePreview(diff, 30, filePath)
         : renderDiff(diff, {
-            width: contentW, filePath, trueColor: true, maxLines: Number.MAX_SAFE_INTEGER, mode: "unified",
+            width: contentW, filePath, trueColor: true, maxLines: Number.MAX_SAFE_INTEGER, mode: "unified", claudeStyle: true,
           }).slice(1);
       return trimBlankEdges(inner);
     }
