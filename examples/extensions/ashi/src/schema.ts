@@ -1,6 +1,5 @@
-// Declarative render schema for tool-call hooks. Pure schema data types plus the
-// ANSI projection of a Body to styled strings — no TUI-renderer dependency.
-// Extensions register `ctx.define("ashi:render-tool:<name>", () => ({ initial, reducers, view }))`.
+// Declarative render schema for tool-call hooks: data types + the ANSI projection
+// of a Body to styled strings, with no TUI-renderer dependency.
 
 import { theme } from "./theme.js";
 import { highlight, supportsLanguage } from "cli-highlight";
@@ -195,12 +194,11 @@ export function renderBody(body: Body, env: Env, diff: DiffSlot): string {
   }
 }
 
-// Even expanded, cap the output so Ctrl+O on a huge result tail-truncates rather
-// than flooding the scrollback. The agent still sees the full result. The cap is
-// ashi.display.{name}.expandedLines (default 200).
+// Even when expanded, the tail is capped (ashi.display.{name}.expandedLines) so
+// Ctrl+O on a huge result can't flood the scrollback. The agent still sees it all.
 const DEFAULT_EXPANDED_LINES = 200;
 
-// Host-wide preview/summary/hidden policy inherited by every kind:"stream" body.
+// Host-wide preview/summary/hidden policy for every kind:"stream" body.
 function renderStream(buffer: string, env: Env): string {
   const display = buffer.replace(/\n+$/, "");
   if (env.expanded) {

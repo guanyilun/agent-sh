@@ -1,10 +1,6 @@
-// An open-ended run of same-kind tool calls. Grows by tail-merge: the caller
-// extends an existing group when its `kind` matches the next call and the group
-// is still the chat's tail. Trailing child renders with └, others ├.
-//
-// When `maxVisible` is finite and exceeded, the oldest children collapse to a
-// summary line ("⋯ N earlier ✓") and the last (maxVisible − 1) stay visible.
-// `toggleExpanded()` reveals all; `maxVisible = Infinity` disables eviction.
+// A run of same-kind tool calls, grown by tail-merge (the caller extends a group
+// only while it matches `kind` and stays the chat's tail). Over `maxVisible` the
+// oldest collapse into a summary line; toggleExpanded() reveals all.
 
 import type { ContainerView, RenderNode, RenderNodes, TextView } from "../renderer.js";
 import { theme } from "../theme.js";
@@ -74,8 +70,7 @@ export class ToolGroup {
     this.repaint();
   }
 
-  /** How many children at the tail are visible right now. When collapsed and over
-   *  the cap, this is maxVisible − 1 (one line goes to the summary). */
+  /** First visible child index; collapsed and over-cap, one slot goes to the summary. */
   private visibleSliceStart(): number {
     if (this.expanded || !Number.isFinite(this.maxVisible)) return 0;
     if (this.allChildren.length <= this.maxVisible) return 0;

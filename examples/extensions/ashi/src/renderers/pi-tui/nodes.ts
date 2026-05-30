@@ -1,5 +1,5 @@
-// pi-tui implementations of the content-node factories. RenderNode is a pi-tui
-// Component at this layer; the casts below are the single place that knows that.
+// RenderNode is a pi-tui Component here; the asNode/asComponent casts are the
+// only place that relies on it.
 
 import {
   Container,

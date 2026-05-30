@@ -15,8 +15,7 @@ interface StatusFields {
   shellMode?: "off" | "on" | "private";
 }
 
-/** Builds the status line from accumulated fields and drives a width-aware text
- *  view: left segment + computed gap + right segment, recomputed on every resize. */
+/** Drives a width-aware text view: left + computed gap + right, recomputed on resize. */
 export class StatusFooter {
   private fields: StatusFields = {};
 

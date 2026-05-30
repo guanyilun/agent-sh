@@ -1,5 +1,3 @@
-// pi-tui implementation of the App shell.
-
 import {
   Editor,
   isKeyRelease,
@@ -28,8 +26,7 @@ import type {
 const asComponent = (n: RenderNode): Component => n as unknown as Component;
 const asNode = (c: Component): RenderNode => c as unknown as RenderNode;
 
-// pi-tui's AutocompleteProvider type is structurally identical to ours (lines +
-// cursor); we adapt by passing through.
+// pi-tui's provider type is structurally identical to ours, so we pass through.
 type PiAutocompleteProvider = Parameters<Editor["setAutocompleteProvider"]>[0];
 
 function makeInput(editor: Editor): InputView {

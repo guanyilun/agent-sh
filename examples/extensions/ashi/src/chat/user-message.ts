@@ -1,6 +1,3 @@
-// User message entry: a markdown block with the user-message background, bracketed
-// by OSC 133 shell-integration zones (honored by renderers that support them).
-
 import type { RenderNode, RenderNodes } from "../renderer.js";
 import { theme } from "../theme.js";
 

@@ -1,17 +1,14 @@
-// Assistant message: streaming markdown. On finalize, settled text is projected
-// into markdown + inline display-math ($$…$$) segments; rebuild-from-store runs
-// the same path so an equation renders identically live and rehydrated.
+// Finalize re-segments the settled buffer into markdown + display-math; the
+// rebuild-from-store path runs the same code so an equation rehydrates identically.
 
 import type { ContainerView, MarkdownView, RenderNode, RenderNodes } from "../renderer.js";
 
-/** Render a LaTeX source string to a display node, or null when no toolchain is
- *  available or rendering failed. */
+/** Render LaTeX to a display node, or null when the toolchain is unavailable. */
 export type EquationRenderer = (latexSrc: string) => RenderNode | null;
 
 type LatexSegment = { type: "text"; value: string } | { type: "latex"; value: string };
 
-/** Split assistant text into ordered markdown / display-math segments. Unclosed
- *  delimiters stay as text. Width-independent — safe to run once. */
+/** Split text into markdown / display-math segments. Width-independent. */
 function segmentLatex(text: string): LatexSegment[] {
   const segments: LatexSegment[] = [];
   let i = 0;
@@ -77,7 +74,6 @@ export class AssistantMessage {
           this.container.addChild(m.node);
         }
       } else {
-        // Fall back to the raw source if the toolchain is missing or fails.
         const eq = this.renderEquation!(seg.value);
         if (eq) {
           this.container.addChild(eq);

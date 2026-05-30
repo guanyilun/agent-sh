@@ -9,9 +9,7 @@ import { isRenderModel, type RenderModel } from "./schema.js";
 export interface RenderState {
   state: Record<string, unknown>;
   invalidate: () => void;
-  /** The active renderer's content-node factories, so an override can build
-   *  renderer-agnostic views (text/markdown/image/container) without importing
-   *  a concrete TUI library. */
+  /** The renderer's node factories, so an override builds views without pi-tui. */
   nodes: RenderNodes;
 }
 
@@ -21,12 +19,11 @@ export interface ThinkingArgs extends RenderState { text: string; hidden: boolea
 
 const SCHEMA_PREFIX = "ashi:render-tool:";
 
-/** ashi:render-* return renderer-agnostic chat-entry controllers (a `.node` plus
- *  their streaming methods). Extension authors override these to customize how
- *  messages render; they build views from the renderer, never from pi-tui. */
+/** Default ashi:render-* hooks returning chat-entry controllers; an extension
+ *  overrides these to customize rendering, building views from the renderer. */
 export function registerRenderDefaults(ctx: ExtensionContext, renderer: Renderer): void {
-  // Cache the equation PNG (not the node): a node can only be mounted once, so a
-  // fresh image is built per render — finalize/rehydrate may render twice.
+  // Cache the PNG, not the node: a node mounts only once, but finalize/rehydrate
+  // may render the same equation twice.
   const equationPng = new Map<string, Buffer | null>();
   const renderEquation: EquationRenderer = (src) => {
     if (!equationPng.has(src)) {
@@ -82,9 +79,8 @@ export interface ToolHookResolver {
   modeFor: (name: string) => { mode: ToolResultMode; previewLines: number; expandedLines: number };
 }
 
-/** Resolves a tool name to a schema RenderModel — :{name} first, then :default —
- *  and mounts it through the renderer. Cache the registered-handler set; callers
- *  can `refresh()` after extensions register new tool-specific renderers. */
+/** Resolves a tool name to a schema RenderModel (:{name}, then :default) and
+ *  mounts it. refresh() re-reads the handler set after new registrations. */
 export function createToolHookResolver(
   ctx: ExtensionContext,
   renderer: Renderer,

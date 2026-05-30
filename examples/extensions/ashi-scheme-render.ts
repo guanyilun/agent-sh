@@ -1,6 +1,3 @@
-// Schema-style renderer for the scheme_eval tool. Status and streaming output are
-// tracked by ashi; this model only declares tool-specific state (the source string).
-
 import type { AgentContext } from "agent-sh/types";
 import type { RenderModel, Segment, ToolDisplay } from "@guanyilun/ashi/render";
 
@@ -36,8 +33,7 @@ const model: RenderModel<SchemeInit> = {
       titleIcon: "scheme",
       title,
       status: s.status,
-      // The title already carries the source; the body shows the evaluation
-      // result (ash-scheme streams it into the framework-tracked `output`).
+      // Title carries the source; body shows the eval result, not an echo of it.
       body: failed
         ? { kind: "text", segments: [
             { text: `✗ ${s.output.trim()}`, style: { color: "error" } },

@@ -1,5 +1,3 @@
-// The pi-tui renderer: ashi's default Renderer implementation.
-
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { Renderer } from "../../renderer.js";
 import { createNodes } from "./nodes.js";

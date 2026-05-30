@@ -1,5 +1,4 @@
-// Project ashi's ANSI palette into pi-tui's theme objects (keeps theme.ts
-// palette-only; another renderer builds its own from the same palette).
+// Project ashi's ANSI palette into pi-tui's theme objects.
 
 import { highlight, supportsLanguage } from "cli-highlight";
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";

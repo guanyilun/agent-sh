@@ -13,7 +13,7 @@ import type { Terminal } from "agent-sh/shell/terminal";
 import activateShellContext from "agent-sh/shell/context";
 import type { AppConfig } from "agent-sh/types";
 
-/** No-op: ashi renders via pi-tui, the PTY only needs to exist. */
+/** ashi renders through its own Renderer; this PTY only needs to exist. */
 function headlessTerminal(): Terminal {
   return {
     write() {},
@@ -150,8 +150,8 @@ async function main(): Promise<void> {
   let shellRef: { kill(): void } | null = null;
   let captureRef: Capture | null = null;
   const cleanup = async (): Promise<void> => {
-    // Persist any just-completed turn before tearing down — the per-turn flush is
-    // fire-and-forget, so a quick exit would otherwise drop it.
+    // The per-turn flush is fire-and-forget; await it so a quick exit can't drop
+    // a just-completed turn.
     try { await captureRef?.flush(); } catch {}
     try { stopFrontend?.(); } catch {}
     try { shellRef?.kill(); } catch {}
@@ -206,9 +206,8 @@ async function main(): Promise<void> {
   captureRef = capture;
   registerCompaction(ctx, getStore, capture);
 
-  // Renderers are extensions: ashi registers the built-in pi-tui renderer; any
-  // loaded extension can register its own `ashi:renderer:<name>`. Selection is
-  // --renderer > ASHI_RENDERER > ashi.renderer (settings) > pi-tui.
+  // Renderers are extensions; selection is --renderer > ASHI_RENDERER >
+  // ashi.renderer (settings) > pi-tui.
   ctx.define("ashi:renderer:pi-tui", () => createPiTuiRenderer());
   const rendererName = (
     config.renderer ?? process.env.ASHI_RENDERER ?? loadRendererPreference() ?? "pi-tui"

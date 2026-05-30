@@ -10,8 +10,7 @@ import type { RenderNode, Renderer } from "../src/renderer.js";
 import type { ExtensionContext } from "agent-sh/types";
 import type { RenderModel } from "../src/schema.js";
 
-// createPiTuiRenderer builds the content-node factories without mounting an app,
-// so these run headless. Render a node and strip styling to assert on text.
+// The node factories run without mounting an app, so these render headless.
 const renderer: Renderer = createPiTuiRenderer();
 
 function lines(node: RenderNode, width = 80): string[] {

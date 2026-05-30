@@ -1,8 +1,5 @@
-// Ink (React) renderer for ashi. Bridges ashi's imperative node model to Ink's
-// declarative tree via mutable vnodes + a version store that forces re-render.
-//
-// Degradations vs pi-tui: no inline images; editor autocomplete and dynamic border
-// color aren't wired; key release/repeat aren't distinguished; Ctrl+Z is best-effort.
+// Bridges ashi's imperative node model to Ink's declarative tree via mutable
+// vnodes + a version store that forces re-render. Degradations are in the README.
 
 import React from "react";
 import { Box, Text, useInput, render as inkRender, type Instance } from "ink";
@@ -45,8 +42,6 @@ import type {
   ToolResultView,
 } from "@guanyilun/ashi/renderer";
 
-// ---------- vnode model ----------
-
 interface SelectState {
   items: SelectItem[];
   index: number;
@@ -70,8 +65,6 @@ const ANSI = /\x1b\[[0-9;]*m/g;
 const measureWidth = (text: string): number => text.replace(ANSI, "").length;
 const termWidth = (): number => process.stdout.columns ?? 80;
 
-// ---------- markdown ----------
-
 const marked = new Marked();
 marked.use(markedTerminal() as Parameters<typeof marked.use>[0]);
 function renderMarkdown(src: string): string {
@@ -81,8 +74,6 @@ function renderMarkdown(src: string): string {
     return src;
   }
 }
-
-// ---------- rerender store ----------
 
 interface Store {
   bump: () => void;
@@ -98,8 +89,6 @@ function createStore(): Store {
     get: () => version,
   };
 }
-
-// ---------- content node factories ----------
 
 function makeNodes(req: () => void): RenderNodes {
   return {
@@ -119,7 +108,7 @@ function makeNodes(req: () => void): RenderNodes {
         setText: (s) => { if (v.kind === "markdown") v.source = s; req(); },
       };
     },
-    image: (): RenderNode | null => null, // capability: images=false
+    image: (): RenderNode | null => null,
     container(): ContainerView {
       const v: VNode = { kind: "container", children: [] };
       const ch = v.kind === "container" ? v.children : [];
@@ -133,8 +122,6 @@ function makeNodes(req: () => void): RenderNodes {
     spacer: (rows: number): RenderNode => asNode({ kind: "spacer", rows }),
   };
 }
-
-// ---------- tool mount (reuses the public ANSI projection) ----------
 
 const MUTED_ARROW = "\x1b[38;2;128;128;128m└\x1b[39m";
 const ERROR_ARROW = "\x1b[38;2;204;102;102m└\x1b[39m";
@@ -230,8 +217,6 @@ function makeToolMount(req: () => void) {
     },
   };
 }
-
-// ---------- React rendering ----------
 
 export function renderVNode(v: VNode, key?: React.Key): React.ReactElement {
   switch (v.kind) {
@@ -334,8 +319,6 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
   );
 }
 
-// ---------- App shell ----------
-
 function containerView(v: VNode, req: () => void): ContainerView {
   const ch = v.kind === "container" ? v.children : [];
   return {
@@ -375,9 +358,9 @@ function makeApp(store: Store, req: () => void): { app: App; element: React.Reac
     setText: (t) => { state.input.text = t; req(); },
     onChange: (fn) => { state.input.onChange = fn; },
     onSubmit: (fn) => { state.input.onSubmit = fn; },
-    setAutocompleteProvider: (_p: AutocompleteProvider) => { /* degraded: no suggestion UI */ },
+    setAutocompleteProvider: (_p: AutocompleteProvider) => {},
     defaultBorderColor: (t) => t,
-    setBorderColor: () => { /* degraded: no dynamic border */ },
+    setBorderColor: () => {},
     invalidate: () => req(),
   };
 
@@ -409,7 +392,7 @@ function makeApp(store: Store, req: () => void): { app: App; element: React.Reac
     },
     createLoader: (label): LoaderView => {
       const v: VNode = { kind: "loader", label };
-      return { node: asNode(v), stop: () => { /* removed from footer by the host */ } };
+      return { node: asNode(v), stop: () => {} };
     },
   };
   return { app, element };
@@ -447,13 +430,12 @@ export function createInkRenderer(): Renderer {
   return buildRenderer().renderer;
 }
 
-/** Test helper: render a single RenderNode tree to a frame via ink-testing-library. */
+/** Test helper: render one RenderNode tree to a frame. */
 export function __renderNode(node: RenderNode): React.ReactElement {
   return renderVNode(asV(node));
 }
 
-/** Test helper: a renderer whose store also drives a built App + its Root element,
- *  so the full chat-stack layout can be rendered headlessly. */
+/** Test helper: renderer + a built App/Root, for headless full-stack layout tests. */
 export function __harness(): InkHarness {
   return buildRenderer().harness();
 }

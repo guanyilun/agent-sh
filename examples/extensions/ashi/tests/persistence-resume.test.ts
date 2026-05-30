@@ -55,7 +55,7 @@ test("a new turn in a session resumed via -c is persisted to disk", async () => 
   applyBranchMessages(ctx as never, () => store, capture);
   assert.equal(conv.messages.length, 2, "resumed conversation should have the 2 prior messages");
 
-  // A new turn: the agent appends a user + assistant message, then completes.
+  // A new turn: the agent appends a user + assistant message.
   conv.messages.push({ role: "user", content: "make a file" });
   conv.messages.push({ role: "assistant", content: "created it" });
   await capture.flush();
@@ -101,16 +101,12 @@ test("the exit race: processing-done leaves the turn un-persisted until flush is
 
   assert.equal(onDisk(), 2, "before the turn flushes, only the 2 seeded messages are on disk");
 
-  // processing-done fires the per-turn flush fire-and-forget (the real listener
-  // does `void flush()` — it does not await).
+  // The real listener does `void flush()` — fire-and-forget, no await.
   await bus.emit("agent:processing-done");
 
-  // This is the race window the bug lived in: if cleanup() ran process.exit(0)
-  // here (the old behavior), the in-flight async append would be killed and the
-  // whole turn lost.
+  // The race window: a bare process.exit() here (old behavior) loses the turn.
   assert.equal(onDisk(), 2, "the new turn is NOT on disk yet — a bare process.exit() here loses it");
 
-  // The fix: cleanup() now awaits capture.flush() before exiting.
   await capture.flush();
   assert.equal(onDisk(), 4, "awaiting the pending flush on exit persists the turn");
 });

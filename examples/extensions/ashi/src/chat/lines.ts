@@ -1,5 +1,3 @@
-// Single-line chat entries (info / error).
-
 import type { RenderNode, RenderNodes } from "../renderer.js";
 import { theme } from "../theme.js";
 

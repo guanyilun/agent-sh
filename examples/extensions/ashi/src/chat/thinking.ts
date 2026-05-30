@@ -1,5 +1,4 @@
-// Thinking block: streaming markdown in the thinking color. Hidden mode clears
-// the block but retains the buffer, so it can be restored on toggle.
+// Hidden mode clears the block but keeps the buffer, so a toggle restores it.
 
 import type { ContainerView, MarkdownView, RenderNode, RenderNodes } from "../renderer.js";
 import { theme } from "../theme.js";

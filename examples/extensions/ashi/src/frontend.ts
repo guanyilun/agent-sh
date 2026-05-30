@@ -257,9 +257,8 @@ export function mountAshi(
     statusFooter.update({ thinking: supported ? level : undefined });
   };
 
-  // A typed list parallel to the scrollback nodes. Group-merge / thinking-toggle
-  // / expand-all inspect these controllers instead of reflecting over the
-  // renderer's node tree.
+  // A typed list parallel to the scrollback nodes, so group-merge / thinking-toggle
+  // / expand-all inspect controllers instead of the opaque renderer node tree.
   type ChatEntry =
     | { t: "group"; group: ToolGroup }
     | { t: "thinking"; ctrl: ThinkingBlock }
@@ -945,10 +944,8 @@ export function mountAshi(
 
   const toggleThinking = (): void => {
     hideThinking = !hideThinking;
-    // Show/hide the thinking blocks currently in the chat. Reasoning isn't
-    // persisted, so rebuilding from the store would just drop them — the toggle
-    // has to act on the live controllers. Group-merging picks up the new flag
-    // for future calls; the next genuine rebuild reflows everything.
+    // Reasoning isn't persisted, so a store rebuild would drop it — toggle the
+    // live controllers instead.
     for (const e of chatEntries) {
       if (e.t === "thinking") e.ctrl.setHidden(hideThinking);
     }

@@ -1,5 +1,3 @@
-// pi-tui mounting for the render schema.
-
 import { Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { theme } from "../../theme.js";
 import type { RenderNode, ToolCallView, ToolResultView } from "../../renderer.js";
@@ -151,8 +149,7 @@ class SchemaResultComponent extends Container {
     const env = this.handle.cell.env;
     const display = this.handle.model.view(this.handle.cell.state as ViewState<unknown>, env);
     if (!display.body) { this.body.setText(""); return; }
-    // stream embeds the preview/summary/hidden policy; diff shows in preview
-    // or when expanded; other kinds show only when expanded/defaultExpanded.
+    // diff shows in preview or expanded; non-policied kinds only when expanded.
     if (display.body.kind === "diff" && !env.expanded && env.mode !== "preview") {
       this.body.setText("");
       return;
@@ -162,8 +159,7 @@ class SchemaResultComponent extends Container {
       this.body.setText("");
       return;
     }
-    // Indent aligns body under the call-line title; reduced width keeps
-    // pre-fit renderers (diff) from overflowing past it.
+    // Reduced width keeps pre-fit renderers (diff) from overflowing the indent.
     const indent = "   ";
     const bodyEnv: Env = { ...env, width: Math.max(1, env.width - indent.length) };
     const rendered = renderBody(display.body, bodyEnv, this.handle.cell.diff);
