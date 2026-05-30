@@ -2,7 +2,7 @@
 // vnodes + a version store that forces re-render. Degradations are in the README.
 
 import React from "react";
-import { Box, Text, useInput, render as inkRender, type Instance } from "ink";
+import { Box, Static, Text, useInput, render as inkRender, type Instance } from "ink";
 import TextInput from "ink-text-input";
 import SelectInput from "ink-select-input";
 import Spinner from "ink-spinner";
@@ -377,6 +377,11 @@ interface AppState {
   input: { text: string; onChange?: (t: string) => void; onSubmit?: (t: string) => void };
   focus: "input" | "select";
   keyHandlers: KeyHandler[];
+  // Scrollback entries [0, committedCount) are settled; they render through
+  // <Static> into native scrollback. The rest (the current turn) stay in Ink's
+  // managed region, so they remain interactive (expand/toggle/group-merge) and
+  // the live tail repaints alone.
+  committedCount: number;
 }
 
 function buildKeyEvent(input: string, key: Record<string, boolean>): KeyEvent {
@@ -414,9 +419,21 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
   }, [state, store]);
   const onSubmit = React.useCallback((val: string) => { state.input.onSubmit?.(val); }, [state]);
   useInput(onKey as Parameters<typeof useInput>[0]);
+  // Settled scrollback flows into the terminal's native scrollback via <Static>
+  // (written once, never repainted), exactly like pi-tui pushing committed lines
+  // above its viewport. Only the live tail + chrome stay in Ink's managed region,
+  // so a streaming chunk repaints one entry instead of the whole growing tree.
+  const sb = state.scrollback;
+  const sbChildren = sb.kind === "container" ? sb.children : [];
+  const cc = Math.min(state.committedCount, sbChildren.length);
+  const committed = sbChildren.slice(0, cc);
+  const live = sbChildren.slice(cc);
   return (
     <Box flexDirection="column">
-      {renderVNode(state.scrollback)}
+      <Static items={committed}>
+        {(child, i) => <Box key={i}>{renderVNode(child, i)}</Box>}
+      </Static>
+      {live.map((child, i) => renderVNode(child, cc + i))}
       {renderVNode(state.footer)}
       {renderVNode(state.queue)}
       <Box
@@ -460,10 +477,29 @@ function makeApp(store: Store, req: () => void): { app: App; element: React.Reac
     input: { text: "" },
     focus: "input",
     keyHandlers: [],
+    committedCount: 0,
   };
 
   let ink: Instance | null = null;
   const element = <Root store={store} state={state} />;
+
+  // <Static> writes committed entries permanently into native scrollback; Ink
+  // can't un-write them. So clearing the chat (fork / session switch / rebuild)
+  // needs a true reset: unmount, wipe the screen AND scrollback buffer (\x1b[3J),
+  // then remount fresh. (No-op before start(), e.g. in headless tests.)
+  const resetTerminal = (): void => {
+    if (!ink) return;
+    ink.unmount();
+    process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
+    ink = inkRender(element);
+  };
+  const scrollbackChildren = scrollback.kind === "container" ? scrollback.children : [];
+  const scrollbackView: ContainerView = {
+    node: asNode(scrollback),
+    addChild: (c) => { scrollbackChildren.push(asV(c)); req(); },
+    removeChild: (c) => { const i = scrollbackChildren.indexOf(asV(c)); if (i >= 0) scrollbackChildren.splice(i, 1); req(); },
+    clear: () => { scrollbackChildren.length = 0; state.committedCount = 0; resetTerminal(); req(); },
+  };
 
   const statusView: TextView = {
     node: asNode(status),
@@ -485,7 +521,7 @@ function makeApp(store: Store, req: () => void): { app: App; element: React.Reac
   };
 
   const app: App = {
-    scrollback: containerView(scrollback, req),
+    scrollback: scrollbackView,
     footerSlot: containerView(footer, req),
     queueSlot: containerView(queue, req),
     input: inputView,
@@ -493,6 +529,7 @@ function makeApp(store: Store, req: () => void): { app: App; element: React.Reac
     setFocus: (target) => { state.focus = asV(target).kind === "select" ? "select" : "input"; req(); },
     focusInput: () => { state.focus = "input"; req(); },
     requestRender: () => req(),
+    commitScrollback: () => { state.committedCount = scrollbackChildren.length; req(); },
     // Ink's own resize handler only re-layouts boxes and re-paints the existing
     // tree — it doesn't re-run Root, so width-dependent content (band, tables,
     // markdown reflow, status, tool output) wouldn't recompute. Bump the store

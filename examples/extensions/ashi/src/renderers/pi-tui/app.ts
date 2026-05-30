@@ -93,6 +93,7 @@ export function createApp(): App {
     setFocus: (target) => tui.setFocus(asComponent(target)),
     focusInput: () => tui.setFocus(editor),
     requestRender: (force) => tui.requestRender(force),
+    commitScrollback: () => {}, // pi-tui manages its own scrollback viewport
     start: () => tui.start(),
     stop: () => tui.stop(),
     onKey: (handler) =>

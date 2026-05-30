@@ -506,10 +506,12 @@ export function mountAshi(
     const toolMap = new Map<string, ReplayEntry>();
     for (const e of branch) replayEntry(e, toolMap);
     appendEntry(renderer.spacer(1), { t: "plain" });
+    app.commitScrollback?.(); // replayed history is settled — commit it to native scrollback
     app.requestRender();
   };
 
   bus.on("agent:query", ({ query }) => {
+    app.commitScrollback?.(); // a new turn begins — the previous one is settled
     appendEntry(renderUserMessage(query), { t: "plain" });
     activeAssistant = null;
     app.requestRender();

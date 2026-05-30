@@ -70,6 +70,21 @@ test("the app shell renders scrollback content, input and status together", () =
   assert.match(frame, /❯/);
 });
 
+test("committed scrollback renders via <Static>, alongside the live tail", () => {
+  const h = __harness();
+  const a = h.nodes.text(); a.setText("first turn");
+  const b = h.nodes.text(); b.setText("second turn");
+  h.app.scrollback.addChild(a.node);
+  h.app.scrollback.addChild(b.node);
+  h.app.commitScrollback?.(); // both settle into the <Static> region
+  const c = h.nodes.text(); c.setText("live tail");
+  h.app.scrollback.addChild(c.node);
+  const frame = strip(render(h.element).lastFrame() ?? "");
+  assert.match(frame, /first turn/);
+  assert.match(frame, /second turn/);
+  assert.match(frame, /live tail/);
+});
+
 test("mounts a tool call + result through the renderer", () => {
   const env = { width: 80, mode: "preview" as const, previewLines: 5 };
   const args = { toolCallId: "t1", name: "bash", title: "bash", rawInput: { command: "ls -la" } };

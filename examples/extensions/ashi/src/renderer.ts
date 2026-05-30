@@ -127,6 +127,11 @@ export interface App {
   setFocus(target: RenderNode): void;
   focusInput(): void;
   requestRender(force?: boolean): void;
+  /** Mark every current scrollback entry as settled. Renderers that commit
+   *  finished turns to the terminal's native scrollback (e.g. Ink's <Static>)
+   *  use this as the boundary; renderers that manage scrollback themselves
+   *  (pi-tui) ignore it. Called by the frontend when a new turn begins. */
+  commitScrollback?(): void;
   start(): void;
   stop(): void;
   onKey(handler: KeyHandler): void;

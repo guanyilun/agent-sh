@@ -66,6 +66,21 @@ chat all come through. Tool rendering reuses the public ANSI projection from
 [`@guanyilun/ashi/render`](../ashi/src/schema.ts) (`renderBody` / `segmentsToString`
 / …), exactly as the pi-tui renderer does.
 
+**Scrollback uses `<Static>`.** Ink owns and repaints its whole managed region
+every frame — so putting the entire transcript there means a tall conversation
+gets `clearTerminal`'d and rewritten on every streamed chunk: you can't scroll, it
+snaps to the bottom, and the spinner starves. Instead, settled turns render through
+Ink's [`<Static>`](https://github.com/vadimdemedes/ink#static), which writes them
+once into the terminal's *native* scrollback (scrollable, never repainted) — the
+same effect as pi-tui pushing committed lines above its viewport. Only the current
+turn plus the input/status chrome stay in the managed region, so a chunk repaints
+one entry, not the whole tree. The frontend marks the boundary via the App's
+optional `commitScrollback()` (called when a new turn begins); the current turn
+stays fully interactive (expand, toggle-thinking, group-merge), and completed turns
+become frozen history. Clearing the chat (fork / session switch) unmounts, wipes the
+screen *and* scrollback buffer, and remounts, since `<Static>` content can't be
+un-written.
+
 It implements the full `Renderer` contract from `@guanyilun/ashi/renderer` and is
 verified headlessly with `ink-testing-library` (`npm test`).
 
