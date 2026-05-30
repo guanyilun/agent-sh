@@ -5,20 +5,27 @@ shipped as an extension. It registers `ashi:renderer:ink`; selecting it swaps as
 entire TUI from pi-tui to Ink without changing ashi itself — the demonstration that
 ashi's renderer is a swappable extension point.
 
+> Requires `@guanyilun/ashi` ≥ 0.2.0 — the `./renderer` contract and the
+> `./render` symbols this builds against landed in 0.2.0.
+
 ## Use
 
-From source (development):
+From source, inside the agent-sh repo — the npm workspace links the local
+`@guanyilun/ashi`, so no published release is needed. Run ashi via its dev
+runner so `-e ashi-ink` resolves through the workspace:
 
 ```bash
-cd examples/extensions/ashi-ink
-npm install && npm run build
-ASHI_RENDERER=ink ashi -e ashi-ink
+npm install                                # once, at the repo root
+npm run build -w @guanyilun/ashi -w ashi-ink
+cd examples/extensions/ashi
+ASHI_RENDERER=ink npm run dev -- -e ashi-ink
 ```
 
 `-e ashi-ink` *loads* the extension (registering `ashi:renderer:ink`) and
 `ASHI_RENDERER=ink` *selects* it. Loading and selecting are separate steps.
 
-Persistent setup (no per-command flags):
+Persistent setup (no per-command flags), once `@guanyilun/ashi` ≥ 0.2.0 is
+published — `ashi install` resolves it from npm:
 
 ```bash
 ashi install ashi-ink            # auto-loads on every launch

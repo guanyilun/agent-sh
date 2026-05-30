@@ -10,7 +10,7 @@
     "test": "node --import tsx --test $(find test -name '*.test.tsx' -type f)"
   },
   "dependencies": {
-    "@guanyilun/ashi": "^0.1.0",
+    "@guanyilun/ashi": "^0.2.0",
     "agent-sh": "^0.14.0",
     "ink": "^5.0.0",
     "ink-select-input": "^6.0.0",
