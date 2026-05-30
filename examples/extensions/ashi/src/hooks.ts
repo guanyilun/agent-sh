@@ -1,6 +1,7 @@
 import type { Component } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
-import { AssistantMessage, ThinkingBlock, UserMessage } from "./components.js";
+import { AssistantMessage, pngToImageComponent, ThinkingBlock, UserMessage } from "./components.js";
+import { markdownTheme } from "./theme.js";
 import { loadDisplayResolver, type ToolResultMode } from "./display-config.js";
 import { isRenderModel, mountCall, mountResult, type RenderModel } from "./schema.js";
 
@@ -33,12 +34,22 @@ export interface ToolResultView extends Component {
 const SCHEMA_PREFIX = "ashi:render-tool:";
 
 export function registerRenderDefaults(ctx: ExtensionContext): void {
+  const equationPng = new Map<string, Buffer | null>();
+  const renderEquation = (src: string): Component | null => {
+    if (!equationPng.has(src)) {
+      equationPng.set(src, (ctx.call("latex:render-equation", src) as Buffer | null) ?? null);
+    }
+    const png = equationPng.get(src) ?? null;
+    return png ? pngToImageComponent(png) : null;
+  };
+
   ctx.define("ashi:render-user-message", (args: UserMessageArgs): Component => {
     return new UserMessage(args.text);
   });
 
   ctx.define("ashi:render-assistant", (args: AssistantArgs): Component => {
-    const msg = new AssistantMessage();
+    const eq = ctx.list().includes("latex:render-equation") ? renderEquation : undefined;
+    const msg = new AssistantMessage(markdownTheme(), eq);
     if (args.text) {
       msg.appendText(args.text);
       msg.finalize();

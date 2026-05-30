@@ -3,14 +3,12 @@ import {
   ProcessTerminal,
   Container,
   Editor,
-  Image,
   Loader,
   SelectList,
   Spacer,
   Text,
   type Component,
   type SelectItem,
-  getImageDimensions,
   matchesKey,
   isKeyRelease,
   isKeyRepeat,
@@ -21,6 +19,7 @@ import {
   AssistantMessage,
   ErrorLine,
   InfoLine,
+  pngToImageComponent,
   ThinkingBlock,
   ToolGroup,
 } from "./components.js";
@@ -514,21 +513,9 @@ export function mountAshi(
     tui.requestRender();
   });
 
-  const imageComponentFromPng = (data: Buffer): Image | null => {
-    const base64 = data.toString("base64");
-    const dims = getImageDimensions(base64, "image/png");
-    if (!dims) return null;
-    return new Image(
-      base64, "image/png",
-      { fallbackColor: (t) => theme.fg("muted", t) },
-      { maxWidthCells: 60, maxHeightCells: 20 },
-      dims,
-    );
-  };
-
   /** Drop the live assistant so subsequent text starts fresh markdown below the image. */
   const appendImage = (data: Buffer): void => {
-    const img = imageComponentFromPng(data);
+    const img = pngToImageComponent(data);
     if (!img) return;
     if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
     chat.addChild(img);

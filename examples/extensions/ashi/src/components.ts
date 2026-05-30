@@ -1,11 +1,84 @@
 import {
+  type Component,
   Container,
+  getImageDimensions,
+  Image,
   Markdown,
   type MarkdownTheme,
   Spacer,
   Text,
 } from "@earendil-works/pi-tui";
 import { markdownTheme, theme } from "./theme.js";
+
+export function pngToImageComponent(data: Buffer): Image | null {
+  const base64 = data.toString("base64");
+  const dims = getImageDimensions(base64, "image/png");
+  if (!dims) return null;
+  return new Image(
+    base64,
+    "image/png",
+    { fallbackColor: (t) => theme.fg("muted", t) },
+    { maxWidthCells: 60, maxHeightCells: 20 },
+    dims,
+  );
+}
+
+export type EquationRenderer = (latexSrc: string) => Component | null;
+
+type LatexSegment =
+  | { type: "text"; value: string }
+  | { type: "latex"; value: string; raw: string };
+
+/** Inline-$ close index, or -1. Pandoc guards keep "$5 and $10" as text. */
+function findInlineClose(text: string, from: number): number {
+  const openChar = text[from];
+  if (openChar === undefined || openChar === "$" || /\s/.test(openChar)) return -1;
+  for (let j = from; j < text.length; j++) {
+    const c = text[j];
+    if (c === "\n") return -1;
+    if (c === "\\") { j++; continue; }
+    if (c === "$") {
+      const prev = text[j - 1];
+      const next = text[j + 1];
+      const closes = prev !== undefined && !/\s/.test(prev)
+        && !(next !== undefined && /[0-9]/.test(next));
+      return closes ? j : -1;
+    }
+  }
+  return -1;
+}
+
+export function segmentLatex(text: string): LatexSegment[] {
+  const segments: LatexSegment[] = [];
+  let textStart = 0;
+  let i = 0;
+  const flushText = (end: number): void => {
+    if (end > textStart) segments.push({ type: "text", value: text.slice(textStart, end) });
+  };
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "\\" && text[i + 1] === "$") { i += 2; continue; }
+    if (ch !== "$") { i += 1; continue; }
+    if (text[i + 1] === "$") {
+      const close = text.indexOf("$$", i + 2);
+      if (close !== -1) {
+        flushText(i);
+        segments.push({ type: "latex", value: text.slice(i + 2, close).trim(), raw: text.slice(i, close + 2) });
+        i = close + 2; textStart = i; continue;
+      }
+      i += 2; continue;
+    }
+    const close = findInlineClose(text, i + 1);
+    if (close !== -1) {
+      flushText(i);
+      segments.push({ type: "latex", value: text.slice(i + 1, close).trim(), raw: text.slice(i, close + 1) });
+      i = close + 1; textStart = i; continue;
+    }
+    i += 1;
+  }
+  flushText(text.length);
+  return segments;
+}
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -34,8 +107,12 @@ export class UserMessage extends Container {
 export class AssistantMessage extends Container {
   private md: Markdown;
   private buffer = "";
-  constructor(mdTheme: MarkdownTheme = markdownTheme()) {
+  private mdTheme: MarkdownTheme;
+  private renderEquation?: EquationRenderer;
+  constructor(mdTheme: MarkdownTheme = markdownTheme(), renderEquation?: EquationRenderer) {
     super();
+    this.mdTheme = mdTheme;
+    this.renderEquation = renderEquation;
     this.md = new Markdown("", 1, 0, mdTheme);
     this.addChild(new Spacer(1));
     this.addChild(this.md);
@@ -51,7 +128,27 @@ export class AssistantMessage extends Container {
   }
   finalize(): void {
     if (this.buffer === "") this.buffer = " ";
-    this.md.setText(this.buffer);
+    if (this.renderEquation && this.buffer.includes("$")) {
+      this.rebuildWithEquations();
+    } else {
+      this.md.setText(this.buffer);
+    }
+  }
+  private rebuildWithEquations(): void {
+    const segments = segmentLatex(this.buffer);
+    if (!segments.some((s) => s.type === "latex")) {
+      this.md.setText(this.buffer);
+      return;
+    }
+    this.clear();
+    this.addChild(new Spacer(1));
+    for (const seg of segments) {
+      if (seg.type === "text") {
+        if (seg.value.trim()) this.addChild(new Markdown(seg.value, 1, 0, this.mdTheme));
+      } else {
+        this.addChild(this.renderEquation!(seg.value) ?? new Markdown(seg.raw, 1, 0, this.mdTheme));
+      }
+    }
   }
   hasContent(): boolean {
     return this.buffer.trim().length > 0;
