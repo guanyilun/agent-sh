@@ -14,7 +14,8 @@ import {
   isKeyRepeat,
 } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
-import { editorTheme, selectListTheme, theme } from "./theme.js";
+import { theme } from "./theme.js";
+import { editorTheme, selectListTheme } from "./renderers/pi-tui/theme-adapters.js";
 import {
   AssistantMessage,
   ErrorLine,

@@ -8,7 +8,8 @@ import {
   Spacer,
   Text,
 } from "@earendil-works/pi-tui";
-import { markdownTheme, theme } from "./theme.js";
+import { theme } from "./theme.js";
+import { markdownTheme } from "./renderers/pi-tui/theme-adapters.js";
 
 export function pngToImageComponent(data: Buffer): Image | null {
   const base64 = data.toString("base64");

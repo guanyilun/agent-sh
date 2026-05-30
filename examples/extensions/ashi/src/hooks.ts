@@ -1,7 +1,7 @@
 import type { Component } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
 import { AssistantMessage, pngToImageComponent, ThinkingBlock, UserMessage } from "./components.js";
-import { markdownTheme } from "./theme.js";
+import { markdownTheme } from "./renderers/pi-tui/theme-adapters.js";
 import { loadDisplayResolver, type ToolResultMode } from "./display-config.js";
 import { isRenderModel, type RenderModel } from "./schema.js";
 import { mountCall, mountResult } from "./renderers/pi-tui/schema-mount.js";
