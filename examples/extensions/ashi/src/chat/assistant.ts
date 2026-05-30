@@ -32,7 +32,7 @@ export class AssistantMessage {
 
   constructor(private nodes: RenderNodes, private renderEquation?: EquationRenderer) {
     this.container = nodes.container();
-    this.md = nodes.markdown({ paddingX: 1 });
+    this.md = nodes.markdown({ paddingX: 1, bullet: true });
     this.container.addChild(nodes.spacer(1));
     this.container.addChild(this.md.node);
     this.node = this.container.node;

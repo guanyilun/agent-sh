@@ -46,6 +46,17 @@ test("a sent user turn gets a background band, a reply does not", () => {
   assert.doesNotMatch(render(__renderNode(a.node)).lastFrame() ?? "", /\x1b\[48;2;/);
 });
 
+test("user ❯ marker starts at column 0; assistant gets a ⏺ bullet", () => {
+  const u = r.markdown({ osc133Zones: true });
+  u.setText("hello");
+  const uf = strip(render(__renderNode(u.node)).lastFrame() ?? "");
+  assert.match(uf, /^❯ hello/m); // ❯ at column 0, single-space gutter
+  const a = r.markdown({ bullet: true });
+  a.setText("a reply");
+  const af = strip(render(__renderNode(a.node)).lastFrame() ?? "");
+  assert.match(af, /^⏺ a reply/m);
+});
+
 const bashModel: RenderModel<{ command: string }> = {
   initial: ({ rawInput }) => ({ command: (rawInput as { command?: string })?.command ?? "" }),
   view: (s) => ({
@@ -150,6 +161,22 @@ test("a wide markdown table is fit to the width and wraps cell content", () => {
     assert.match(frame, /[┌┬┐]/); // a real box-drawn table, not scrambled
     const bodyRows = frame.split("\n").filter((l) => l.includes("│")).length;
     assert.ok(bodyRows > 3, `the long cell should wrap across rows, got ${bodyRows}`);
+  } finally {
+    if (desc) Object.defineProperty(process.stdout, "columns", desc);
+    else delete (process.stdout as { columns?: number }).columns;
+  }
+});
+
+test("a small table grows to its content, not the full terminal width", () => {
+  const desc = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+  Object.defineProperty(process.stdout, "columns", { value: 70, configurable: true });
+  try {
+    const md = r.markdown({ paddingX: 1 });
+    md.setText("| A | B |\n|---|---|\n| x | y |");
+    const frame = frameOf(md.node);
+    const maxW = Math.max(...frame.split("\n").map((l) => l.length));
+    assert.match(frame, /[┌┬┐]/);
+    assert.ok(maxW < 30, `small table should grow to content, got width ${maxW}`);
   } finally {
     if (desc) Object.defineProperty(process.stdout, "columns", desc);
     else delete (process.stdout as { columns?: number }).columns;

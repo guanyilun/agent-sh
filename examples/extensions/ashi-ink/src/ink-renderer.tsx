@@ -59,7 +59,7 @@ interface SelectState {
 
 type VNode =
   | { kind: "text"; lines: string[]; fn: ((width: number) => string[]) | null; paddingX?: number }
-  | { kind: "markdown"; source: string; color?: (t: string) => string; userMsg?: boolean; paddingX?: number; mdc?: MdCache }
+  | { kind: "markdown"; source: string; color?: (t: string) => string; userMsg?: boolean; bullet?: boolean; paddingX?: number; mdc?: MdCache }
   | { kind: "spacer"; rows: number }
   | { kind: "container"; children: VNode[] }
   | { kind: "loader"; label: string }
@@ -72,15 +72,17 @@ const ANSI = /\x1b\[[0-9;]*m/g;
 const measureWidth = (text: string): number => text.replace(ANSI, "").length;
 const termWidth = (): number => process.stdout.columns ?? 80;
 
-// Ink's signature accent: a soft violet (#c778dd), used for the prompt, the
-// tool gutter, user-turn markers, and the loader.
-const ACCENT = "\x1b[38;2;199;120;221m";
+// Ink's accent violet (#c778dd), used for the loader spinner and the focused
+// input border. Chat markers are neutral gray (see MARKER_GRAY) — Claude Code style.
 const ACCENT_HEX = "#c778dd";
 const RESET = "\x1b[39m";
 const BOLD = "\x1b[1m";
 const BOLD_OFF = "\x1b[22m";
 const USER_BG = "#3a3a42"; // subtle gray band behind a sent user turn (Claude Code style)
-const USER_MARKER = `${ACCENT}${BOLD}❯${BOLD_OFF}${RESET} `; // fg-only codes, safe inside the band
+const MARKER_GRAY = "\x1b[38;2;154;160;166m"; // light-gray ❯ (raw ANSI, safe over the band bg)
+const MARKER_GRAY_HEX = "#9aa0a6"; // same gray for Ink color props (the input prompt)
+const USER_MARKER = `${MARKER_GRAY}${BOLD}❯${BOLD_OFF}${RESET} `; // ❯ at col 0, 2-col gutter
+const ASSISTANT_MARKER = "⏺ "; // assistant response bullet (Claude Code), default fg, 2-col gutter
 
 // marked-terminal's legacy table renderer hands us pre-rendered header/body
 // strings delimited by these markers, then sizes the table to content with no
@@ -100,14 +102,27 @@ function splitTableRows(text: string): string[][] {
 
 function fitTable(header: string, body: string, width: number): string {
   const head = splitTableRows(header)[0] ?? [];
+  const rows = splitTableRows(body);
   const cols = Math.max(1, head.length);
   const overhead = cols + 1 + cols * 2; // borders + 1-cell padding each side
-  const content = Math.max(cols * 3, width - overhead);
-  const base = Math.floor(content / cols);
-  const rem = content % cols;
-  const colWidths = Array.from({ length: cols }, (_, i) => base + (i < rem ? 1 : 0) + 2);
+  // Grow eagerly to the content's natural width; only shrink+wrap once the table
+  // would exceed the terminal. (cli-table3 otherwise spans the full width always.)
+  const natural = Array.from({ length: cols }, (_, i) => {
+    let mx = measureWidth(head[i] ?? "");
+    for (const r of rows) mx = Math.max(mx, measureWidth(r[i] ?? ""));
+    return Math.max(1, mx);
+  });
+  let colWidths: number[];
+  if (natural.reduce((a, b) => a + b, 0) + overhead <= width) {
+    colWidths = natural.map((n) => n + 2); // +2 = the 1-cell padding each side
+  } else {
+    const content = Math.max(cols * 3, width - overhead);
+    const base = Math.floor(content / cols);
+    const rem = content % cols;
+    colWidths = Array.from({ length: cols }, (_, i) => base + (i < rem ? 1 : 0) + 2);
+  }
   const t = new Table({ head, colWidths, wordWrap: true, wrapOnWordBoundary: true, style: { head: [] } });
-  for (const row of splitTableRows(body)) t.push(row);
+  for (const row of rows) t.push(row);
   return `${t.toString()}\n`;
 }
 
@@ -222,7 +237,7 @@ function makeNodes(req: () => void): RenderNodes {
     },
     markdown(opts?: MarkdownOptions): MarkdownView {
       // osc133Zones is only set for user turns; use it to give them the band.
-      const v: VNode = { kind: "markdown", source: "", color: opts?.color, userMsg: opts?.osc133Zones, paddingX: opts?.paddingX };
+      const v: VNode = { kind: "markdown", source: "", color: opts?.color, userMsg: opts?.osc133Zones, bullet: opts?.bullet, paddingX: opts?.paddingX };
       return {
         node: asNode(v),
         setText: (s) => { if (v.kind === "markdown") v.source = s; req(); },
@@ -366,20 +381,28 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
     case "markdown": {
       const w = termWidth();
       if (v.userMsg) {
-        // A sent user turn: a faint full-width band with a violet ❯ marker (the
-        // input prompt). Ink's <Text backgroundColor> colors padding too, so
+        // A sent user turn: a faint full-width band with a ❯ marker at column 0
+        // (Claude Code style). Ink's <Text backgroundColor> colors padding too, so
         // padding each line to the terminal width fills the row. marked-terminal
         // emits \x1b[0m full resets that would reset the background mid-line, so
         // strip ANSI — a user turn is plain text on the band; only the fg-only
-        // marker codes (safe over a background) are added back.
-        // A 1-space indent before the marker aligns the row with the reply's
-        // indent (` ❯ hi` ~ ` reply`). Marker column is 3 wide (" ❯ " / "   ").
-        const plain = renderMarkdown(v.source, w - 3).replace(ANSI, "");
+        // marker codes (safe over a background) are added back. 2-col gutter
+        // ("❯ " / "  ") so wrapped lines align with the content.
+        const plain = renderMarkdown(v.source, w - 2).replace(ANSI, "");
         const banded = plain.split("\n").map((l, i) => {
-          const marker = i === 0 ? ` ${USER_MARKER}` : "   ";
-          return marker + l + " ".repeat(Math.max(0, w - 3 - l.length));
+          const marker = i === 0 ? USER_MARKER : "  ";
+          return marker + l + " ".repeat(Math.max(0, w - 2 - l.length));
         }).join("\n");
         return <Text key={key} backgroundColor={USER_BG}>{banded}</Text>;
+      }
+      if (v.bullet) {
+        // An assistant response: a ⏺ bullet at column 0, content hanging-indented
+        // to column 2 (Claude Code design). No background, no extra padding.
+        let md = renderMarkdownStreaming(v, w - 2);
+        if (md.replace(ANSI, "").trim() === "") return null;
+        if (v.color) md = md.split("\n").map(v.color).join("\n");
+        const out = md.split("\n").map((l, i) => (i === 0 ? ASSISTANT_MARKER : "  ") + l).join("\n");
+        return <Text key={key}>{out}</Text>;
       }
       const pad = v.paddingX ?? 0;
       let md = renderMarkdownStreaming(v, w - pad);
@@ -492,7 +515,7 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
         borderRight={false}
         borderColor={state.focus === "input" ? ACCENT_HEX : "gray"}
       >
-        <Text color={ACCENT_HEX} bold>{"❯ "}</Text>
+        <Text color={MARKER_GRAY_HEX} bold>{"❯ "}</Text>
         <TextInput
           value={state.input.text}
           focus={state.focus === "input"}

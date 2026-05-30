@@ -25,6 +25,9 @@ export interface MarkdownOptions {
   paddingY?: number;
   /** Bracket with OSC 133 shell-integration zones; renderers may ignore. */
   osc133Zones?: boolean;
+  /** This is a primary assistant response — renderers may show a role bullet
+   *  (e.g. a ⏺ gutter). Renderers that don't, ignore it. */
+  bullet?: boolean;
 }
 
 /** Streaming markdown: ashi pushes the full buffer each update; renderer reflows. */
