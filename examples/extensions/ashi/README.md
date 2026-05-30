@@ -122,7 +122,7 @@ Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
 {
   "ashi": {
     "display": {
-      "default": { "result": "preview", "previewLines": 5 },
+      "default": { "result": "preview", "previewLines": 5, "expandedLines": 200 },
       "read":    { "result": "hidden" },
       "ls":      { "result": "hidden" },
       "grep":    { "result": "summary" },
@@ -142,7 +142,7 @@ Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
 
 For `edit_file` / `write_file`, the diff frame is treated as the output and follows the same gating: shown for `preview`, hidden for `hidden`/`summary` (the call line already carries `+12 -3` stats). The line-count hint is suppressed for diff-producing tools so edits stay quiet.
 
-Hit `Ctrl+O` to toggle expansion across all tool entries in chat — result bodies show their full output regardless of mode, and call lines with truncated labels (e.g. long `bash` commands) reveal their full text. Press again to collapse.
+Hit `Ctrl+O` to toggle expansion across all tool entries in chat — result bodies show their output regardless of mode, and call lines with truncated labels (e.g. long `bash` commands) reveal their full text. Press again to collapse. Expanded output is still tail-capped to `expandedLines` (default 200) so `Ctrl+O` on a huge result can't flood the scrollback — the rest shows as a `… (N earlier lines hidden)` note. The agent always receives the full output; only the on-screen display is bounded.
 
 Each tool inherits from `default` and is overridden by its own block. Unknown tool names fall through to `default`.
 

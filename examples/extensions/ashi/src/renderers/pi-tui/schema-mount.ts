@@ -45,7 +45,7 @@ const HANDLES = new Map<string, RenderHandle<unknown>>();
 function handleFor<S>(
   args: MountArgs,
   model: RenderModel<S>,
-  envInit: { width: number; mode: Env["mode"]; previewLines: number },
+  envInit: MountEnv,
 ): RenderHandle<S> {
   const existing = HANDLES.get(args.toolCallId) as RenderHandle<S> | undefined;
   if (existing) return existing;

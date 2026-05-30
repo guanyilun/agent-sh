@@ -5,13 +5,15 @@ export type ToolResultMode = "hidden" | "summary" | "preview";
 export interface ToolEntryConfig {
   result: ToolResultMode;
   previewLines: number;
+  /** Max lines shown when a tool entry is expanded (Ctrl+O); the tail is kept. */
+  expandedLines: number;
 }
 
 export interface DisplayResolver {
   resolve(name: string, modelDisplay?: Partial<ToolEntryConfig>): ToolEntryConfig;
 }
 
-const DEFAULT_ENTRY: ToolEntryConfig = { result: "preview", previewLines: 5 };
+const DEFAULT_ENTRY: ToolEntryConfig = { result: "preview", previewLines: 5, expandedLines: 200 };
 
 const BUILTIN_OVERRIDES: Record<string, Partial<ToolEntryConfig>> = {
   read: { result: "hidden" },
@@ -43,6 +45,7 @@ function mergeEntry(base: ToolEntryConfig, patch?: Partial<ToolEntryConfig>): To
   return {
     result: patch.result ?? base.result,
     previewLines: patch.previewLines ?? base.previewLines,
+    expandedLines: patch.expandedLines ?? base.expandedLines,
   };
 }
 

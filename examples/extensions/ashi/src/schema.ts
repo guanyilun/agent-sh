@@ -55,13 +55,14 @@ export interface ToolDisplay {
   defaultExpanded?: boolean;
 }
 
-/** `mode` and `previewLines` come from ashi.display.{name} (display-config.ts). */
+/** `mode`, `previewLines`, `expandedLines` come from ashi.display.{name}. */
 export interface Env {
   width: number;
   expanded: boolean;
   finalized: boolean;
   mode: "preview" | "summary" | "hidden";
   previewLines: number;
+  expandedLines?: number;
 }
 
 export type Reducer<S, P = unknown> = (state: S, payload: P) => S;
@@ -109,6 +110,7 @@ export interface MountEnv {
   width: number;
   mode: Env["mode"];
   previewLines: number;
+  expandedLines?: number;
 }
 
 /** Width-aware diff cache: the edit/write tool supplies `fn` at finalize and
@@ -197,10 +199,22 @@ export function renderBody(body: Body, env: Env, diff: DiffSlot): string {
   }
 }
 
+// Even expanded, cap the output so Ctrl+O on a huge result tail-truncates rather
+// than flooding the scrollback. The agent still sees the full result. The cap is
+// ashi.display.{name}.expandedLines (default 200).
+const DEFAULT_EXPANDED_LINES = 200;
+
 // Host-wide preview/summary/hidden policy inherited by every kind:"stream" body.
 function renderStream(buffer: string, env: Env): string {
   const display = buffer.replace(/\n+$/, "");
-  if (env.expanded) return theme.fg("toolOutput", display);
+  if (env.expanded) {
+    const cap = env.expandedLines ?? DEFAULT_EXPANDED_LINES;
+    const lines = display.split("\n");
+    if (lines.length <= cap) return theme.fg("toolOutput", display);
+    const hidden = lines.length - cap;
+    const note = theme.fg("muted", `... (${hidden} earlier lines hidden, ${lines.length} total)`);
+    return `${note}\n${theme.fg("toolOutput", lines.slice(-cap).join("\n"))}`;
+  }
   if (env.mode === "hidden") {
     if (!env.finalized) return "";
     return lineCountHint(buffer);

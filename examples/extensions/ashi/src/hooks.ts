@@ -79,7 +79,7 @@ export interface ToolResultResolveArgs {
 export interface ToolHookResolver {
   call: (args: ToolCallResolveArgs) => ToolCallView;
   result: (args: ToolResultResolveArgs) => ToolResultView;
-  modeFor: (name: string) => { mode: ToolResultMode; previewLines: number };
+  modeFor: (name: string) => { mode: ToolResultMode; previewLines: number; expandedLines: number };
 }
 
 /** Resolves a tool name to a schema RenderModel — :{name} first, then :default —
@@ -110,17 +110,17 @@ export function createToolHookResolver(
     },
     modeFor(name: string) {
       const e = resolver.resolve(name, schemaModel(name).display);
-      return { mode: e.result, previewLines: e.previewLines };
+      return { mode: e.result, previewLines: e.previewLines, expandedLines: e.expandedLines };
     },
     call(args) {
-      const { mode, previewLines } = this.modeFor(args.name);
+      const { mode, previewLines, expandedLines } = this.modeFor(args.name);
       return renderer.mountToolCall(schemaModel(args.name), args,
-        { width: initialWidth(), mode, previewLines });
+        { width: initialWidth(), mode, previewLines, expandedLines });
     },
     result(args) {
-      const { mode, previewLines } = this.modeFor(args.name);
+      const { mode, previewLines, expandedLines } = this.modeFor(args.name);
       return renderer.mountToolResult(schemaModel(args.name), { ...args, title: args.name },
-        { width: initialWidth(), mode, previewLines });
+        { width: initialWidth(), mode, previewLines, expandedLines });
     },
   };
 }
