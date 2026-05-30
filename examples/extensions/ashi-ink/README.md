@@ -45,11 +45,14 @@ word motion (Alt+B / Alt+F), Shift+Enter for multi-line, and input history — i
 reuses agent-sh's line editor over the same kitty-aware terminal input the default
 renderer uses, so keys behave identically across the two.
 
+Autocomplete and slash-command suggestions work too: the suggestion popup is a
+substrate-owned primitive (a list in the `belowInput` slot) that this renderer just
+draws, so it behaves the same here as in the default renderer.
+
 As a demonstration renderer, a couple of affordances degrade:
 
 - **No inline images.**
-- **Editor autocomplete** isn't wired, and shell mode isn't color-coded on the input
-  border (the status footer still indicates it).
+- Shell mode isn't color-coded on the input border (the status footer still indicates it).
 
 It implements the full renderer contract from `@guanyilun/ashi/renderer`. The
 rendering is verified headlessly with `ink-testing-library` (`npm test`); the

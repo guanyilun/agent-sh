@@ -22,7 +22,6 @@ import {
 } from "@guanyilun/ashi/render";
 import type {
   App,
-  AutocompleteProvider,
   ContainerView,
   InputView,
   KeyEvent,
@@ -522,6 +521,13 @@ function renderBlock(child: VNode, globalIndex: number): React.ReactElement | nu
   return <Box key={globalIndex} flexDirection="column" marginTop={marginTop}>{el}</Box>;
 }
 
+function cursorLineCol(editor: LineEditor): { line: number; col: number } {
+  const t = editor.text;
+  const idx = Math.min(editor.cursor, t.length);
+  const before = t.slice(0, idx);
+  return { line: before.split("\n").length - 1, col: idx - (before.lastIndexOf("\n") + 1) };
+}
+
 function paintInput(editor: LineEditor, focused: boolean): string {
   const text = editor.displayText;
   let body = text;
@@ -540,6 +546,7 @@ interface AppState {
   footer: VNode;
   queue: VNode;
   status: VNode;
+  belowInput: VNode;
   editor: LineEditor;
   onChange?: (t: string) => void;
   onSubmit?: (t: string) => void;
@@ -580,6 +587,7 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
       <Box marginTop={1} borderStyle="single" borderLeft={false} borderRight={false} borderColor={MARKER_GRAY_HEX}>
         <Text>{paintInput(state.editor, state.focus === "input")}</Text>
       </Box>
+      {renderVNode(state.belowInput)}
       {renderVNode(state.status)}
     </Box>
   );
@@ -603,10 +611,11 @@ function makeApp(store: Store, req: () => void): {
   const footer: VNode = { kind: "container", children: [] };
   const queue: VNode = { kind: "container", children: [] };
   const status: VNode = { kind: "text", lines: [], fn: null };
+  const belowInput: VNode = { kind: "container", children: [] };
   const editor = new LineEditor();
 
   const state: AppState = {
-    scrollback, footer, queue, status, editor,
+    scrollback, footer, queue, status, belowInput, editor,
     focus: "input",
     activeSelect: null,
     keyHandlers: [],
@@ -698,9 +707,17 @@ function makeApp(store: Store, req: () => void): {
     node: asNode({ kind: "text", lines: [], fn: null }),
     getText: () => editor.text,
     setText: (t) => { editor.setText(t); req(); },
+    getCursor: () => cursorLineCol(editor),
+    replaceBeforeCursor: (count, text) => {
+      const t = editor.text;
+      const cur = Math.min(editor.cursor, t.length);
+      const start = Math.max(0, cur - count);
+      editor.setText(t.slice(0, start) + text + t.slice(cur));
+      editor.cursor = start + text.length;
+      req();
+    },
     onChange: (fn) => { state.onChange = fn; },
     onSubmit: (fn) => { state.onSubmit = fn; },
-    setAutocompleteProvider: (_p: AutocompleteProvider) => {},
     defaultBorderColor: (t) => t,
     setBorderColor: () => {},
     invalidate: () => req(),
@@ -711,6 +728,7 @@ function makeApp(store: Store, req: () => void): {
     footerSlot: containerView(footer, req),
     queueSlot: containerView(queue, req),
     input: inputView,
+    belowInput: containerView(belowInput, req),
     status: statusView,
     setFocus: (target) => {
       const tv = asV(target);

@@ -54,28 +54,6 @@ export class BusAutocompleteProvider implements AutocompleteProvider {
     }));
     return { items, prefix: before };
   }
-
-  applyCompletion(
-    lines: string[],
-    cursorLine: number,
-    cursorCol: number,
-    item: AutocompleteItem,
-    prefix: string,
-  ): { lines: string[]; cursorLine: number; cursorCol: number } {
-    const line = lines[cursorLine] ?? "";
-    // Replace the prefix span (the leading slash-word + args we sent) with
-    // the completion value. Anything after the cursor is preserved.
-    const head = line.slice(0, cursorCol - prefix.length);
-    const tail = line.slice(cursorCol);
-    const newLine = `${head}${item.value}${tail}`;
-    const out = lines.slice();
-    out[cursorLine] = newLine;
-    return {
-      lines: out,
-      cursorLine,
-      cursorCol: (head + item.value).length,
-    };
-  }
 }
 
 /** Locate an active `@` file-trigger in the text preceding the cursor.

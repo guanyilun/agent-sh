@@ -73,22 +73,18 @@ export interface AutocompleteProvider {
     cursorLine: number,
     cursorCol: number,
   ): Promise<AutocompleteSuggestions | null>;
-  applyCompletion(
-    lines: string[],
-    cursorLine: number,
-    cursorCol: number,
-    item: AutocompleteItem,
-    prefix: string,
-  ): { lines: string[]; cursorLine: number; cursorCol: number };
 }
 
 export interface InputView {
   node: RenderNode;
   getText(): string;
   setText(text: string): void;
+  /** Cursor position — the substrate's autocomplete queries the provider in line/col. */
+  getCursor(): { line: number; col: number };
+  /** Apply a completion: delete `count` chars before the cursor, insert `text`, cursor after. */
+  replaceBeforeCursor(count: number, text: string): void;
   onChange(fn: (text: string) => void): void;
   onSubmit(fn: (text: string) => void): void;
-  setAutocompleteProvider(p: AutocompleteProvider): void;
   /** Default border color fn, so callers can restore after a temporary change. */
   readonly defaultBorderColor: (t: string) => string;
   setBorderColor(fn: (t: string) => string): void;
@@ -119,6 +115,8 @@ export interface App {
   footerSlot: ContainerView;
   queueSlot: ContainerView;
   input: InputView;
+  /** Slot rendered directly beneath the input (e.g. the autocomplete suggestion list). */
+  belowInput: ContainerView;
   status: TextView;
   setFocus(target: RenderNode): void;
   focusInput(): void;

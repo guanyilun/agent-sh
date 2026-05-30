@@ -20,6 +20,7 @@ import { loadGroupMaxVisible } from "./display-config.js";
 import { classifySubmit, deriveChangeHandlerResult } from "./shell-mode.js";
 import { UserShellIntents } from "./user-shell-intents.js";
 import { BusAutocompleteProvider } from "./autocomplete.js";
+import { createAutocompleteController } from "./autocomplete-controller.js";
 import { StatusFooter } from "./status-footer.js";
 import { applyOutputMode } from "./terminal-mode.js";
 import type { MultiSessionStore } from "./multi-session-store.js";
@@ -195,11 +196,11 @@ export function mountAshi(
 
   let shellMode = false;
   let pendingPrivate = false;
-  const baseAutocomplete = new BusAutocompleteProvider(bus);
-  input.setAutocompleteProvider({
-    getSuggestions: async (lines, line, col) =>
-      shellMode ? null : baseAutocomplete.getSuggestions(lines, line, col),
-    applyCompletion: baseAutocomplete.applyCompletion.bind(baseAutocomplete),
+  const autocomplete = createAutocompleteController({
+    app,
+    input,
+    provider: new BusAutocompleteProvider(bus),
+    suppressed: () => shellMode,
   });
 
   const defaultBorderColor = input.defaultBorderColor;
@@ -233,6 +234,7 @@ export function mountAshi(
     if (r.mode !== shellMode) setShellMode(r.mode);
     setPendingPrivate(r.pendingPrivate);
     if (r.replaceText !== undefined) input.setText(r.replaceText);
+    autocomplete.refresh();
   });
 
   input.onSubmit((text) => {

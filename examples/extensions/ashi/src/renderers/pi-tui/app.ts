@@ -14,7 +14,6 @@ import { editorTheme, selectListTheme } from "./theme-adapters.js";
 import { createNodes } from "./nodes.js";
 import type {
   App,
-  AutocompleteProvider,
   InputView,
   KeyEvent,
   LoaderView,
@@ -26,17 +25,18 @@ import type {
 const asComponent = (n: RenderNode): Component => n as unknown as Component;
 const asNode = (c: Component): RenderNode => c as unknown as RenderNode;
 
-type PiAutocompleteProvider = Parameters<Editor["setAutocompleteProvider"]>[0];
-
 function makeInput(editor: Editor): InputView {
   return {
     node: asNode(editor),
     getText: () => editor.getText(),
     setText: (t) => editor.setText(t),
+    getCursor: () => editor.getCursor(),
+    replaceBeforeCursor: (count, text) => {
+      for (let i = 0; i < count; i++) editor.handleInput("\x7f");
+      editor.insertTextAtCursor(text);
+    },
     onChange: (fn) => { editor.onChange = fn; },
     onSubmit: (fn) => { editor.onSubmit = fn; },
-    setAutocompleteProvider: (p: AutocompleteProvider) =>
-      editor.setAutocompleteProvider(p as unknown as PiAutocompleteProvider),
     defaultBorderColor: editor.borderColor,
     setBorderColor: (fn) => { editor.borderColor = fn; },
     invalidate: () => editor.invalidate(),
@@ -73,6 +73,7 @@ export function createApp(): App {
   const footerSlot = nodes.container();
   const queueSlot = nodes.container();
   const status = nodes.text({ paddingX: 1 });
+  const belowInput = nodes.container();
   const editor = new Editor(tui, editorTheme(), { paddingX: 1 });
   const input = makeInput(editor);
 
@@ -80,6 +81,7 @@ export function createApp(): App {
   tui.addChild(asComponent(footerSlot.node));
   tui.addChild(asComponent(queueSlot.node));
   tui.addChild(editor);
+  tui.addChild(asComponent(belowInput.node));
   tui.addChild(asComponent(status.node));
   tui.setFocus(editor);
 
@@ -88,6 +90,7 @@ export function createApp(): App {
     footerSlot,
     queueSlot,
     input,
+    belowInput,
     status,
     setFocus: (target) => tui.setFocus(asComponent(target)),
     focusInput: () => tui.setFocus(editor),

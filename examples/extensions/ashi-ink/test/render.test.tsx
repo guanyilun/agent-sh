@@ -5,6 +5,8 @@ import { createInkRenderer, __renderNode, __harness } from "../src/ink-renderer.
 import type { RenderModel } from "@guanyilun/ashi/render";
 import type { RenderNode } from "@guanyilun/ashi/renderer";
 import { ToolGroup } from "../../ashi/src/chat/tool-group.js";
+import { createAutocompleteController } from "../../ashi/src/autocomplete-controller.js";
+import type { AutocompleteProvider } from "@guanyilun/ashi/renderer";
 
 const r = createInkRenderer();
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -309,4 +311,28 @@ test("the input box border uses the same gray as the ❯ marker", () => {
   const raw = render(h.element).lastFrame() ?? "";
   // MARKER_GRAY_HEX #9aa0a6 → truecolor 154;160;166, on both the ❯ and the border.
   assert.match(raw, /38;2;154;160;166/);
+});
+
+test("autocomplete: the shared controller drives a suggestion list in the ink renderer", async () => {
+  const h = __harness();
+  const provider: AutocompleteProvider = {
+    async getSuggestions(lines, _l, col) {
+      const before = (lines[0] ?? "").slice(0, col);
+      if (!before.startsWith("/")) return null;
+      const items = ["/commit", "/clear"].filter((c) => c.startsWith(before) && c !== before).map((c) => ({ value: c, label: c }));
+      return items.length ? { items, prefix: before } : null;
+    },
+  };
+  const ctrl = createAutocompleteController({ app: h.app, input: h.app.input, provider, suppressed: () => false });
+  h.app.input.setText("/c");
+  ctrl.refresh(); // ink's setText doesn't fire onChange; the frontend drives refresh
+  await new Promise((r) => setTimeout(r, 0));
+
+  const frame = strip(render(h.element).lastFrame() ?? "");
+  assert.match(frame, /\/commit/);
+  assert.match(frame, /\/clear/);
+
+  h.feedInput("\x1b[B"); // ↓ → select /clear
+  h.feedInput("\t"); // Tab → apply
+  assert.equal(h.editor.text, "/clear");
 });
