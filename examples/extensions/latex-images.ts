@@ -19,7 +19,7 @@ import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ShellContext } from "agent-sh/types";
+import type { ExtensionContext } from "agent-sh/types";
 
 // Settings loaded in activate() via ctx.getExtensionSettings
 let config = { dpi: 300, fgColor: "d4d4d4" };
@@ -98,7 +98,7 @@ function renderEquation(equation: string): Buffer | null {
 
 // ── Extension entry point ────────────────────────────────────────
 
-export default function activate(ctx: ShellContext) {
+export default function activate(ctx: ExtensionContext) {
   const { bus } = ctx;
 
   // Load settings: ~/.agent-sh/settings.json → "latex-images": { dpi, fgColor }
@@ -115,24 +115,27 @@ export default function activate(ctx: ShellContext) {
     return;
   }
 
-  // Handle inline $$...$$ display math
-  ctx.shell.createBlockTransform({
-    open: "$$",
-    close: "$$",
-    transform(latex) {
-      const png = renderEquation(latex);
-      if (!png) return null;
-      return { type: "image", data: png };
-    },
-  });
+  ctx.define("latex:render-equation", (equation: string): Buffer | null => renderEquation(equation));
 
-  // Advise the code block renderer — wrap the default syntax highlighter
-  ctx.advise("render:code-block", (next, language: string, code: string, width: number) => {
-    if (language !== "latex" && language !== "tex") return next(language, code, width);
-    const png = renderEquation(code);
-    if (!png) return next(language, code, width); // render failed — fall through
-    ctx.call("render:image", png);
-  });
+  // Shell-only — ashi has no shell surface; it uses the capability above instead.
+  if (ctx.shell) {
+    ctx.shell.createBlockTransform({
+      open: "$$",
+      close: "$$",
+      transform(latex) {
+        const png = renderEquation(latex);
+        if (!png) return null;
+        return { type: "image", data: png };
+      },
+    });
+
+    ctx.advise("render:code-block", (next, language: string, code: string, width: number) => {
+      if (language !== "latex" && language !== "tex") return next(language, code, width);
+      const png = renderEquation(code);
+      if (!png) return next(language, code, width);
+      ctx.call("render:image", png);
+    });
+  }
 
   process.on("exit", () => {
     if (tmpDir) {
