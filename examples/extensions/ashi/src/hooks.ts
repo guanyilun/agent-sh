@@ -3,7 +3,8 @@ import type { ExtensionContext } from "agent-sh/types";
 import { AssistantMessage, pngToImageComponent, ThinkingBlock, UserMessage } from "./components.js";
 import { markdownTheme } from "./theme.js";
 import { loadDisplayResolver, type ToolResultMode } from "./display-config.js";
-import { isRenderModel, mountCall, mountResult, type RenderModel } from "./schema.js";
+import { isRenderModel, type RenderModel } from "./schema.js";
+import { mountCall, mountResult } from "./renderers/pi-tui/schema-mount.js";
 
 export interface RenderState {
   state: Record<string, unknown>;
