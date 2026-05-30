@@ -1,4 +1,4 @@
-import type { MountArgs, MountEnv, RenderModel } from "./schema.js";
+import { segmentsToString, type MountArgs, type MountEnv, type RenderModel, type Segment } from "./schema.js";
 
 /** Opaque handle to a renderer-native view; ashi never inspects it. */
 declare const nodeBrand: unique symbol;
@@ -168,6 +168,42 @@ export interface ToolGroupModel {
 export interface ToolGroupView {
   node: RenderNode;
   update(model: ToolGroupModel): void;
+}
+
+/** The default tool-group rendering (a `├`/`└` tree): one styled content line per
+ *  row, no indent — a renderer mounts these into its own nodes (typically with a
+ *  one-space pad). Shared so renderers don't reinvent it. */
+export function renderToolGroupLines(model: ToolGroupModel): string[] {
+  const lines: string[] = [
+    segmentsToString([
+      { text: model.icon, style: { color: "warning" } },
+      " ",
+      { text: model.kind, style: { bold: true, color: "toolTitle" } },
+    ]),
+  ];
+  if (model.hidden) {
+    const noun = model.hidden.count === 1 ? "earlier call" : "earlier calls";
+    lines.push(segmentsToString([
+      { text: "├", style: { color: "muted" } }, " ",
+      { text: "⋯", style: { color: "muted" } }, " ",
+      { text: `${model.hidden.count} ${noun}`, style: { color: "muted" } }, " ",
+      { text: model.hidden.ok ? "✓" : "✗", style: { color: model.hidden.ok ? "success" : "error" } },
+    ]));
+  }
+  model.children.forEach((child, idx) => {
+    const segs: Segment[] = [{ text: idx === model.children.length - 1 ? "└" : "├", style: { color: "muted" } }, " "];
+    if (child.name !== model.kind) segs.push({ text: child.name, style: { bold: true, color: "toolTitle" } }, " ");
+    segs.push({ text: child.detail, style: { color: "muted" } }, " ");
+    if (!child.status) {
+      segs.push(" ", { text: "…", style: { color: "muted" } });
+    } else {
+      const ok = child.status.exitCode === null || child.status.exitCode === 0;
+      segs.push(" ", { text: ok ? "✓" : "✗", style: { color: ok ? "success" : "error" } });
+      if (child.status.summary) segs.push(" ", { text: child.status.summary, style: { color: "muted" } });
+    }
+    lines.push(segmentsToString(segs));
+  });
+  return lines;
 }
 
 export interface RendererCapabilities {

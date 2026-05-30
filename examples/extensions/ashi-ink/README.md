@@ -35,25 +35,24 @@ ashi install ashi-ink            # auto-loads on every launch
 Selection precedence: `--renderer ink` > `ASHI_RENDERER=ink` > `ashi.renderer` in
 settings > `pi-tui` (default).
 
-## A deliberately distinct look
+## Its look
 
-So you can tell at a glance which renderer is active, Ink uses its own visual
-identity rather than mirroring pi-tui:
+Ink gives the *chrome* a light identity, while rendering messages and tool
+output exactly like pi-tui:
 
 - each sent user turn on a **faint gray band with a violet `❯` marker** (the
   Claude Code pattern — stock Ink's `<Box>` can't fill a rect, but a padded
   `<Text backgroundColor>` does, once `marked-terminal`'s `\x1b[0m` resets are
   stripped so they can't punch a hole in the background),
-- a violet **`▌` gutter bar** channeling every tool call and its output —
-  including grouped `read`/`search` runs (Ink supplies `mountToolGroup`, so the
-  group is drawn with the gutter instead of pi-tui's `├`/`└` tree),
 - a **`❯` prompt** between top/bottom violet rules,
 - content reflowed to the terminal width with each wrapped line indented one
-  space, and a single violet accent (`#c778dd`) throughout.
+  space, and a single violet accent (`#c778dd`) for the chrome.
 
-The *content* (markdown, diffs, tool bodies) is the same ANSI the substrate
-produces — only the chrome and framing differ, which is exactly the seam a
-renderer owns.
+Tool calls, results, and grouped `read`/`search` runs use the substrate's shared
+default rendering (`renderToolGroupLines` + the `└` corner-arrow), so they look
+the same as pi-tui — Ink opts into the default rather than featuring tool calls.
+The tool look is still fully the renderer's to change (see below); Ink just
+chooses not to.
 
 ## How it works
 

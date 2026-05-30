@@ -241,10 +241,12 @@ remote/web bridge…) without forking ashi.
 Tool calls follow the same rule: the renderer owns the look. Same-kind runs of
 `read`/`search` are collapsed by a substrate `ToolGroup` controller that owns only
 the *state* (tail-merge, eviction, expand) and hands the renderer a neutral
-`ToolGroupModel` to draw via the optional `mountToolGroup()` — pi-tui draws a
-`├`/`└` tree, Ink draws its gutter. Grouping is a presentation policy, not a
-mandate: a renderer that omits `mountToolGroup` opts out entirely, and the
-substrate renders those calls individually through the schema mount.
+`ToolGroupModel` to draw via the optional `mountToolGroup()`. The substrate ships
+a default rendering — `renderToolGroupLines(model)`, the `├`/`└` tree — that a
+renderer can mount as-is (both pi-tui and Ink do) or ignore and draw the model
+however it likes. Grouping is a presentation policy, not a mandate: a renderer
+that omits `mountToolGroup` opts out entirely, and the substrate renders those
+calls individually through the schema mount.
 
 The substrate also owns terminal setup so renderers don't each rediscover it.
 agent-sh's shell clears OPOST on boot (pi-tui emits its own `\r`); ashi reads

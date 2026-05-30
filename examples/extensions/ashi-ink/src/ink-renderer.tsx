@@ -20,7 +20,6 @@ import {
   type MountEnv,
   type Reducer,
   type RenderModel,
-  type Segment,
   type ToolDisplay,
   type ViewState,
 } from "@guanyilun/ashi/render";
@@ -41,11 +40,11 @@ import type {
   SelectView,
   TextView,
   ToolCallView,
-  ToolGroupChild,
   ToolGroupModel,
   ToolGroupView,
   ToolResultView,
 } from "@guanyilun/ashi/renderer";
+import { renderToolGroupLines } from "@guanyilun/ashi/renderer";
 
 interface SelectState {
   items: SelectItem[];
@@ -181,12 +180,6 @@ function makeNodes(req: () => void): RenderNodes {
   };
 }
 
-// A solid gutter channels each tool call/result, instead of pi-tui's gray
-// corner-arrow. Errors turn the gutter red.
-const OK_GUTTER = `${ACCENT}▌${RESET} `;
-const ERR_GUTTER = `\x1b[38;2;224;108;117m▌${RESET} `;
-const GUTTER_W = 2;
-
 interface Cell {
   state: ViewState<Record<string, unknown>>;
   env: Env;
@@ -194,11 +187,9 @@ interface Cell {
   model: RenderModel<unknown>;
 }
 
-function gutterFor(display: ToolDisplay): string {
-  const ok = display.status?.exitCode === null || display.status?.exitCode === 0;
-  return ok ? OK_GUTTER : ERR_GUTTER;
-}
-
+// Tool calls/results render like pi-tui: the call line carries the one-space
+// pad (paddingX on the node); the result body is prefixed with a `└` corner-arrow
+// and continuation lines are indented under it.
 function paintCall(cell: Cell, width: number): string {
   const display = cell.model.view(cell.state, cell.env) as ToolDisplay;
   const icon = iconString(display.titleIcon);
@@ -207,10 +198,10 @@ function paintCall(cell: Cell, width: number): string {
   if (display.titleRight && display.titleRight.length > 0) {
     const right = segmentsToString(display.titleRight);
     const used = measureWidth(icon) + measureWidth(title) + measureWidth(status) + measureWidth(right);
-    const pad = " ".repeat(Math.max(2, width - GUTTER_W - 2 - used));
-    return `${gutterFor(display)}${icon}${title}${status}${pad}${right}`;
+    const pad = " ".repeat(Math.max(2, width - 2 - used));
+    return `${icon}${title}${status}${pad}${right}`;
   }
-  return `${gutterFor(display)}${icon}${title}${status}`;
+  return `${icon}${title}${status}`;
 }
 
 function paintResult(cell: Cell, width: number): string[] {
@@ -220,11 +211,16 @@ function paintResult(cell: Cell, width: number): string[] {
   if (display.body.kind === "diff" && !env.expanded && env.mode !== "preview") return [];
   const policied = display.body.kind === "stream" || display.body.kind === "diff";
   if (!policied && !env.expanded && !display.defaultExpanded) return [];
-  const bodyEnv: Env = { ...env, width: Math.max(1, width - GUTTER_W) };
+  const indent = "   ";
+  const bodyEnv: Env = { ...env, width: Math.max(1, width - indent.length) };
   const rendered = renderBody(display.body, bodyEnv, cell.diff);
   if (!rendered.trim()) return [];
-  const gutter = gutterFor(display);
-  return rendered.split("\n").map((l) => `${gutter}${l}`);
+  const ok = display.status?.exitCode === null || display.status?.exitCode === 0;
+  const arrow = segmentsToString([{ text: "└", style: { color: ok ? "muted" : "error" } }]);
+  const lines = rendered.split("\n");
+  lines[0] = ` ${arrow} ${lines[0]}`;
+  for (let i = 1; i < lines.length; i++) lines[i] = `${indent}${lines[i]}`;
+  return lines;
 }
 
 function makeToolMount(req: () => void) {
@@ -262,7 +258,7 @@ function makeToolMount(req: () => void) {
   return {
     mountCall(model: RenderModel<unknown>, args: MountArgs, env: MountEnv): ToolCallView {
       const cell = cellFor(model, args, env);
-      const v: VNode = { kind: "text", lines: [], fn: (w) => [paintCall(cell, w)] };
+      const v: VNode = { kind: "text", lines: [], fn: (w) => [paintCall(cell, w)], paddingX: 1 };
       return { node: asNode(v), setStatus: (o) => dispatch(cell, "status", o) };
     },
     mountResult(model: RenderModel<unknown>, args: MountArgs, env: MountEnv): ToolResultView {
@@ -279,48 +275,21 @@ function makeToolMount(req: () => void) {
   };
 }
 
-// A tool group, drawn with the gutter instead of pi-tui's ├/└ tree: every row
-// (header, summary, children) is channeled by the violet ▌.
+// A tool group: render the substrate's default ├/└ lines into Ink text nodes
+// (one-space pad each, matching pi-tui). The model is still ours to draw any way
+// we like — we just opt into the shared default.
 function makeToolGroup(req: () => void): ToolGroupView {
   const v: VNode = { kind: "container", children: [] };
   const ch = v.kind === "container" ? v.children : [];
-  const line = (s: string): VNode => ({ kind: "text", lines: [s], fn: null });
   const update = (model: ToolGroupModel): void => {
     ch.length = 0;
     ch.push({ kind: "spacer", rows: 1 });
-    ch.push(line(OK_GUTTER + segmentsToString([
-      { text: model.icon, style: { color: "warning" } },
-      { text: " " },
-      { text: model.kind, style: { bold: true, color: "toolTitle" } },
-    ])));
-    if (model.hidden) {
-      const noun = model.hidden.count === 1 ? "earlier call" : "earlier calls";
-      ch.push(line(OK_GUTTER + segmentsToString([
-        { text: `⋯ ${model.hidden.count} ${noun} `, style: { color: "muted" } },
-        { text: model.hidden.ok ? "✓" : "✗", style: { color: model.hidden.ok ? "success" : "error" } },
-      ])));
-    }
-    for (const child of model.children) {
-      const ok = !child.status || child.status.exitCode === null || child.status.exitCode === 0;
-      ch.push(line((ok ? OK_GUTTER : ERR_GUTTER) + groupChildRow(child, model.kind)));
+    for (const l of renderToolGroupLines(model)) {
+      ch.push({ kind: "text", lines: [l], fn: null, paddingX: 1 });
     }
     req();
   };
   return { node: asNode(v), update };
-}
-
-function groupChildRow(child: ToolGroupChild, kind: string): string {
-  const segs: Segment[] = [{ text: "  " }]; // indent under the gutter
-  if (child.name !== kind) segs.push({ text: `${child.name} `, style: { bold: true, color: "toolTitle" } });
-  segs.push({ text: child.detail, style: { color: "muted" } });
-  if (!child.status) {
-    segs.push({ text: "  " }, { text: "…", style: { color: "muted" } });
-  } else {
-    const ok = child.status.exitCode === null || child.status.exitCode === 0;
-    segs.push({ text: "  " }, { text: ok ? "✓" : "✗", style: { color: ok ? "success" : "error" } });
-    if (child.status.summary) segs.push({ text: ` ${child.status.summary}`, style: { color: "muted" } });
-  }
-  return segmentsToString(segs);
 }
 
 export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | null {
