@@ -227,9 +227,12 @@ has two halves — content-node factories (`text` / `markdown` / `image` /
 / input / status, plus select lists, loader, and key events) — together with
 `mountToolCall` / `mountToolResult` and a `capabilities` list so a renderer can
 declare gaps and the substrate degrades rather than crashes. This is how you build
-a different TUI frontend (OpenTUI, Ink, a remote/web bridge…) without forking ashi.
-See [`examples/extensions/ashi-opentui-renderer.ts`](../ashi-opentui-renderer.ts)
-for a worked skeleton.
+a different TUI frontend (Ink, OpenTUI, a remote/web bridge…) without forking ashi.
+
+- [`examples/extensions/ashi-ink`](../ashi-ink) — a **working** Ink (React) renderer
+  (`ASHI_RENDERER=ink ashi -e ashi-ink`), verified with `ink-testing-library`.
+- [`examples/extensions/ashi-opentui-renderer.ts`](../ashi-opentui-renderer.ts) — a
+  type-checked OpenTUI skeleton (OpenTUI needs Bun, so it's a shape reference).
 
 For non-render concerns (commands, settings, tools, providers) use the standard `agent-sh` extension API. See the [agent-sh extension docs](https://github.com/guanyilun/agent-sh/blob/main/docs/extensions.md).
 
