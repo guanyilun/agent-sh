@@ -135,8 +135,9 @@ function markedFor(width: number): Marked {
   let m = markedCache.get(width);
   if (!m) {
     m = new Marked();
-    // tab: list / code-block / blockquote indent (default 4 is heavy with our pad).
-    m.use(markedTerminal({ width, reflowText: true, tab: 2 }) as Parameters<Marked["use"]>[0]);
+    // tab: list / code-block / blockquote indent. 0 = flush-left markdown (the
+    // bullet gutter is the only indent); flattens nested lists, which is accepted.
+    m.use(markedTerminal({ width, reflowText: true, tab: 0 }) as Parameters<Marked["use"]>[0]);
     m.use({ renderer: { table: (h: unknown, b: unknown): string => fitTable(String(h), String(b), width) } } as Parameters<Marked["use"]>[0]);
     markedCache.set(width, m);
   }
