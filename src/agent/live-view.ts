@@ -1,5 +1,4 @@
 import type { ChatCompletionMessageParam, AgentShMessage } from "./llm-client.js";
-import { stripMeta } from "./llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import type { ImageContent } from "./types.js";
 
@@ -152,7 +151,8 @@ export class LiveView {
     this.invalidateMessagesCache();
   }
 
-  getMessages(): ChatCompletionMessageParam[] {
+  /** Send-shaped; may be longer than get() (dangling calls stubbed) — never link()/replace() by these indices. */
+  forLLM(): ChatCompletionMessageParam[] {
     return this.normalizeReasoningConsistency(
       this.stubDanglingToolCalls(this.dropOrphanToolMessages(this.messages)),
     );
@@ -160,10 +160,6 @@ export class LiveView {
 
   get(): AgentShMessage[] {
     return this.messages as AgentShMessage[];
-  }
-
-  forLLM(): ChatCompletionMessageParam[] {
-    return this.getMessages().map(stripMeta);
   }
 
   replace(msgs: AgentShMessage[]): void {

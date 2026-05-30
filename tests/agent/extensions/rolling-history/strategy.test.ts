@@ -222,12 +222,12 @@ describe("compact end-to-end", () => {
     const ctx = makeCtx(state, store);
     const advisor = makeCompactAdvisor(ctx);
 
-    const beforeLen = state.getMessages().length;
+    const beforeLen = state.get().length;
     const result = await advisor(async () => null, { target: budget });
 
     assert.ok(result, "should compact");
     assert.ok(result.evictedCount > 0, "evictedCount should be > 0");
-    assert.ok(state.getMessages().length < beforeLen, "live view should shrink");
+    assert.ok(state.get().length < beforeLen, "live view should shrink");
   });
 
   test("rebuilt live view keeps the first turn and the last turn", async () => {
@@ -242,7 +242,7 @@ describe("compact end-to-end", () => {
     const result = await advisor(async () => null, { target: budget });
 
     assert.ok(result);
-    const rebuilt = state.getMessages();
+    const rebuilt = state.get();
     // First user turn is pinned (priority PINNED on turns[0]).
     assert.ok(rebuilt.some((m) => m.role === "user" && m.content === firstUserContent),
       "first user turn should be pinned");
@@ -263,7 +263,7 @@ describe("compact end-to-end", () => {
     assert.ok(result);
 
     const marker = "[Conversation history";
-    const block = state.getMessages().find(
+    const block = state.get().find(
       (m) => m.role === "user" && typeof m.content === "string" && m.content.startsWith(marker),
     );
     assert.ok(block, "summary block should be present in live view");

@@ -129,7 +129,7 @@ test("LiveView.addToolResult with string produces plain tool message", () => {
   conv.addAssistantMessage(null, [{ id: "call_1", function: { name: "read_file", arguments: "{}" } }]);
   conv.addToolResult("call_1", "file content");
 
-  const msgs = conv.getMessages();
+  const msgs = conv.get();
   const toolMsg = msgs.find((m) => m.role === "tool") as any;
   assert.equal(toolMsg.tool_call_id, "call_1");
   assert.equal(toolMsg.content, "file content");
@@ -140,7 +140,7 @@ test("LiveView.addToolResult with ImageContent[] produces vision content parts",
   conv.addAssistantMessage(null, [{ id: "call_1", function: { name: "read_file", arguments: "{}" } }]);
   conv.addToolResult("call_1", [{ type: "image", data: "Zm9v", mimeType: "image/png" }]);
 
-  const msgs = conv.getMessages();
+  const msgs = conv.get();
   const toolMsg = msgs.find((m) => m.role === "tool") as any;
   assert.ok(Array.isArray(toolMsg.content), "content should be array of content parts");
   assert.equal(toolMsg.content.length, 2);
@@ -159,7 +159,7 @@ test("LiveView.addToolResult with error ImageContent[] still marks error", () =>
   conv.addAssistantMessage(null, [{ id: "call_1", function: { name: "read_file", arguments: "{}" } }]);
   conv.addToolResult("call_1", [{ type: "image", data: "Zm9v", mimeType: "image/png" }], true);
 
-  const msgs = conv.getMessages();
+  const msgs = conv.get();
   const toolMsg = msgs.find((m) => m.role === "tool") as any;
   assert.ok(Array.isArray(toolMsg.content));
   assert.ok(toolMsg.content[0].text.startsWith("Error:"));

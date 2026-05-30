@@ -321,7 +321,7 @@ export class AgentLoop implements AgentBackend {
     }));
 
     onPipe("context:snapshot", (payload) => {
-      payload.messages = this.conversation.getMessages();
+      payload.messages = this.conversation.get();
       payload.contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
       payload.activeTokens = this.conversation.estimateTokens();
       return payload;
@@ -783,12 +783,10 @@ export class AgentLoop implements AgentBackend {
     h.define("conversation:prepare", (messages: unknown[]) => messages);
 
     // ── Conversation primitives for compaction strategies ─────────
-    // Read messages (for inspection / computing new arrays) and replace
-    // the whole array (write side). Extensions implementing
-    // `conversation:compact` use these to observe and mutate.
-    h.define("conversation:get-messages", () => this.conversation.getMessages());
+    // Canonical array (link/replace index space), not forLLM().
+    h.define("conversation:get-messages", () => this.conversation.get());
     h.define("conversation:replace-messages", (msgs: unknown[]) => {
-      this.conversation.replaceMessages(msgs as ReturnType<typeof this.conversation.getMessages>);
+      this.conversation.replace(msgs as ReturnType<typeof this.conversation.get>);
     });
     h.define("conversation:estimate-tokens", () => this.conversation.estimateTokens());
     h.define("conversation:estimate-prompt-tokens", () => this.conversation.estimatePromptTokens());
@@ -806,13 +804,13 @@ export class AgentLoop implements AgentBackend {
       const strategy = opts.strategy;
       if (strategy?.kind === "rewind" || strategy?.kind === "replace") {
         const before = this.conversation.estimatePromptTokens();
-        const beforeLen = this.conversation.getMessages().length;
+        const beforeLen = this.conversation.get().length;
         const next = strategy.kind === "rewind"
-          ? this.conversation.getMessages().slice(0, strategy.toIndex)
-          : (strategy.messages as ReturnType<LiveView["getMessages"]>);
-        this.conversation.replaceMessages(next);
+          ? this.conversation.get().slice(0, strategy.toIndex)
+          : (strategy.messages as ReturnType<LiveView["get"]>);
+        this.conversation.replace(next);
         const after = this.conversation.estimatePromptTokens();
-        const afterLen = this.conversation.getMessages().length;
+        const afterLen = this.conversation.get().length;
         return { before, after, evictedCount: Math.max(0, beforeLen - afterLen) } as CompactResult;
       }
       return null;
@@ -1457,7 +1455,7 @@ export class AgentLoop implements AgentBackend {
     // wrapTrailingWithDynamicContext for the cache-stability rationale.
     const rawMessages = [
       { role: "system" as const, content: systemPrompt },
-      ...wrapTrailingWithDynamicContext(this.conversation.getMessages(), dynamicContext, toolPrompt),
+      ...wrapTrailingWithDynamicContext(this.conversation.forLLM(), dynamicContext, toolPrompt),
     ];
 
     // Let extensions transform the message array (compact, summarize, filter, etc.)
