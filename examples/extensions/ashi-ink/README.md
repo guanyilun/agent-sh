@@ -45,9 +45,12 @@ Ink follows Claude Code's chat design (a different look from pi-tui's):
   stripped so they can't punch a hole in the background),
 - each assistant turn under a **`⏺` bullet at column 0**, content hanging-indented
   to column 2; markdown is flush-left (`tab: 0`),
-- **tools** as `⏺ Name(detail)` (the `⏺` colored by status) with output under a
-  `⎿` gutter; **read/search groups** collapse to a one-line `⏺ Read N files`
-  summary and expand (Ctrl+O) to a `⎿` list,
+- **tools** as `⏺ Name(detail)` — the `⏺` **dimmed and blinking while running**,
+  then solid **green** (ok) / **red** (error) — with output under a `⎿` gutter;
+  **read/search groups** collapse to a one-line `⏺ Read N files` summary and expand
+  (Ctrl+O) to a `⎿` list,
+- one blank line between top-level blocks (a tool result stays tight under its
+  call) — the renderer owns the inter-block rhythm, like Claude Code's `marginTop`,
 - tables grow to their content and only wrap once they'd exceed the terminal.
 
 The entire tool look lives in the renderer (`paintCall` / `paintResult` /

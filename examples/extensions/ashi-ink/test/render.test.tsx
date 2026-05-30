@@ -118,6 +118,48 @@ test("committed scrollback renders via <Static>, alongside the live tail", () =>
   assert.match(frame, /live tail/);
 });
 
+test("the renderer puts a blank line between top-level blocks", () => {
+  const h = __harness();
+  const a = h.nodes.text(); a.setText("block one");
+  const b = h.nodes.text(); b.setText("block two");
+  h.app.scrollback.addChild(a.node);
+  h.app.scrollback.addChild(b.node);
+  const frame = strip(render(h.element).lastFrame() ?? "");
+  // one blank line above the second block (the first, at index 0, gets none)
+  assert.match(frame, /block one *\n *\nblock two/);
+});
+
+test("a block's leading substrate spacer doesn't double the inter-block gap", () => {
+  const h = __harness();
+  const mk = (t: string): RenderNode => {
+    const c = h.nodes.container();
+    c.addChild(h.nodes.spacer(1)); // pi-tui's per-block gap; ink owns rhythm instead
+    const tx = h.nodes.text(); tx.setText(t);
+    c.addChild(tx.node);
+    return c.node;
+  };
+  h.app.scrollback.addChild(mk("alpha"));
+  h.app.scrollback.addChild(mk("beta"));
+  const frame = strip(render(h.element).lastFrame() ?? "");
+  assert.match(frame, /alpha *\n *\nbeta/); // exactly one blank between
+  assert.doesNotMatch(frame, /alpha *\n *\n *\nbeta/); // not two
+});
+
+test("a tool result stays tight under its call (no inter-block gap)", () => {
+  const env = { width: 80, mode: "preview" as const, previewLines: 5 };
+  const args = { toolCallId: "tt", name: "bash", title: "bash", rawInput: { command: "echo hi" } };
+  const call = r.mountToolCall(bashModel as RenderModel<unknown>, args, env);
+  const result = r.mountToolResult(bashModel as RenderModel<unknown>, args, env);
+  result.appendChunk("hi\n");
+  result.finalize({ exitCode: 0 });
+  const h = __harness();
+  h.app.scrollback.addChild(call.node);
+  h.app.scrollback.addChild(result.node);
+  const frame = strip(render(h.element).lastFrame() ?? "");
+  // the ⎿ result is the line immediately under the ⏺ call — no blank line between
+  assert.match(frame, /⏺ Bash\(echo hi\) *\n *⎿  hi/);
+});
+
 test("mounts a tool call + result through the renderer", () => {
   const env = { width: 80, mode: "preview" as const, previewLines: 5 };
   const args = { toolCallId: "t1", name: "bash", title: "bash", rawInput: { command: "ls -la" } };

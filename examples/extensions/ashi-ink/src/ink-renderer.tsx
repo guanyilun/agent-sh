@@ -12,7 +12,6 @@ import Table from "cli-table3";
 import {
   renderBody,
   segmentsToString,
-  type Color,
   type DiffSlot,
   type Env,
   type MountArgs,
@@ -56,7 +55,7 @@ interface SelectState {
 }
 
 type VNode =
-  | { kind: "text"; lines: string[]; fn: ((width: number) => string[]) | null; paddingX?: number }
+  | { kind: "text"; lines: string[]; fn: ((width: number) => string[]) | null; paddingX?: number; cont?: boolean }
   | { kind: "markdown"; source: string; color?: (t: string) => string; userMsg?: boolean; bullet?: boolean; paddingX?: number; mdc?: MdCache }
   | { kind: "spacer"; rows: number }
   | { kind: "container"; children: VNode[] }
@@ -81,6 +80,13 @@ const MARKER_GRAY = "\x1b[38;2;154;160;166m"; // light-gray ❯ (raw ANSI, safe 
 const MARKER_GRAY_HEX = "#9aa0a6"; // same gray for Ink color props (the input prompt)
 const USER_MARKER = `${MARKER_GRAY}${BOLD}❯${BOLD_OFF}${RESET} `; // ❯ at col 0, 2-col gutter
 const ASSISTANT_MARKER = "⏺ "; // assistant response bullet (Claude Code), default fg, 2-col gutter
+
+// Claude Code's dark-theme status colors for the tool dot — its success green and
+// error red, which differ from ashi's theme palette (ink mimics Claude Code's look).
+const DOT_OK = "\x1b[38;2;78;186;101m"; // rgb(78,186,101) bright green
+const DOT_ERR = "\x1b[38;2;255;107;128m"; // rgb(255,107,128) bright red
+const DIM_ON = "\x1b[2m"; // running dot is dimmed default-fg, like Claude Code's dimColor
+const DIM_OFF = "\x1b[22m";
 
 // marked-terminal's legacy table renderer hands us pre-rendered header/body
 // strings delimited by these markers, then sizes the table to content with no
@@ -216,10 +222,37 @@ function createStore(): Store {
       if (INSPECT_FILE) { inspectBump(); if (flushing) inspectReentrantBump(); }
       if (scheduled) return;
       scheduled = true;
-      setTimeout(flush, Math.max(0, 16 - (performance.now() - lastFlush)));
+      const h = setTimeout(flush, Math.max(0, 16 - (performance.now() - lastFlush)));
+      (h as { unref?: () => void }).unref?.();
     },
     subscribe: (l) => { listeners.add(l); return () => { listeners.delete(l); }; },
     get: () => version,
+  };
+}
+
+// Claude Code blinks a running tool's dot — a dimmed ⏺ toggling on/off every
+// ~600ms — and shows it solid (green ok / red error) once resolved. One shared
+// clock keeps every running dot in sync; it ticks only while something is running
+// and unrefs so it never holds the process open (headless tests still exit clean).
+const BLINK_MS = 600;
+interface Blink { on: () => boolean; start: (token: object) => void; stop: (token: object) => void }
+function makeBlink(bump: () => void): Blink {
+  const active = new Set<object>();
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let on = true;
+  return {
+    on: () => on,
+    start: (token) => {
+      active.add(token);
+      if (!timer) {
+        timer = setInterval(() => { on = !on; bump(); }, BLINK_MS);
+        (timer as { unref?: () => void }).unref?.();
+      }
+    },
+    stop: (token) => {
+      active.delete(token);
+      if (active.size === 0 && timer) { clearInterval(timer); timer = null; on = true; }
+    },
   };
 }
 
@@ -266,9 +299,9 @@ interface Cell {
 }
 
 // Claude Code tool look (ink owns the presentation; the schema supplies only the
-// data — name/detail/status/body). A tool call is `⏺ Name(detail)`, the ⏺ colored
-// by status (amber running, green ok, red error); the result hangs under a `⎿`
-// gutter (⎿ at col 2, content at col 5), matching the assistant ⏺ bullet rhythm.
+// data — name/detail/status/body). A tool call is `⏺ Name(detail)`, the ⏺ dimmed
+// and blinking while running, then solid green ok / red error; the result hangs
+// under a `⎿` gutter (⎿ at col 2, content at col 5), matching the ⏺ bullet rhythm.
 const RESULT_GUTTER = "     "; // 5 cols — continuation under "  ⎿  "
 
 function prettyToolName(name: string): string {
@@ -277,14 +310,18 @@ function prettyToolName(name: string): string {
   return words.join(" ") || "Tool";
 }
 
-function statusColor(s?: { exitCode: number | null }): Color {
-  if (!s) return "warning"; // still running
-  return s.exitCode === null || s.exitCode === 0 ? "success" : "error";
+// The status dot, Claude Code style: a dimmed ⏺ that blinks (a blank when the
+// shared clock is off) while running, solid green/red once resolved. A blank keeps
+// the 2-col gutter so the name never shifts as the dot blinks.
+function statusDot(s: { exitCode: number | null } | undefined, blinkOn: boolean): string {
+  if (!s) return blinkOn ? `${DIM_ON}⏺${DIM_OFF}` : " ";
+  const ok = s.exitCode === null || s.exitCode === 0;
+  return `${ok ? DOT_OK : DOT_ERR}⏺${RESET}`;
 }
 
-function paintCall(cell: Cell, width: number): string {
+function paintCall(cell: Cell, width: number, blinkOn: boolean): string {
   const display = cell.model.view(cell.state, cell.env) as ToolDisplay;
-  const bullet = segmentsToString([{ text: "⏺", style: { color: statusColor(display.status) } }]);
+  const bullet = statusDot(display.status, blinkOn);
   const name = prettyToolName(cell.args.name);
   let detail = (cell.args.displayDetail ?? "").trim()
     || segmentsToString(display.title).replace(ANSI, "").replace(/^\$\s*/, "").trim();
@@ -314,7 +351,7 @@ function paintResult(cell: Cell, width: number): string[] {
   return lines;
 }
 
-function makeToolMount(req: () => void) {
+function makeToolMount(req: () => void, blink: Blink) {
   const handles = new Map<string, Cell>();
 
   const cellFor = (model: RenderModel<unknown>, args: MountArgs, env: MountEnv): Cell => {
@@ -332,6 +369,7 @@ function makeToolMount(req: () => void) {
       args,
     };
     handles.set(args.toolCallId, cell);
+    blink.start(cell);
     return cell;
   };
 
@@ -350,17 +388,17 @@ function makeToolMount(req: () => void) {
   return {
     mountCall(model: RenderModel<unknown>, args: MountArgs, env: MountEnv): ToolCallView {
       const cell = cellFor(model, args, env);
-      const v: VNode = { kind: "text", lines: [], fn: (w) => [paintCall(cell, w)], paddingX: 0 };
+      const v: VNode = { kind: "text", lines: [], fn: (w) => [paintCall(cell, w, blink.on())], paddingX: 0 };
       return { node: asNode(v), setStatus: (o) => dispatch(cell, "status", o) };
     },
     mountResult(model: RenderModel<unknown>, args: MountArgs, env: MountEnv): ToolResultView {
       const cell = cellFor(model, args, env);
-      const v: VNode = { kind: "text", lines: [], fn: (w) => paintResult(cell, w) };
+      const v: VNode = { kind: "text", lines: [], fn: (w) => paintResult(cell, w), cont: true };
       return {
         node: asNode(v),
         appendChunk: (c) => dispatch(cell, "chunk", c),
         setDiffRenderer: (fn) => dispatch(cell, "diff", fn),
-        finalize: (o) => { cell.env = { ...cell.env, finalized: true }; dispatch(cell, "status", { ...o, elapsedMs: 0 }); handles.delete(args.toolCallId); },
+        finalize: (o) => { cell.env = { ...cell.env, finalized: true }; dispatch(cell, "status", { ...o, elapsedMs: 0 }); handles.delete(args.toolCallId); blink.stop(cell); },
         toggleExpanded: () => { cell.env = { ...cell.env, expanded: !cell.env.expanded }; req(); },
       };
     },
@@ -379,20 +417,28 @@ function summarizeGroup(kind: string, n: number): string {
 function childOk(c: ToolGroupModel["children"][number]): boolean {
   return !c.status || c.status.exitCode === null || c.status.exitCode === 0;
 }
-function makeToolGroup(req: () => void): ToolGroupView {
+function groupSummaryLine(model: ToolGroupModel, blinkOn: boolean): string {
+  const total = model.children.length + (model.hidden?.count ?? 0);
+  const running = model.children.some((c) => !c.status);
+  const anyErr = model.children.some((c) => !childOk(c)) || (model.hidden ? !model.hidden.ok : false);
+  const dot = statusDot(running ? undefined : { exitCode: anyErr ? 1 : 0 }, blinkOn);
+  return `${dot} ${summarizeGroup(model.kind, total)}`;
+}
+function makeToolGroup(req: () => void, blink: Blink): ToolGroupView {
   const v: VNode = { kind: "container", children: [] };
   const ch = v.kind === "container" ? v.children : [];
-  const update = (model: ToolGroupModel): void => {
+  let model: ToolGroupModel | null = null;
+  let acquired = false;
+  const update = (m: ToolGroupModel): void => {
+    model = m;
+    const running = m.children.some((c) => !c.status);
+    if (running && !acquired) { blink.start(v); acquired = true; }
+    else if (!running && acquired) { blink.stop(v); acquired = false; }
     ch.length = 0;
-    ch.push({ kind: "spacer", rows: 1 });
-    const total = model.children.length + (model.hidden?.count ?? 0);
-    const running = model.children.some((c) => !c.status);
-    const anyErr = model.children.some((c) => !childOk(c)) || (model.hidden ? !model.hidden.ok : false);
-    const color: Color = running ? "warning" : anyErr ? "error" : "success";
-    const bullet = segmentsToString([{ text: "⏺", style: { color } }]);
-    ch.push({ kind: "text", lines: [`${bullet} ${summarizeGroup(model.kind, total)}`], fn: null, paddingX: 0 });
-    if (model.expanded) {
-      for (const c of model.children) {
+    // Summary bullet via a render fn so the blink clock repaints it in place.
+    ch.push({ kind: "text", lines: [], fn: () => (model ? [groupSummaryLine(model, blink.on())] : []), paddingX: 0 });
+    if (m.expanded) {
+      for (const c of m.children) {
         const elbow = segmentsToString([{ text: "⎿", style: { color: childOk(c) ? "muted" : "error" } }]);
         const sum = c.status?.summary ? ` ${segmentsToString([{ text: c.status.summary, style: { color: "muted" } }])}` : "";
         ch.push({ kind: "text", lines: [`  ${elbow}  ${c.detail}${sum}`], fn: null, paddingX: 0 });
@@ -446,12 +492,11 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
     }
     case "spacer":
       return <Box key={key} height={v.rows} />;
-    case "container":
-      return (
-        <Box key={key} flexDirection="column">
-          {v.children.map((c, i) => renderVNode(c, i))}
-        </Box>
-      );
+    case "container": {
+      const kids = v.children.map((c, i) => renderVNode(c, i)).filter((x) => x !== null);
+      if (kids.length === 0) return null; // an empty block renders nothing, like pi-tui
+      return <Box key={key} flexDirection="column">{kids}</Box>;
+    }
     case "loader":
       return (
         <Box key={key}>
@@ -473,6 +518,25 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
       );
     }
   }
+}
+
+// The renderer owns inter-block rhythm (Claude Code's marginTop model): one blank
+// line above each top-level scrollback block, except the very first and except a
+// tool result, which stays tight under its call (the call vnode is the block start;
+// the result carries `cont`). Empty blocks render nothing and so contribute no gap.
+//
+// The shared chat controllers also prepend a spacer per block (pi-tui's per-block
+// gap); keeping it here would stack with marginTop and double the gap. So this
+// renderer drops a block's leading spacer and lets marginTop be the single source.
+function renderBlock(child: VNode, globalIndex: number): React.ReactElement | null {
+  const block: VNode = child.kind === "container" && child.children[0]?.kind === "spacer"
+    ? { ...child, children: child.children.slice(1) }
+    : child;
+  const el = renderVNode(block, globalIndex);
+  if (el === null) return null;
+  const tight = block.kind === "text" && !!block.cont;
+  const marginTop = globalIndex === 0 || tight ? 0 : 1;
+  return <Box key={globalIndex} flexDirection="column" marginTop={marginTop}>{el}</Box>;
 }
 
 interface AppState {
@@ -537,12 +601,13 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
   const tree = (
     <Box flexDirection="column">
       <Static items={committed}>
-        {(child, i) => <Box key={i}>{renderVNode(child, i)}</Box>}
+        {(child, i) => renderBlock(child, i)}
       </Static>
-      {live.map((child, i) => renderVNode(child, cc + i))}
+      {live.map((child, i) => renderBlock(child, cc + i))}
       {renderVNode(state.footer)}
       {renderVNode(state.queue)}
       <Box
+        marginTop={1}
         borderStyle="single"
         borderLeft={false}
         borderRight={false}
@@ -685,8 +750,9 @@ interface InkHarness {
 function buildRenderer(): { renderer: Renderer; harness: () => InkHarness } {
   const store = createStore();
   const req = (): void => store.bump();
+  const blink = makeBlink(req);
   const nodes = makeNodes(req);
-  const tool = makeToolMount(req);
+  const tool = makeToolMount(req, blink);
   const mountToolCall: Renderer["mountToolCall"] = (model, args, env) => tool.mountCall(model, args, env);
   const renderer: Renderer = {
     ...nodes,
@@ -694,7 +760,7 @@ function buildRenderer(): { renderer: Renderer; harness: () => InkHarness } {
     measureWidth,
     mountToolCall,
     mountToolResult: (model, args, env) => tool.mountResult(model, args, env),
-    mountToolGroup: () => makeToolGroup(req),
+    mountToolGroup: () => makeToolGroup(req, blink),
     mount: () => makeApp(store, req).app,
   };
   const harness = (): InkHarness => {
