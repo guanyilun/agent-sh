@@ -80,6 +80,41 @@ test("concurrent flushes do not double-append (serialized)", async () => {
   assert.equal(reread.length, 2, "the two messages should be appended exactly once, not duplicated");
 });
 
+test("the exit race: processing-done leaves the turn un-persisted until flush is awaited", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ashi-persist-"));
+  const cwd = "/tmp/ashi-persist-cwd-race";
+  const sid = await seededSession(dir, cwd);
+
+  const store = new MultiSessionStore(dir, cwd, { resumeSessionId: sid });
+  const conv = { messages: [] as Msg[] };
+  const { ctx, bus } = makeCtx(conv);
+  const capture = registerCapture(ctx as never, () => store);
+  applyBranchMessages(ctx as never, () => store, capture);
+
+  // A turn completes: the agent appended user + assistant messages.
+  conv.messages.push({ role: "user", content: "make+edit a file" });
+  conv.messages.push({ role: "assistant", content: "did it" });
+
+  const file = path.join(dir, `${sid}.jsonl`);
+  const onDisk = (): number =>
+    fs.readFileSync(file, "utf8").split("\n").filter((l) => l.includes('"type":"message"')).length;
+
+  assert.equal(onDisk(), 2, "before the turn flushes, only the 2 seeded messages are on disk");
+
+  // processing-done fires the per-turn flush fire-and-forget (the real listener
+  // does `void flush()` — it does not await).
+  await bus.emit("agent:processing-done");
+
+  // This is the race window the bug lived in: if cleanup() ran process.exit(0)
+  // here (the old behavior), the in-flight async append would be killed and the
+  // whole turn lost.
+  assert.equal(onDisk(), 2, "the new turn is NOT on disk yet — a bare process.exit() here loses it");
+
+  // The fix: cleanup() now awaits capture.flush() before exiting.
+  await capture.flush();
+  assert.equal(onDisk(), 4, "awaiting the pending flush on exit persists the turn");
+});
+
 test("a new turn in a session resumed via the in-app picker is persisted", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ashi-persist-"));
   const cwd = "/tmp/ashi-persist-cwd2";
