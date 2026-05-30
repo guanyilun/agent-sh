@@ -2,7 +2,7 @@ import type {
   AutocompleteItem,
   AutocompleteProvider,
   AutocompleteSuggestions,
-} from "@earendil-works/pi-tui";
+} from "./renderer.js";
 import type { EventBus } from "agent-sh/event-bus";
 
 /** Adapt pi-tui's AutocompleteProvider to agent-sh's autocomplete:request pipe.

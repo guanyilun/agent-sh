@@ -1,40 +1,24 @@
-import {
-  TUI,
-  ProcessTerminal,
-  Container,
-  Editor,
-  Loader,
-  SelectList,
-  Spacer,
-  Text,
-  type Component,
-  type SelectItem,
-  matchesKey,
-  isKeyRelease,
-  isKeyRepeat,
-} from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "agent-sh/types";
 import { theme } from "./theme.js";
-import { editorTheme, selectListTheme } from "./renderers/pi-tui/theme-adapters.js";
-import {
-  AssistantMessage,
-  ErrorLine,
-  InfoLine,
-  pngToImageComponent,
-  ThinkingBlock,
-  ToolGroup,
-} from "./components.js";
-import type { ToolCallView, ToolResultView } from "./hooks.js";
+import type {
+  KeyEvent,
+  LoaderView,
+  RenderNode,
+  Renderer,
+  SelectItem,
+  SelectView,
+  ToolCallView,
+  ToolResultView,
+} from "./renderer.js";
+import { ErrorLine, InfoLine } from "./chat/lines.js";
+import { AssistantMessage } from "./chat/assistant.js";
+import { ThinkingBlock } from "./chat/thinking.js";
+import { UserMessage } from "./chat/user-message.js";
+import { ToolGroup } from "./chat/tool-group.js";
 import { createToolHookResolver } from "./hooks.js";
 import { loadGroupMaxVisible } from "./display-config.js";
 import { classifySubmit, deriveChangeHandlerResult } from "./shell-mode.js";
 import { UserShellIntents } from "./user-shell-intents.js";
-
-const GROUPABLE_KINDS = new Set(["read", "search"]);
-const TOOL_KIND: Record<string, string> = {
-  read_file: "read", ls: "read",
-  grep: "search", glob: "search",
-};
 import { BusAutocompleteProvider } from "./autocomplete.js";
 import { StatusFooter } from "./status-footer.js";
 import type { MultiSessionStore } from "./multi-session-store.js";
@@ -46,6 +30,12 @@ import type { Capture } from "./capture.js";
 import { execSync } from "node:child_process";
 import { renderDiff, detectLanguage, highlightLine } from "agent-sh/utils/diff-renderer.js";
 import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
+
+const GROUPABLE_KINDS = new Set(["read", "search"]);
+const TOOL_KIND: Record<string, string> = {
+  read_file: "read", ls: "read",
+  grep: "search", glob: "search",
+};
 
 interface DiffStats { added: number; removed: number; isNewFile: boolean; isIdentical: boolean }
 
@@ -164,7 +154,6 @@ function relativize(fp: string): string {
 }
 
 export interface AshiHandle {
-  tui: TUI;
   stop: () => void;
   openTreePicker: () => Promise<void>;
   openSessionPicker: () => Promise<void>;
@@ -175,37 +164,35 @@ export function mountAshi(
   ctx: ExtensionContext,
   getStore: () => MultiSessionStore,
   capture: Capture,
+  renderer: Renderer,
 ): AshiHandle {
   const { bus } = ctx;
-  const terminal = new ProcessTerminal();
-  const tui = new TUI(terminal);
+  const app = renderer.mount();
+  const input = app.input;
 
-  const chat = new Container();
-  const footerSlot = new Container();
-  const queueSlot = new Container();
-  const editor = new Editor(tui, editorTheme(), { paddingX: 1 });
+  const statusFooter = new StatusFooter(app.status, renderer.measureWidth);
 
   let shellMode = false;
   let pendingPrivate = false;
   const baseAutocomplete = new BusAutocompleteProvider(bus);
-  editor.setAutocompleteProvider({
+  input.setAutocompleteProvider({
     getSuggestions: async (lines, line, col) =>
       shellMode ? null : baseAutocomplete.getSuggestions(lines, line, col),
     applyCompletion: baseAutocomplete.applyCompletion.bind(baseAutocomplete),
   });
 
-  const defaultBorderColor = editor.borderColor;
+  const defaultBorderColor = input.defaultBorderColor;
   const shellBorderColor = (t: string): string => theme.fg("bashMode", t);
   const privateBorderColor = (t: string): string => theme.fg("bashModePrivate", t);
   const refreshShellChrome = (): void => {
-    editor.borderColor = shellMode
+    input.setBorderColor(shellMode
       ? (pendingPrivate ? privateBorderColor : shellBorderColor)
-      : defaultBorderColor;
-    editor.invalidate();
+      : defaultBorderColor);
+    input.invalidate();
     statusFooter.update({
       shellMode: shellMode ? (pendingPrivate ? "private" : "on") : "off",
     });
-    tui.requestRender();
+    app.requestRender();
   };
   const setShellMode = (on: boolean): void => {
     if (shellMode === on) return;
@@ -219,20 +206,20 @@ export function mountAshi(
     refreshShellChrome();
   };
 
-  editor.onChange = (text) => {
+  input.onChange((text) => {
     const r = deriveChangeHandlerResult(shellMode, pendingPrivate, text);
     // Order matters: setText fires onChange synchronously, and the recursive
     // call must see the new mode/private values or it re-runs the entry
     // transition and clobbers the just-set state.
     if (r.mode !== shellMode) setShellMode(r.mode);
     setPendingPrivate(r.pendingPrivate);
-    if (r.replaceText !== undefined) editor.setText(r.replaceText);
-  };
+    if (r.replaceText !== undefined) input.setText(r.replaceText);
+  });
 
-  editor.onSubmit = (text) => {
+  input.onSubmit((text) => {
     const action = classifySubmit(text, shellMode, pendingPrivate);
     if (action.kind === "noop") return;
-    editor.setText("");
+    input.setText("");
     switch (action.kind) {
       case "shell":
         submitShell(action.line, { private: action.private });
@@ -245,15 +232,14 @@ export function mountAshi(
         if (processing) {
           queuedQueries.push(action.query);
           renderQueueSlot();
-          tui.requestRender();
+          app.requestRender();
           return;
         }
         bus.emit("agent:submit", { query: action.query });
         return;
     }
-  };
+  });
 
-  const statusFooter = new StatusFooter();
   const cwd = ctx.call("cwd") as string;
   statusFooter.update({ cwd, branch: currentGitBranch(cwd) });
   let compactions = 0;
@@ -271,12 +257,24 @@ export function mountAshi(
     statusFooter.update({ thinking: supported ? level : undefined });
   };
 
-  tui.addChild(chat);
-  tui.addChild(footerSlot);
-  tui.addChild(queueSlot);
-  tui.addChild(editor);
-  tui.addChild(statusFooter);
-  tui.setFocus(editor);
+  // A typed list parallel to the scrollback nodes. Group-merge / thinking-toggle
+  // / expand-all inspect these controllers instead of reflecting over the
+  // renderer's node tree.
+  type ChatEntry =
+    | { t: "group"; group: ToolGroup }
+    | { t: "thinking"; ctrl: ThinkingBlock }
+    | { t: "assistant"; ctrl: AssistantMessage }
+    | { t: "pair"; result: ToolResultView }
+    | { t: "plain" };
+  const chatEntries: ChatEntry[] = [];
+  const appendEntry = (node: RenderNode, entry: ChatEntry): void => {
+    app.scrollback.addChild(node);
+    chatEntries.push(entry);
+  };
+  const clearChat = (): void => {
+    app.scrollback.clear();
+    chatEntries.length = 0;
+  };
 
   interface ToolPair { call: ToolCallView; result: ToolResultView; startedAt: number }
   type LiveToolEntry = { kind: "pair"; pair: ToolPair } | { kind: "group"; group: ToolGroup };
@@ -288,33 +286,33 @@ export function mountAshi(
 
   /** Visible thinking acts as a hard separator; hidden thinking is transparent. */
   const findMergeableGroup = (kind: string): ToolGroup | null => {
-    for (let i = chat.children.length - 1; i >= 0; i--) {
-      const c = chat.children[i]!;
-      if (c instanceof ToolGroup) return c.kind === kind ? c : null;
-      if (c instanceof ThinkingBlock && hideThinking) continue;
-      if (c instanceof AssistantMessage && !c.hasContent()) continue;
+    for (let i = chatEntries.length - 1; i >= 0; i--) {
+      const e = chatEntries[i]!;
+      if (e.t === "group") return e.group.kind === kind ? e.group : null;
+      if (e.t === "thinking" && hideThinking) continue;
+      if (e.t === "assistant" && !e.ctrl.hasContent()) continue;
       return null;
     }
     return null;
   };
-  let loader: Loader | null = null;
+  let loader: LoaderView | null = null;
   let processing = false;
   const queuedQueries: string[] = [];
   const queuedShellLines: { line: string; private: boolean }[] = [];
   const pendingUserShell = new UserShellIntents();
 
   const renderQueueSlot = (): void => {
-    queueSlot.clear();
+    app.queueSlot.clear();
     for (const item of queuedShellLines) {
       const oneLine = item.line.replace(/\s+/g, " ");
       const preview = oneLine.length > 80 ? oneLine.slice(0, 77) + "…" : oneLine;
       const tag = item.private ? "shell·private" : "shell";
-      queueSlot.addChild(new InfoLine(`↳ ${tag}: ${preview}`));
+      app.queueSlot.addChild(new InfoLine(renderer, `↳ ${tag}: ${preview}`).node);
     }
     for (const q of queuedQueries) {
       const oneLine = q.replace(/\s+/g, " ");
       const preview = oneLine.length > 80 ? oneLine.slice(0, 77) + "…" : oneLine;
-      queueSlot.addChild(new InfoLine(`↳ queued: ${preview}`));
+      app.queueSlot.addChild(new InfoLine(renderer, `↳ queued: ${preview}`).node);
     }
   };
 
@@ -322,7 +320,7 @@ export function mountAshi(
     if (processing) {
       queuedShellLines.push({ line, private: !!opts?.private });
       renderQueueSlot();
-      tui.requestRender();
+      app.requestRender();
       return;
     }
     pendingUserShell.push({ private: !!opts?.private });
@@ -333,25 +331,25 @@ export function mountAshi(
 
   const renderState = (): { state: Record<string, unknown>; invalidate: () => void } => ({
     state: {},
-    invalidate: () => tui.requestRender(),
+    invalidate: () => app.requestRender(),
   });
 
-  const tools = createToolHookResolver(ctx);
+  const tools = createToolHookResolver(ctx, renderer);
 
-  const renderUserMessage = (text: string): Component =>
-    ctx.call("ashi:render-user-message", { text, ...renderState() }) as Component;
+  const renderUserMessage = (text: string): RenderNode =>
+    (ctx.call("ashi:render-user-message", { text, ...renderState() }) as UserMessage).node;
 
   const renderAssistantLive = (): AssistantMessage =>
     ctx.call("ashi:render-assistant", { text: "", ...renderState() }) as AssistantMessage;
 
-  const renderAssistantFinal = (text: string): Component =>
-    ctx.call("ashi:render-assistant", { text, ...renderState() }) as Component;
+  const renderAssistantFinal = (text: string): AssistantMessage =>
+    ctx.call("ashi:render-assistant", { text, ...renderState() }) as AssistantMessage;
 
   const renderThinkingLive = (): ThinkingBlock =>
     ctx.call("ashi:render-thinking", { text: "", hidden: hideThinking, ...renderState() }) as ThinkingBlock;
 
-  const renderThinkingFinal = (text: string): Component =>
-    ctx.call("ashi:render-thinking", { text, hidden: hideThinking, ...renderState() }) as Component;
+  const renderThinkingFinal = (text: string): ThinkingBlock =>
+    ctx.call("ashi:render-thinking", { text, hidden: hideThinking, ...renderState() }) as ThinkingBlock;
 
   const renderToolPair = (args: {
     toolCallId: string; name: string; title: string;
@@ -370,7 +368,7 @@ export function mountAshi(
   const ensureAssistant = (): AssistantMessage => {
     if (!activeAssistant) {
       activeAssistant = renderAssistantLive();
-      chat.addChild(activeAssistant);
+      appendEntry(activeAssistant.node, { t: "assistant", ctrl: activeAssistant });
     }
     return activeAssistant;
   };
@@ -385,20 +383,20 @@ export function mountAshi(
   const ensureThinking = (): ThinkingBlock => {
     if (!activeThinking) {
       activeThinking = renderThinkingLive();
-      chat.addChild(activeThinking);
+      appendEntry(activeThinking.node, { t: "thinking", ctrl: activeThinking });
     }
     return activeThinking;
   };
 
   const startLoader = (): void => {
     if (loader) return;
-    loader = new Loader(tui, fgAccent, fgMuted, "thinking…");
-    footerSlot.addChild(loader);
+    loader = app.createLoader("thinking…", fgAccent, fgMuted);
+    app.footerSlot.addChild(loader.node);
   };
   const stopLoader = (): void => {
     if (!loader) return;
     loader.stop();
-    footerSlot.removeChild(loader);
+    app.footerSlot.removeChild(loader.node);
     loader = null;
   };
 
@@ -409,7 +407,10 @@ export function mountAshi(
   const replayEntry = (entry: SessionEntry, toolMap: Map<string, ReplayEntry>): void => {
     if (entry.type === "session") return;
     if (entry.type === "compaction") {
-      chat.addChild(new InfoLine(`▼ compacted (firstKept=${entry.firstKeptId.slice(0, 6)}, ${entry.tokensBefore} tokens)`));
+      appendEntry(
+        new InfoLine(renderer, `▼ compacted (firstKept=${entry.firstKeptId.slice(0, 6)}, ${entry.tokensBefore} tokens)`).node,
+        { t: "plain" },
+      );
       return;
     }
     if (entry.type === "shell-exchange") {
@@ -418,27 +419,29 @@ export function mountAshi(
         toolCallId: `user-shell-replay-${entry.id}`, name, title: name,
         kind: "bash", displayDetail: entry.command, rawInput: { command: entry.command },
       });
-      chat.addChild(pair.call);
-      chat.addChild(pair.result);
+      appendEntry(pair.call.node, { t: "plain" });
+      appendEntry(pair.result.node, { t: "pair", result: pair.result });
       if (entry.output) pair.result.appendChunk(entry.output);
       pair.result.finalize({ exitCode: entry.exitCode });
       pair.call.setStatus({ exitCode: entry.exitCode, elapsedMs: 0 });
-      chat.addChild(new Spacer(1));
+      appendEntry(renderer.spacer(1), { t: "plain" });
       return;
     }
     const m = entry.message;
     if (m.role === "user") {
       const raw = typeof m.content === "string" ? m.content : "";
       if (raw.startsWith("[Compacted conversation summary]")) return;
-      chat.addChild(renderUserMessage(stripContextWrappers(raw)));
+      appendEntry(renderUserMessage(stripContextWrappers(raw)), { t: "plain" });
     } else if (m.role === "assistant") {
       const reasoning = readReasoning(m);
       if (reasoning) {
-        chat.addChild(renderThinkingFinal(reasoning));
+        const tb = renderThinkingFinal(reasoning);
+        appendEntry(tb.node, { t: "thinking", ctrl: tb });
       }
       const text = typeof m.content === "string" ? m.content : "";
       if (text) {
-        chat.addChild(renderAssistantFinal(text));
+        const am = renderAssistantFinal(text);
+        appendEntry(am.node, { t: "assistant", ctrl: am });
       }
       if (m.tool_calls) {
         for (const tc of m.tool_calls) {
@@ -449,7 +452,7 @@ export function mountAshi(
           if (kind && GROUPABLE_KINDS.has(kind)) {
             const mergeable = findMergeableGroup(kind);
             const group = mergeable
-              ?? (() => { const g = new ToolGroup(kind, groupMaxVisible); chat.addChild(g); return g; })();
+              ?? (() => { const g = new ToolGroup(renderer, kind, groupMaxVisible); appendEntry(g.node, { t: "group", group: g }); return g; })();
             group.addCall(id, name, detailFromArgs(tc.function.arguments));
             if (id) toolMap.set(id, { kind: "group", group, name });
             continue;
@@ -459,8 +462,8 @@ export function mountAshi(
             displayDetail: detailFromArgs(tc.function.arguments),
             rawInput: tc.function.arguments,
           });
-          chat.addChild(pair.call);
-          chat.addChild(pair.result);
+          appendEntry(pair.call.node, { t: "plain" });
+          appendEntry(pair.result.node, { t: "pair", result: pair.result });
           if (id) toolMap.set(id, { kind: "pair", pair, name });
         }
       }
@@ -469,7 +472,7 @@ export function mountAshi(
       const text = typeof m.content === "string" ? m.content : "";
       const found = id ? toolMap.get(id) : undefined;
       if (!found) {
-        chat.addChild(new InfoLine(`tool result (no matching call): ${text.slice(0, 80)}`));
+        appendEntry(new InfoLine(renderer, `tool result (no matching call): ${text.slice(0, 80)}`).node, { t: "plain" });
         return;
       }
       const summary = inferSummary(found.name, text);
@@ -494,38 +497,38 @@ export function mountAshi(
     activeAssistant = null;
     activeThinking = null;
     activeTools.clear();
-    chat.clear();
+    clearChat();
     const branch = getStore().current().getBranch();
     const toolMap = new Map<string, ReplayEntry>();
     for (const e of branch) replayEntry(e, toolMap);
-    chat.addChild(new Spacer(1));
-    tui.requestRender();
+    appendEntry(renderer.spacer(1), { t: "plain" });
+    app.requestRender();
   };
 
   bus.on("agent:query", ({ query }) => {
-    chat.addChild(renderUserMessage(query));
+    appendEntry(renderUserMessage(query), { t: "plain" });
     activeAssistant = null;
-    tui.requestRender();
+    app.requestRender();
   });
 
   bus.on("agent:processing-start", () => {
     processing = true;
     startLoader();
-    tui.requestRender();
+    app.requestRender();
   });
 
   /** Drop the live assistant so subsequent text starts fresh markdown below the image. */
   const appendImage = (data: Buffer): void => {
-    const img = pngToImageComponent(data);
+    const img = renderer.image(data);
     if (!img) return;
     if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
-    chat.addChild(img);
+    appendEntry(img, { t: "plain" });
   };
 
   /** tui-renderer normally owns this hook; ashi disables it and provides its own. */
   ctx.define("render:image", (data: Buffer) => {
     appendImage(data);
-    tui.requestRender();
+    app.requestRender();
   });
 
   bus.on("agent:response-chunk", ({ blocks }) => {
@@ -535,13 +538,13 @@ export function mountAshi(
       else if (b.type === "code-block") ensureAssistant().appendCodeBlock(b.language, b.code);
       else if (b.type === "image") appendImage(b.data);
     }
-    tui.requestRender();
+    app.requestRender();
   });
 
   bus.on("agent:thinking-chunk", ({ text }) => {
     if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
     ensureThinking().appendText(text);
-    tui.requestRender();
+    app.requestRender();
   });
 
   bus.on("agent:tool-started", (e) => {
@@ -561,10 +564,10 @@ export function mountAshi(
     if (GROUPABLE_KINDS.has(kind)) {
       const mergeable = findMergeableGroup(kind);
       const group = mergeable
-        ?? (() => { const g = new ToolGroup(kind, groupMaxVisible); chat.addChild(g); return g; })();
+        ?? (() => { const g = new ToolGroup(renderer, kind, groupMaxVisible); appendEntry(g.node, { t: "group", group: g }); return g; })();
       group.addCall(id, lookupName, detail);
       activeTools.set(id, { kind: "group", group });
-      tui.requestRender();
+      app.requestRender();
       return;
     }
 
@@ -573,16 +576,16 @@ export function mountAshi(
       displayDetail: detail, rawInput: e.rawInput,
     });
     activeTools.set(id, { kind: "pair", pair });
-    chat.addChild(pair.call);
-    chat.addChild(pair.result);
-    tui.requestRender();
+    appendEntry(pair.call.node, { t: "plain" });
+    appendEntry(pair.result.node, { t: "pair", result: pair.result });
+    app.requestRender();
   });
 
   bus.on("agent:tool-output-chunk", ({ chunk }) => {
     for (const entry of [...activeTools.values()].reverse()) {
       if (entry.kind === "pair") {
         entry.pair.result.appendChunk(chunk);
-        tui.requestRender();
+        app.requestRender();
         return;
       }
     }
@@ -597,7 +600,7 @@ export function mountAshi(
     if (entry.kind === "group") {
       entry.group.recordCompletion(id, e.exitCode, summary);
       activeTools.delete(id);
-      tui.requestRender();
+      app.requestRender();
       return;
     }
     const pair = entry.pair;
@@ -611,7 +614,7 @@ export function mountAshi(
     pair.call.setStatus({ exitCode: e.exitCode, elapsedMs: Date.now() - pair.startedAt, summary });
     pair.result.finalize({ exitCode: e.exitCode, summary });
     activeTools.delete(id);
-    tui.requestRender();
+    app.requestRender();
   });
 
   // agent:tool-* listeners already render agent-issued bash; the shell:* path
@@ -636,9 +639,9 @@ export function mountAshi(
       kind: "bash", displayDetail: command, rawInput: { command },
     });
     activeUserShell = { pair, command, isPrivate };
-    chat.addChild(pair.call);
-    chat.addChild(pair.result);
-    tui.requestRender();
+    appendEntry(pair.call.node, { t: "plain" });
+    appendEntry(pair.result.node, { t: "pair", result: pair.result });
+    app.requestRender();
   });
 
   bus.on("shell:command-done", ({ output, cwd, exitCode }) => {
@@ -649,8 +652,8 @@ export function mountAshi(
     pair.call.setStatus({ exitCode, elapsedMs: Date.now() - pair.startedAt });
     pair.result.finalize({ exitCode });
     activeUserShell = null;
-    chat.addChild(new Spacer(1));
-    tui.requestRender();
+    appendEntry(renderer.spacer(1), { t: "plain" });
+    app.requestRender();
     void getStore().current().appendShellExchange({
       command, output: output ?? "", exitCode, cwd,
       ...(isPrivate ? { private: true } : {}),
@@ -663,7 +666,7 @@ export function mountAshi(
     stopLoader();
     finalizeThinking();
     if (activeAssistant) activeAssistant.finalize();
-    chat.addChild(new Spacer(1));
+    appendEntry(renderer.spacer(1), { t: "plain" });
     refreshFooterStats();
     refreshBranch();
     // Shell queue drains first so its output lands in the next turn's <shell_events>.
@@ -680,38 +683,38 @@ export function mountAshi(
     } else {
       renderQueueSlot();
     }
-    tui.requestRender();
+    app.requestRender();
   });
 
   bus.on("agent:usage", (u) => {
     if (u.prompt_tokens > 0) {
       statusFooter.update({ tokens: u.prompt_tokens });
-      tui.requestRender();
+      app.requestRender();
     }
   });
 
   bus.on("agent:cancelled", () => {
     processing = false;
     stopLoader();
-    chat.addChild(new InfoLine("cancelled"));
-    tui.requestRender();
+    appendEntry(new InfoLine(renderer, "cancelled").node, { t: "plain" });
+    app.requestRender();
   });
 
   bus.on("agent:error", ({ message }) => {
     processing = false;
     stopLoader();
-    chat.addChild(new ErrorLine(message));
-    tui.requestRender();
+    appendEntry(new ErrorLine(renderer, message).node, { t: "plain" });
+    app.requestRender();
   });
 
   bus.on("ui:info", ({ message }) => {
-    chat.addChild(new InfoLine(message));
-    tui.requestRender();
+    appendEntry(new InfoLine(renderer, message).node, { t: "plain" });
+    app.requestRender();
   });
 
   bus.on("ui:error", ({ message }) => {
-    chat.addChild(new ErrorLine(message));
-    tui.requestRender();
+    appendEntry(new ErrorLine(renderer, message).node, { t: "plain" });
+    app.requestRender();
   });
 
   bus.on("agent:info", (info) => {
@@ -721,25 +724,25 @@ export function mountAshi(
       contextWindow: info.contextWindow,
     });
     refreshThinking();
-    tui.requestRender();
+    app.requestRender();
   });
 
   bus.on("config:changed", () => {
     refreshThinking();
-    tui.requestRender();
+    app.requestRender();
   });
 
   bus.on("conversation:after-compact", () => {
     compactions++;
     statusFooter.update({ compactions });
     refreshFooterStats();
-    tui.requestRender();
+    app.requestRender();
   });
 
   refreshFooterStats();
 
   let pickerOpen = false;
-  let activeSessionPicker: SelectList | null = null;
+  let activeSessionPicker: SelectView | null = null;
   let activeSessionRepopulate: ((keepIndex?: number) => boolean) | null = null;
   let activeSessionClose: (() => void) | null = null;
 
@@ -838,18 +841,18 @@ export function mountAshi(
       const label = r.id === activeLeaf ? "● current" : "leaf";
       return { value: `tip:${r.id}`, label: `${treePrefix}${label}` };
     });
-    const picker = new SelectList(items, 15, selectListTheme());
+    const picker = app.createSelectList(items, { visibleRows: 15 });
     const activeIdx = items.findIndex((it) => it.value === `tip:${activeLeaf}`);
     picker.setSelectedIndex(activeIdx >= 0 ? activeIdx : items.length - 1);
 
     const close = (): void => {
       pickerOpen = false;
-      footerSlot.removeChild(picker);
-      tui.setFocus(editor);
-      tui.requestRender();
+      app.footerSlot.removeChild(picker.node);
+      app.focusInput();
+      app.requestRender();
     };
 
-    picker.onSelect = async (item) => {
+    picker.onSelect(async (item) => {
       close();
       const [kind, id] = item.value.split(":") as ["msg" | "tip", string];
       if (kind === "tip") {
@@ -867,37 +870,37 @@ export function mountAshi(
       store.setActiveLeaf(targetLeaf);
       applyBranchMessages(ctx, getStore, capture);
       const raw = typeof entry.message.content === "string" ? entry.message.content : "";
-      editor.setText(stripContextWrappers(raw));
+      input.setText(stripContextWrappers(raw));
       bus.emit("ui:info", { message: `fork: rewound to ${targetLeaf.slice(0, 6)}` });
       await rebuildChat();
       refreshFooterStats();
-    };
-    picker.onCancel = close;
+    });
+    picker.onCancel(close);
 
     pickerOpen = true;
-    footerSlot.addChild(picker);
-    tui.setFocus(picker);
-    tui.requestRender();
+    app.footerSlot.addChild(picker.node);
+    app.setFocus(picker.node);
+    app.requestRender();
   };
 
   const openSessionPicker = async (): Promise<void> => {
     if (pickerOpen) return;
 
-    const hint = new InfoLine("↑↓ move · enter: resume · d: delete · esc: cancel");
+    const hint = new InfoLine(renderer, "↑↓ move · enter: resume · d: delete · esc: cancel");
 
     const close = (): void => {
-      if (activeSessionPicker) footerSlot.removeChild(activeSessionPicker);
-      footerSlot.removeChild(hint);
+      if (activeSessionPicker) app.footerSlot.removeChild(activeSessionPicker.node);
+      app.footerSlot.removeChild(hint.node);
       activeSessionPicker = null;
       activeSessionRepopulate = null;
       activeSessionClose = null;
       pickerOpen = false;
-      tui.setFocus(editor);
-      tui.requestRender();
+      app.focusInput();
+      app.requestRender();
     };
 
     const populate = (keepIndex?: number): boolean => {
-      if (activeSessionPicker) footerSlot.removeChild(activeSessionPicker);
+      if (activeSessionPicker) app.footerSlot.removeChild(activeSessionPicker.node);
       const currentId = getStore().current().id;
       const list = getStore().listSessions().filter((s) => s.id !== currentId);
       if (list.length === 0) {
@@ -908,35 +911,35 @@ export function mountAshi(
         value: s.id,
         label: formatSessionRow(s, false),
       }));
-      const picker = new SelectList(items, 15, selectListTheme());
+      const picker = app.createSelectList(items, { visibleRows: 15 });
       if (keepIndex !== undefined) {
         picker.setSelectedIndex(Math.min(keepIndex, items.length - 1));
       }
-      picker.onSelect = async (item) => {
+      picker.onSelect(async (item) => {
         const id = item.value;
         close();
         resumeSession(ctx, getStore, capture, id);
         bus.emit("ui:info", { message: `resumed session ${id}` });
         await rebuildChat();
         refreshFooterStats();
-      };
-      picker.onCancel = close;
+      });
+      picker.onCancel(close);
       activeSessionPicker = picker;
-      footerSlot.addChild(picker);
-      tui.setFocus(picker);
+      app.footerSlot.addChild(picker.node);
+      app.setFocus(picker.node);
       return true;
     };
 
-    footerSlot.addChild(hint);
+    app.footerSlot.addChild(hint.node);
     if (!populate()) {
-      footerSlot.removeChild(hint);
+      app.footerSlot.removeChild(hint.node);
       bus.emit("ui:info", { message: "no past sessions in this cwd" });
       return;
     }
     pickerOpen = true;
     activeSessionRepopulate = populate;
     activeSessionClose = close;
-    tui.requestRender();
+    app.requestRender();
   };
 
   const toggleThinking = (): void => {
@@ -944,14 +947,10 @@ export function mountAshi(
     if (processing) {
       // Mid-turn: only show/hide existing nodes. Group-merging respects the
       // new flag for future calls; next idle rebuild reflows everything.
-      const walk = (node: Container): void => {
-        for (const child of node.children) {
-          if (child instanceof ThinkingBlock) child.setHidden(hideThinking);
-          else if (child instanceof Container) walk(child);
-        }
-      };
-      walk(chat);
-      tui.requestRender();
+      for (const e of chatEntries) {
+        if (e.t === "thinking") e.ctrl.setHidden(hideThinking);
+      }
+      app.requestRender();
       return;
     }
     void rebuildChat();
@@ -962,20 +961,20 @@ export function mountAshi(
   const resumeFromSuspend = (): void => {
     if (!suspended) return;
     suspended = false;
-    tui.start();
-    tui.requestRender(true);
+    app.start();
+    app.requestRender(true);
   };
   const suspendToShell = (): void => {
     if (suspended) return;
     suspended = true;
-    tui.stop();
+    app.stop();
     process.kill(process.pid, "SIGSTOP");
   };
   if (jobControl) process.on("SIGCONT", resumeFromSuspend);
 
-  tui.addInputListener((data) => {
-    if (isKeyRelease(data) || isKeyRepeat(data)) return;
-    if (matchesKey(data, "escape")) {
+  app.onKey((key: KeyEvent) => {
+    if (key.isRelease() || key.isRepeat()) return;
+    if (key.matches("escape")) {
       if (processing) {
         bus.emit("agent:cancel-request", {});
         return { consume: true };
@@ -986,7 +985,7 @@ export function mountAshi(
         return { consume: true };
       }
     }
-    if (activeSessionPicker && matchesKey(data, "d")) {
+    if (activeSessionPicker && key.matches("d")) {
       const selected = activeSessionPicker.getSelectedItem();
       if (selected) {
         const currentId = getStore().current().id;
@@ -1000,41 +999,41 @@ export function mountAshi(
           return { consume: true };
         }
         if (!activeSessionRepopulate?.(idx)) activeSessionClose?.();
-        tui.requestRender();
+        app.requestRender();
       }
       return { consume: true };
     }
-    if (matchesKey(data, "up") && queuedQueries.length > 0 && editor.getText().length === 0) {
+    if (key.matches("up") && queuedQueries.length > 0 && input.getText().length === 0) {
       const last = queuedQueries.pop()!;
       renderQueueSlot();
-      editor.setText(last);
-      tui.requestRender();
+      input.setText(last);
+      app.requestRender();
       return { consume: true };
     }
-    if (matchesKey(data, "backspace") && shellMode && editor.getText().length === 0) {
+    if (key.matches("backspace") && shellMode && input.getText().length === 0) {
       // Editor swallows backspace-on-empty; two-step exit: first clears the
       // private signal, second exits shell mode entirely.
       if (pendingPrivate) setPendingPrivate(false);
       else setShellMode(false);
       return { consume: true };
     }
-    if (matchesKey(data, "ctrl+c")) {
-      editor.setText("");
+    if (key.matches("ctrl+c")) {
+      input.setText("");
       return { consume: true };
     }
-    if (matchesKey(data, "ctrl+d") && editor.getText().length === 0) {
+    if (key.matches("ctrl+d") && input.getText().length === 0) {
       ctx.quit();
       return { consume: true };
     }
-    if (jobControl && matchesKey(data, "ctrl+z")) {
+    if (jobControl && key.matches("ctrl+z")) {
       suspendToShell();
       return { consume: true };
     }
-    if (matchesKey(data, "ctrl+t")) {
+    if (key.matches("ctrl+t")) {
       toggleThinking();
       return { consume: true };
     }
-    if (matchesKey(data, "shift+tab")) {
+    if (key.matches("shift+tab")) {
       const { level, levels, supported } = bus.emitPipe("config:get-thinking", {
         level: "off", levels: [] as string[], supported: true,
       });
@@ -1044,46 +1043,26 @@ export function mountAshi(
       }
       return { consume: true };
     }
-    if (matchesKey(data, "ctrl+o")) {
-      const toggle = (node: Container): void => {
-        for (const child of node.children) {
-          const fn = (child as unknown as { toggleExpanded?: () => void }).toggleExpanded;
-          if (typeof fn === "function") fn.call(child);
-          if (child instanceof Container) toggle(child);
-        }
-      };
-      toggle(chat);
-      tui.requestRender();
+    if (key.matches("ctrl+o")) {
+      for (const e of chatEntries) {
+        if (e.t === "group") e.group.toggleExpanded();
+        else if (e.t === "pair") e.result.toggleExpanded();
+      }
+      app.requestRender();
       return { consume: true };
     }
     return undefined;
   });
 
-  tui.start();
+  app.start();
 
   return {
-    tui,
     stop: () => {
       process.off("SIGCONT", resumeFromSuspend);
-      tui.stop();
+      app.stop();
     },
     openTreePicker,
     openSessionPicker,
     rebuildChat,
   };
-}
-
-function isForkAnchor(e: SessionEntry): boolean {
-  if (e.type === "session" || e.type === "compaction") return true;
-  return e.type === "message" && e.message.role === "user";
-}
-
-function pickerLabel(e: SessionEntry, isActive: boolean): string {
-  const marker = isActive ? "●" : "│";
-  const short = e.id.slice(0, 6);
-  if (e.type === "session") return `${marker} ${short} session start`;
-  if (e.type === "compaction") return `${marker} ${short} ▼ compacted (firstKept=${e.firstKeptId.slice(0, 6)})`;
-  const raw = e.type === "message" && typeof e.message.content === "string" ? e.message.content : "";
-  const text = stripContextWrappers(raw).slice(0, 70).replace(/\n/g, " ");
-  return `${marker} ${short} ${text}`;
 }

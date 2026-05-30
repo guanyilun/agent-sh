@@ -32,6 +32,7 @@ import { registerCompaction } from "./compaction.js";
 import { registerCapture } from "./capture.js";
 import { registerRenderDefaults } from "./hooks.js";
 import { registerDefaultSchemaRenderers } from "./default-schema-renderers.js";
+import { createPiTuiRenderer } from "./renderers/pi-tui/index.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -192,12 +193,13 @@ async function main(): Promise<void> {
 
   const capture = registerCapture(ctx, getStore);
   registerCompaction(ctx, getStore, capture);
-  registerRenderDefaults(ctx);
+  const renderer = createPiTuiRenderer();
+  registerRenderDefaults(ctx, renderer);
   registerDefaultSchemaRenderers(ctx);
 
   ctx.advise("system-prompt:build", (next) => `${next()}\n\n<cwd>${process.cwd()}</cwd>`);
 
-  const handle = mountAshi(ctx, getStore, capture);
+  const handle = mountAshi(ctx, getStore, capture, renderer);
   stopFrontend = handle.stop;
 
   registerForkCommands(ctx, getStore, handle.openTreePicker, handle.rebuildChat, capture);

@@ -3,9 +3,8 @@
 //
 // This is the substrate's render contract: pure schema data types plus the ANSI
 // projection of a Body to styled strings — no TUI-renderer (pi-tui/OpenTUI/…)
-// dependency. The pi-tui mounting of these strings into live components lives in
-// renderers/pi-tui/schema-mount.ts; mountCall/mountResult are re-exported at the
-// bottom so the published "@guanyilun/ashi/render" surface stays intact.
+// dependency. The renderer mounts these strings into live views
+// (renderers/pi-tui/schema-mount.ts, reached through Renderer.mountToolCall).
 
 import { theme } from "./theme.js";
 import { highlight, supportsLanguage } from "cli-highlight";
@@ -228,8 +227,3 @@ function lineCountHint(buffer: string): string {
   const label = lines.length === 1 ? "1 line" : `${lines.length} lines`;
   return theme.fg("muted", label);
 }
-
-// ---- pi-tui mount (back-compat re-export) ----
-// SchemaCallComponent/SchemaResultComponent + mountCall/mountResult moved to the
-// pi-tui renderer. Re-exported so the published ./render surface stays intact.
-export { mountCall, mountResult } from "./renderers/pi-tui/schema-mount.js";

@@ -3,8 +3,9 @@
 // Factored out of schema.ts so the schema itself stays renderer-agnostic — the
 // projection (renderBody/segmentsToString/…) lives in schema.ts and is imported here.
 
-import { Container, Spacer, Text, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { theme } from "../../theme.js";
+import type { RenderNode, ToolCallView, ToolResultView } from "../../renderer.js";
 import {
   iconString,
   renderBody,
@@ -184,12 +185,23 @@ class SchemaResultComponent extends Container {
   }
 }
 
-export function mountCall<S>(model: RenderModel<S>, args: MountArgs, env: MountEnv): Component {
+export function mountCall<S>(model: RenderModel<S>, args: MountArgs, env: MountEnv): ToolCallView {
   const handle = handleFor(args, model, env);
-  return new SchemaCallComponent(handle as RenderHandle<unknown>);
+  const comp = new SchemaCallComponent(handle as RenderHandle<unknown>);
+  return {
+    node: comp as unknown as RenderNode,
+    setStatus: (opts) => comp.setStatus(opts),
+  };
 }
 
-export function mountResult<S>(model: RenderModel<S>, args: MountArgs, env: MountEnv): Component {
+export function mountResult<S>(model: RenderModel<S>, args: MountArgs, env: MountEnv): ToolResultView {
   const handle = handleFor(args, model, env);
-  return new SchemaResultComponent(handle as RenderHandle<unknown>);
+  const comp = new SchemaResultComponent(handle as RenderHandle<unknown>);
+  return {
+    node: comp as unknown as RenderNode,
+    appendChunk: (chunk) => comp.appendChunk(chunk),
+    setDiffRenderer: (fn) => comp.setDiffRenderer(fn),
+    finalize: (opts) => comp.finalize(opts),
+    toggleExpanded: () => comp.toggleExpanded(),
+  };
 }
