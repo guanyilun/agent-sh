@@ -1,15 +1,19 @@
 # agent-sh
 
-A real shell with an AI agent one keystroke away.
+A composable agent runtime — pair any frontend with any agent backend, over one shared extension layer.
 
 [![npm version](https://img.shields.io/npm/v/agent-sh.svg)](https://www.npmjs.com/package/agent-sh)
 [![license](https://img.shields.io/npm/l/agent-sh.svg)](https://github.com/guanyilun/agent-sh/blob/main/LICENSE)
 
+## Three example apps built on agent-sh
+
+agent-sh is small at its core and does its real work through extensions, so the same runtime drives very different apps. Three to start with — all sharing the same agent backends, tools, providers, and `~/.agent-sh/settings.json`:
+
+### 1. A shell with the agent one keystroke away — bundled with agent-sh
+
+A normal shell on top of node-pty — your rc config, your aliases, vim and tmux all just work. But at the start of any line, type `>` and you're talking to a small agent that already sees your cwd, your last command, and its output. Nothing to set up, no project to explain.
+
 ![demo](assets/demo.gif)
-
-I live in my terminal. A lot of the time I'm not coding — I'm deploying something, poking at a failing `rsync`, figuring out why `docker build` won't start, fixing a one-liner. And very often I need an AI agent to help. Spinning up a full coding agent for this stuff is overkill, and I got tired of copy-pasting errors into a chat window every time.
-
-So I built agent-sh. Under the hood it's a normal shell on top of node-pty — your rc config, your aliases, vim and tmux all just work. But at the start of any line, type `>` and you're talking to a small agent that already sees your cwd, your last command, and its output. Nothing to set up, no project to explain.
 
 ```
 ~ $ ls -la                       # real shell command
@@ -19,7 +23,32 @@ So I built agent-sh. Under the hood it's a normal shell on top of node-pty — y
 ~ $ > draft a commit message     # agent reads your diff and shell history
 ```
 
-agent-sh is built to be agent-agnostic. The recommended path is the built-in agent `ash` — a lightweight agent designed so extensions can plug into the same tool surface. If you'd rather host an existing coding agent (pi, claude-code, opencode), you can [bring your own](#bring-your-own-agent) — with the trade-off that it manages its own separate tools.
+```bash
+npm install -g agent-sh
+```
+
+[Quick Start ↓](#quick-start)
+
+### 2. ashi — a standalone coding agent
+
+[**`@guanyilun/ashi`**](examples/extensions/ashi/) is the same `ash` agent in a chat-style TUI, with no shell underneath — just the agent. Installed separately, it reuses agent-sh's backend, tools, slash commands, providers, and skills, and adds session history, in-session branching, and LLM-driven compaction.
+
+```bash
+npm install -g @guanyilun/ashi
+ashi
+```
+
+### 3. asHub — a GUI coding agent
+
+[**firslov/asHub**](https://github.com/firslov/asHub) is a third-party cross-platform desktop app (Electron) built on the agent-sh runtime: a multi-session sidebar, persistence across restarts, and a live-streaming interface with Markdown, syntax-highlighted code, diffs, and tool-call rendering. macOS / Windows / Linux.
+
+## How it works
+
+agent-sh is a **composable agent runtime**. At its center is a pure kernel — a typed event bus, a named-handler registry, and an extension loader — that knows nothing about terminals, LLMs, shells, or rendering. Everything else plugs into it: the agent backend, its tools, provider management, and the frontend that drives it.
+
+The frontend and the agent backend are both just components on the bus, so you **mix and match** them freely — wire several frontends to one backend, or keep one frontend and swap the backend underneath — all sharing the **same extension layer** of tools, content transforms, slash commands, and themes. `import { createCore } from "agent-sh"` gives you the headless kernel; load the pieces you want and wire your own I/O.
+
+For the kernel design in full — the bus, handlers, the compositor, and the shell ↔ agent boundary — see [Architecture](docs/architecture.md). To embed the runtime in your own frontend, see the [Library Guide](docs/library.md). The rest of this README covers the bundled shell.
 
 ## Quick Start
 
@@ -141,6 +170,8 @@ All three bridges receive agent-sh's per-query shell context (`<shell_events>`) 
 
 ## Key Features
 
+**Pure kernel, everything is an extension.** `createCore()` is a frontend-agnostic runtime — event bus, handler registry, compositor, backend coordinator, and nothing else. The agent, its tools, provider management, shell tracking, and the TUI renderer all load as extensions through one public API. Even the built-in agent can be disabled.
+
 **Real terminal, zero compromise.** Full PTY with your shell config, aliases, and environment. Shell starts instantly — the agent connects asynchronously in the background.
 
 **One entry point, smart tool selection.** Type `>` and agent-sh figures out how to help. Scratchpad tools (`bash`, `read_file`, `grep`, `glob`) for investigation. Extensions add capabilities like running commands in your live shell. No modes to pick — the agent reasons about which tools to use based on your intent.
@@ -151,7 +182,7 @@ All three bridges receive agent-sh's per-query shell context (`<shell_events>`) 
 
 **Extensible by design.** The entire system is built on a typed event bus. Extensions can add custom input modes, content transforms (render LaTeX as images, Mermaid as diagrams), themes, slash commands, or replace the agent backend entirely. The built-in TUI renderer is itself just an extension.
 
-**Embeddable as a library.** The core is a headless kernel — `import { createCore } from "agent-sh"` to build WebSocket servers, REST APIs, Electron apps, or test harnesses. No terminal required.
+**Embeddable as a library.** The core is a headless kernel — `import { createCore } from "agent-sh"` to build WebSocket servers, REST APIs, Electron apps, alternate TUIs, or test harnesses. No terminal required. [ashi](examples/extensions/ashi/) and [asHub](https://github.com/firslov/asHub) are exactly this.
 
 ## Documentation
 

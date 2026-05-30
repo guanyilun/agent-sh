@@ -13,6 +13,8 @@ agent-sh has two integration points. The difference: **extensions customize the 
 
 If you're adding a Mermaid renderer or a custom slash command, write an extension. If you're building a web server that talks to an LLM, use the library.
 
+Two real frontends are built this way: [**ashi**](../examples/extensions/ashi/) (published as `@guanyilun/ashi`) drives `createCore()` into a standalone chat-style TUI with no shell underneath, and [**asHub**](https://github.com/firslov/asHub) wraps the same kernel in an Electron desktop app. Both reuse the ash backend, tools, and providers — only the frontend differs.
+
 ## Quick Start
 
 ```typescript

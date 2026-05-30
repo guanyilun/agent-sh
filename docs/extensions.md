@@ -369,7 +369,7 @@ Built-in extensions load first (via a declarative manifest), then user extension
 
 ### Real-world bridges
 
-The echo-backend shows the protocol. The `examples/extensions/` directory has two production bridges that wire real agent SDKs into agent-sh. Both are **pure protocol translators** — they map the external SDK's event stream to agent-sh's bus events, and that's it. Neither bundles any tools of its own; each external agent uses its own built-in tools as-is.
+The echo-backend shows the protocol. The `examples/extensions/` directory has three production bridges that wire real agent SDKs into agent-sh. All are **pure protocol translators** — they map the external SDK's event stream to agent-sh's bus events, and that's it. None bundle any tools of their own; each external agent uses its own built-in tools as-is.
 
 PTY-access tools (`terminal_read`, `terminal_keys`, `user_shell`) are deliberately *not* part of a bridge's job. They're opt-in capabilities that live in their own extensions, registered per backend in that backend's tool format. Keeping this separation means bridges stay narrow and composable.
 
@@ -409,9 +409,25 @@ cd ~/.agent-sh/extensions/pi-bridge && npm install
    - `agent_end` → `agent:response-done` + `agent:processing-done`
 3. **Session management** — `agent:reset-session` creates a new pi session via `runtime.newSession()`
 
+#### OpenCode Bridge (`opencode-bridge/`)
+
+Runs [opencode](https://opencode.ai/) in-process via `@opencode-ai/sdk`. The SDK boots an embedded HTTP server the bridge talks to; opencode brings its own models, tools, and `opencode auth login` credentials.
+
+```bash
+cp -r examples/extensions/opencode-bridge ~/.agent-sh/extensions/
+cd ~/.agent-sh/extensions/opencode-bridge && npm install
+# Requires: opencode configured separately (opencode auth login)
+```
+
+**How it works:**
+
+1. **Registers as backend** with an async `start()` that calls `createOpencode()` to boot the embedded server and open a session
+2. **Subscribes to the SDK's event stream** (`client.event.subscribe()`, iterated with `for await`) — maps opencode events to agent-sh events (`agent:response-chunk`, `agent:tool-started`, …)
+3. **Cancellation and reset** — `agent:cancel-request` and `agent:reset-session` are wired to the SDK's abort and new-session calls
+
 #### Adding PTY access to a bridge
 
-Neither bridge bundles PTY tools. If you want the external agent to observe or mutate the user's live terminal, write a companion extension that registers tools in the target SDK's tool format:
+None of the bridges bundle PTY tools. If you want the external agent to observe or mutate the user's live terminal, write a companion extension that registers tools in the target SDK's tool format:
 
 - **`terminal_read`** — calls `ctx.call("terminal-buffer").readScreen()` and returns the text + cursor + alt-screen state
 - **`terminal_keys`** — emits `shell:pty-write` to send keystrokes to the PTY
@@ -421,14 +437,14 @@ For pi, this is a standalone extension that registers with pi's `customTools` (v
 
 #### Writing your own bridge
 
-Both bridges follow the same 4-step structure:
+All three bridges follow the same 4-step structure:
 
 1. **Register as backend** — emit `agent:register-backend` with `name`, `start()`, `kill()`
 2. **Listen for `agent:submit`** — forward the query to the external agent
 3. **Map the agent's events** to agent-sh bus events (response chunks, tool starts/completions, thinking, errors)
 4. **Handle cancellation and reset** — wire `agent:cancel-request` and `agent:reset-session`
 
-The difference between the two bridges is just SDK shape: Claude Code uses an async iterator you `for await` over; pi uses a subscription callback. The translation layer is the same. Keep PTY tools out — they belong in companion extensions.
+The difference between the bridges is just SDK shape: Claude Code and opencode expose async iterators you `for await` over; pi uses a subscription callback. The translation layer is the same. Keep PTY tools out — they belong in companion extensions.
 
 ##### Forwarding query context
 

@@ -35,7 +35,7 @@ Every query draws on two distinct streams of context:
 The two streams don't overlap: agent tool outputs live only in the conversation, and shell context tracks only user-initiated activity. When either stream grows large, ash has escape hatches rather than silent truncation:
 
 - **Long shell outputs** are spilled to tempfiles (`<tmpdir>/agent-sh-<pid>/<id>.out`) at capture time. The LLM sees a head+tail stub with the path and recovers the full output via plain `read_file`.
-- **Older conversation turns** are nucleated into one-line summaries and appended to `~/.agent-sh/history` — a persistent, cross-session archive. The `conversation_recall` tool browses, searches, and expands entries from both the in-session archive and the history file.
+- **Older conversation turns** are compacted by the built-in `rolling-history` extension: each is nucleated into a one-line summary in a persistent store (`~/.agent-sh/rolling-history/history.jsonl`), with the full message kept in an ephemeral per-session cache. The `conversation_recall` tool browses, searches, and expands those entries.
 
 Compaction is pluggable: the `conversation:compact` handler is advisable, so extensions can install richer strategies without changing the recall surface. See [Context Management](context-management.md) for the full design.
 
@@ -182,7 +182,9 @@ Extensions can add tools that cross the shell↔agent boundary via `shell:exec-r
 | `glob` | Find files by name pattern | No |
 | `ls` | List directory contents (with timestamps and sizes) | No |
 | `list_skills` | List available skills (name, description, path) | No |
-| `conversation_recall` | Browse/search/expand evicted turns from the in-session archive and `~/.agent-sh/history` | No |
+| `conversation_recall`\* | Browse/search/expand evicted conversation turns from the rolling-history store | No |
+
+\* `conversation_recall` is not a core tool — it's registered by the built-in `rolling-history` extension, so it's absent under headless/bridge backends. Every other row is a core tool registered by `activateAgent(ctx)`.
 
 **Common pattern**: all file-based tools resolve relative paths from the current working directory, looked up via the `cwd` handler (`ctx.call("cwd")`). The shell-context built-in advises this with the PTY-tracked cwd; without it, tools fall back to `process.cwd()`.
 
@@ -238,7 +240,7 @@ The agent retries transient failures with exponential backoff:
 
 The agent supports configurable thinking/reasoning levels for models that support `reasoning_effort`:
 
-- Levels: `off` (default), `low`, `medium`, `high`
+- Levels: `off` (default), `low`, `medium`, `high`, `xhigh` (`xhigh` falls back to `high` on providers that don't support it)
 - Set via the `config:set-thinking` event (wired to `/thinking` slash command)
 - Query current state via `config:get-thinking` pipe
 - The agent validates that the current model/provider supports reasoning before enabling

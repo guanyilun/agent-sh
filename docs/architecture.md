@@ -1,6 +1,6 @@
 # Architecture
 
-agent-sh is a shell with a pluggable AI backend. The shell is the product — the agent is a bus-driven component that self-wires to events.
+agent-sh is a composable agent runtime: a pure kernel that any frontend can drive and any agent backend can plug into, over one shared extension layer. Frontends and backends are both bus-driven components that self-wire to events — the bundled shell is just one frontend among several.
 
 ## Design Philosophy: Pure Kernel + Everything Is an Extension
 
@@ -150,8 +150,9 @@ agent-sh/
 │   │   ├── providers/        # openai, openrouter, deepseek, openai-compatible
 │   │   ├── token-budget.ts   # Shared constants (RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW)
 │   │   ├── tool-registry.ts, tool-protocol.ts
-│   │   ├── conversation-state.ts  # Messages + eager nucleation + priority compaction + recall
-│   │   ├── nuclear-form.ts, history-file.ts, system-prompt.ts
+│   │   ├── live-view.ts       # In-memory messages array + compaction + recall archive
+│   │   ├── store.ts, session-store.ts  # Append-only entry store; session/message persistence
+│   │   ├── nuclear-form.ts, system-prompt.ts
 │   │   ├── skills.ts, subagent.ts
 │   │   └── tools/            # Built-in tool implementations (bash, read/write/edit, grep, glob, ls, ...)
 │   │
