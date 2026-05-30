@@ -8,6 +8,7 @@ import SelectInput from "ink-select-input";
 import Spinner from "ink-spinner";
 import { Marked } from "marked";
 import { markedTerminal } from "marked-terminal";
+import Table from "cli-table3";
 import {
   iconString,
   renderBody,
@@ -79,15 +80,46 @@ const BOLD_OFF = "\x1b[22m";
 const USER_BG = "#3a3a42"; // subtle gray band behind a sent user turn (Claude Code style)
 const USER_MARKER = `${ACCENT}${BOLD}❯${BOLD_OFF}${RESET} `; // fg-only codes, safe inside the band
 
+// marked-terminal's legacy table renderer hands us pre-rendered header/body
+// strings delimited by these markers, then sizes the table to content with no
+// max — so a wide column overflows the terminal and Ink re-wraps it to chaos.
+// We split the markers ourselves and rebuild with cli-table3 colWidths that fit
+// the available width (the one constraint that makes it wrap inside cells).
+const TABLE_CELL_SPLIT = "^*||*^";
+const TABLE_ROW_WRAP_RE = /\*\|\*\|\*\|\*/g;
+
+function splitTableRows(text: string): string[][] {
+  if (!text) return [];
+  return text.split("\n").filter(Boolean).map((l) => {
+    const cells = l.replace(TABLE_ROW_WRAP_RE, "").split(TABLE_CELL_SPLIT);
+    return cells.slice(0, cells.length - 1); // trailing split is empty
+  });
+}
+
+function fitTable(header: string, body: string, width: number): string {
+  const head = splitTableRows(header)[0] ?? [];
+  const cols = Math.max(1, head.length);
+  const overhead = cols + 1 + cols * 2; // borders + 1-cell padding each side
+  const content = Math.max(cols * 3, width - overhead);
+  const base = Math.floor(content / cols);
+  const rem = content % cols;
+  const colWidths = Array.from({ length: cols }, (_, i) => base + (i < rem ? 1 : 0) + 2);
+  const t = new Table({ head, colWidths, wordWrap: true, wrapOnWordBoundary: true, style: { head: [] } });
+  for (const row of splitTableRows(body)) t.push(row);
+  return `${t.toString()}\n`;
+}
+
 // marked-terminal defaults to width 80 / no reflow, so prose never wraps to the
 // real terminal width. Reflow at the available width (cached per width) so the
-// caller can indent each wrapped line consistently.
+// caller can indent each wrapped line consistently; override the table renderer
+// to fit the terminal (see fitTable).
 const markedCache = new Map<number, Marked>();
 function markedFor(width: number): Marked {
   let m = markedCache.get(width);
   if (!m) {
     m = new Marked();
     m.use(markedTerminal({ width, reflowText: true }) as Parameters<Marked["use"]>[0]);
+    m.use({ renderer: { table: (h: unknown, b: unknown): string => fitTable(String(h), String(b), width) } } as Parameters<Marked["use"]>[0]);
     markedCache.set(width, m);
   }
   return m;
@@ -474,8 +506,12 @@ function makeApp(store: Store, req: () => void): { app: App; element: React.Reac
     setFocus: (target) => { state.focus = asV(target).kind === "select" ? "select" : "input"; req(); },
     focusInput: () => { state.focus = "input"; req(); },
     requestRender: () => req(),
-    start: () => { if (!ink) ink = inkRender(element); },
-    stop: () => { ink?.unmount(); ink = null; },
+    // Ink's own resize handler only re-layouts boxes and re-paints the existing
+    // tree — it doesn't re-run Root, so width-dependent content (band, tables,
+    // markdown reflow, status, tool output) wouldn't recompute. Bump the store
+    // on resize to force a render at the new width.
+    start: () => { if (ink) return; process.stdout.on("resize", req); ink = inkRender(element); },
+    stop: () => { process.stdout.off("resize", req); ink?.unmount(); ink = null; },
     onKey: (handler) => { state.keyHandlers.push(handler); },
     createSelectList: (items): SelectView => {
       const sel: SelectState = {

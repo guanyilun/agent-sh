@@ -100,3 +100,21 @@ test("a tool group is drawn with the gutter, not pi-tui's tree connectors", () =
   assert.match(frame, /ls src\//); // child name shown when it differs from the kind
   assert.doesNotMatch(frame, /[├└]/);
 });
+
+test("a wide markdown table is fit to the width and wraps cell content", () => {
+  const desc = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+  Object.defineProperty(process.stdout, "columns", { value: 70, configurable: true });
+  try {
+    const md = r.markdown({ paddingX: 1 });
+    md.setText("| Col | What it does |\n|---|---|\n| a | " + "lorem ".repeat(30).trim() + " |");
+    const frame = frameOf(md.node);
+    const maxW = Math.max(...frame.split("\n").map((l) => l.length));
+    assert.ok(maxW <= 70, `table should fit 70 cols, got ${maxW}`);
+    assert.match(frame, /[┌┬┐]/); // a real box-drawn table, not scrambled
+    const bodyRows = frame.split("\n").filter((l) => l.includes("│")).length;
+    assert.ok(bodyRows > 3, `the long cell should wrap across rows, got ${bodyRows}`);
+  } finally {
+    if (desc) Object.defineProperty(process.stdout, "columns", desc);
+    else delete (process.stdout as { columns?: number }).columns;
+  }
+});

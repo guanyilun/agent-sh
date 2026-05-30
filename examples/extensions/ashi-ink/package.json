@@ -12,6 +12,7 @@
   "dependencies": {
     "@guanyilun/ashi": "^0.2.0",
     "agent-sh": "^0.14.0",
+    "cli-table3": "^0.6.0",
     "ink": "^5.0.0",
     "ink-select-input": "^6.0.0",
     "ink-spinner": "^5.0.0",
