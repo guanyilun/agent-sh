@@ -1,28 +1,12 @@
-// Example: a TUI renderer shipped as an extension.
-//
-// Renderers in ashi are extensions. An extension registers `ashi:renderer:<name>`
-// returning a value that implements ashi's Renderer contract
-// (`@guanyilun/ashi/renderer`); a user selects it with ASHI_RENDERER=<name>.
-// Because the substrate (schema, theme, chat controllers, frontend) depends only
-// on that interface, a custom renderer needs zero changes to ashi itself — this
-// is how you build a different TUI frontend (OpenTUI, Ink, a remote/web bridge…).
+// Example: a TUI renderer shipped as an extension. An extension registers
+// `ashi:renderer:<name>` implementing ashi's Renderer contract; a user selects it
+// with ASHI_RENDERER=<name>:
 //
 //   ASHI_RENDERER=opentui ashi -e ashi-opentui-renderer
 //
-// This particular renderer is an OpenTUI SKELETON: it type-checks against the
-// Renderer contract (the proof the contract is renderer-neutral), but the bodies
-// are honest stubs. Wiring them needs `@opentui/core` and a TTY. Each member is
-// annotated with the OpenTUI concept that would back it:
-//
-//   text / markdown        -> an OpenTUI TextRenderable; markdown projects styled
-//                             lines (renderBody from the schema is renderer-agnostic)
-//   container              -> a GroupRenderable / BoxRenderable
-//   spacer                 -> a fixed-height empty renderable
-//   image                  -> the terminal graphics protocol, if supported
-//   mount()                -> OpenTUI's CLI renderer as the root + the chat stack
-//                             (scrollback / footer / queue / input / status),
-//                             keyboard events feeding onKey, and input + select-list
-//                             widgets for the editor and pickers
+// This is an OpenTUI SKELETON: it type-checks against the Renderer contract (the
+// proof the contract is renderer-neutral), but the bodies are honest stubs that
+// need `@opentui/core` to wire up.
 
 import type { ExtensionContext } from "agent-sh/types";
 import type { Renderer, RenderNode } from "@guanyilun/ashi/renderer";
@@ -45,7 +29,7 @@ function createOpenTuiRenderer(): Renderer {
   return {
     text: () => notImplemented("text node"),
     markdown: () => notImplemented("markdown node"),
-    image: (): RenderNode | null => null, // honest: no image support yet
+    image: (): RenderNode | null => null,
     container: () => notImplemented("container"),
     spacer: () => notImplemented("spacer"),
     capabilities: {

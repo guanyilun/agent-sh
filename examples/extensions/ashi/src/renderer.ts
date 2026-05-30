@@ -1,9 +1,5 @@
-// The Renderer contract. ashi (the TUI substrate) renders through this interface
-// and never imports a concrete TUI library directly. pi-tui is the default
-// renderer (renderers/pi-tui); OpenTUI or others implement the same contract
-// (renderers/opentui). The vocabulary here is grounded in what the chat
-// controllers (chat/*), the schema mount, and the frontend actually consume —
-// not a speculative superset.
+// The Renderer contract: ashi renders through this interface and never imports a
+// concrete TUI library directly.
 
 import type { MountArgs, MountEnv, RenderModel } from "./schema.js";
 
@@ -14,8 +10,6 @@ declare const nodeBrand: unique symbol;
 export interface RenderNode {
   readonly [nodeBrand]: true;
 }
-
-// ---- content nodes ----
 
 export interface StyledSink {
   /** Replace content with pre-styled ANSI lines; painted verbatim. */
@@ -69,8 +63,6 @@ export interface RenderNodes {
   container(): ContainerView;
   spacer(rows: number): RenderNode;
 }
-
-// ---- app shell ----
 
 /** Raw key event, wrapped so ashi matches keys without importing the renderer's
  *  key utilities. */

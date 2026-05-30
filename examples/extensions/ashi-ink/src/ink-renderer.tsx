@@ -1,15 +1,8 @@
-// Ink (React) renderer for ashi.
+// Ink (React) renderer for ashi. Bridges ashi's imperative node model to Ink's
+// declarative tree via mutable vnodes + a version store that forces re-render.
 //
-// ashi's substrate produces ANSI-styled content and drives renderers imperatively
-// (nodes mutate, app.requestRender() repaints). Ink is declarative. The bridge is
-// a retained-mode vnode tree: factories create mutable vnodes, a React root walks
-// them, and requestRender() bumps a version store that forces a re-render. Ink
-// renders embedded ANSI faithfully, so ashi's content needs no restyling.
-//
-// Honest degradations vs pi-tui (capabilities/notes): no inline images; editor
-// autocomplete and dynamic border color aren't wired; key release/repeat aren't
-// distinguished; Ctrl+Z suspend/resume is best-effort. Content, tool calls/diffs,
-// markdown, pickers, loader, and the core keybindings work.
+// Degradations vs pi-tui: no inline images; editor autocomplete and dynamic border
+// color aren't wired; key release/repeat aren't distinguished; Ctrl+Z is best-effort.
 
 import React from "react";
 import { Box, Text, useInput, render as inkRender, type Instance } from "ink";

@@ -1,7 +1,4 @@
-// pi-tui mounting for the render schema. Holds the shared call/result state cell
-// and the Container-based components that paint the schema's ANSI projection.
-// Factored out of schema.ts so the schema itself stays renderer-agnostic — the
-// projection (renderBody/segmentsToString/…) lives in schema.ts and is imported here.
+// pi-tui mounting for the render schema.
 
 import { Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { theme } from "../../theme.js";
@@ -86,8 +83,6 @@ function handleFor<S>(
   HANDLES.set(args.toolCallId, handle as unknown as RenderHandle<unknown>);
   return handle as unknown as RenderHandle<S>;
 }
-
-// Components that satisfy the legacy ToolCallView / ToolResultView contracts.
 
 class SchemaCallComponent extends Container {
   private line: Text;

@@ -1,7 +1,5 @@
-// pi-tui theme adapters: project ashi's renderer-agnostic ANSI palette (theme)
-// into the theme objects pi-tui's Markdown / SelectList / Editor expect. These
-// live in the pi-tui renderer so theme.ts stays substrate-level (palette only);
-// a different renderer builds its own native theme objects from the same palette.
+// Project ashi's ANSI palette into pi-tui's theme objects (keeps theme.ts
+// palette-only; another renderer builds its own from the same palette).
 
 import { highlight, supportsLanguage } from "cli-highlight";
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";

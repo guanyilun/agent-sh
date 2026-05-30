@@ -1,5 +1,4 @@
-// Single-line chat entries (info / error). Renderer-agnostic controllers over a
-// text node; the host mounts `.node` into the scrollback.
+// Single-line chat entries (info / error).
 
 import type { RenderNode, RenderNodes } from "../renderer.js";
 import { theme } from "../theme.js";

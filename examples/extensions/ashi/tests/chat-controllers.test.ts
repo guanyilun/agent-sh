@@ -85,13 +85,12 @@ test("schema tool call/result mount and render through the renderer", () => {
   const args = { toolCallId: "t1", name: "bash", title: "bash", rawInput: { command: "ls -la" } };
 
   const call = renderer.mountToolCall(model, args, env);
-  // Leading spacer line, then the call title with a pending marker.
   assert.deepEqual(lines(call.node), ["", " $ ls -la  …"]);
 
   const result = renderer.mountToolResult(model, args, env);
   result.appendChunk("file1\nfile2\n");
   result.finalize({ exitCode: 0 });
-  // call line picks up the ✓ from the shared cell once the result finalizes.
+  // The call line picks up the ✓ from the shared cell once the result finalizes.
   assert.match(lines(call.node)[1]!, /\$ ls -la\s+✓/);
   assert.deepEqual(lines(result.node), [" └ file1", "   file2"]);
 });

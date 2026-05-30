@@ -1,7 +1,6 @@
 // Assistant message: streaming markdown. On finalize, settled text is projected
-// into markdown + inline display-math ($$…$$) segments; streaming shows the raw
-// delimiters until then, and rebuild-from-store runs the same path so an equation
-// renders identically live and rehydrated.
+// into markdown + inline display-math ($$…$$) segments; rebuild-from-store runs
+// the same path so an equation renders identically live and rehydrated.
 
 import type { ContainerView, MarkdownView, RenderNode, RenderNodes } from "../renderer.js";
 

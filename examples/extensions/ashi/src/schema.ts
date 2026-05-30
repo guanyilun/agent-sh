@@ -1,10 +1,6 @@
-// Declarative render schema for tool-call hooks. External renderers register
-// `ctx.define("ashi:render-tool:<name>", () => ({ initial, reducers, view }))`.
-//
-// This is the substrate's render contract: pure schema data types plus the ANSI
-// projection of a Body to styled strings — no TUI-renderer (pi-tui/OpenTUI/…)
-// dependency. The renderer mounts these strings into live views
-// (renderers/pi-tui/schema-mount.ts, reached through Renderer.mountToolCall).
+// Declarative render schema for tool-call hooks. Pure schema data types plus the
+// ANSI projection of a Body to styled strings — no TUI-renderer dependency.
+// Extensions register `ctx.define("ashi:render-tool:<name>", () => ({ initial, reducers, view }))`.
 
 import { theme } from "./theme.js";
 import { highlight, supportsLanguage } from "cli-highlight";
@@ -122,8 +118,8 @@ export interface DiffSlot {
   cached: string[];
 }
 
-// ---- ANSI projection (renderer-agnostic) ----
-// Sole place that knows about theme colors + highlighting; renderers stay pure-data.
+// ANSI projection: the sole place that knows about theme colors + highlighting;
+// renderers stay pure-data.
 
 function styleSegment(seg: Segment): string {
   if (typeof seg === "string") return seg;

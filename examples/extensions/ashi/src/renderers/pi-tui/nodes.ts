@@ -1,6 +1,5 @@
-// pi-tui implementations of the content-node factories (renderer.ts RenderNodes).
-// RenderNode is a pi-tui Component at this layer; the casts below are the single
-// place that knows that. ashi treats the returned handles as opaque.
+// pi-tui implementations of the content-node factories. RenderNode is a pi-tui
+// Component at this layer; the casts below are the single place that knows that.
 
 import {
   Container,

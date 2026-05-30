@@ -100,8 +100,7 @@ export class ToolGroup {
       );
     }
 
-    // Reconcile childContainer to exactly the `visible` slice, in order. We rebuild
-    // rather than diff because group sizes are small.
+    // Rebuild rather than diff the child container: group sizes are small.
     this.childContainer.clear();
     visible.forEach((child, idx) => {
       const isLast = idx === visible.length - 1;

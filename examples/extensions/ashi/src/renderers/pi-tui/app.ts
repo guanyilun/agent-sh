@@ -1,6 +1,4 @@
-// pi-tui implementation of the App shell (renderer.ts App). Wraps TUI +
-// ProcessTerminal + Editor + SelectList + Loader and composes the standard chat
-// stack: scrollback / footerSlot / queueSlot / input / status.
+// pi-tui implementation of the App shell.
 
 import {
   Editor,

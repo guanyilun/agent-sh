@@ -1,6 +1,5 @@
-// Schema-style renderer for the scheme_eval tool. No pi-tui import, no ANSI,
-// no highlighter dep. Status and streaming output are tracked by ashi; this
-// model only declares tool-specific state (the source string).
+// Schema-style renderer for the scheme_eval tool. Status and streaming output are
+// tracked by ashi; this model only declares tool-specific state (the source string).
 
 import type { AgentContext } from "agent-sh/types";
 import type { RenderModel, Segment, ToolDisplay } from "@guanyilun/ashi/render";

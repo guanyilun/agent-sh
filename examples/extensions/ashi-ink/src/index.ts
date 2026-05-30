@@ -1,5 +1,4 @@
-// Registers the Ink renderer so `ASHI_RENDERER=ink ashi -e ashi-ink` runs ashi's
-// TUI on Ink (React) instead of pi-tui — a renderer shipped purely as an extension.
+// Registers the Ink renderer: `ASHI_RENDERER=ink ashi -e ashi-ink`.
 
 import type { ExtensionContext } from "agent-sh/types";
 import { createInkRenderer } from "./ink-renderer.js";

@@ -1,5 +1,4 @@
-// The pi-tui renderer: ashi's default Renderer implementation. Bundles the
-// content-node factories, the app shell, and a capability list.
+// The pi-tui renderer: ashi's default Renderer implementation.
 
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { Renderer } from "../../renderer.js";
