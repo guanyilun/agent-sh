@@ -69,6 +69,37 @@ const ANSI = /\x1b\[[0-9;]*m/g;
 const measureWidth = (text: string): number => text.replace(ANSI, "").length;
 const termWidth = (): number => process.stdout.columns ?? 80;
 
+// Ink renders each line of a <Text> independently: it closes any open SGR at the
+// line boundary and does NOT reopen it on the next line. So a color span wrapping a
+// whole multi-line block (e.g. theme.fg around streamed tool output) tints only the
+// first line. Re-emit the SGR active at each newline so every line is self-styled.
+const SGR_RESETS = new Set(["\x1b[0m", "\x1b[m", "\x1b[39m", "\x1b[49m", "\x1b[22m"]);
+function carrySgr(text: string): string {
+  if (!text.includes("\n")) return text;
+  let active = "";
+  return text.split("\n").map((line) => {
+    const out = active + line;
+    for (const code of line.match(ANSI) ?? []) active = SGR_RESETS.has(code) ? "" : active + code;
+    return out;
+  }).join("\n");
+}
+
+// Truncate to a visible (ANSI-ignoring) width, dropping a trailing … and closing
+// any open SGR — keeps a long command or output line to one row instead of wrapping.
+function truncateVisible(s: string, width: number): string {
+  if (width <= 1 || measureWidth(s) <= width) return s;
+  let visible = 0;
+  let out = "";
+  for (const m of s.matchAll(/\x1b\[[0-9;]*m|[\s\S]/g)) {
+    const tok = m[0];
+    if (tok[0] === "\x1b") { out += tok; continue; }
+    if (visible >= width - 1) break;
+    out += tok;
+    visible++;
+  }
+  return `${out}…\x1b[0m`;
+}
+
 // Ink's accent violet (#c778dd), used for the loader spinner and the focused
 // input border. Chat markers are neutral gray (see MARKER_GRAY) — Claude Code style.
 const ACCENT_HEX = "#c778dd";
@@ -330,7 +361,8 @@ function paintCall(cell: Cell, width: number, blinkOn: boolean): string {
   const room = Math.max(8, width - 2 - measureWidth(name) - 2 - (sum ? sum.length + 1 : 0));
   if (detail.length > room) detail = `${detail.slice(0, Math.max(1, room - 1))}…`;
   const nameStyled = segmentsToString([{ text: name, style: { bold: true } }]);
-  return detail ? `${bullet} ${nameStyled}(${detail})${tail}` : `${bullet} ${nameStyled}${tail}`;
+  const line = detail ? `${bullet} ${nameStyled}(${detail})${tail}` : `${bullet} ${nameStyled}${tail}`;
+  return truncateVisible(line, width);
 }
 
 function paintResult(cell: Cell, width: number): string[] {
@@ -341,14 +373,14 @@ function paintResult(cell: Cell, width: number): string[] {
   const policied = display.body.kind === "stream" || display.body.kind === "diff";
   if (!policied && !env.expanded && !display.defaultExpanded) return [];
   const bodyEnv: Env = { ...env, width: Math.max(1, width - RESULT_GUTTER.length) };
-  const rendered = renderBody(display.body, bodyEnv, cell.diff);
+  const rendered = carrySgr(renderBody(display.body, bodyEnv, cell.diff));
   if (!rendered.trim()) return [];
   const ok = display.status?.exitCode === null || display.status?.exitCode === 0;
   const elbow = segmentsToString([{ text: "⎿", style: { color: ok ? "muted" : "error" } }]);
   const lines = rendered.split("\n");
   lines[0] = `  ${elbow}  ${lines[0]}`;
   for (let i = 1; i < lines.length; i++) lines[i] = `${RESULT_GUTTER}${lines[i]}`;
-  return lines;
+  return lines.map((l) => truncateVisible(l, width));
 }
 
 function makeToolMount(req: () => void, blink: Blink) {

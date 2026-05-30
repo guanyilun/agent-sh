@@ -181,6 +181,20 @@ test("mounts a tool call + result through the renderer", () => {
   assert.match(frameOf(call.node), /⏺ Bash\(ls -la\)/);
 });
 
+test("multi-line tool output is consistently colored (not first-line-only)", () => {
+  const env = { width: 80, mode: "preview" as const, previewLines: 10 };
+  const args = { toolCallId: "m1", name: "bash", title: "bash", rawInput: { command: "ls" } };
+  const result = r.mountToolResult(bashModel as RenderModel<unknown>, args, env);
+  result.appendChunk("alpha\nbravo\ncharlie\n");
+  result.finalize({ exitCode: 0 });
+  const raw = render(__renderNode(result.node)).lastFrame() ?? "";
+  const out = raw.split("\n").filter((l) => /alpha|bravo|charlie/.test(l));
+  assert.equal(out.length, 3);
+  // every output row carries a color code — Ink drops a block-spanning SGR at each
+  // newline, so without per-line re-emission only the first row would be styled.
+  for (const l of out) assert.match(l, /\x1b\[38;2;/);
+});
+
 test("a read group: gerund + in-flight path while active, count when done, full list on expand", () => {
   const g = new ToolGroup(r as never, "read");
   g.addCall("1", "read_file", "src/app.ts");
