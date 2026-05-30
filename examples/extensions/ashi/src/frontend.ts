@@ -295,6 +295,7 @@ export function mountAshi(
     return null;
   };
   let loader: LoaderView | null = null;
+  let loaderGap: RenderNode | null = null;
   let processing = false;
   const queuedQueries: string[] = [];
   const queuedShellLines: { line: string; private: boolean }[] = [];
@@ -390,6 +391,8 @@ export function mountAshi(
 
   const startLoader = (): void => {
     if (loader) return;
+    loaderGap = renderer.spacer(1); // a blank line sets it off from the content above
+    app.footerSlot.addChild(loaderGap);
     loader = app.createLoader("thinking…", fgAccent, fgMuted);
     app.footerSlot.addChild(loader.node);
   };
@@ -397,6 +400,8 @@ export function mountAshi(
     if (!loader) return;
     loader.stop();
     app.footerSlot.removeChild(loader.node);
+    if (loaderGap) app.footerSlot.removeChild(loaderGap);
+    loaderGap = null;
     loader = null;
   };
 
@@ -424,7 +429,6 @@ export function mountAshi(
       if (entry.output) pair.result.appendChunk(entry.output);
       pair.result.finalize({ exitCode: entry.exitCode });
       pair.call.setStatus({ exitCode: entry.exitCode, elapsedMs: 0 });
-      appendEntry(renderer.spacer(1), { t: "plain" });
       return;
     }
     const m = entry.message;
@@ -652,7 +656,6 @@ export function mountAshi(
     pair.call.setStatus({ exitCode, elapsedMs: Date.now() - pair.startedAt });
     pair.result.finalize({ exitCode });
     activeUserShell = null;
-    appendEntry(renderer.spacer(1), { t: "plain" });
     app.requestRender();
     void getStore().current().appendShellExchange({
       command, output: output ?? "", exitCode, cwd,

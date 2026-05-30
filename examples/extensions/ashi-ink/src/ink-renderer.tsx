@@ -117,7 +117,8 @@ function markedFor(width: number): Marked {
   let m = markedCache.get(width);
   if (!m) {
     m = new Marked();
-    m.use(markedTerminal({ width, reflowText: true }) as Parameters<Marked["use"]>[0]);
+    // tab: list / code-block / blockquote indent (default 4 is heavy with our pad).
+    m.use(markedTerminal({ width, reflowText: true, tab: 2 }) as Parameters<Marked["use"]>[0]);
     m.use({ renderer: { table: (h: unknown, b: unknown): string => fitTable(String(h), String(b), width) } } as Parameters<Marked["use"]>[0]);
     markedCache.set(width, m);
   }
@@ -388,13 +389,19 @@ function buildKeyEvent(input: string, key: Record<string, boolean>): KeyEvent {
 
 function Root({ store, state }: { store: Store; state: AppState }): React.ReactElement {
   React.useSyncExternalStore(store.subscribe, store.get, store.get);
-  useInput((input, key) => {
-    const ev = buildKeyEvent(input, key as unknown as Record<string, boolean>);
-    for (const h of state.keyHandlers) {
-      const r = h(ev);
-      if (r && r.consume) break;
-    }
-  });
+  // Stable handlers. Ink's useInput re-subscribes its stdin listener whenever the
+  // handler identity changes, and ink-text-input re-runs on new callbacks — a
+  // fresh closure every render churns those through the streaming render-storm
+  // (the "dependency changes every render" loop). state/store are stable refs.
+  const onKey = React.useCallback((input: string, key: Record<string, unknown>) => {
+    const ev = buildKeyEvent(input, key as Record<string, boolean>);
+    for (const h of state.keyHandlers) { const r = h(ev); if (r && r.consume) break; }
+  }, [state]);
+  const onChange = React.useCallback((val: string) => {
+    state.input.text = val; state.input.onChange?.(val); store.bump();
+  }, [state, store]);
+  const onSubmit = React.useCallback((val: string) => { state.input.onSubmit?.(val); }, [state]);
+  useInput(onKey as Parameters<typeof useInput>[0]);
   return (
     <Box flexDirection="column">
       {renderVNode(state.scrollback)}
@@ -405,15 +412,14 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
         borderLeft={false}
         borderRight={false}
         borderColor={state.focus === "input" ? ACCENT_HEX : "gray"}
-        paddingX={1}
       >
         <Text color={ACCENT_HEX} bold>{"❯ "}</Text>
         <TextInput
           value={state.input.text}
           focus={state.focus === "input"}
           showCursor={state.focus === "input"}
-          onChange={(val) => { state.input.text = val; state.input.onChange?.(val); store.bump(); }}
-          onSubmit={(val) => { state.input.onSubmit?.(val); }}
+          onChange={onChange}
+          onSubmit={onSubmit}
         />
       </Box>
       {renderVNode(state.status)}
