@@ -59,7 +59,7 @@ interface SelectState {
 
 type VNode =
   | { kind: "text"; lines: string[]; fn: ((width: number) => string[]) | null; paddingX?: number }
-  | { kind: "markdown"; source: string; color?: (t: string) => string; userMsg?: boolean; paddingX?: number }
+  | { kind: "markdown"; source: string; color?: (t: string) => string; userMsg?: boolean; paddingX?: number; mdc?: MdCache }
   | { kind: "spacer"; rows: number }
   | { kind: "container"; children: VNode[] }
   | { kind: "loader"; label: string }
@@ -133,6 +133,37 @@ function renderMarkdown(src: string, width: number): string {
   } catch {
     return src;
   }
+}
+
+// Stable-prefix streaming (the Claude Code pattern): re-parsing the whole reply
+// every frame is O(n²) over a long stream. Lex only the unstable tail, treat the
+// last non-space token as the still-growing block, and cache the rendered output
+// of the completed blocks (the boundary only advances). marked's lexer keeps an
+// unclosed code fence as one token, so the boundary never splits mid-block —
+// render(stable) + "\n\n" + render(unstable) === render(whole) for marked-terminal.
+interface MdCache { src: string; out: string; w: number }
+const blockLexer = new Marked();
+function renderMarkdownStreaming(v: { source: string; mdc?: MdCache }, width: number): string {
+  const src = v.source;
+  let c = v.mdc;
+  if (!c || c.w !== width || !src.startsWith(c.src)) c = v.mdc = { src: "", out: "", w: width };
+  let advance = 0;
+  try {
+    const toks = blockLexer.lexer(src.slice(c.src.length));
+    let last = toks.length - 1;
+    while (last >= 0 && toks[last]!.type === "space") last--;
+    for (let i = 0; i < last; i++) advance += toks[i]!.raw.length;
+  } catch { advance = 0; }
+  if (advance > 0) {
+    const delta = renderMarkdown(src.slice(c.src.length, c.src.length + advance), width);
+    c.out = c.out ? `${c.out}\n\n${delta}` : delta;
+    c.src = src.slice(0, c.src.length + advance);
+  }
+  const tail = src.slice(c.src.length);
+  const tailOut = tail.trim() ? renderMarkdown(tail, width) : "";
+  if (!c.out) return tailOut;
+  if (!tailOut) return c.out;
+  return `${c.out}\n\n${tailOut}`;
 }
 
 interface Store {
@@ -351,7 +382,7 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
         return <Text key={key} backgroundColor={USER_BG}>{banded}</Text>;
       }
       const pad = v.paddingX ?? 0;
-      let md = renderMarkdown(v.source, w - pad);
+      let md = renderMarkdownStreaming(v, w - pad);
       if (md.replace(ANSI, "").trim() === "") return null;
       if (v.color) md = md.split("\n").map(v.color).join("\n");
       const indent = " ".repeat(pad);

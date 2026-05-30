@@ -70,6 +70,28 @@ test("the app shell renders scrollback content, input and status together", () =
   assert.match(frame, /❯/);
 });
 
+test("streaming markdown (stable-prefix) converges to the one-shot render", () => {
+  const desc = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+  Object.defineProperty(process.stdout, "columns", { value: 70, configurable: true });
+  try {
+    const doc =
+      "# Title\n\nFirst paragraph long enough to wrap across the width a little bit.\n\n" +
+      "- item one\n- item two\n\n```js\nconst x = 1;\n```\n\nClosing words here.";
+    const streamed = r.markdown({ paddingX: 1 });
+    for (let i = 1; i < doc.length; i += 5) { streamed.setText(doc.slice(0, i)); frameOf(streamed.node); }
+    streamed.setText(doc);
+    const streamedFrame = frameOf(streamed.node);
+    const oneShot = r.markdown({ paddingX: 1 });
+    oneShot.setText(doc);
+    assert.equal(streamedFrame, frameOf(oneShot.node));
+    assert.match(streamedFrame, /Title/);
+    assert.match(streamedFrame, /Closing words/);
+  } finally {
+    if (desc) Object.defineProperty(process.stdout, "columns", desc);
+    else delete (process.stdout as { columns?: number }).columns;
+  }
+});
+
 test("committed scrollback renders via <Static>, alongside the live tail", () => {
   const h = __harness();
   const a = h.nodes.text(); a.setText("first turn");
