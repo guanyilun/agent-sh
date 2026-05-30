@@ -33,6 +33,7 @@ import { registerCapture } from "./capture.js";
 import { registerRenderDefaults } from "./hooks.js";
 import { registerDefaultSchemaRenderers } from "./default-schema-renderers.js";
 import { createPiTuiRenderer } from "./renderers/pi-tui/index.js";
+import type { Renderer } from "./renderer.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -193,7 +194,21 @@ async function main(): Promise<void> {
 
   const capture = registerCapture(ctx, getStore);
   registerCompaction(ctx, getStore, capture);
-  const renderer = createPiTuiRenderer();
+
+  // Renderers are extensions: ashi registers the built-in pi-tui renderer, and
+  // any loaded extension can register its own `ashi:renderer:<name>` (see
+  // examples/extensions/ashi-opentui-renderer). ASHI_RENDERER picks one by name.
+  ctx.define("ashi:renderer:pi-tui", () => createPiTuiRenderer());
+  const rendererName = (process.env.ASHI_RENDERER ?? "pi-tui").trim();
+  const rendererKey = `ashi:renderer:${rendererName}`;
+  if (!ctx.list().includes(rendererKey)) {
+    process.stderr.write(
+      `ashi: no renderer registered for "${rendererName}" (${rendererKey}). ` +
+      `Load the extension that provides it (e.g. \`ashi -e <renderer-ext>\`), or unset ASHI_RENDERER.\n`,
+    );
+    process.exit(1);
+  }
+  const renderer = ctx.call(rendererKey) as Renderer;
   registerRenderDefaults(ctx, renderer);
   registerDefaultSchemaRenderers(ctx);
 

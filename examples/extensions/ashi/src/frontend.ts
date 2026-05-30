@@ -15,7 +15,7 @@ import { AssistantMessage } from "./chat/assistant.js";
 import { ThinkingBlock } from "./chat/thinking.js";
 import { UserMessage } from "./chat/user-message.js";
 import { ToolGroup } from "./chat/tool-group.js";
-import { createToolHookResolver } from "./hooks.js";
+import { createToolHookResolver, type RenderState } from "./hooks.js";
 import { loadGroupMaxVisible } from "./display-config.js";
 import { classifySubmit, deriveChangeHandlerResult } from "./shell-mode.js";
 import { UserShellIntents } from "./user-shell-intents.js";
@@ -329,9 +329,10 @@ export function mountAshi(
   };
   let hideThinking = true;
 
-  const renderState = (): { state: Record<string, unknown>; invalidate: () => void } => ({
+  const renderState = (): RenderState => ({
     state: {},
     invalidate: () => app.requestRender(),
+    nodes: renderer,
   });
 
   const tools = createToolHookResolver(ctx, renderer);

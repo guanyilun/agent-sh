@@ -152,13 +152,16 @@ Other extensions can customize how chat entries and tool results render without 
 
 ### Chat hooks
 
-These return [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) components directly:
+These return a renderer-agnostic chat-entry view built from the active renderer's
+node factories (`args.nodes`), so an override never imports a concrete TUI library:
 
 | Hook | Args | Returns |
 |---|---|---|
-| `ashi:render-user-message` | `{ text, state, invalidate }` | `Component` |
-| `ashi:render-assistant` | `{ text, state, invalidate }` | `Component` |
-| `ashi:render-thinking` | `{ text, hidden, state, invalidate }` | `Component` |
+| `ashi:render-user-message` | `{ text, nodes, state, invalidate }` | `{ node }` |
+| `ashi:render-assistant` | `{ text, nodes, state, invalidate }` | `{ node, appendText, appendCodeBlock, finalize, hasContent }` |
+| `ashi:render-thinking` | `{ text, hidden, nodes, state, invalidate }` | `{ node, appendText, finalize, setHidden }` |
+
+`nodes` is a `RenderNodes` (`text` / `markdown` / `image` / `container` / `spacer`); `src/chat/` holds the default controllers.
 
 ### Tool hooks — declarative render schema
 
@@ -197,6 +200,36 @@ const myModel: RenderModel<...> = {
   display: { result: "summary", previewLines: 3 },
 };
 ```
+
+### Renderers
+
+The whole TUI is swappable. ashi (the substrate) depends only on the `Renderer`
+contract from [`@guanyilun/ashi/renderer`](src/renderer.ts) — the schema, theme,
+chat controllers, and frontend never import a concrete TUI library. The built-in
+renderer is pi-tui (`src/renderers/pi-tui`).
+
+A renderer is just an extension that registers `ashi:renderer:<name>`:
+
+```ts
+import type { Renderer } from "@guanyilun/ashi/renderer";
+
+function createMyRenderer(): Renderer { /* … */ }
+
+export default function activate(ctx) {
+  ctx.define("ashi:renderer:my-tui", () => createMyRenderer());
+}
+```
+
+Select it with `ASHI_RENDERER=my-tui ashi -e my-tui-renderer` (pi-tui is the
+default; an unknown name errors rather than silently falling back). The contract
+has two halves — content-node factories (`text` / `markdown` / `image` /
+`container` / `spacer`) and an app shell (`mount()` → scrollback / footer / queue
+/ input / status, plus select lists, loader, and key events) — together with
+`mountToolCall` / `mountToolResult` and a `capabilities` list so a renderer can
+declare gaps and the substrate degrades rather than crashes. This is how you build
+a different TUI frontend (OpenTUI, Ink, a remote/web bridge…) without forking ashi.
+See [`examples/extensions/ashi-opentui-renderer.ts`](../ashi-opentui-renderer.ts)
+for a worked skeleton.
 
 For non-render concerns (commands, settings, tools, providers) use the standard `agent-sh` extension API. See the [agent-sh extension docs](https://github.com/guanyilun/agent-sh/blob/main/docs/extensions.md).
 

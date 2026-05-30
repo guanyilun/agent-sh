@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "agent-sh/types";
-import type { Renderer, ToolCallView, ToolResultView } from "./renderer.js";
+import type { Renderer, RenderNodes, ToolCallView, ToolResultView } from "./renderer.js";
 import { UserMessage } from "./chat/user-message.js";
 import { AssistantMessage, type EquationRenderer } from "./chat/assistant.js";
 import { ThinkingBlock } from "./chat/thinking.js";
@@ -9,6 +9,10 @@ import { isRenderModel, type RenderModel } from "./schema.js";
 export interface RenderState {
   state: Record<string, unknown>;
   invalidate: () => void;
+  /** The active renderer's content-node factories, so an override can build
+   *  renderer-agnostic views (text/markdown/image/container) without importing
+   *  a concrete TUI library. */
+  nodes: RenderNodes;
 }
 
 export interface UserMessageArgs extends RenderState { text: string }
