@@ -274,3 +274,39 @@ test("a small table grows to its content, not the full terminal width", () => {
     else delete (process.stdout as { columns?: number }).columns;
   }
 });
+
+test("typed text lands in the editor and shows in the input box", () => {
+  const h = __harness();
+  h.feedInput("hello");
+  assert.equal(h.editor.text, "hello");
+  const frame = strip(render(h.element).lastFrame() ?? "");
+  assert.match(frame, /❯ hello/);
+});
+
+test("Alt+B moves back one word (readline word navigation)", () => {
+  const h = __harness();
+  h.feedInput("foo bar");
+  h.feedInput("\x1bb"); // Alt+B
+  h.feedInput("X");
+  assert.equal(h.editor.text, "foo Xbar");
+});
+
+test("Shift+Enter inserts a newline; Enter submits", () => {
+  const h = __harness();
+  let submitted: string | null = null;
+  h.app.input.onSubmit((t) => { submitted = t; h.app.input.setText(""); });
+  h.feedInput("ab");
+  h.feedInput("\x1b[13;2u"); // kitty Shift+Enter
+  h.feedInput("cd");
+  assert.equal(h.editor.text, "ab\ncd");
+  h.feedInput("\r"); // Enter
+  assert.equal(submitted, "ab\ncd");
+  assert.equal(h.editor.text, ""); // onSubmit cleared it
+});
+
+test("the input box border uses the same gray as the ❯ marker", () => {
+  const h = __harness();
+  const raw = render(h.element).lastFrame() ?? "";
+  // MARKER_GRAY_HEX #9aa0a6 → truecolor 154;160;166, on both the ❯ and the border.
+  assert.match(raw, /38;2;154;160;166/);
+});

@@ -1,10 +1,10 @@
 // Bridges ashi's imperative node tree to Ink via mutable vnodes + a version store.
 
 import React from "react";
-import { Box, Static, Text, useInput, render as inkRender, type Instance } from "ink";
-import TextInput from "ink-text-input";
-import SelectInput from "ink-select-input";
+import { Box, Static, Text, render as inkRender, type Instance } from "ink";
 import Spinner from "ink-spinner";
+import { LineEditor } from "agent-sh/utils/line-editor.js";
+import { ProcessTerminal, matchesKey, isKeyRelease, isKeyRepeat, type KeyId } from "@earendil-works/pi-tui";
 import { Marked } from "marked";
 import { markedTerminal } from "marked-terminal";
 import Table from "cli-table3";
@@ -48,6 +48,7 @@ const commitWatcher = INSPECT_FILE ? makeCommitWatcher() : null;
 interface SelectState {
   items: SelectItem[];
   index: number;
+  visibleRows: number;
   highlighted?: SelectItem;
   onSelect: (item: SelectItem) => void;
   onCancel: () => void;
@@ -105,6 +106,8 @@ const MARKER_GRAY = "\x1b[38;2;154;160;166m"; // fg-only, safe over the band bg
 const MARKER_GRAY_HEX = "#9aa0a6";
 const USER_MARKER = `${MARKER_GRAY}${BOLD}❯${BOLD_OFF}${RESET} `;
 const ASSISTANT_MARKER = "⏺ ";
+const CURSOR_ON = "\x1b[7m"; // inverse video — the text cursor block
+const CURSOR_OFF = "\x1b[27m";
 
 // Claude Code's dark-theme dot colors (differ from ashi's theme palette).
 const DOT_OK = "\x1b[38;2;78;186;101m";
@@ -496,16 +499,22 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
         </Box>
       );
     case "select": {
+      // Drawn here; navigated by raw keys in the input dispatch (focus === "select").
       const s = v.state;
-      const items = s.items.map((it) => ({ label: it.label, value: it.value }));
+      const n = s.items.length;
+      const rows = Math.max(1, s.visibleRows);
+      const start = n > rows ? Math.max(0, Math.min(s.index - Math.floor(rows / 2), n - rows)) : 0;
       return (
-        <SelectInput
-          key={key}
-          items={items}
-          initialIndex={Math.min(s.index, Math.max(0, items.length - 1))}
-          onHighlight={(it) => { s.highlighted = s.items.find((x) => x.value === it.value); }}
-          onSelect={(it) => { const found = s.items.find((x) => x.value === it.value); if (found) s.onSelect(found); }}
-        />
+        <Box key={key} flexDirection="column">
+          {s.items.slice(start, start + rows).map((it, i) => {
+            const active = start + i === s.index;
+            return (
+              <Text key={it.value} color={active ? ACCENT_HEX : undefined}>
+                {(active ? "❯ " : "  ") + it.label}
+              </Text>
+            );
+          })}
+        </Box>
       );
     }
   }
@@ -525,51 +534,48 @@ function renderBlock(child: VNode, globalIndex: number): React.ReactElement | nu
   return <Box key={globalIndex} flexDirection="column" marginTop={marginTop}>{el}</Box>;
 }
 
+// The input box: ❯ prompt + the editor's display text, with an inverse-video cursor
+// block when focused. Hanging-indents wrapped logical lines under the prompt.
+function paintInput(editor: LineEditor, focused: boolean): string {
+  const text = editor.displayText;
+  let body = text;
+  if (focused) {
+    const cur = editor.displayCursor;
+    const at = text[cur];
+    if (at === undefined) body = `${text}${CURSOR_ON} ${CURSOR_OFF}`;
+    else if (at === "\n") body = `${text.slice(0, cur)}${CURSOR_ON} ${CURSOR_OFF}${text.slice(cur)}`;
+    else body = `${text.slice(0, cur)}${CURSOR_ON}${at}${CURSOR_OFF}${text.slice(cur + 1)}`;
+  }
+  return body.split("\n").map((l, i) => (i === 0 ? USER_MARKER : "  ") + l).join("\n");
+}
+
 interface AppState {
   scrollback: VNode;
   footer: VNode;
   queue: VNode;
   status: VNode;
-  input: { text: string; onChange?: (t: string) => void; onSubmit?: (t: string) => void };
+  editor: LineEditor;
+  onChange?: (t: string) => void;
+  onSubmit?: (t: string) => void;
   focus: "input" | "select";
+  activeSelect: SelectState | null;
   keyHandlers: KeyHandler[];
   // [0, committedCount) are settled and render via <Static>; the rest is the live turn.
   committedCount: number;
 }
 
-function buildKeyEvent(input: string, key: Record<string, boolean>): KeyEvent {
-  const matches = (name: string): boolean => {
-    const parts = name.split("+");
-    const mods = parts.slice(0, -1);
-    const base = parts[parts.length - 1]!;
-    if (mods.includes("ctrl") && !key.ctrl) return false;
-    if (mods.includes("shift") && !key.shift) return false;
-    switch (base) {
-      case "escape": return !!key.escape;
-      case "up": return !!key.upArrow;
-      case "down": return !!key.downArrow;
-      case "tab": return !!key.tab;
-      case "backspace": return !!key.backspace || !!key.delete;
-      case "return": return !!key.return;
-      default: return input === base;
-    }
+// Global key matching shares pi-tui's matcher, so it behaves identically to the
+// default renderer (kitty-aware once ProcessTerminal enables the protocol).
+function buildKeyEvent(seq: string): KeyEvent {
+  return {
+    matches: (name) => matchesKey(seq, name as KeyId),
+    isRelease: () => isKeyRelease(seq),
+    isRepeat: () => isKeyRepeat(seq),
   };
-  return { matches, isRelease: () => false, isRepeat: () => false };
 }
 
 function Root({ store, state }: { store: Store; state: AppState }): React.ReactElement {
   React.useSyncExternalStore(store.subscribe, store.get, store.get);
-  // Stable handler identities: a fresh closure each render would churn useInput's
-  // stdin re-subscribe and ink-text-input through the streaming render storm.
-  const onKey = React.useCallback((input: string, key: Record<string, unknown>) => {
-    const ev = buildKeyEvent(input, key as Record<string, boolean>);
-    for (const h of state.keyHandlers) { const r = h(ev); if (r && r.consume) break; }
-  }, [state]);
-  const onChange = React.useCallback((val: string) => {
-    state.input.text = val; state.input.onChange?.(val); store.bump();
-  }, [state, store]);
-  const onSubmit = React.useCallback((val: string) => { state.input.onSubmit?.(val); }, [state]);
-  useInput(onKey as Parameters<typeof useInput>[0]);
   // Settled turns flow into native scrollback via <Static> (written once); only the
   // live tail + chrome stay in Ink's managed region, so a chunk repaints one entry.
   const sb = state.scrollback;
@@ -585,21 +591,8 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
       {live.map((child, i) => renderBlock(child, cc + i))}
       {renderVNode(state.footer)}
       {renderVNode(state.queue)}
-      <Box
-        marginTop={1}
-        borderStyle="single"
-        borderLeft={false}
-        borderRight={false}
-        borderColor={state.focus === "input" ? ACCENT_HEX : "gray"}
-      >
-        <Text color={MARKER_GRAY_HEX} bold>{"❯ "}</Text>
-        <TextInput
-          value={state.input.text}
-          focus={state.focus === "input"}
-          showCursor={state.focus === "input"}
-          onChange={onChange}
-          onSubmit={onSubmit}
-        />
+      <Box marginTop={1} borderStyle="single" borderLeft={false} borderRight={false} borderColor={MARKER_GRAY_HEX}>
+        <Text>{paintInput(state.editor, state.focus === "input")}</Text>
       </Box>
       {renderVNode(state.status)}
     </Box>
@@ -619,22 +612,81 @@ function containerView(v: VNode, req: () => void): ContainerView {
   };
 }
 
-function makeApp(store: Store, req: () => void): { app: App; element: React.ReactElement } {
+function makeApp(store: Store, req: () => void): {
+  app: App; element: React.ReactElement; dispatch: (seq: string) => void; editor: LineEditor;
+} {
   const scrollback: VNode = { kind: "container", children: [] };
   const footer: VNode = { kind: "container", children: [] };
   const queue: VNode = { kind: "container", children: [] };
   const status: VNode = { kind: "text", lines: [], fn: null };
+  const editor = new LineEditor();
 
   const state: AppState = {
-    scrollback, footer, queue, status,
-    input: { text: "" },
+    scrollback, footer, queue, status, editor,
     focus: "input",
+    activeSelect: null,
     keyHandlers: [],
     committedCount: 0,
   };
 
   let ink: Instance | null = null;
   const element = <Root store={store} state={state} />;
+  const terminal = new ProcessTerminal();
+
+  // Within a multi-line buffer ↑/↓ move between lines; at the top/bottom edge they
+  // page through input history. Returns whether anything moved.
+  const moveVertical = (dir: number): boolean => {
+    const lines = editor.text.split("\n");
+    if (lines.length > 1) {
+      let acc = 0, line = 0;
+      for (; line < lines.length; line++) {
+        if (editor.cursor <= acc + lines[line]!.length) break;
+        acc += lines[line]!.length + 1;
+      }
+      const target = line + dir;
+      if (target >= 0 && target < lines.length) {
+        const col = editor.cursor - acc;
+        let pos = 0;
+        for (let i = 0; i < target; i++) pos += lines[i]!.length + 1;
+        editor.cursor = pos + Math.min(col, lines[target]!.length);
+        return true;
+      }
+    }
+    return (dir < 0 ? editor.historyBack() : editor.historyForward()) !== null;
+  };
+
+  const handleSelectKey = (seq: string): void => {
+    const s = state.activeSelect;
+    if (!s) return;
+    const n = s.items.length;
+    if (matchesKey(seq, "escape")) { s.onCancel(); return; }
+    if (n === 0) return;
+    if (matchesKey(seq, "up")) { s.index = (s.index - 1 + n) % n; s.highlighted = s.items[s.index]; req(); }
+    else if (matchesKey(seq, "down")) { s.index = (s.index + 1) % n; s.highlighted = s.items[s.index]; req(); }
+    else if (matchesKey(seq, "enter") || matchesKey(seq, "return")) { const it = s.items[s.index]; if (it) s.onSelect(it); }
+  };
+
+  // One raw key sequence (pre-segmented + paste-rewrapped by ProcessTerminal). Global
+  // handlers get first refusal, like pi-tui's input listeners; whatever they leave
+  // drives the focused surface — the select picker or the line editor.
+  const dispatch = (seq: string): void => {
+    const ev = buildKeyEvent(seq);
+    for (const h of state.keyHandlers) if (h(ev)?.consume) return;
+    if (isKeyRelease(seq)) return;
+    if (state.focus === "select") { handleSelectKey(seq); return; }
+    const before = editor.text;
+    let changed = false;
+    let submitted: string | null = null;
+    for (const a of editor.feed(seq)) {
+      if (a.action === "submit") submitted = a.buffer;
+      else if (a.action === "arrow-up") changed = moveVertical(-1) || changed;
+      else if (a.action === "arrow-down") changed = moveVertical(1) || changed;
+      else changed = true;
+    }
+    if (editor.text !== before) state.onChange?.(editor.text);
+    if (submitted !== null) { editor.pushHistory(submitted); state.onSubmit?.(submitted); changed = true; }
+    if (changed) req();
+  };
 
   // <Static> entries are permanent, so clearing needs a true reset: unmount, wipe the
   // screen + scrollback buffer (\x1b[3J), remount. No-op before start() (headless).
@@ -661,10 +713,10 @@ function makeApp(store: Store, req: () => void): { app: App; element: React.Reac
 
   const inputView: InputView = {
     node: asNode({ kind: "text", lines: [], fn: null }),
-    getText: () => state.input.text,
-    setText: (t) => { state.input.text = t; req(); },
-    onChange: (fn) => { state.input.onChange = fn; },
-    onSubmit: (fn) => { state.input.onSubmit = fn; },
+    getText: () => editor.text,
+    setText: (t) => { editor.setText(t); req(); },
+    onChange: (fn) => { state.onChange = fn; },
+    onSubmit: (fn) => { state.onSubmit = fn; },
     setAutocompleteProvider: (_p: AutocompleteProvider) => {},
     defaultBorderColor: (t) => t,
     setBorderColor: () => {},
@@ -677,30 +729,36 @@ function makeApp(store: Store, req: () => void): { app: App; element: React.Reac
     queueSlot: containerView(queue, req),
     input: inputView,
     status: statusView,
-    setFocus: (target) => { state.focus = asV(target).kind === "select" ? "select" : "input"; req(); },
-    focusInput: () => { state.focus = "input"; req(); },
+    setFocus: (target) => {
+      const tv = asV(target);
+      state.focus = tv.kind === "select" ? "select" : "input";
+      state.activeSelect = tv.kind === "select" ? tv.state : null;
+      req();
+    },
+    focusInput: () => { state.focus = "input"; state.activeSelect = null; req(); },
     requestRender: () => req(),
     commitScrollback: () => { state.committedCount = scrollbackChildren.length; req(); },
     start: () => {
       if (ink) return;
       if (INSPECT_FILE) inspectConsole();
-      // Ink's resize re-layouts but doesn't re-run Root, so width-dependent content
-      // wouldn't recompute; bump on resize to force a render at the new width.
-      process.stdout.on("resize", req);
+      // ProcessTerminal owns raw stdin: it sets raw mode, runs the kitty-keyboard
+      // handshake (so Shift+Enter and Alt+B arrive as distinct sequences), segments
+      // input into single key events, and re-emits resize as our render bump.
+      terminal.start(dispatch, req);
       // patchConsole off only while inspecting, so React's warning reaches our wrapper.
       ink = inkRender(element, INSPECT_FILE ? { patchConsole: false } : undefined);
     },
-    stop: () => { process.stdout.off("resize", req); ink?.unmount(); ink = null; },
+    stop: () => { terminal.stop(); ink?.unmount(); ink = null; },
     onKey: (handler) => { state.keyHandlers.push(handler); },
-    createSelectList: (items): SelectView => {
+    createSelectList: (items, opts): SelectView => {
       const sel: SelectState = {
-        items, index: Math.min(0, items.length - 1),
-        onSelect: () => {}, onCancel: () => {},
+        items, index: items.length > 0 ? 0 : -1, visibleRows: opts.visibleRows,
+        highlighted: items[0], onSelect: () => {}, onCancel: () => {},
       };
       const v: VNode = { kind: "select", state: sel };
       return {
         node: asNode(v),
-        setSelectedIndex: (i) => { sel.index = i; req(); },
+        setSelectedIndex: (i) => { sel.index = i; sel.highlighted = sel.items[i]; req(); },
         getSelectedItem: () => sel.highlighted ?? sel.items[sel.index],
         onSelect: (fn) => { sel.onSelect = fn; },
         onCancel: (fn) => { sel.onCancel = fn; },
@@ -711,7 +769,7 @@ function makeApp(store: Store, req: () => void): { app: App; element: React.Reac
       return { node: asNode(v), stop: () => {} };
     },
   };
-  return { app, element };
+  return { app, element, dispatch, editor };
 }
 
 interface InkHarness {
@@ -719,6 +777,8 @@ interface InkHarness {
   mountToolCall: Renderer["mountToolCall"];
   app: App;
   element: React.ReactElement;
+  feedInput: (seq: string) => void;
+  editor: LineEditor;
 }
 
 function buildRenderer(): { renderer: Renderer; harness: () => InkHarness } {
@@ -739,7 +799,7 @@ function buildRenderer(): { renderer: Renderer; harness: () => InkHarness } {
   };
   const harness = (): InkHarness => {
     const built = makeApp(store, req);
-    return { nodes, mountToolCall, app: built.app, element: built.element };
+    return { nodes, mountToolCall, app: built.app, element: built.element, feedInput: built.dispatch, editor: built.editor };
   };
   return { renderer, harness };
 }

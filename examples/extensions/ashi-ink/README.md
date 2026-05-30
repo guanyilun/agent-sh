@@ -40,14 +40,17 @@ settings > `pi-tui` (the default).
 ## What works, what doesn't
 
 Content, tool calls and results, diffs, markdown, tables, the session/fork pickers,
-the loader, and the core keybindings all work. As a demonstration renderer, a few
-shell affordances degrade:
+and the loader all work. The input box is a real line editor: readline keybindings,
+word motion (Alt+B / Alt+F), Shift+Enter for multi-line, and input history — it
+reuses agent-sh's line editor over the same kitty-aware terminal input the default
+renderer uses, so keys behave identically across the two.
+
+As a demonstration renderer, a couple of affordances degrade:
 
 - **No inline images.**
-- **Editor autocomplete** and the **dynamic shell-mode border color** aren't wired
-  (shell mode still shows in the status footer).
-- **Key release/repeat** aren't distinguished, and Ctrl+Z **suspend/resume** is
-  best-effort.
+- **Editor autocomplete** isn't wired, and shell mode isn't color-coded on the input
+  border (the status footer still indicates it).
 
-It implements the full renderer contract from `@guanyilun/ashi/renderer` and is
-verified headlessly with `ink-testing-library` (`npm test`).
+It implements the full renderer contract from `@guanyilun/ashi/renderer`. The
+rendering is verified headlessly with `ink-testing-library` (`npm test`); the
+terminal input layer is shared with the default renderer.
