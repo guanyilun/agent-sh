@@ -216,7 +216,7 @@ async function streamOnce(
   const stream = await llmClient.stream({
     messages: [
       { role: "system", content: systemPrompt },
-      ...wrapTrailingWithDynamicContext(conversation.getMessages(), dynamicContext ?? ""),
+      ...wrapTrailingWithDynamicContext(conversation.forLLM(), dynamicContext ?? ""),
     ],
     tools: apiTools.length > 0 ? apiTools : undefined,
     model,
