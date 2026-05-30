@@ -54,6 +54,22 @@ class ZonedMarkdown extends Markdown {
   }
 }
 
+class FooterSlot extends Container {
+  override render(width: number): string[] {
+    return this.children.length === 0 ? [""] : super.render(width);
+  }
+}
+
+export function footerContainer(): ContainerView {
+  const c = new FooterSlot();
+  return {
+    node: asNode(c),
+    addChild: (child) => c.addChild(asComponent(child)),
+    removeChild: (child) => c.removeChild(asComponent(child)),
+    clear: () => c.clear(),
+  };
+}
+
 export function createNodes(): RenderNodes {
   return {
     text(opts) {
