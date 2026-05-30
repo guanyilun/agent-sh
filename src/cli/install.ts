@@ -35,7 +35,13 @@ interface Resolver {
 
 export function listBundled(): string[] {
   if (!fs.existsSync(BUNDLED_DIR)) return [];
-  return fs.readdirSync(BUNDLED_DIR).map((n) => n.replace(/\.(ts|js|mjs)$/, ""));
+  const out: string[] = [];
+  for (const d of fs.readdirSync(BUNDLED_DIR, { withFileTypes: true })) {
+    if (d.name.startsWith(".")) continue;
+    if (d.isDirectory()) out.push(d.name);
+    else if (SCRIPT_EXTS.some((ext) => d.name.endsWith(ext))) out.push(d.name.replace(/\.[^.]+$/, ""));
+  }
+  return out;
 }
 
 /** Heuristic: a backend named "pi" is typically provided by an extension called "pi-bridge". */
