@@ -139,9 +139,21 @@ interface Store {
 }
 function createStore(): Store {
   let version = 0;
+  let scheduled = false;
   const listeners = new Set<() => void>();
+  // Coalesce bumps to one notification per tick. Streaming fires req() many times
+  // a tick (chunk text + status + loader); a synchronous bump on each one advances
+  // the snapshot under useSyncExternalStore's post-commit re-check, which force-
+  // re-renders, re-checks, and runs away ("Maximum update depth"). Deferring to a
+  // microtask collapses a burst into a single render whose snapshot is stable at
+  // commit, so the re-check matches and the loop never forms.
+  const flush = (): void => {
+    scheduled = false;
+    version++;
+    for (const l of [...listeners]) l();
+  };
   return {
-    bump: () => { version++; for (const l of listeners) l(); },
+    bump: () => { if (scheduled) return; scheduled = true; queueMicrotask(flush); },
     subscribe: (l) => { listeners.add(l); return () => { listeners.delete(l); }; },
     get: () => version,
   };
