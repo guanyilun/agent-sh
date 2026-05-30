@@ -13,7 +13,7 @@ import type { Terminal } from "agent-sh/shell/terminal";
 import activateShellContext from "agent-sh/shell/context";
 import type { AppConfig } from "agent-sh/types";
 
-/** No-op: ashi renders via pi-tui, the PTY only needs to exist. */
+/** ashi renders through its own Renderer; this PTY only needs to exist. */
 function headlessTerminal(): Terminal {
   return {
     write() {},
@@ -29,18 +29,23 @@ import { MultiSessionStore } from "./multi-session-store.js";
 import { registerForkCommands, applyBranchMessages } from "./commands.js";
 import { registerSessionCommands } from "./session-commands.js";
 import { registerCompaction } from "./compaction.js";
-import { registerCapture } from "./capture.js";
+import { registerCapture, type Capture } from "./capture.js";
 import { registerRenderDefaults } from "./hooks.js";
 import { registerDefaultSchemaRenderers } from "./default-schema-renderers.js";
+import { createPiTuiRenderer } from "./renderers/pi-tui/index.js";
+import type { Renderer } from "./renderer.js";
+import { loadRendererPreference } from "./display-config.js";
+import { applyOutputMode } from "./terminal-mode.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
-function parseArgs(argv: string[]): AppConfig & { extensions?: string[]; continueLast: boolean } {
+function parseArgs(argv: string[]): AppConfig & { extensions?: string[]; continueLast: boolean; renderer?: string } {
   let model: string | undefined;
   let apiKey: string | undefined;
   let baseURL: string | undefined;
   let provider: string | undefined;
   let backend: string | undefined;
+  let renderer: string | undefined;
   let continueLast = false;
   const extensions: string[] = [];
 
@@ -51,6 +56,7 @@ function parseArgs(argv: string[]): AppConfig & { extensions?: string[]; continu
     else if (a === "--base-url" && argv[i + 1]) baseURL = argv[++i];
     else if (a === "--provider" && argv[i + 1]) provider = argv[++i];
     else if (a === "--backend" && argv[i + 1]) backend = argv[++i];
+    else if (a === "--renderer" && argv[i + 1]) renderer = argv[++i];
     else if ((a === "-e" || a === "--extensions") && argv[i + 1]) {
       extensions.push(...argv[++i]!.split(",").map(s => s.trim()).filter(Boolean));
     } else if (a === "-c" || a === "--continue") {
@@ -61,7 +67,7 @@ function parseArgs(argv: string[]): AppConfig & { extensions?: string[]; continu
     }
   }
 
-  return { shell: "/bin/sh", model, apiKey, baseURL, provider, backend, extensions, continueLast };
+  return { shell: "/bin/sh", model, apiKey, baseURL, provider, backend, renderer, extensions, continueLast };
 }
 
 const MANAGEMENT_HELP = `ashi — ash (agent-sh's built-in agent) in an interactive TUI
@@ -77,9 +83,12 @@ Management:
 
 Launch (default):
   ashi [--provider <name>] [--model <id>] [--api-key <key>] [--base-url <url>]
-       [--backend <name>] [-e <ext>[,<ext>...]] [-c | --continue]
+       [--backend <name>] [--renderer <name>] [-e <ext>[,<ext>...]] [-c | --continue]
 
   -c, --continue   Resume the last session in this cwd (fresh session if none)
+  --renderer       TUI renderer (default: pi-tui). Also ASHI_RENDERER, or
+                   ashi.renderer in settings.json. A renderer is an extension;
+                   install it (or -e it) so its ashi:renderer:<name> is registered.
 
 Reads ~/.agent-sh/settings.json for providers and defaults.`;
 
@@ -140,7 +149,11 @@ async function main(): Promise<void> {
   let stopFrontend: (() => void) | null = null;
 
   let shellRef: { kill(): void } | null = null;
-  const cleanup = (): void => {
+  let captureRef: Capture | null = null;
+  const cleanup = async (): Promise<void> => {
+    // The per-turn flush is fire-and-forget; await it so a quick exit can't drop
+    // a just-completed turn.
+    try { await captureRef?.flush(); } catch {}
     try { stopFrontend?.(); } catch {}
     try { shellRef?.kill(); } catch {}
     try { core.kill(); } catch {}
@@ -191,13 +204,31 @@ async function main(): Promise<void> {
   }
 
   const capture = registerCapture(ctx, getStore);
+  captureRef = capture;
   registerCompaction(ctx, getStore, capture);
-  registerRenderDefaults(ctx);
+
+  // Renderers are extensions; selection is --renderer > ASHI_RENDERER >
+  // ashi.renderer (settings) > pi-tui.
+  ctx.define("ashi:renderer:pi-tui", () => createPiTuiRenderer());
+  const rendererName = (
+    config.renderer ?? process.env.ASHI_RENDERER ?? loadRendererPreference() ?? "pi-tui"
+  ).trim();
+  const rendererKey = `ashi:renderer:${rendererName}`;
+  if (!ctx.list().includes(rendererKey)) {
+    process.stderr.write(
+      `ashi: no renderer registered for "${rendererName}" (${rendererKey}). ` +
+      `Install the extension that provides it (or pass -e <ext>) so it registers ${rendererKey}.\n`,
+    );
+    process.exit(1);
+  }
+  const renderer = ctx.call(rendererKey) as Renderer;
+  applyOutputMode(renderer.capabilities.rawOutput);
+  registerRenderDefaults(ctx, renderer);
   registerDefaultSchemaRenderers(ctx);
 
   ctx.advise("system-prompt:build", (next) => `${next()}\n\n<cwd>${process.cwd()}</cwd>`);
 
-  const handle = mountAshi(ctx, getStore, capture);
+  const handle = mountAshi(ctx, getStore, capture, renderer);
   stopFrontend = handle.stop;
 
   registerForkCommands(ctx, getStore, handle.openTreePicker, handle.rebuildChat, capture);

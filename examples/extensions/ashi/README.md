@@ -73,6 +73,8 @@ Ctrl+O       Expand/collapse all tool calls and results in chat
 
 The current thinking level is shown in the footer as `[level]` next to the model name.
 
+Typing `/` (commands) or `@` (files) opens a suggestion popup: ↑/↓ to move, Tab or Enter to accept, Esc to dismiss.
+
 ## Sessions
 
 Many sessions per cwd, fresh by default:
@@ -122,7 +124,7 @@ Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
 {
   "ashi": {
     "display": {
-      "default": { "result": "preview", "previewLines": 5 },
+      "default": { "result": "preview", "previewLines": 5, "expandedLines": 200 },
       "read":    { "result": "hidden" },
       "ls":      { "result": "hidden" },
       "grep":    { "result": "summary" },
@@ -142,63 +144,17 @@ Per-tool compactness lives under `ashi.display` in `~/.agent-sh/settings.json`:
 
 For `edit_file` / `write_file`, the diff frame is treated as the output and follows the same gating: shown for `preview`, hidden for `hidden`/`summary` (the call line already carries `+12 -3` stats). The line-count hint is suppressed for diff-producing tools so edits stay quiet.
 
-Hit `Ctrl+O` to toggle expansion across all tool entries in chat — result bodies show their full output regardless of mode, and call lines with truncated labels (e.g. long `bash` commands) reveal their full text. Press again to collapse.
+Hit `Ctrl+O` to toggle expansion across all tool entries in chat — result bodies show their output regardless of mode, and call lines with truncated labels (e.g. long `bash` commands) reveal their full text. Press again to collapse. Expanded output is still tail-capped to `expandedLines` (default 200) so `Ctrl+O` on a huge result can't flood the scrollback — the rest shows as a `… (N earlier lines hidden)` note. The agent always receives the full output; only the on-screen display is bounded.
 
 Each tool inherits from `default` and is overridden by its own block. Unknown tool names fall through to `default`.
 
-## Extension surface
+## Extending ashi
 
-Other extensions can customize how chat entries and tool results render without forking ashi.
-
-### Chat hooks
-
-These return [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) components directly:
-
-| Hook | Args | Returns |
-|---|---|---|
-| `ashi:render-user-message` | `{ text, state, invalidate }` | `Component` |
-| `ashi:render-assistant` | `{ text, state, invalidate }` | `Component` |
-| `ashi:render-thinking` | `{ text, hidden, state, invalidate }` | `Component` |
-
-### Tool hooks — declarative render schema
-
-Tool rendering uses a declarative schema so extensions don't import pi-tui or touch ashi internals. Register a `RenderModel` under `ashi:render-tool:{name}` (with `:default` as the fallback):
-
-```ts
-import type { RenderModel, ToolDisplay } from "@guanyilun/ashi/render";
-
-const myModel: RenderModel<{ command: string }> = {
-  initial: ({ rawInput }) => ({ command: JSON.parse(String(rawInput)).command ?? "" }),
-  view: (s): ToolDisplay => ({
-    title: [
-      { text: "$ ", style: { bold: true, color: "toolTitle" } },
-      { text: s.command, highlight: "bash" },
-    ],
-    status: s.status,
-    body: { kind: "stream", text: s.output },
-    expandable: true,
-  }),
-};
-
-export default function activate(ctx) {
-  ctx.define("ashi:render-tool:bash", () => myModel);
-}
-```
-
-`view(state, env)` is a pure function returning a `ToolDisplay`. Ashi owns the pi-tui mapping, theming, streaming buffer policy (preview / summary / hidden modes from `ashi.display`), diff width memoization, and the Ctrl+O expand toggle. The framework auto-tracks `state.status`, `state.output` (streaming chunks), and `state.hasDiff` (for edit/write) — renderers read these without wiring their own reducers.
-
-`ToolDisplay` body kinds: `text`, `code` (with syntax highlighting via `lang`), `stream` (preview/summary/hidden policy applied by ashi), `diff` (closure pushed by the frontend orchestrator), `lines`, `compound`. Custom state transitions can be declared via an optional `reducers` map.
-
-To ship a default display policy with your renderer (e.g. "this tool's output is large, default to `summary`"), set `display` on the model. User `settings.json` still wins:
-
-```ts
-const myModel: RenderModel<...> = {
-  initial, view,
-  display: { result: "summary", previewLines: 3 },
-};
-```
-
-For non-render concerns (commands, settings, tools, providers) use the standard `agent-sh` extension API. See the [agent-sh extension docs](https://github.com/guanyilun/agent-sh/blob/main/docs/extensions.md).
+Other extensions can customize chat and tool-result rendering — and even swap the whole
+TUI renderer (pi-tui, Ink, …) — without forking ashi. See **[EXTENDING.md](EXTENDING.md)**
+for the chat/tool render hooks, the declarative tool render schema, and the renderer
+contract. For non-render concerns (commands, settings, tools, providers), use the
+standard [agent-sh extension API](https://github.com/guanyilun/agent-sh/blob/main/docs/extensions.md).
 
 ## Install from source
 

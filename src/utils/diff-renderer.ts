@@ -28,6 +28,10 @@ export interface DiffRenderOptions {
   trueColor?: boolean;
   /** Enable syntax highlighting on diff lines. Default true. */
   syntaxHighlight?: boolean;
+  /** Draw the `│` rule between the line number and the code (default true). Set false
+   *  for a flush gutter: `<n> <sigil><code>`, the row background spans the line, and
+   *  context code is left un-dimmed. */
+  gutterLine?: boolean;
 }
 
 // ── Constants ────────────────────────────────────────────────────
@@ -303,6 +307,7 @@ interface UnifiedLayout {
   lineTextW: number;
   textWidth: number;
   useTrueColor: boolean;
+  gutterLine: boolean;
   lang: string | undefined;
   removedPalette: InlinePalette;
   addedPalette: InlinePalette;
@@ -323,6 +328,7 @@ function unifiedLayout(diff: DiffResult, opts: DiffRenderOptions): UnifiedLayout
     lineTextW: Math.max(1, textWidth - noW - 5),
     textWidth,
     useTrueColor: opts.trueColor !== false,
+    gutterLine: opts.gutterLine !== false,
     lang: opts.syntaxHighlight !== false ? detectLanguage(opts.filePath) : undefined,
     removedPalette: { rowBg: p.errorBg, emphBg: p.errorBgEmph },
     addedPalette: { rowBg: p.successBg, emphBg: p.successBgEmph },
@@ -330,13 +336,21 @@ function unifiedLayout(diff: DiffResult, opts: DiffRenderOptions): UnifiedLayout
 }
 
 function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
-  const { noW, lineTextW, textWidth, useTrueColor, lang, removedPalette, addedPalette } = layout;
+  const { noW, lineTextW, textWidth, useTrueColor, gutterLine, lang, removedPalette, addedPalette } = layout;
   const out: string[] = [];
 
   const pairs = findChangePairs(hunk);
   const renderedAsPartOfPair = new Set<number>();
   const bgWidth = Math.max(1, textWidth - noW - 3);
   const gutter = (n: string): string => `${p.dim}${n} │${p.reset} `;
+
+  const change = (no: string, sigil: string, bg: string, fg: string, text: string): string => {
+    if (!gutterLine) {
+      return `${bg}${padToWidth(`${no} ${fg}${sigil}${preserveBg(text, bg)}`, textWidth)}${p.reset}`;
+    }
+    if (useTrueColor) return gutter(no) + padToWidth(`${bg}${fg}${sigil} ${preserveBg(text, bg)}`, bgWidth) + p.reset;
+    return `${gutter(no)}${fg}${sigil} ${text}${p.reset}`;
+  };
 
   for (let i = 0; i < hunk.lines.length; i++) {
     const line = hunk.lines[i];
@@ -347,7 +361,8 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
     if (line.type === "context") {
       const raw = truncateText(line.text, lineTextW);
       const text = lang ? highlightLine(raw, lang) : raw;
-      out.push(`${gutter(no)}  ${p.dim}${text}${p.reset}`);
+      // The flush gutter dims only the line number; the code stays normal/highlighted.
+      out.push(!gutterLine ? `${p.dim}${no}${p.reset}  ${text}` : `${gutter(no)}  ${p.dim}${text}${p.reset}`);
       continue;
     }
 
@@ -370,18 +385,9 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
         removedText = lang ? highlightLine(raw, lang) : raw;
       }
 
-      if (useTrueColor) {
-        out.push(gutter(no) + padToWidth(`${p.errorBg}${p.error}- ${preserveBg(removedText, p.errorBg)}`, bgWidth) + p.reset);
-      } else {
-        out.push(`${gutter(no)}${p.error}- ${removedText}${p.reset}`);
-      }
-
+      out.push(change(no, "-", p.errorBg, p.error, removedText));
       if (addedText !== null && addedNo !== null) {
-        if (useTrueColor) {
-          out.push(gutter(addedNo) + padToWidth(`${p.successBg}${p.success}+ ${preserveBg(addedText, p.successBg)}`, bgWidth) + p.reset);
-        } else {
-          out.push(`${gutter(addedNo)}${p.success}+ ${addedText}${p.reset}`);
-        }
+        out.push(change(addedNo, "+", p.successBg, p.success, addedText));
       }
       continue;
     }
@@ -390,11 +396,7 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
       if (renderedAsPartOfPair.has(i)) continue;
       const raw = truncateText(line.text, lineTextW);
       const text = lang ? highlightLine(raw, lang) : raw;
-      if (useTrueColor) {
-        out.push(gutter(no) + padToWidth(`${p.successBg}${p.success}+ ${preserveBg(text, p.successBg)}`, bgWidth) + p.reset);
-      } else {
-        out.push(`${gutter(no)}${p.success}+ ${text}${p.reset}`);
-      }
+      out.push(change(no, "+", p.successBg, p.success, text));
     }
   }
   return out;

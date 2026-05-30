@@ -1,7 +1,3 @@
-// Schema-style renderer for the scheme_eval tool. No pi-tui import, no ANSI,
-// no highlighter dep. Status and streaming output are tracked by ashi; this
-// model only declares tool-specific state (the source string).
-
 import type { AgentContext } from "agent-sh/types";
 import type { RenderModel, Segment, ToolDisplay } from "@guanyilun/ashi/render";
 
@@ -37,14 +33,12 @@ const model: RenderModel<SchemeInit> = {
       titleIcon: "scheme",
       title,
       status: s.status,
+      // Title carries the source; body shows the eval result, not an echo of it.
       body: failed
-        ? { kind: "compound", parts: [
-            { kind: "code", lang: "scheme", text: s.source },
-            { kind: "text", segments: [
-              { text: `✗ ${s.output.trim()}`, style: { color: "error" } },
-            ] },
+        ? { kind: "text", segments: [
+            { text: `✗ ${s.output.trim()}`, style: { color: "error" } },
           ] }
-        : { kind: "code", lang: "scheme", text: s.source },
+        : { kind: "stream", text: s.output },
       expandable: true,
       defaultExpanded: failed,
     };

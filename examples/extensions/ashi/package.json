@@ -1,6 +1,6 @@
 {
   "name": "@guanyilun/ashi",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "Ash in an interactive TUI — agent-sh's built-in agent without the shell underneath",
   "type": "module",
   "main": "dist/cli.js",
@@ -12,6 +12,10 @@
     "./render": {
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js"
+    },
+    "./renderer": {
+      "types": "./dist/renderer.d.ts",
+      "import": "./dist/renderer.js"
     }
   },
   "files": [

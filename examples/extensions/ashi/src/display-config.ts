@@ -5,13 +5,14 @@ export type ToolResultMode = "hidden" | "summary" | "preview";
 export interface ToolEntryConfig {
   result: ToolResultMode;
   previewLines: number;
+  expandedLines: number;
 }
 
 export interface DisplayResolver {
   resolve(name: string, modelDisplay?: Partial<ToolEntryConfig>): ToolEntryConfig;
 }
 
-const DEFAULT_ENTRY: ToolEntryConfig = { result: "preview", previewLines: 5 };
+const DEFAULT_ENTRY: ToolEntryConfig = { result: "preview", previewLines: 5, expandedLines: 200 };
 
 const BUILTIN_OVERRIDES: Record<string, Partial<ToolEntryConfig>> = {
   read: { result: "hidden" },
@@ -29,6 +30,12 @@ const BUILTIN_OVERRIDES: Record<string, Partial<ToolEntryConfig>> = {
 interface AshiSettings extends Record<string, unknown> {
   display?: Record<string, Partial<ToolEntryConfig>>;
   groupMaxVisible?: number;
+  renderer?: string;
+}
+
+export function loadRendererPreference(): string | undefined {
+  const r = getExtensionSettings<AshiSettings>("ashi", {}).renderer;
+  return typeof r === "string" && r.trim() ? r.trim() : undefined;
 }
 
 export function loadGroupMaxVisible(): number {
@@ -43,6 +50,7 @@ function mergeEntry(base: ToolEntryConfig, patch?: Partial<ToolEntryConfig>): To
   return {
     result: patch.result ?? base.result,
     previewLines: patch.previewLines ?? base.previewLines,
+    expandedLines: patch.expandedLines ?? base.expandedLines,
   };
 }
 

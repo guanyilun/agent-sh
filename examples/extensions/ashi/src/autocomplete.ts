@@ -2,7 +2,7 @@ import type {
   AutocompleteItem,
   AutocompleteProvider,
   AutocompleteSuggestions,
-} from "@earendil-works/pi-tui";
+} from "./renderer.js";
 import type { EventBus } from "agent-sh/event-bus";
 
 /** Adapt pi-tui's AutocompleteProvider to agent-sh's autocomplete:request pipe.
@@ -53,28 +53,6 @@ export class BusAutocompleteProvider implements AutocompleteProvider {
       description: it.description,
     }));
     return { items, prefix: before };
-  }
-
-  applyCompletion(
-    lines: string[],
-    cursorLine: number,
-    cursorCol: number,
-    item: AutocompleteItem,
-    prefix: string,
-  ): { lines: string[]; cursorLine: number; cursorCol: number } {
-    const line = lines[cursorLine] ?? "";
-    // Replace the prefix span (the leading slash-word + args we sent) with
-    // the completion value. Anything after the cursor is preserved.
-    const head = line.slice(0, cursorCol - prefix.length);
-    const tail = line.slice(cursorCol);
-    const newLine = `${head}${item.value}${tail}`;
-    const out = lines.slice();
-    out[cursorLine] = newLine;
-    return {
-      lines: out,
-      cursorLine,
-      cursorCol: (head + item.value).length,
-    };
   }
 }
 

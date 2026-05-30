@@ -1,8 +1,5 @@
-// Declarative render schema for tool-call hooks. External renderers register
-// `ctx.define("ashi:render-tool:<name>", () => ({ initial, reducers, view }))`.
-
-import { Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
-import type { Component } from "@earendil-works/pi-tui";
+import { theme } from "./theme.js";
+import { highlight, supportsLanguage } from "cli-highlight";
 import type { ThemeColor } from "./theme.js";
 import type { ToolEntryConfig } from "./display-config.js";
 
@@ -22,8 +19,7 @@ export type Segment = string | { text: string; style?: StyleHint; highlight?: st
 export type Body =
   | { kind: "text"; segments: Segment[] }
   | { kind: "code"; lang?: string; text: string }
-  /** Width-aware renderer is supplied via setDiffRenderer; view() opts in by
-   *  returning { kind: "diff" } and gating on hasDiff in state. */
+  /** Width-aware renderer supplied via setDiffRenderer; view() opts in and gates on hasDiff. */
   | { kind: "diff" }
   | { kind: "stream"; text: string }
   | { kind: "lines"; lines: Segment[][] }
@@ -35,14 +31,13 @@ export interface DisplayStatus {
   summary?: string;
 }
 
-/** Renderers pick a category; ashi picks the glyph. Falls back to generic. */
+/** Renderers pick a category; ashi picks the glyph. */
 export type TitleIcon = "read" | "search" | "edit" | "shell" | "generic" | "scheme";
 
 export interface ToolDisplay {
   titleIcon?: TitleIcon;
   title: Segment[];
-  /** Right-aligned on the title line; framework handles padding and reserves
-   *  space for the status suffix so renderers don't compute widths. */
+  /** Right-aligned on the title line; framework handles padding and status-suffix spacing. */
   titleRight?: Segment[];
   status?: DisplayStatus;
   body?: Body;
@@ -50,19 +45,19 @@ export interface ToolDisplay {
   defaultExpanded?: boolean;
 }
 
-/** `mode` and `previewLines` come from ashi.display.{name} (display-config.ts). */
+/** `mode`, `previewLines`, `expandedLines` come from ashi.display.{name}. */
 export interface Env {
   width: number;
   expanded: boolean;
   finalized: boolean;
   mode: "preview" | "summary" | "hidden";
   previewLines: number;
+  expandedLines?: number;
 }
 
 export type Reducer<S, P = unknown> = (state: S, payload: P) => S;
 
-/** Framework tracks `output`, `status`, `hasDiff` — renderers don't wire
- *  `chunk` / `status` / `diff` reducers themselves. */
+/** Framework tracks `output`/`status`/`hasDiff`; renderers don't wire those reducers. */
 export type ViewState<S> = S & {
   output: string;
   status?: DisplayStatus;
@@ -91,35 +86,6 @@ export function isRenderModel(v: unknown): v is RenderModel<unknown> {
   return typeof o.initial === "function" && typeof o.view === "function";
 }
 
-// Call-side and result-side components share one state cell, so chunks from
-// the result side can repaint the call line (e.g. for in-title progress).
-
-import { theme } from "./theme.js";
-
-interface DiffSlot {
-  fn?: (width: number) => string[];
-  lastWidth: number;
-  cached: string[];
-}
-
-interface SharedCell<S> {
-  state: S;
-  env: Env;
-  diff: DiffSlot;
-  callView?: SchemaCallComponent;
-  resultView?: SchemaResultComponent;
-}
-
-interface RenderHandle<S> {
-  cell: SharedCell<S>;
-  model: RenderModel<S>;
-  toolCallId: string;
-  dispatch: (action: string, payload?: unknown) => void;
-}
-
-/** Lets the result-side mount find the call-side cell. Cleared on finalize. */
-const HANDLES = new Map<string, RenderHandle<unknown>>();
-
 export interface MountArgs {
   toolCallId: string;
   name: string;
@@ -129,61 +95,26 @@ export interface MountArgs {
   rawInput?: unknown;
 }
 
-function handleFor<S>(
-  args: MountArgs,
-  model: RenderModel<S>,
-  envInit: { width: number; mode: Env["mode"]; previewLines: number },
-): RenderHandle<S> {
-  const existing = HANDLES.get(args.toolCallId) as RenderHandle<S> | undefined;
-  if (existing) return existing;
-  const userInitial = model.initial({
-    rawInput: args.rawInput,
-    name: args.name,
-    title: args.title,
-    kind: args.kind,
-    displayDetail: args.displayDetail,
-  });
-  const cell: SharedCell<ViewState<S>> = {
-    state: { ...(userInitial as object), output: "", hasDiff: false } as ViewState<S>,
-    env: { ...envInit, expanded: false, finalized: false },
-    diff: { lastWidth: -1, cached: [] },
-  };
-  const reducers = model.reducers ?? {};
-  const handle: RenderHandle<ViewState<S>> = {
-    cell,
-    model: model as unknown as RenderModel<ViewState<S>>,
-    toolCallId: args.toolCallId,
-    dispatch(action, payload) {
-      if (action === "status") {
-        cell.state = { ...cell.state, status: payload as DisplayStatus };
-      } else if (action === "chunk") {
-        cell.state = { ...cell.state, output: cell.state.output + (payload as string) };
-      } else if (action === "diff") {
-        cell.diff = { fn: payload as (w: number) => string[], lastWidth: -1, cached: [] };
-        cell.state = { ...cell.state, hasDiff: true };
-      } else {
-        const reducer = reducers[action];
-        if (!reducer) return;
-        cell.state = (reducer as Reducer<ViewState<S>, unknown>)(cell.state, payload);
-      }
-      cell.callView?.repaint();
-      cell.resultView?.repaint();
-    },
-  };
-  HANDLES.set(args.toolCallId, handle as unknown as RenderHandle<unknown>);
-  return handle as unknown as RenderHandle<S>;
+export interface MountEnv {
+  width: number;
+  mode: Env["mode"];
+  previewLines: number;
+  expandedLines?: number;
 }
 
-// Sole place that knows about theme colors + highlighting; renderers stay pure-data.
-
-import { highlight, supportsLanguage } from "cli-highlight";
+/** Width-aware diff cache shared between this projection and the renderer's mount cell. */
+export interface DiffSlot {
+  fn?: (width: number) => string[];
+  lastWidth: number;
+  cached: string[];
+}
 
 function styleSegment(seg: Segment): string {
   if (typeof seg === "string") return seg;
   let text = seg.text;
   if (seg.highlight && supportsLanguage(seg.highlight)) {
     try { text = highlight(text, { language: seg.highlight, ignoreIllegals: true }); }
-    catch { /* fall through */ }
+    catch {}
   }
   const s = seg.style;
   if (!s) return text;
@@ -194,7 +125,7 @@ function styleSegment(seg: Segment): string {
   return text;
 }
 
-function segmentsToString(segs: Segment[]): string {
+export function segmentsToString(segs: Segment[]): string {
   return segs.map(styleSegment).join("");
 }
 
@@ -202,7 +133,7 @@ const TITLE_ICON_GLYPH: Record<TitleIcon, string> = {
   read: "◆", search: "⌕", edit: "✎", shell: "$", scheme: "λ", generic: "⚙",
 };
 
-function iconString(icon?: TitleIcon): string {
+export function iconString(icon?: TitleIcon): string {
   if (!icon) return "";
   return `${theme.fg("warning", TITLE_ICON_GLYPH[icon])} `;
 }
@@ -215,7 +146,7 @@ function fmtElapsed(ms: number): string {
   return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
 }
 
-function statusSuffix(s?: DisplayStatus): string {
+export function statusSuffix(s?: DisplayStatus): string {
   if (!s) return `  ${theme.fg("muted", "…")}`;
   const ok = s.exitCode === null || s.exitCode === 0;
   const mark = ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
@@ -224,14 +155,14 @@ function statusSuffix(s?: DisplayStatus): string {
   return `  ${mark}${elapsed}${sum}`;
 }
 
-function renderBody(body: Body, env: Env, diff: DiffSlot): string {
+export function renderBody(body: Body, env: Env, diff: DiffSlot): string {
   switch (body.kind) {
     case "text":
       return segmentsToString(body.segments);
     case "code": {
       if (body.lang && supportsLanguage(body.lang)) {
         try { return highlight(body.text, { language: body.lang, ignoreIllegals: true }); }
-        catch { /* fall through */ }
+        catch {}
       }
       return body.text;
     }
@@ -252,10 +183,19 @@ function renderBody(body: Body, env: Env, diff: DiffSlot): string {
   }
 }
 
-// Host-wide preview/summary/hidden policy inherited by every kind:"stream" body.
+// The tail is capped even when expanded so a huge result can't flood scrollback; the agent still sees it all.
+const DEFAULT_EXPANDED_LINES = 200;
+
 function renderStream(buffer: string, env: Env): string {
   const display = buffer.replace(/\n+$/, "");
-  if (env.expanded) return theme.fg("toolOutput", display);
+  if (env.expanded) {
+    const cap = env.expandedLines ?? DEFAULT_EXPANDED_LINES;
+    const lines = display.split("\n");
+    if (lines.length <= cap) return theme.fg("toolOutput", display);
+    const hidden = lines.length - cap;
+    const note = theme.fg("muted", `... (${hidden} earlier lines hidden, ${lines.length} total)`);
+    return `${note}\n${theme.fg("toolOutput", lines.slice(-cap).join("\n"))}`;
+  }
   if (env.mode === "hidden") {
     if (!env.finalized) return "";
     return lineCountHint(buffer);
@@ -281,118 +221,4 @@ function lineCountHint(buffer: string): string {
   const lines = buffer.split("\n").filter((l) => l.length > 0);
   const label = lines.length === 1 ? "1 line" : `${lines.length} lines`;
   return theme.fg("muted", label);
-}
-
-// Components that satisfy the legacy ToolCallView / ToolResultView contracts.
-
-class SchemaCallComponent extends Container {
-  private line: Text;
-  constructor(private handle: RenderHandle<unknown>) {
-    super();
-    this.line = new Text("", 1, 0);
-    this.addChild(new Spacer(1));
-    this.addChild(this.line);
-    handle.cell.callView = this;
-    this.repaint();
-  }
-
-  setStatus(opts: { exitCode: number | null; elapsedMs: number; summary?: string }): void {
-    this.handle.dispatch("status", opts);
-  }
-
-  repaint(): void {
-    const display = this.handle.model.view(this.handle.cell.state as ViewState<unknown>, this.handle.cell.env);
-    const icon = iconString(display.titleIcon);
-    const title = segmentsToString(display.title);
-    const status = statusSuffix(display.status);
-    if (display.titleRight && display.titleRight.length > 0) {
-      const right = segmentsToString(display.titleRight);
-      // env.width − 2 accounts for Text's paddingX=1 on each side.
-      const used = visibleWidth(icon) + visibleWidth(title) + visibleWidth(status) + visibleWidth(right);
-      const pad = " ".repeat(Math.max(2, this.handle.cell.env.width - 2 - used));
-      this.line.setText(`${icon}${title}${status}${pad}${right}`);
-    } else {
-      this.line.setText(`${icon}${title}${status}`);
-    }
-  }
-}
-
-class SchemaResultComponent extends Container {
-  private body: Text;
-  constructor(private handle: RenderHandle<unknown>) {
-    super();
-    this.body = new Text("", 0, 0);
-    this.addChild(this.body);
-    handle.cell.resultView = this;
-    this.repaint();
-  }
-
-  appendChunk(chunk: string): void { this.handle.dispatch("chunk", chunk); }
-  setDiffRenderer(fn: (width: number) => string[]): void { this.handle.dispatch("diff", fn); }
-  finalize(opts: { exitCode: number | null; summary?: string }): void {
-    this.handle.cell.env = { ...this.handle.cell.env, finalized: true };
-    this.handle.dispatch("status", { ...opts, elapsedMs: 0 });
-    HANDLES.delete(this.handle.toolCallId);
-  }
-  toggleExpanded(): void {
-    this.handle.cell.env = { ...this.handle.cell.env, expanded: !this.handle.cell.env.expanded };
-    this.repaint();
-    this.handle.cell.callView?.repaint();
-  }
-
-  override render(width: number): string[] {
-    if (this.handle.cell.env.width !== width) {
-      this.handle.cell.env = { ...this.handle.cell.env, width };
-      this.repaint();
-    }
-    return super.render(width);
-  }
-
-  repaint(): void {
-    const env = this.handle.cell.env;
-    const display = this.handle.model.view(this.handle.cell.state as ViewState<unknown>, env);
-    if (!display.body) { this.body.setText(""); return; }
-    // stream embeds the preview/summary/hidden policy; diff shows in preview
-    // or when expanded; other kinds show only when expanded/defaultExpanded.
-    if (display.body.kind === "diff" && !env.expanded && env.mode !== "preview") {
-      this.body.setText("");
-      return;
-    }
-    const policied = display.body.kind === "stream" || display.body.kind === "diff";
-    if (!policied && !env.expanded && !display.defaultExpanded) {
-      this.body.setText("");
-      return;
-    }
-    // Indent aligns body under the call-line title; reduced width keeps
-    // pre-fit renderers (diff) from overflowing past it.
-    const indent = "   ";
-    const bodyEnv: Env = { ...env, width: Math.max(1, env.width - indent.length) };
-    const rendered = renderBody(display.body, bodyEnv, this.handle.cell.diff);
-    if (!rendered.trim()) {
-      this.body.setText("");
-      return;
-    }
-    const ok = display.status?.exitCode === null || display.status?.exitCode === 0;
-    const arrow = ok ? theme.fg("muted", "└") : theme.fg("error", "└");
-    const lines = rendered.split("\n");
-    lines[0] = ` ${arrow} ${lines[0]}`;
-    for (let i = 1; i < lines.length; i++) lines[i] = `${indent}${lines[i]}`;
-    this.body.setText(lines.join("\n"));
-  }
-}
-
-export interface MountEnv {
-  width: number;
-  mode: Env["mode"];
-  previewLines: number;
-}
-
-export function mountCall<S>(model: RenderModel<S>, args: MountArgs, env: MountEnv): Component {
-  const handle = handleFor(args, model, env);
-  return new SchemaCallComponent(handle as RenderHandle<unknown>);
-}
-
-export function mountResult<S>(model: RenderModel<S>, args: MountArgs, env: MountEnv): Component {
-  const handle = handleFor(args, model, env);
-  return new SchemaResultComponent(handle as RenderHandle<unknown>);
 }

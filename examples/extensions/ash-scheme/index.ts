@@ -30,6 +30,8 @@ async function withDisplay(
     title: toolName, toolCallId, kind, rawInput, displayDetail,
   });
   const result = await run();
+  // Stream the result so the TUI's tracked `output` holds it, not just the summary.
+  if (result.content) bus.emit("agent:tool-output-chunk", { toolCallId, chunk: result.content });
   bus.emit("agent:tool-completed", {
     toolCallId,
     exitCode: result.exitCode,

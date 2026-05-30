@@ -2,8 +2,7 @@ import type { ExtensionContext } from "agent-sh/types";
 import type { MultiSessionStore } from "./multi-session-store.js";
 import type { AgentShMessage as AgentMessage } from "agent-sh/session-store";
 
-/** Maintains an `(entryId | null)[]` parallel to the live messages array;
- *  null slots are synthetics like compaction summaries that have no entry. */
+// liveEntryIds is parallel to the live messages array; null slots are synthetics (e.g. compaction summaries) with no entry.
 export interface Capture {
   flush(): Promise<void>;
   getEntryIdAt(messageIndex: number): string | null;
@@ -32,13 +31,20 @@ export function registerCapture(
     return { ...m, meta: { ...m.meta, diff: meta.diff, filePath: meta.filePath } };
   };
 
-  const flush = async (): Promise<void> => {
+  const writeNewMessages = async (): Promise<void> => {
     const messages = ctx.call("conversation:get-messages") as AgentMessage[] | undefined;
     if (!messages || messages.length <= liveEntryIds.length) return;
     const newMessages = messages.slice(liveEntryIds.length).map(enrich);
     const newIds = await getStore().current().appendMessages(newMessages);
     liveEntryIds = [...liveEntryIds, ...newIds];
     getStore().markLastSession();
+  };
+
+  // Serialize flushes so an exit-time flush can't race processing-done and double-append.
+  let chain: Promise<void> = Promise.resolve();
+  const flush = (): Promise<void> => {
+    chain = chain.then(writeNewMessages, writeNewMessages);
+    return chain;
   };
 
   ctx.bus.on("agent:processing-done", () => { void flush(); });

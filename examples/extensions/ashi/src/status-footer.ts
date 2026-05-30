@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { Container, Text, visibleWidth } from "@earendil-works/pi-tui";
+import type { TextView } from "./renderer.js";
 import { theme } from "./theme.js";
 
 interface StatusFields {
@@ -15,41 +15,33 @@ interface StatusFields {
   shellMode?: "off" | "on" | "private";
 }
 
-export class StatusFooter extends Container {
-  private text: Text;
+export class StatusFooter {
   private fields: StatusFields = {};
-  private lastWidth = 0;
 
-  constructor() {
-    super();
-    this.text = new Text("", 1, 0);
-    this.addChild(this.text);
+  constructor(
+    private view: TextView,
+    private measure: (text: string) => number,
+  ) {
+    this.refresh();
   }
 
   update(patch: Partial<StatusFields>): void {
     this.fields = { ...this.fields, ...patch };
-    this.repaint(this.lastWidth);
+    this.refresh();
   }
 
-  render(width: number): string[] {
-    if (width !== this.lastWidth) {
-      this.lastWidth = width;
-      this.repaint(width);
-    }
-    return super.render(width);
+  private refresh(): void {
+    this.view.setRenderFn((width) => [this.buildFooter(width)]);
   }
 
-  private repaint(width: number): void {
+  private buildFooter(width: number): string {
+    // width − 2: text node has paddingX=1 each side.
     const contentWidth = width > 0 ? Math.max(1, width - 2) : 0;
     const right = this.buildRight();
-    const rightWidth = visibleWidth(right);
     const left = this.buildLine();
-    if (!right) {
-      this.text.setText(left);
-      return;
-    }
-    const gap = Math.max(1, contentWidth - visibleWidth(left) - rightWidth);
-    this.text.setText(`${left}${" ".repeat(gap)}${right}`);
+    if (!right) return left;
+    const gap = Math.max(1, contentWidth - this.measure(left) - this.measure(right));
+    return `${left}${" ".repeat(gap)}${right}`;
   }
 
   private buildRight(): string {
