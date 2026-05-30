@@ -26,7 +26,6 @@ import type {
 const asComponent = (n: RenderNode): Component => n as unknown as Component;
 const asNode = (c: Component): RenderNode => c as unknown as RenderNode;
 
-// pi-tui's provider type is structurally identical to ours, so we pass through.
 type PiAutocompleteProvider = Parameters<Editor["setAutocompleteProvider"]>[0];
 
 function makeInput(editor: Editor): InputView {
@@ -93,7 +92,7 @@ export function createApp(): App {
     setFocus: (target) => tui.setFocus(asComponent(target)),
     focusInput: () => tui.setFocus(editor),
     requestRender: (force) => tui.requestRender(force),
-    commitScrollback: () => {}, // pi-tui manages its own scrollback viewport
+    commitScrollback: () => {},
     start: () => tui.start(),
     stop: () => tui.stop(),
     onKey: (handler) =>

@@ -9,7 +9,6 @@ import { isRenderModel, type RenderModel } from "./schema.js";
 export interface RenderState {
   state: Record<string, unknown>;
   invalidate: () => void;
-  /** The renderer's node factories, so an override builds views without pi-tui. */
   nodes: RenderNodes;
 }
 
@@ -19,11 +18,8 @@ export interface ThinkingArgs extends RenderState { text: string; hidden: boolea
 
 const SCHEMA_PREFIX = "ashi:render-tool:";
 
-/** Default ashi:render-* hooks returning chat-entry controllers; an extension
- *  overrides these to customize rendering, building views from the renderer. */
 export function registerRenderDefaults(ctx: ExtensionContext, renderer: Renderer): void {
-  // Cache the PNG, not the node: a node mounts only once, but finalize/rehydrate
-  // may render the same equation twice.
+  // Cache the PNG, not the node: finalize/rehydrate can render an equation twice.
   const equationPng = new Map<string, Buffer | null>();
   const renderEquation: EquationRenderer = (src) => {
     if (!equationPng.has(src)) {
@@ -79,8 +75,6 @@ export interface ToolHookResolver {
   modeFor: (name: string) => { mode: ToolResultMode; previewLines: number; expandedLines: number };
 }
 
-/** Resolves a tool name to a schema RenderModel (:{name}, then :default) and
- *  mounts it. refresh() re-reads the handler set after new registrations. */
 export function createToolHookResolver(
   ctx: ExtensionContext,
   renderer: Renderer,
@@ -97,7 +91,6 @@ export function createToolHookResolver(
     throw new Error(`no render model for tool "${name}" and no ${SCHEMA_PREFIX}default registered`);
   };
 
-  // The result view corrects its width on the first paint; 80 is a safe seed.
   const initialWidth = (): number => process.stdout.columns ?? 80;
 
   return {

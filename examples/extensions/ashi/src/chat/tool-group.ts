@@ -1,8 +1,3 @@
-// A run of same-kind tool calls, grown by tail-merge (the caller extends a group
-// only while it matches `kind` and stays the chat's tail). Over `maxVisible` the
-// oldest collapse into a summary line; toggleExpanded() reveals all. The look is
-// the renderer's (mountToolGroup); this only owns the state.
-
 import type { Renderer, RenderNode, ToolGroupChild, ToolGroupModel, ToolGroupView } from "../renderer.js";
 
 export const GROUP_ICONS: Record<string, string> = { read: "◆", search: "⌕" };
@@ -53,7 +48,7 @@ export class ToolGroup {
     this.repaint();
   }
 
-  /** First visible child index; collapsed and over-cap, one slot goes to the summary. */
+  // When collapsed and over-cap, one visible slot is reserved for the summary.
   private visibleSliceStart(): number {
     if (this.expanded || !Number.isFinite(this.maxVisible)) return 0;
     if (this.allChildren.length <= this.maxVisible) return 0;

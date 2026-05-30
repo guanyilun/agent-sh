@@ -1,6 +1,3 @@
-// RenderNode is a pi-tui Component here; the asNode/asComponent casts are the
-// only place that relies on it.
-
 import {
   Container,
   getImageDimensions,
@@ -24,7 +21,6 @@ import type {
 const asNode = (c: Component): RenderNode => c as unknown as RenderNode;
 const asComponent = (n: RenderNode): Component => n as unknown as Component;
 
-/** A Text that can recompute its content from the live width before painting. */
 class MeasuredText extends Text {
   private fn: ((width: number) => string[]) | null = null;
   private lastWidth = -1;
@@ -47,8 +43,7 @@ const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
-/** Markdown that brackets its rendered block with OSC 133 shell-integration
- *  zones so terminals can navigate between user prompts. */
+// OSC 133 zone brackets let terminals navigate between user prompts.
 class ZonedMarkdown extends Markdown {
   override render(width: number): string[] {
     const lines = super.render(width);

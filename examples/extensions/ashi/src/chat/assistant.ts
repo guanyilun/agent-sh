@@ -1,14 +1,9 @@
-// Finalize re-segments the settled buffer into markdown + display-math; the
-// rebuild-from-store path runs the same code so an equation rehydrates identically.
-
 import type { ContainerView, MarkdownView, RenderNode, RenderNodes } from "../renderer.js";
 
-/** Render LaTeX to a display node, or null when the toolchain is unavailable. */
 export type EquationRenderer = (latexSrc: string) => RenderNode | null;
 
 type LatexSegment = { type: "text"; value: string } | { type: "latex"; value: string };
 
-/** Split text into markdown / display-math segments. Width-independent. */
 function segmentLatex(text: string): LatexSegment[] {
   const segments: LatexSegment[] = [];
   let i = 0;

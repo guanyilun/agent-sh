@@ -2,8 +2,7 @@ import type { ExtensionContext } from "agent-sh/types";
 import type { MultiSessionStore } from "./multi-session-store.js";
 import type { AgentShMessage as AgentMessage } from "agent-sh/session-store";
 
-/** Maintains an `(entryId | null)[]` parallel to the live messages array;
- *  null slots are synthetics like compaction summaries that have no entry. */
+// liveEntryIds is parallel to the live messages array; null slots are synthetics (e.g. compaction summaries) with no entry.
 export interface Capture {
   flush(): Promise<void>;
   getEntryIdAt(messageIndex: number): string | null;
@@ -41,8 +40,7 @@ export function registerCapture(
     getStore().markLastSession();
   };
 
-  // Serialize flushes through a chain so an exit-time flush can't race a
-  // processing-done flush and double-append the same messages.
+  // Serialize flushes so an exit-time flush can't race processing-done and double-append.
   let chain: Promise<void> = Promise.resolve();
   const flush = (): Promise<void> => {
     chain = chain.then(writeNewMessages, writeNewMessages);

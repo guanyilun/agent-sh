@@ -9,7 +9,6 @@ export function createPiTuiToolGroup(): ToolGroupView {
   container.addChild(rows.node);
 
   const update = (model: ToolGroupModel): void => {
-    // Rebuild rather than diff the rows: group sizes are small.
     rows.clear();
     for (const line of renderToolGroupLines(model)) {
       const t = nodes.text({ paddingX: 1 });

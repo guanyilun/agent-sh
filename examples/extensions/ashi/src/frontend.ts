@@ -47,9 +47,7 @@ function buildDiffRenderer(
 ): (width: number) => string[] {
   return (width) => {
     if (!boxed) {
-      // Claude Code style: no frame — the diff hangs under the renderer's own
-      // gutter. The file path is already on the call line, so drop renderDiff's
-      // header (lines[0]); the line-numbered, bg-colored hunks are the body.
+      // Drop renderDiff's header (lines[0]); file path is already on the call line.
       const contentW = Math.max(20, width);
       const inner = diff.isNewFile
         ? renderNewFilePreview(diff, 30, filePath, true)
@@ -98,9 +96,6 @@ function renderNewFilePreview(
   const body = shown.map((l, i) => {
     const no = String(i + 1).padStart(noW);
     const code = highlightLine(l.text, lang);
-    // A fresh file isn't a diff: Claude Code shows plain highlighted content with no
-    // markers or background. We keep a dim line number (no `│`) to match the edit
-    // context gutter; pi-tui's boxed style keeps the `│`.
     return claudeStyle ? `\x1b[2m${no}\x1b[22m  ${code}` : `${theme.fg("muted", `${no} │`)} ${code}`;
   });
   if (overflow > 0) body.push(theme.fg("muted", `… ${overflow} more lines`));
@@ -145,12 +140,11 @@ function detailFromArgs(argsJson: string | undefined): string {
       const compact = args.source.replace(/\s+/g, " ").trim();
       return compact.length > 80 ? compact.slice(0, 77) + "…" : compact;
     }
-  } catch { /* fall through */ }
+  } catch { /* */ }
   return "";
 }
 
-/** resultDisplay isn't persisted, so /resume rebuilds the "16 entries" / "117
- *  lines" hints from saved tool output. */
+/** resultDisplay isn't persisted; /resume rebuilds these hints from saved tool output. */
 function inferSummary(toolName: string, content: unknown): string | undefined {
   if (typeof content !== "string" || content.length === 0) return undefined;
   const lines = content.split("\n").filter((l) => l.length > 0);
@@ -235,9 +229,7 @@ export function mountAshi(
 
   input.onChange((text) => {
     const r = deriveChangeHandlerResult(shellMode, pendingPrivate, text);
-    // Order matters: setText fires onChange synchronously, and the recursive
-    // call must see the new mode/private values or it re-runs the entry
-    // transition and clobbers the just-set state.
+    // setText fires onChange synchronously; set mode/private before setText or the recursive call clobbers it.
     if (r.mode !== shellMode) setShellMode(r.mode);
     setPendingPrivate(r.pendingPrivate);
     if (r.replaceText !== undefined) input.setText(r.replaceText);
@@ -283,8 +275,6 @@ export function mountAshi(
     statusFooter.update({ thinking: supported ? level : undefined });
   };
 
-  // A typed list parallel to the scrollback nodes, so group-merge / thinking-toggle
-  // / expand-all inspect controllers instead of the opaque renderer node tree.
   type ChatEntry =
     | { t: "group"; group: ToolGroup }
     | { t: "thinking"; ctrl: ThinkingBlock }
@@ -417,7 +407,7 @@ export function mountAshi(
 
   const startLoader = (): void => {
     if (loader) return;
-    loaderGap = renderer.spacer(1); // a blank line sets it off from the content above
+    loaderGap = renderer.spacer(1);
     app.footerSlot.addChild(loaderGap);
     loader = app.createLoader("thinking…", fgAccent, fgMuted);
     app.footerSlot.addChild(loader.node);
@@ -531,12 +521,12 @@ export function mountAshi(
     const branch = getStore().current().getBranch();
     const toolMap = new Map<string, ReplayEntry>();
     for (const e of branch) replayEntry(e, toolMap);
-    app.commitScrollback?.(); // replayed history is settled — commit it to native scrollback
+    app.commitScrollback?.();
     app.requestRender();
   };
 
   bus.on("agent:query", ({ query }) => {
-    app.commitScrollback?.(); // a new turn begins — the previous one is settled
+    app.commitScrollback?.();
     appendEntry(renderUserMessage(query), { t: "plain" });
     activeAssistant = null;
     app.requestRender();
@@ -548,7 +538,6 @@ export function mountAshi(
     app.requestRender();
   });
 
-  /** Drop the live assistant so subsequent text starts fresh markdown below the image. */
   const appendImage = (data: Buffer): void => {
     const img = renderer.image(data);
     if (!img) return;
@@ -648,8 +637,7 @@ export function mountAshi(
     app.requestRender();
   });
 
-  // agent:tool-* listeners already render agent-issued bash; the shell:* path
-  // is only for user-issued `!` commands.
+  // shell:* path is only for user-issued `!` commands; agent bash renders via agent:tool-*.
   let agentShellActive = false;
   let shellForegroundBusy = false;
   bus.on("shell:agent-exec-start", () => { agentShellActive = true; });
@@ -698,7 +686,7 @@ export function mountAshi(
     if (activeAssistant) activeAssistant.finalize();
     refreshFooterStats();
     refreshBranch();
-    // Shell queue drains first so its output lands in the next turn's <shell_events>.
+    // Drain shell queue before queries so its output lands in the next turn's <shell_events>.
     while (queuedShellLines.length > 0) {
       const item = queuedShellLines.shift()!;
       pendingUserShell.push({ private: item.private });
@@ -826,8 +814,6 @@ export function mountAshi(
         const only = byId.get(kids[0]!);
         const isTip = !!only && !(only.type === "message" && only.message.role === "user");
         if (isTip) {
-          // Render the tip as a branch-child so it gets a `└` connector at
-          // a deeper indent, visually "the next node in this branch."
           walk(kids[0]!, [...lineage, " "], true);
         } else {
           walk(kids[0]!, lineage, false);
@@ -973,8 +959,7 @@ export function mountAshi(
 
   const toggleThinking = (): void => {
     hideThinking = !hideThinking;
-    // Reasoning isn't persisted, so a store rebuild would drop it — toggle the
-    // live controllers instead.
+    // Reasoning isn't persisted; toggle live controllers instead of rebuilding.
     for (const e of chatEntries) {
       if (e.t === "thinking") e.ctrl.setHidden(hideThinking);
     }
@@ -1006,7 +991,7 @@ export function mountAshi(
         return { consume: true };
       }
       if (shellForegroundBusy) {
-        // Real ^C byte; PTY translates it to SIGINT for the foreground process.
+        // Literal ^C byte; PTY translates to SIGINT for the foreground process.
         bus.emit("shell:pty-write", { data: "\x03" });
         return { consume: true };
       }
@@ -1037,8 +1022,7 @@ export function mountAshi(
       return { consume: true };
     }
     if (key.matches("backspace") && shellMode && input.getText().length === 0) {
-      // Editor swallows backspace-on-empty; two-step exit: first clears the
-      // private signal, second exits shell mode entirely.
+      // Two-step exit: first backspace clears the private signal, second exits shell mode.
       if (pendingPrivate) setPendingPrivate(false);
       else setShellMode(false);
       return { consume: true };

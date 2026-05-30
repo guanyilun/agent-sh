@@ -5,7 +5,6 @@ export type ToolResultMode = "hidden" | "summary" | "preview";
 export interface ToolEntryConfig {
   result: ToolResultMode;
   previewLines: number;
-  /** Max lines shown when a tool entry is expanded (Ctrl+O); the tail is kept. */
   expandedLines: number;
 }
 
@@ -34,7 +33,6 @@ interface AshiSettings extends Record<string, unknown> {
   renderer?: string;
 }
 
-/** The persistent renderer preference (ashi.renderer); env/flag override it. */
 export function loadRendererPreference(): string | undefined {
   const r = getExtensionSettings<AshiSettings>("ashi", {}).renderer;
   return typeof r === "string" && r.trim() ? r.trim() : undefined;

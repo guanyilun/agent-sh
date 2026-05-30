@@ -16,9 +16,6 @@ import {
   type ViewState,
 } from "../../schema.js";
 
-// Call-side and result-side components share one state cell, so chunks from
-// the result side can repaint the call line (e.g. for in-title progress).
-
 interface SharedCell<S> {
   state: S;
   env: Env;
@@ -34,7 +31,6 @@ interface RenderHandle<S> {
   dispatch: (action: string, payload?: unknown) => void;
 }
 
-/** Lets the result-side mount find the call-side cell. Cleared on finalize. */
 const HANDLES = new Map<string, RenderHandle<unknown>>();
 
 function handleFor<S>(
@@ -104,7 +100,7 @@ class SchemaCallComponent extends Container {
     const status = statusSuffix(display.status);
     if (display.titleRight && display.titleRight.length > 0) {
       const right = segmentsToString(display.titleRight);
-      // env.width − 2 accounts for Text's paddingX=1 on each side.
+      // width − 2: Text has paddingX=1 each side.
       const used = visibleWidth(icon) + visibleWidth(title) + visibleWidth(status) + visibleWidth(right);
       const pad = " ".repeat(Math.max(2, this.handle.cell.env.width - 2 - used));
       this.line.setText(`${icon}${title}${status}${pad}${right}`);
@@ -149,7 +145,6 @@ class SchemaResultComponent extends Container {
     const env = this.handle.cell.env;
     const display = this.handle.model.view(this.handle.cell.state as ViewState<unknown>, env);
     if (!display.body) { this.body.setText(""); return; }
-    // diff shows in preview or expanded; non-policied kinds only when expanded.
     if (display.body.kind === "diff" && !env.expanded && env.mode !== "preview") {
       this.body.setText("");
       return;
@@ -159,7 +154,7 @@ class SchemaResultComponent extends Container {
       this.body.setText("");
       return;
     }
-    // Reduced width keeps pre-fit renderers (diff) from overflowing the indent.
+    // Reduced width keeps pre-fit diff renderers from overflowing the indent.
     const indent = "   ";
     const bodyEnv: Env = { ...env, width: Math.max(1, env.width - indent.length) };
     const rendered = renderBody(display.body, bodyEnv, this.handle.cell.diff);

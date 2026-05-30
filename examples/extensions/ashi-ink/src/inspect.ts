@@ -1,9 +1,3 @@
-// Rendering-flow inspector, off unless ASHI_INSPECT is set (=1 writes to
-// $TMPDIR/ashi-inspect.log, or set it to a path). It captures the three things
-// that pin a React render loop: the "Maximum update depth" warning with its
-// stack, any re-entrant store bump (a bump fired *during* a flush is the loop
-// signature), and the per-commit render count via a Profiler. Append-only JSONL.
-
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +18,6 @@ export function inspectLog(event: string, data?: Record<string, unknown>): void 
 const shortStack = (): string =>
   (new Error().stack ?? "").split("\n").slice(2, 16).map((l) => l.trim()).join(" | ");
 
-/** Wrap console.error to record the loop warning with a stack, then pass through. */
 export function inspectConsole(): void {
   if (!INSPECT_FILE) return;
   const orig = console.error.bind(console);
@@ -37,7 +30,6 @@ export function inspectConsole(): void {
   };
 }
 
-/** A render burst: many commits in a tight window points at the looping subtree. */
 export function makeCommitWatcher(): (id: string, phase: string, actualMs: number) => void {
   let windowStart = 0;
   let windowCount = 0;
@@ -54,14 +46,10 @@ export function makeCommitWatcher(): (id: string, phase: string, actualMs: numbe
   };
 }
 
-/** Note a store bump that fired while a flush was in progress — i.e. a render- or
- *  effect-phase mutation, which is exactly how a setState-in-effect loop forms. */
 export function inspectReentrantBump(): void {
   inspectLog("reentrant-bump", { jsStack: shortStack() });
 }
 
-// Producer-side capture: when bumps come faster than ~30 per 250ms, sample the
-// caller's stack once per burst — that names whoever is driving the render storm.
 let bumpWindowStart = 0;
 let bumpCount = 0;
 let bumpSampled = false;

@@ -1,5 +1,4 @@
-// Bridges ashi's imperative node model to Ink's declarative tree via mutable
-// vnodes + a version store that forces re-render. Degradations are in the README.
+// Bridges ashi's imperative node tree to Ink via mutable vnodes + a version store.
 
 import React from "react";
 import { Box, Static, Text, useInput, render as inkRender, type Instance } from "ink";
@@ -69,10 +68,8 @@ const ANSI = /\x1b\[[0-9;]*m/g;
 const measureWidth = (text: string): number => text.replace(ANSI, "").length;
 const termWidth = (): number => process.stdout.columns ?? 80;
 
-// Ink renders each line of a <Text> independently: it closes any open SGR at the
-// line boundary and does NOT reopen it on the next line. So a color span wrapping a
-// whole multi-line block (e.g. theme.fg around streamed tool output) tints only the
-// first line. Re-emit the SGR active at each newline so every line is self-styled.
+// Ink closes an open SGR at each newline and never reopens it, so a multi-line color
+// span tints only the first line — re-emit the active SGR after every newline.
 const SGR_RESETS = new Set(["\x1b[0m", "\x1b[m", "\x1b[39m", "\x1b[49m", "\x1b[22m"]);
 function carrySgr(text: string): string {
   if (!text.includes("\n")) return text;
@@ -84,8 +81,7 @@ function carrySgr(text: string): string {
   }).join("\n");
 }
 
-// Truncate to a visible (ANSI-ignoring) width, dropping a trailing … and closing
-// any open SGR — keeps a long command or output line to one row instead of wrapping.
+// Truncate to a visible width with a trailing …, closing any open SGR (no wrapping).
 function truncateVisible(s: string, width: number): string {
   if (width <= 1 || measureWidth(s) <= width) return s;
   let visible = 0;
@@ -100,30 +96,24 @@ function truncateVisible(s: string, width: number): string {
   return `${out}…\x1b[0m`;
 }
 
-// Ink's accent violet (#c778dd), used for the loader spinner and the focused
-// input border. Chat markers are neutral gray (see MARKER_GRAY) — Claude Code style.
-const ACCENT_HEX = "#c778dd";
+const ACCENT_HEX = "#c778dd"; // loader spinner + focused input border
 const RESET = "\x1b[39m";
 const BOLD = "\x1b[1m";
 const BOLD_OFF = "\x1b[22m";
-const USER_BG = "#3a3a42"; // subtle gray band behind a sent user turn (Claude Code style)
-const MARKER_GRAY = "\x1b[38;2;154;160;166m"; // light-gray ❯ (raw ANSI, safe over the band bg)
-const MARKER_GRAY_HEX = "#9aa0a6"; // same gray for Ink color props (the input prompt)
-const USER_MARKER = `${MARKER_GRAY}${BOLD}❯${BOLD_OFF}${RESET} `; // ❯ at col 0, 2-col gutter
-const ASSISTANT_MARKER = "⏺ "; // assistant response bullet (Claude Code), default fg, 2-col gutter
+const USER_BG = "#3a3a42";
+const MARKER_GRAY = "\x1b[38;2;154;160;166m"; // fg-only, safe over the band bg
+const MARKER_GRAY_HEX = "#9aa0a6";
+const USER_MARKER = `${MARKER_GRAY}${BOLD}❯${BOLD_OFF}${RESET} `;
+const ASSISTANT_MARKER = "⏺ ";
 
-// Claude Code's dark-theme status colors for the tool dot — its success green and
-// error red, which differ from ashi's theme palette (ink mimics Claude Code's look).
-const DOT_OK = "\x1b[38;2;78;186;101m"; // rgb(78,186,101) bright green
-const DOT_ERR = "\x1b[38;2;255;107;128m"; // rgb(255,107,128) bright red
-const DIM_ON = "\x1b[2m"; // running dot is dimmed default-fg, like Claude Code's dimColor
+// Claude Code's dark-theme dot colors (differ from ashi's theme palette).
+const DOT_OK = "\x1b[38;2;78;186;101m";
+const DOT_ERR = "\x1b[38;2;255;107;128m";
+const DIM_ON = "\x1b[2m";
 const DIM_OFF = "\x1b[22m";
 
-// marked-terminal's legacy table renderer hands us pre-rendered header/body
-// strings delimited by these markers, then sizes the table to content with no
-// max — so a wide column overflows the terminal and Ink re-wraps it to chaos.
-// We split the markers ourselves and rebuild with cli-table3 colWidths that fit
-// the available width (the one constraint that makes it wrap inside cells).
+// marked-terminal's legacy table renderer hands us marker-delimited cells sized to
+// content with no max; we split them and rebuild with cli-table3 colWidths that fit.
 const TABLE_CELL_SPLIT = "^*||*^";
 const TABLE_ROW_WRAP_RE = /\*\|\*\|\*\|\*/g;
 
@@ -140,8 +130,7 @@ function fitTable(header: string, body: string, width: number): string {
   const rows = splitTableRows(body);
   const cols = Math.max(1, head.length);
   const overhead = cols + 1 + cols * 2; // borders + 1-cell padding each side
-  // Grow eagerly to the content's natural width; only shrink+wrap once the table
-  // would exceed the terminal. (cli-table3 otherwise spans the full width always.)
+  // Grow to content width; only shrink+wrap once it would exceed the terminal.
   const natural = Array.from({ length: cols }, (_, i) => {
     let mx = measureWidth(head[i] ?? "");
     for (const r of rows) mx = Math.max(mx, measureWidth(r[i] ?? ""));
@@ -161,17 +150,13 @@ function fitTable(header: string, body: string, width: number): string {
   return `${t.toString()}\n`;
 }
 
-// marked-terminal defaults to width 80 / no reflow, so prose never wraps to the
-// real terminal width. Reflow at the available width (cached per width) so the
-// caller can indent each wrapped line consistently; override the table renderer
-// to fit the terminal (see fitTable).
+// marked-terminal defaults to width 80 / no reflow; reflow at the real width (cached).
 const markedCache = new Map<number, Marked>();
 function markedFor(width: number): Marked {
   let m = markedCache.get(width);
   if (!m) {
     m = new Marked();
-    // tab: list / code-block / blockquote indent. 0 = flush-left markdown (the
-    // bullet gutter is the only indent); flattens nested lists, which is accepted.
+    // tab 0 = flush-left markdown (the bullet is the only indent); flattens nested lists.
     m.use(markedTerminal({ width, reflowText: true, tab: 0 }) as Parameters<Marked["use"]>[0]);
     m.use({ renderer: { table: (h: unknown, b: unknown): string => fitTable(String(h), String(b), width) } } as Parameters<Marked["use"]>[0]);
     markedCache.set(width, m);
@@ -186,12 +171,9 @@ function renderMarkdown(src: string, width: number): string {
   }
 }
 
-// Stable-prefix streaming (the Claude Code pattern): re-parsing the whole reply
-// every frame is O(n²) over a long stream. Lex only the unstable tail, treat the
-// last non-space token as the still-growing block, and cache the rendered output
-// of the completed blocks (the boundary only advances). marked's lexer keeps an
-// unclosed code fence as one token, so the boundary never splits mid-block —
-// render(stable) + "\n\n" + render(unstable) === render(whole) for marked-terminal.
+// Stable-prefix streaming: render only the unstable tail and cache completed blocks
+// (the boundary only advances), so a long stream isn't re-parsed every frame. marked
+// keeps an unclosed fence as one token, so the boundary never splits a block.
 interface MdCache { src: string; out: string; w: number }
 const blockLexer = new Marked();
 function renderMarkdownStreaming(v: { source: string; mdc?: MdCache }, width: number): string {
@@ -227,12 +209,6 @@ function createStore(): Store {
   let scheduled = false;
   let flushing = false;
   const listeners = new Set<() => void>();
-  // Coalesce bumps to one notification per tick. Streaming fires req() many times
-  // a tick (chunk text + status + loader); a synchronous bump on each one advances
-  // the snapshot under useSyncExternalStore's post-commit re-check, which force-
-  // re-renders, re-checks, and runs away ("Maximum update depth"). Deferring to a
-  // microtask collapses a burst into a single render whose snapshot is stable at
-  // commit, so the re-check matches and the loop never forms.
   let lastFlush = 0;
   const flush = (): void => {
     scheduled = false;
@@ -243,12 +219,9 @@ function createStore(): Store {
     flushing = false;
   };
   return {
-    // Throttle to ~60fps via a timer (a macrotask). A fast stream emits chunk
-    // events microtask-paced; coalescing per-microtask still flushes once per
-    // chunk, and those flushes chain within one macrotask drain until React's
-    // nested-update limit trips ("Maximum update depth"). A timer flush runs at
-    // the macrotask boundary, so a whole burst collapses into one render and the
-    // chain can't form.
+    // Timer-throttle to ~60fps. Bursty per-microtask bumps would chain renders past
+    // React's nested-update limit ("Maximum update depth"); a macrotask flush
+    // collapses a whole burst into one render so the chain can't form.
     bump: () => {
       if (INSPECT_FILE) { inspectBump(); if (flushing) inspectReentrantBump(); }
       if (scheduled) return;
@@ -261,10 +234,8 @@ function createStore(): Store {
   };
 }
 
-// Claude Code blinks a running tool's dot — a dimmed ⏺ toggling on/off every
-// ~600ms — and shows it solid (green ok / red error) once resolved. One shared
-// clock keeps every running dot in sync; it ticks only while something is running
-// and unrefs so it never holds the process open (headless tests still exit clean).
+// One shared ~600ms clock blinks running dots in sync; it ticks only while something
+// runs and unrefs so it never holds the process open (headless tests exit clean).
 const BLINK_MS = 600;
 interface Blink { on: () => boolean; start: (token: object) => void; stop: (token: object) => void }
 function makeBlink(bump: () => void): Blink {
@@ -299,7 +270,6 @@ function makeNodes(req: () => void): RenderNodes {
       };
     },
     markdown(opts?: MarkdownOptions): MarkdownView {
-      // osc133Zones is only set for user turns; use it to give them the band.
       const v: VNode = { kind: "markdown", source: "", color: opts?.color, userMsg: opts?.osc133Zones, bullet: opts?.bullet, paddingX: opts?.paddingX };
       return {
         node: asNode(v),
@@ -329,10 +299,7 @@ interface Cell {
   args: MountArgs;
 }
 
-// Claude Code tool look (ink owns the presentation; the schema supplies only the
-// data — name/detail/status/body). A tool call is `⏺ Name(detail)`, the ⏺ dimmed
-// and blinking while running, then solid green ok / red error; the result hangs
-// under a `⎿` gutter (⎿ at col 2, content at col 5), matching the ⏺ bullet rhythm.
+// Tool look (ink owns presentation; the schema supplies name/detail/status/body).
 const RESULT_GUTTER = "     "; // 5 cols — continuation under "  ⎿  "
 
 function prettyToolName(name: string): string {
@@ -341,9 +308,8 @@ function prettyToolName(name: string): string {
   return words.join(" ") || "Tool";
 }
 
-// The status dot, Claude Code style: a dimmed ⏺ that blinks (a blank when the
-// shared clock is off) while running, solid green/red once resolved. A blank keeps
-// the 2-col gutter so the name never shifts as the dot blinks.
+// Dimmed blinking ⏺ while running (a blank keeps the gutter width steady), solid
+// green/red once resolved.
 function statusDot(s: { exitCode: number | null } | undefined, blinkOn: boolean): string {
   if (!s) return blinkOn ? `${DIM_ON}⏺${DIM_OFF}` : " ";
   const ok = s.exitCode === null || s.exitCode === 0;
@@ -437,11 +403,8 @@ function makeToolMount(req: () => void, blink: Blink) {
   };
 }
 
-// A read/search group, Claude Code style: a `⏺ Reading N files… (ctrl+o to expand)`
-// summary (gerund + … while active, past tense when done), with the in-flight file
-// path(s) listed under a `⎿` gutter so you see *what* it's reading, not just a count.
-// Expanding (Ctrl+O) lists every call with its per-file summary. Not a ├/└ tree; the
-// count rolls up whether or not the substrate evicted older calls.
+// Read/search group: a "Reading N files… (ctrl+o to expand)" summary with the
+// in-flight path(s) under ⎿; expand lists every call with its per-file summary.
 function summarizeGroup(kind: string, n: number, running: boolean): string {
   if (kind === "read") return `${running ? "Reading" : "Read"} ${n} file${n === 1 ? "" : "s"}`;
   if (kind === "search") return `${running ? "Searching for" : "Searched for"} ${n} pattern${n === 1 ? "" : "s"}`;
@@ -469,10 +432,9 @@ function makeToolGroup(req: () => void, blink: Blink): ToolGroupView {
     if (running && !acquired) { blink.start(v); acquired = true; }
     else if (!running && acquired) { blink.stop(v); acquired = false; }
     ch.length = 0;
-    // Summary bullet via a render fn so the blink clock repaints it in place.
+    // Summary via a render fn so the blink clock repaints it in place.
     ch.push({ kind: "text", lines: [], fn: () => (model ? [groupSummaryLine(model, blink.on())] : []), paddingX: 0 });
-    // Collapsed: only the in-flight files (the current reads), like Claude Code's
-    // active group — once done it's just the count. Expanded: every call + summary.
+    // Collapsed shows only in-flight files; expanded shows every call + summary.
     const rows = m.expanded ? m.children : m.children.filter((c) => !c.status);
     for (const c of rows) {
       const elbow = segmentsToString([{ text: "⎿", style: { color: childOk(c) ? "muted" : "error" } }]);
@@ -495,13 +457,8 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
     case "markdown": {
       const w = termWidth();
       if (v.userMsg) {
-        // A sent user turn: a faint full-width band with a ❯ marker at column 0
-        // (Claude Code style). Ink's <Text backgroundColor> colors padding too, so
-        // padding each line to the terminal width fills the row. marked-terminal
-        // emits \x1b[0m full resets that would reset the background mid-line, so
-        // strip ANSI — a user turn is plain text on the band; only the fg-only
-        // marker codes (safe over a background) are added back. 2-col gutter
-        // ("❯ " / "  ") so wrapped lines align with the content.
+        // Sent user turn: a faint full-width band (pad each line to the width). Strip
+        // ANSI first — marked-terminal's \x1b[0m resets would punch holes in the bg.
         const plain = renderMarkdown(v.source, w - 2).replace(ANSI, "");
         const banded = plain.split("\n").map((l, i) => {
           const marker = i === 0 ? USER_MARKER : "  ";
@@ -510,8 +467,7 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
         return <Text key={key} backgroundColor={USER_BG}>{banded}</Text>;
       }
       if (v.bullet) {
-        // An assistant response: a ⏺ bullet at column 0, content hanging-indented
-        // to column 2 (Claude Code design). No background, no extra padding.
+        // Assistant response: a ⏺ bullet at column 0, content hanging-indented to 2.
         let md = renderMarkdownStreaming(v, w - 2);
         if (md.replace(ANSI, "").trim() === "") return null;
         if (v.color) md = md.split("\n").map(v.color).join("\n");
@@ -555,14 +511,9 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
   }
 }
 
-// The renderer owns inter-block rhythm (Claude Code's marginTop model): one blank
-// line above each top-level scrollback block, except the very first and except a
-// tool result, which stays tight under its call (the call vnode is the block start;
-// the result carries `cont`). Empty blocks render nothing and so contribute no gap.
-//
-// The shared chat controllers also prepend a spacer per block (pi-tui's per-block
-// gap); keeping it here would stack with marginTop and double the gap. So this
-// renderer drops a block's leading spacer and lets marginTop be the single source.
+// Renderer owns inter-block rhythm: one blank line above each block (marginTop),
+// except index 0 and a tool result (cont → tight under its call). The shared chat
+// controllers also prepend a per-block spacer, so drop a block's leading spacer here.
 function renderBlock(child: VNode, globalIndex: number): React.ReactElement | null {
   const block: VNode = child.kind === "container" && child.children[0]?.kind === "spacer"
     ? { ...child, children: child.children.slice(1) }
@@ -582,10 +533,7 @@ interface AppState {
   input: { text: string; onChange?: (t: string) => void; onSubmit?: (t: string) => void };
   focus: "input" | "select";
   keyHandlers: KeyHandler[];
-  // Scrollback entries [0, committedCount) are settled; they render through
-  // <Static> into native scrollback. The rest (the current turn) stay in Ink's
-  // managed region, so they remain interactive (expand/toggle/group-merge) and
-  // the live tail repaints alone.
+  // [0, committedCount) are settled and render via <Static>; the rest is the live turn.
   committedCount: number;
 }
 
@@ -611,10 +559,8 @@ function buildKeyEvent(input: string, key: Record<string, boolean>): KeyEvent {
 
 function Root({ store, state }: { store: Store; state: AppState }): React.ReactElement {
   React.useSyncExternalStore(store.subscribe, store.get, store.get);
-  // Stable handlers. Ink's useInput re-subscribes its stdin listener whenever the
-  // handler identity changes, and ink-text-input re-runs on new callbacks — a
-  // fresh closure every render churns those through the streaming render-storm
-  // (the "dependency changes every render" loop). state/store are stable refs.
+  // Stable handler identities: a fresh closure each render would churn useInput's
+  // stdin re-subscribe and ink-text-input through the streaming render storm.
   const onKey = React.useCallback((input: string, key: Record<string, unknown>) => {
     const ev = buildKeyEvent(input, key as Record<string, boolean>);
     for (const h of state.keyHandlers) { const r = h(ev); if (r && r.consume) break; }
@@ -624,10 +570,8 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
   }, [state, store]);
   const onSubmit = React.useCallback((val: string) => { state.input.onSubmit?.(val); }, [state]);
   useInput(onKey as Parameters<typeof useInput>[0]);
-  // Settled scrollback flows into the terminal's native scrollback via <Static>
-  // (written once, never repainted), exactly like pi-tui pushing committed lines
-  // above its viewport. Only the live tail + chrome stay in Ink's managed region,
-  // so a streaming chunk repaints one entry instead of the whole growing tree.
+  // Settled turns flow into native scrollback via <Static> (written once); only the
+  // live tail + chrome stay in Ink's managed region, so a chunk repaints one entry.
   const sb = state.scrollback;
   const sbChildren = sb.kind === "container" ? sb.children : [];
   const cc = Math.min(state.committedCount, sbChildren.length);
@@ -692,10 +636,8 @@ function makeApp(store: Store, req: () => void): { app: App; element: React.Reac
   let ink: Instance | null = null;
   const element = <Root store={store} state={state} />;
 
-  // <Static> writes committed entries permanently into native scrollback; Ink
-  // can't un-write them. So clearing the chat (fork / session switch / rebuild)
-  // needs a true reset: unmount, wipe the screen AND scrollback buffer (\x1b[3J),
-  // then remount fresh. (No-op before start(), e.g. in headless tests.)
+  // <Static> entries are permanent, so clearing needs a true reset: unmount, wipe the
+  // screen + scrollback buffer (\x1b[3J), remount. No-op before start() (headless).
   const resetTerminal = (): void => {
     if (!ink) return;
     ink.unmount();
@@ -739,16 +681,13 @@ function makeApp(store: Store, req: () => void): { app: App; element: React.Reac
     focusInput: () => { state.focus = "input"; req(); },
     requestRender: () => req(),
     commitScrollback: () => { state.committedCount = scrollbackChildren.length; req(); },
-    // Ink's own resize handler only re-layouts boxes and re-paints the existing
-    // tree — it doesn't re-run Root, so width-dependent content (band, tables,
-    // markdown reflow, status, tool output) wouldn't recompute. Bump the store
-    // on resize to force a render at the new width.
     start: () => {
       if (ink) return;
       if (INSPECT_FILE) inspectConsole();
+      // Ink's resize re-layouts but doesn't re-run Root, so width-dependent content
+      // wouldn't recompute; bump on resize to force a render at the new width.
       process.stdout.on("resize", req);
-      // Inspecting needs React's warning to reach our console wrapper, not Ink's
-      // log interceptor — so disable patchConsole only then.
+      // patchConsole off only while inspecting, so React's warning reaches our wrapper.
       ink = inkRender(element, INSPECT_FILE ? { patchConsole: false } : undefined);
     },
     stop: () => { process.stdout.off("resize", req); ink?.unmount(); ink = null; },

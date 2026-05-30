@@ -15,7 +15,6 @@ interface StatusFields {
   shellMode?: "off" | "on" | "private";
 }
 
-/** Drives a width-aware text view: left + computed gap + right, recomputed on resize. */
 export class StatusFooter {
   private fields: StatusFields = {};
 
@@ -36,7 +35,7 @@ export class StatusFooter {
   }
 
   private buildFooter(width: number): string {
-    // width − 2 mirrors the text node's paddingX=1 on each side.
+    // width − 2: text node has paddingX=1 each side.
     const contentWidth = width > 0 ? Math.max(1, width - 2) : 0;
     const right = this.buildRight();
     const left = this.buildLine();

@@ -28,10 +28,8 @@ export interface DiffRenderOptions {
   trueColor?: boolean;
   /** Enable syntax highlighting on diff lines. Default true. */
   syntaxHighlight?: boolean;
-  /** Claude Code gutter style (unified mode): right-aligned line number, the
-   *  `+`/`-` sigil hugging the code, the row background spanning the whole line,
-   *  and context code shown un-dimmed (only its line number dims). Default false
-   *  keeps the `<n> │ <sigil> ` boxed style. */
+  /** Claude Code unified gutter: `<n> <sigil><code>`, row background spanning the
+   *  line, context code un-dimmed. Default false keeps the `<n> │ <sigil> ` style. */
   claudeStyle?: boolean;
 }
 
@@ -345,8 +343,6 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
   const bgWidth = Math.max(1, textWidth - noW - 3);
   const gutter = (n: string): string => `${p.dim}${n} │${p.reset} `;
 
-  // Claude Code gutter: `<n> <sigil><code>` with the row background spanning the
-  // whole line (number included) and no `│` separator. Classic keeps `<n> │ <s> `.
   const change = (no: string, sigil: string, bg: string, fg: string, text: string): string => {
     if (claudeStyle) {
       return `${bg}${padToWidth(`${no} ${fg}${sigil}${preserveBg(text, bg)}`, textWidth)}${p.reset}`;

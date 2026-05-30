@@ -1,5 +1,4 @@
-// Hidden mode clears the block but keeps the buffer, so a toggle restores it.
-
+// Hidden clears the block but keeps the buffer so a toggle restores it.
 import type { ContainerView, MarkdownView, RenderNode, RenderNodes } from "../renderer.js";
 import { theme } from "../theme.js";
 

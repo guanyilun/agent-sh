@@ -1,6 +1,5 @@
 import { segmentsToString, type MountArgs, type MountEnv, type RenderModel, type Segment } from "./schema.js";
 
-/** Opaque handle to a renderer-native view; ashi never inspects it. */
 declare const nodeBrand: unique symbol;
 export interface RenderNode {
   readonly [nodeBrand]: true;
@@ -14,7 +13,6 @@ export interface StyledSink {
 
 export interface TextView extends StyledSink {
   node: RenderNode;
-  /** Recompute lines from the live width (first paint + resize); null clears it. */
   setRenderFn(fn: ((width: number) => string[]) | null): void;
 }
 
@@ -23,14 +21,12 @@ export interface MarkdownOptions {
   bgColor?: (t: string) => string;
   paddingX?: number;
   paddingY?: number;
-  /** Bracket with OSC 133 shell-integration zones; renderers may ignore. */
   osc133Zones?: boolean;
-  /** This is a primary assistant response — renderers may show a role bullet
-   *  (e.g. a ⏺ gutter). Renderers that don't, ignore it. */
+  /** Primary assistant response — renderers may show a role bullet; others ignore. */
   bullet?: boolean;
 }
 
-/** Streaming markdown: ashi pushes the full buffer each update; renderer reflows. */
+/** Streaming: ashi pushes the full buffer each update; renderer reflows. */
 export interface MarkdownView {
   node: RenderNode;
   setText(full: string): void;
@@ -46,7 +42,7 @@ export interface ContainerView {
 export interface RenderNodes {
   text(opts?: { paddingX?: number; paddingY?: number }): TextView;
   markdown(opts?: MarkdownOptions): MarkdownView;
-  /** Inline image, or null when the renderer can't show it. */
+  /** Null when the renderer can't show images. */
   image(png: Buffer): RenderNode | null;
   container(): ContainerView;
   spacer(rows: number): RenderNode;
@@ -71,7 +67,6 @@ export interface AutocompleteSuggestions {
   prefix: string;
 }
 
-/** Editor autocomplete in renderer-neutral terms (lines + cursor). */
 export interface AutocompleteProvider {
   getSuggestions(
     lines: string[],
@@ -106,8 +101,6 @@ export interface SelectItem {
   description?: string;
 }
 
-/** Imperative (not a Promise) so the host can mutate the list in place —
- *  e.g. delete-and-repopulate in the session picker. */
 export interface SelectView {
   node: RenderNode;
   setSelectedIndex(i: number): void;
@@ -130,10 +123,7 @@ export interface App {
   setFocus(target: RenderNode): void;
   focusInput(): void;
   requestRender(force?: boolean): void;
-  /** Mark every current scrollback entry as settled. Renderers that commit
-   *  finished turns to the terminal's native scrollback (e.g. Ink's <Static>)
-   *  use this as the boundary; renderers that manage scrollback themselves
-   *  (pi-tui) ignore it. Called by the frontend when a new turn begins. */
+  /** Marks current scrollback as settled; the boundary for renderers that commit finished turns to native scrollback (Ink's <Static>). Others ignore it. */
   commitScrollback?(): void;
   start(): void;
   stop(): void;
@@ -142,7 +132,6 @@ export interface App {
   createLoader(label: string, color: (t: string) => string, muted: (t: string) => string): LoaderView;
 }
 
-/** Satisfied by the schema renderer; extension authors write RenderModels. */
 export interface ToolCallView {
   node: RenderNode;
   setStatus(opts: { exitCode: number | null; elapsedMs: number; summary?: string }): void;
@@ -159,19 +148,18 @@ export interface ToolResultView {
 }
 
 export interface ToolGroupChild {
-  name: string; // short tool name, shown when it differs from the group kind
+  name: string;
   detail: string;
   status?: { exitCode: number | null; summary?: string };
 }
 
-/** A run of same-kind tool calls. The substrate owns the state (tail-merge,
- *  eviction, expand); the renderer owns the look. */
+/** A run of same-kind tool calls: substrate owns the state, renderer owns the look. */
 export interface ToolGroupModel {
-  kind: string; // "read" / "search"
-  icon: string; // glyph (◆ / ⌕ / ▶), mapped from kind by the substrate
-  children: ToolGroupChild[]; // currently visible, tail order
-  hidden: { count: number; ok: boolean } | null; // collapsed older calls, or null
-  expanded: boolean; // user toggled the group open (renderers may list children)
+  kind: string;
+  icon: string;
+  children: ToolGroupChild[];
+  hidden: { count: number; ok: boolean } | null;
+  expanded: boolean;
 }
 
 export interface ToolGroupView {
@@ -179,9 +167,7 @@ export interface ToolGroupView {
   update(model: ToolGroupModel): void;
 }
 
-/** The default tool-group rendering (a `├`/`└` tree): one styled content line per
- *  row, no indent — a renderer mounts these into its own nodes (typically with a
- *  one-space pad). Shared so renderers don't reinvent it. */
+/** Default tool-group rendering (`├`/`└` tree): one styled line per row, no indent. */
 export function renderToolGroupLines(model: ToolGroupModel): string[] {
   const lines: string[] = [
     segmentsToString([
@@ -219,26 +205,19 @@ export interface RendererCapabilities {
   images: boolean;
   /** When false, assistant/thinking fall back to plain styled text. */
   markdownStreaming: boolean;
-  /** Set true only if the renderer emits its own carriage returns and wants the
-   *  raw (OPOST-off) terminal — pi-tui does. Omit/false for libraries that emit
-   *  lone `\n` (Ink, most others); the substrate keeps OPOST on so they don't
-   *  staircase. agent-sh's shell clears OPOST on boot, so this is load-bearing. */
+  /** True only if the renderer emits its own carriage returns and wants the raw (OPOST-off) terminal; substrate keeps OPOST on otherwise so lone-`\n` renderers don't staircase. */
   rawOutput?: boolean;
-  /** Wrap a diff in a box frame (`╭─ path +N -M ─╮`). Default (omitted) is framed,
-   *  as pi-tui draws it. A renderer that hangs the diff under its own gutter, Claude
-   *  Code style, sets this false to receive the bare hunk lines instead. */
+  /** Default (omitted) frames the diff in a box; set false to receive bare hunk lines for a self-drawn gutter. */
   diffFrame?: boolean;
 }
 
-/** What ashi depends on: content-node factories + app shell + capabilities. */
 export interface Renderer extends RenderNodes {
   readonly capabilities: RendererCapabilities;
   /** Visible (ANSI-aware) width of a styled string. */
   measureWidth(text: string): number;
   mountToolCall(model: RenderModel<unknown>, args: MountArgs, env: MountEnv): ToolCallView;
   mountToolResult(model: RenderModel<unknown>, args: MountArgs, env: MountEnv): ToolResultView;
-  /** Group rendering, if the renderer groups same-kind tool calls. A renderer
-   *  that omits this opts out — the substrate renders such calls individually. */
+  /** Omitting this opts out of grouping; substrate then renders same-kind calls individually. */
   mountToolGroup?(): ToolGroupView;
   mount(): App;
 }

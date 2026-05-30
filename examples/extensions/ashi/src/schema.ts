@@ -1,6 +1,3 @@
-// Declarative render schema for tool-call hooks: data types + the ANSI projection
-// of a Body to styled strings, with no TUI-renderer dependency.
-
 import { theme } from "./theme.js";
 import { highlight, supportsLanguage } from "cli-highlight";
 import type { ThemeColor } from "./theme.js";
@@ -22,8 +19,7 @@ export type Segment = string | { text: string; style?: StyleHint; highlight?: st
 export type Body =
   | { kind: "text"; segments: Segment[] }
   | { kind: "code"; lang?: string; text: string }
-  /** Width-aware renderer is supplied via setDiffRenderer; view() opts in by
-   *  returning { kind: "diff" } and gating on hasDiff in state. */
+  /** Width-aware renderer supplied via setDiffRenderer; view() opts in and gates on hasDiff. */
   | { kind: "diff" }
   | { kind: "stream"; text: string }
   | { kind: "lines"; lines: Segment[][] }
@@ -35,14 +31,13 @@ export interface DisplayStatus {
   summary?: string;
 }
 
-/** Renderers pick a category; ashi picks the glyph. Falls back to generic. */
+/** Renderers pick a category; ashi picks the glyph. */
 export type TitleIcon = "read" | "search" | "edit" | "shell" | "generic" | "scheme";
 
 export interface ToolDisplay {
   titleIcon?: TitleIcon;
   title: Segment[];
-  /** Right-aligned on the title line; framework handles padding and reserves
-   *  space for the status suffix so renderers don't compute widths. */
+  /** Right-aligned on the title line; framework handles padding and status-suffix spacing. */
   titleRight?: Segment[];
   status?: DisplayStatus;
   body?: Body;
@@ -62,8 +57,7 @@ export interface Env {
 
 export type Reducer<S, P = unknown> = (state: S, payload: P) => S;
 
-/** Framework tracks `output`, `status`, `hasDiff` — renderers don't wire
- *  `chunk` / `status` / `diff` reducers themselves. */
+/** Framework tracks `output`/`status`/`hasDiff`; renderers don't wire those reducers. */
 export type ViewState<S> = S & {
   output: string;
   status?: DisplayStatus;
@@ -108,24 +102,19 @@ export interface MountEnv {
   expandedLines?: number;
 }
 
-/** Width-aware diff cache: the edit/write tool supplies `fn` at finalize and
- *  renderBody memoizes the last width's output. Shared between this projection
- *  and the renderer's mount cell. */
+/** Width-aware diff cache shared between this projection and the renderer's mount cell. */
 export interface DiffSlot {
   fn?: (width: number) => string[];
   lastWidth: number;
   cached: string[];
 }
 
-// ANSI projection: the sole place that knows about theme colors + highlighting;
-// renderers stay pure-data.
-
 function styleSegment(seg: Segment): string {
   if (typeof seg === "string") return seg;
   let text = seg.text;
   if (seg.highlight && supportsLanguage(seg.highlight)) {
     try { text = highlight(text, { language: seg.highlight, ignoreIllegals: true }); }
-    catch { /* fall through */ }
+    catch {}
   }
   const s = seg.style;
   if (!s) return text;
@@ -173,7 +162,7 @@ export function renderBody(body: Body, env: Env, diff: DiffSlot): string {
     case "code": {
       if (body.lang && supportsLanguage(body.lang)) {
         try { return highlight(body.text, { language: body.lang, ignoreIllegals: true }); }
-        catch { /* fall through */ }
+        catch {}
       }
       return body.text;
     }
@@ -194,11 +183,9 @@ export function renderBody(body: Body, env: Env, diff: DiffSlot): string {
   }
 }
 
-// Even when expanded, the tail is capped (ashi.display.{name}.expandedLines) so
-// Ctrl+O on a huge result can't flood the scrollback. The agent still sees it all.
+// The tail is capped even when expanded so a huge result can't flood scrollback; the agent still sees it all.
 const DEFAULT_EXPANDED_LINES = 200;
 
-// Host-wide preview/summary/hidden policy for every kind:"stream" body.
 function renderStream(buffer: string, env: Env): string {
   const display = buffer.replace(/\n+$/, "");
   if (env.expanded) {
