@@ -8,6 +8,7 @@ import { loadExtensions } from "agent-sh/extension-loader";
 import { activateAgent } from "agent-sh/agent";
 import { getSettings } from "agent-sh/settings";
 import { Shell } from "agent-sh/shell";
+import { TerminalBuffer } from "agent-sh/utils/terminal-buffer";
 import type { Terminal } from "agent-sh/shell/terminal";
 import activateShellContext from "agent-sh/shell/context";
 import type { AppConfig } from "agent-sh/types";
@@ -166,6 +167,17 @@ async function main(): Promise<void> {
     terminal: headlessTerminal(),
   });
   shellRef = shell;
+
+  let terminalBuffer: TerminalBuffer | null | undefined;
+  ctx.define("terminal-buffer", (): TerminalBuffer | null => {
+    if (terminalBuffer !== undefined) return terminalBuffer;
+    try {
+      terminalBuffer = TerminalBuffer.createWired(core.bus);
+    } catch {
+      terminalBuffer = null;
+    }
+    return terminalBuffer;
+  });
 
   const loaded = await loadExtensions(ctx, config.extensions);
   core.bus.emit("core:extensions-loaded", { names: loaded });

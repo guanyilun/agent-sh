@@ -156,6 +156,10 @@ export class Shell implements InputContext {
       this.ptyProcess.resize(cols, rows);
     });
 
+    this.bus.on("shell:host-write", ({ data }) => {
+      this.terminal.write(data);
+    });
+
     // Compat shims for the bus-event API. shell:stdout-hold maps to hard
     // mute so terminal_keys' stdout-show can't paint through the overlay.
     let holdRefcount = 0;

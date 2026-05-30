@@ -21,6 +21,8 @@ declare module "../core/event-bus.js" {
     "shell:pty-write": { data: string };
     "shell:pty-resize": { cols: number; rows: number };
 
+    "shell:host-write": { data: string };
+
     "shell:buffer-request": Record<string, never>;
     "shell:buffer-snapshot": {
       text: string;
