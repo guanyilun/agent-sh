@@ -31,6 +31,13 @@ const BUILTIN_OVERRIDES: Record<string, Partial<ToolEntryConfig>> = {
 interface AshiSettings extends Record<string, unknown> {
   display?: Record<string, Partial<ToolEntryConfig>>;
   groupMaxVisible?: number;
+  renderer?: string;
+}
+
+/** The persistent renderer preference (ashi.renderer); env/flag override it. */
+export function loadRendererPreference(): string | undefined {
+  const r = getExtensionSettings<AshiSettings>("ashi", {}).renderer;
+  return typeof r === "string" && r.trim() ? r.trim() : undefined;
 }
 
 export function loadGroupMaxVisible(): number {

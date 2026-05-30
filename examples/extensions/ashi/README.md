@@ -220,14 +220,23 @@ export default function activate(ctx) {
 }
 ```
 
-Select it with `ASHI_RENDERER=my-tui ashi -e my-tui-renderer` (pi-tui is the
-default; an unknown name errors rather than silently falling back). The contract
-has two halves — content-node factories (`text` / `markdown` / `image` /
-`container` / `spacer`) and an app shell (`mount()` → scrollback / footer / queue
-/ input / status, plus select lists, loader, and key events) — together with
-`mountToolCall` / `mountToolResult` and a `capabilities` list so a renderer can
-declare gaps and the substrate degrades rather than crashes. This is how you build
-a different TUI frontend (Ink, OpenTUI, a remote/web bridge…) without forking ashi.
+**Loading vs. selecting are separate.** A renderer must be *loaded* (so its
+`ashi:renderer:<name>` is registered) and then *selected* by name:
+
+- **Load** — `ashi install my-tui-renderer` (installed extensions auto-load every
+  launch), or `-e my-tui-renderer` to load from source during development.
+- **Select** — `--renderer my-tui` (flag) **>** `ASHI_RENDERER=my-tui` (env) **>**
+  `ashi.renderer` in `settings.json` (persistent preference) **>** `pi-tui`
+  (default). An unknown name errors rather than silently falling back.
+
+So a persistent setup is `ashi install my-tui-renderer` once + `"ashi": { "renderer":
+"my-tui" }` in settings — no per-command flags. The contract has two halves —
+content-node factories (`text` / `markdown` / `image` / `container` / `spacer`) and
+an app shell (`mount()` → scrollback / footer / queue / input / status, plus select
+lists, loader, and key events) — together with `mountToolCall` / `mountToolResult`
+and a `capabilities` list so a renderer can declare gaps and the substrate degrades
+rather than crashes. This is how you build a different TUI frontend (Ink, a
+remote/web bridge…) without forking ashi.
 
 See [`examples/extensions/ashi-ink`](../ashi-ink) for a worked example — a **working**
 Ink (React) renderer (`ASHI_RENDERER=ink ashi -e ashi-ink`), verified with

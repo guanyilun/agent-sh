@@ -7,14 +7,26 @@ ashi's renderer is a swappable extension point.
 
 ## Use
 
+From source (development):
+
 ```bash
 cd examples/extensions/ashi-ink
 npm install && npm run build
 ASHI_RENDERER=ink ashi -e ashi-ink
 ```
 
-`ashi -e ashi-ink` loads this extension (registering `ashi:renderer:ink`), and
-`ASHI_RENDERER=ink` selects it. Unset the env var (or set `pi-tui`) for the default.
+`-e ashi-ink` *loads* the extension (registering `ashi:renderer:ink`) and
+`ASHI_RENDERER=ink` *selects* it. Loading and selecting are separate steps.
+
+Persistent setup (no per-command flags):
+
+```bash
+ashi install ashi-ink            # auto-loads on every launch
+# then in ~/.agent-sh/settings.json: { "ashi": { "renderer": "ink" } }
+```
+
+Selection precedence: `--renderer ink` > `ASHI_RENDERER=ink` > `ashi.renderer` in
+settings > `pi-tui` (default).
 
 ## How it works
 

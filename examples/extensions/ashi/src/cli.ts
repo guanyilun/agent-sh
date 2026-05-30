@@ -34,15 +34,17 @@ import { registerRenderDefaults } from "./hooks.js";
 import { registerDefaultSchemaRenderers } from "./default-schema-renderers.js";
 import { createPiTuiRenderer } from "./renderers/pi-tui/index.js";
 import type { Renderer } from "./renderer.js";
+import { loadRendererPreference } from "./display-config.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
-function parseArgs(argv: string[]): AppConfig & { extensions?: string[]; continueLast: boolean } {
+function parseArgs(argv: string[]): AppConfig & { extensions?: string[]; continueLast: boolean; renderer?: string } {
   let model: string | undefined;
   let apiKey: string | undefined;
   let baseURL: string | undefined;
   let provider: string | undefined;
   let backend: string | undefined;
+  let renderer: string | undefined;
   let continueLast = false;
   const extensions: string[] = [];
 
@@ -53,6 +55,7 @@ function parseArgs(argv: string[]): AppConfig & { extensions?: string[]; continu
     else if (a === "--base-url" && argv[i + 1]) baseURL = argv[++i];
     else if (a === "--provider" && argv[i + 1]) provider = argv[++i];
     else if (a === "--backend" && argv[i + 1]) backend = argv[++i];
+    else if (a === "--renderer" && argv[i + 1]) renderer = argv[++i];
     else if ((a === "-e" || a === "--extensions") && argv[i + 1]) {
       extensions.push(...argv[++i]!.split(",").map(s => s.trim()).filter(Boolean));
     } else if (a === "-c" || a === "--continue") {
@@ -63,7 +66,7 @@ function parseArgs(argv: string[]): AppConfig & { extensions?: string[]; continu
     }
   }
 
-  return { shell: "/bin/sh", model, apiKey, baseURL, provider, backend, extensions, continueLast };
+  return { shell: "/bin/sh", model, apiKey, baseURL, provider, backend, renderer, extensions, continueLast };
 }
 
 const MANAGEMENT_HELP = `ashi — ash (agent-sh's built-in agent) in an interactive TUI
@@ -79,9 +82,12 @@ Management:
 
 Launch (default):
   ashi [--provider <name>] [--model <id>] [--api-key <key>] [--base-url <url>]
-       [--backend <name>] [-e <ext>[,<ext>...]] [-c | --continue]
+       [--backend <name>] [--renderer <name>] [-e <ext>[,<ext>...]] [-c | --continue]
 
   -c, --continue   Resume the last session in this cwd (fresh session if none)
+  --renderer       TUI renderer (default: pi-tui). Also ASHI_RENDERER, or
+                   ashi.renderer in settings.json. A renderer is an extension;
+                   install it (or -e it) so its ashi:renderer:<name> is registered.
 
 Reads ~/.agent-sh/settings.json for providers and defaults.`;
 
@@ -200,16 +206,18 @@ async function main(): Promise<void> {
   captureRef = capture;
   registerCompaction(ctx, getStore, capture);
 
-  // Renderers are extensions: ashi registers the built-in pi-tui renderer, and
-  // any loaded extension can register its own `ashi:renderer:<name>` (see
-  // examples/extensions/ashi-opentui-renderer). ASHI_RENDERER picks one by name.
+  // Renderers are extensions: ashi registers the built-in pi-tui renderer; any
+  // loaded extension can register its own `ashi:renderer:<name>`. Selection is
+  // --renderer > ASHI_RENDERER > ashi.renderer (settings) > pi-tui.
   ctx.define("ashi:renderer:pi-tui", () => createPiTuiRenderer());
-  const rendererName = (process.env.ASHI_RENDERER ?? "pi-tui").trim();
+  const rendererName = (
+    config.renderer ?? process.env.ASHI_RENDERER ?? loadRendererPreference() ?? "pi-tui"
+  ).trim();
   const rendererKey = `ashi:renderer:${rendererName}`;
   if (!ctx.list().includes(rendererKey)) {
     process.stderr.write(
       `ashi: no renderer registered for "${rendererName}" (${rendererKey}). ` +
-      `Load the extension that provides it (e.g. \`ashi -e <renderer-ext>\`), or unset ASHI_RENDERER.\n`,
+      `Install the extension that provides it (or pass -e <ext>) so it registers ${rendererKey}.\n`,
     );
     process.exit(1);
   }
