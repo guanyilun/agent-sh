@@ -405,14 +405,15 @@ function makeToolMount(req: () => void, blink: Blink) {
   };
 }
 
-// A read/search group, Claude Code style: a single `⏺ Read N files` summary line
-// (not a ├/└ tree, no "+N earlier" eviction). Expanding (Ctrl+O) lists each call
-// under a `⎿` gutter. The whole count is summarized whether or not the substrate
-// evicted older calls — ink reads the model and draws it however it likes.
-function summarizeGroup(kind: string, n: number): string {
-  if (kind === "read") return `Read ${n} file${n === 1 ? "" : "s"}`;
-  if (kind === "search") return `Searched ${n} pattern${n === 1 ? "" : "s"}`;
-  return `${n} ${kind} call${n === 1 ? "" : "s"}`;
+// A read/search group, Claude Code style: a `⏺ Reading N files… (ctrl+o to expand)`
+// summary (gerund + … while active, past tense when done), with the in-flight file
+// path(s) listed under a `⎿` gutter so you see *what* it's reading, not just a count.
+// Expanding (Ctrl+O) lists every call with its per-file summary. Not a ├/└ tree; the
+// count rolls up whether or not the substrate evicted older calls.
+function summarizeGroup(kind: string, n: number, running: boolean): string {
+  if (kind === "read") return `${running ? "Reading" : "Read"} ${n} file${n === 1 ? "" : "s"}`;
+  if (kind === "search") return `${running ? "Searching for" : "Searched for"} ${n} pattern${n === 1 ? "" : "s"}`;
+  return `${running ? "Running" : "Ran"} ${n} ${kind} call${n === 1 ? "" : "s"}`;
 }
 function childOk(c: ToolGroupModel["children"][number]): boolean {
   return !c.status || c.status.exitCode === null || c.status.exitCode === 0;
@@ -422,7 +423,8 @@ function groupSummaryLine(model: ToolGroupModel, blinkOn: boolean): string {
   const running = model.children.some((c) => !c.status);
   const anyErr = model.children.some((c) => !childOk(c)) || (model.hidden ? !model.hidden.ok : false);
   const dot = statusDot(running ? undefined : { exitCode: anyErr ? 1 : 0 }, blinkOn);
-  return `${dot} ${summarizeGroup(model.kind, total)}`;
+  const hint = model.expanded ? "" : ` ${DIM_ON}(ctrl+o to expand)${DIM_OFF}`;
+  return `${dot} ${summarizeGroup(model.kind, total, running)}${running ? "…" : ""}${hint}`;
 }
 function makeToolGroup(req: () => void, blink: Blink): ToolGroupView {
   const v: VNode = { kind: "container", children: [] };
@@ -437,12 +439,13 @@ function makeToolGroup(req: () => void, blink: Blink): ToolGroupView {
     ch.length = 0;
     // Summary bullet via a render fn so the blink clock repaints it in place.
     ch.push({ kind: "text", lines: [], fn: () => (model ? [groupSummaryLine(model, blink.on())] : []), paddingX: 0 });
-    if (m.expanded) {
-      for (const c of m.children) {
-        const elbow = segmentsToString([{ text: "⎿", style: { color: childOk(c) ? "muted" : "error" } }]);
-        const sum = c.status?.summary ? ` ${segmentsToString([{ text: c.status.summary, style: { color: "muted" } }])}` : "";
-        ch.push({ kind: "text", lines: [`  ${elbow}  ${c.detail}${sum}`], fn: null, paddingX: 0 });
-      }
+    // Collapsed: only the in-flight files (the current reads), like Claude Code's
+    // active group — once done it's just the count. Expanded: every call + summary.
+    const rows = m.expanded ? m.children : m.children.filter((c) => !c.status);
+    for (const c of rows) {
+      const elbow = segmentsToString([{ text: "⎿", style: { color: childOk(c) ? "muted" : "error" } }]);
+      const sum = m.expanded && c.status?.summary ? ` ${segmentsToString([{ text: c.status.summary, style: { color: "muted" } }])}` : "";
+      ch.push({ kind: "text", lines: [`  ${elbow}  ${c.detail}${sum}`], fn: null, paddingX: 0 });
     }
     req();
   };

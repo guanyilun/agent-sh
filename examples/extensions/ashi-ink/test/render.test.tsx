@@ -181,19 +181,28 @@ test("mounts a tool call + result through the renderer", () => {
   assert.match(frameOf(call.node), /⏺ Bash\(ls -la\)/);
 });
 
-test("a read/search group renders a summary line; expands to a ⎿ list", () => {
+test("a read group: gerund + in-flight path while active, count when done, full list on expand", () => {
   const g = new ToolGroup(r as never, "read");
   g.addCall("1", "read_file", "src/app.ts");
-  g.addCall("2", "ls", "src/");
+  g.addCall("2", "read_file", "src/util.ts");
   g.recordCompletion("1", 0, "120 lines");
-  const collapsed = frameOf(g.node);
-  assert.match(collapsed, /⏺ Read 2 files/); // one summary line, no tree
+  // call 2 still running → active: gerund, ellipsis, ctrl+o hint, in-flight path shown
+  let collapsed = frameOf(g.node);
+  assert.match(collapsed, /⏺ Reading 2 files…/);
+  assert.match(collapsed, /\(ctrl\+o to expand\)/);
+  assert.match(collapsed, /⎿  src\/util\.ts/); // the file being read, not just a count
   assert.doesNotMatch(collapsed, /[├└]/);
+  // finish it → past tense, no path under the collapsed summary
+  g.recordCompletion("2", 0, "45 lines");
+  collapsed = frameOf(g.node);
+  assert.match(collapsed, /⏺ Read 2 files/);
+  assert.doesNotMatch(collapsed, /⎿/);
+  // expand → full list with per-file summaries, no hint
   g.toggleExpanded();
   const expanded = frameOf(g.node);
-  assert.match(expanded, /⏺ Read 2 files/);
   assert.match(expanded, /⎿  src\/app\.ts.*120 lines/);
-  assert.match(expanded, /⎿  src\//);
+  assert.match(expanded, /⎿  src\/util\.ts.*45 lines/);
+  assert.doesNotMatch(expanded, /\(ctrl\+o to expand\)/);
 });
 
 test("a wide markdown table is fit to the width and wraps cell content", () => {
