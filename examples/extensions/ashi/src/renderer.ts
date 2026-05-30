@@ -150,6 +150,26 @@ export interface ToolResultView {
   toggleExpanded(): void;
 }
 
+export interface ToolGroupChild {
+  name: string; // short tool name, shown when it differs from the group kind
+  detail: string;
+  status?: { exitCode: number | null; summary?: string };
+}
+
+/** A run of same-kind tool calls. The substrate owns the state (tail-merge,
+ *  eviction, expand); the renderer owns the look. */
+export interface ToolGroupModel {
+  kind: string; // "read" / "search"
+  icon: string; // glyph (◆ / ⌕ / ▶), mapped from kind by the substrate
+  children: ToolGroupChild[]; // currently visible, tail order
+  hidden: { count: number; ok: boolean } | null; // collapsed older calls, or null
+}
+
+export interface ToolGroupView {
+  node: RenderNode;
+  update(model: ToolGroupModel): void;
+}
+
 export interface RendererCapabilities {
   images: boolean;
   /** When false, assistant/thinking fall back to plain styled text. */
@@ -168,5 +188,8 @@ export interface Renderer extends RenderNodes {
   measureWidth(text: string): number;
   mountToolCall(model: RenderModel<unknown>, args: MountArgs, env: MountEnv): ToolCallView;
   mountToolResult(model: RenderModel<unknown>, args: MountArgs, env: MountEnv): ToolResultView;
+  /** Group rendering, if the renderer groups same-kind tool calls. A renderer
+   *  that omits this opts out — the substrate renders such calls individually. */
+  mountToolGroup?(): ToolGroupView;
   mount(): App;
 }

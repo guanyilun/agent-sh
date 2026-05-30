@@ -224,7 +224,6 @@ export function mountAshi(
     switch (action.kind) {
       case "shell":
         submitShell(action.line, { private: action.private });
-        setPendingPrivate(false);
         return;
       case "command":
         bus.emit("command:execute", { name: action.name, args: action.args });
@@ -450,7 +449,7 @@ export function mountAshi(
           const id = tc.id ?? "";
           const name = tc.function.name ?? "tool";
           const kind = TOOL_KIND[name];
-          if (kind && GROUPABLE_KINDS.has(kind)) {
+          if (kind && GROUPABLE_KINDS.has(kind) && renderer.mountToolGroup) {
             const mergeable = findMergeableGroup(kind);
             const group = mergeable
               ?? (() => { const g = new ToolGroup(renderer, kind, groupMaxVisible); appendEntry(g.node, { t: "group", group: g }); return g; })();
@@ -562,7 +561,7 @@ export function mountAshi(
     );
 
     const kind = e.kind ?? "";
-    if (GROUPABLE_KINDS.has(kind)) {
+    if (GROUPABLE_KINDS.has(kind) && renderer.mountToolGroup) {
       const mergeable = findMergeableGroup(kind);
       const group = mergeable
         ?? (() => { const g = new ToolGroup(renderer, kind, groupMaxVisible); appendEntry(g.node, { t: "group", group: g }); return g; })();

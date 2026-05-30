@@ -238,6 +238,14 @@ and a `capabilities` list so a renderer can declare gaps and the substrate degra
 rather than crashes. This is how you build a different TUI frontend (Ink, a
 remote/web bridge…) without forking ashi.
 
+Tool calls follow the same rule: the renderer owns the look. Same-kind runs of
+`read`/`search` are collapsed by a substrate `ToolGroup` controller that owns only
+the *state* (tail-merge, eviction, expand) and hands the renderer a neutral
+`ToolGroupModel` to draw via the optional `mountToolGroup()` — pi-tui draws a
+`├`/`└` tree, Ink draws its gutter. Grouping is a presentation policy, not a
+mandate: a renderer that omits `mountToolGroup` opts out entirely, and the
+substrate renders those calls individually through the schema mount.
+
 The substrate also owns terminal setup so renderers don't each rediscover it.
 agent-sh's shell clears OPOST on boot (pi-tui emits its own `\r`); ashi reads
 `capabilities.rawOutput` and restores OPOST for renderers that emit lone `\n`

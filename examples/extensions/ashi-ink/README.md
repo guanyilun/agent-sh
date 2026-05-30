@@ -44,8 +44,9 @@ identity rather than mirroring pi-tui:
   Claude Code pattern — stock Ink's `<Box>` can't fill a rect, but a padded
   `<Text backgroundColor>` does, once `marked-terminal`'s `\x1b[0m` resets are
   stripped so they can't punch a hole in the background),
-- a violet **`▌` gutter bar** channeling each *non-grouped* tool call and its
-  output, in place of pi-tui's gray `└` corner-arrow,
+- a violet **`▌` gutter bar** channeling every tool call and its output —
+  including grouped `read`/`search` runs (Ink supplies `mountToolGroup`, so the
+  group is drawn with the gutter instead of pi-tui's `├`/`└` tree),
 - a **`❯` prompt** between top/bottom violet rules,
 - content reflowed to the terminal width with each wrapped line indented one
   space, and a single violet accent (`#c778dd`) throughout.

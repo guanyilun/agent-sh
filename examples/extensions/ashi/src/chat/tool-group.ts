@@ -1,18 +1,11 @@
 // A run of same-kind tool calls, grown by tail-merge (the caller extends a group
 // only while it matches `kind` and stays the chat's tail). Over `maxVisible` the
-// oldest collapse into a summary line; toggleExpanded() reveals all.
+// oldest collapse into a summary line; toggleExpanded() reveals all. The look is
+// the renderer's (mountToolGroup); this only owns the state.
 
-import type { ContainerView, RenderNode, RenderNodes, TextView } from "../renderer.js";
-import { theme } from "../theme.js";
+import type { Renderer, RenderNode, ToolGroupChild, ToolGroupModel, ToolGroupView } from "../renderer.js";
 
 export const GROUP_ICONS: Record<string, string> = { read: "◆", search: "⌕" };
-
-interface GroupChild {
-  name: string;
-  detail: string;
-  text: TextView;
-  status?: { exitCode: number | null; summary?: string };
-}
 
 const SHORT_TOOL_NAMES: Record<string, string> = {
   read_file: "read",
@@ -27,32 +20,22 @@ function shortToolName(name: string): string {
 export class ToolGroup {
   readonly node: RenderNode;
   readonly kind: string;
-  private headerText: TextView;
-  private summaryText: TextView;
-  private childContainer: ContainerView;
+  private view: ToolGroupView;
   private maxVisible: number;
-  private allChildren: GroupChild[] = [];
-  private callsById = new Map<string, GroupChild>();
+  private allChildren: ToolGroupChild[] = [];
+  private callsById = new Map<string, ToolGroupChild>();
   private expanded = false;
 
-  constructor(private nodes: RenderNodes, kind: string, maxVisible: number = Infinity) {
+  constructor(renderer: Renderer, kind: string, maxVisible: number = Infinity) {
     this.kind = kind;
     this.maxVisible = maxVisible;
-    this.headerText = nodes.text({ paddingX: 1 });
-    this.summaryText = nodes.text({ paddingX: 1 });
-    this.childContainer = nodes.container();
-    const container = nodes.container();
-    container.addChild(nodes.spacer(1));
-    container.addChild(this.headerText.node);
-    container.addChild(this.summaryText.node);
-    container.addChild(this.childContainer.node);
-    this.node = container.node;
-    this.repaintHeader();
+    this.view = renderer.mountToolGroup!();
+    this.node = this.view.node;
+    this.repaint();
   }
 
   addCall(toolCallId: string, name: string, detail: string): void {
-    const text = this.nodes.text({ paddingX: 1 });
-    const child: GroupChild = { name: shortToolName(name), detail: detail || "…", text };
+    const child: ToolGroupChild = { name: shortToolName(name), detail: detail || "…" };
     if (toolCallId) this.callsById.set(toolCallId, child);
     this.allChildren.push(child);
     this.repaint();
@@ -80,49 +63,18 @@ export class ToolGroup {
   private repaint(): void {
     const start = this.visibleSliceStart();
     const evicted = this.allChildren.slice(0, start);
-    const visible = this.allChildren.slice(start);
-
-    if (evicted.length === 0) {
-      this.summaryText.setText("");
-    } else {
-      const allOk = evicted.every(
-        (c) => !c.status || c.status.exitCode === null || c.status.exitCode === 0,
-      );
-      const mark = allOk ? theme.fg("success", "✓") : theme.fg("error", "✗");
-      const noun = evicted.length === 1 ? "earlier call" : "earlier calls";
-      this.summaryText.setText(
-        `${theme.fg("muted", "├")} ${theme.fg("muted", "⋯")} ${theme.fg("muted", `${evicted.length} ${noun}`)} ${mark}`,
-      );
-    }
-
-    // Rebuild rather than diff the child container: group sizes are small.
-    this.childContainer.clear();
-    visible.forEach((child, idx) => {
-      const isLast = idx === visible.length - 1;
-      this.repaintChild(child, isLast);
-      this.childContainer.addChild(child.text.node);
-    });
-  }
-
-  private repaintChild(child: GroupChild, isLast: boolean): void {
-    let tail: string;
-    if (!child.status) {
-      tail = ` ${theme.fg("muted", "…")}`;
-    } else {
-      const ok = child.status.exitCode === null || child.status.exitCode === 0;
-      const mark = ok ? theme.fg("success", "✓") : theme.fg("error", "✗");
-      const sum = child.status.summary ? ` ${theme.fg("muted", child.status.summary)}` : "";
-      tail = ` ${mark}${sum}`;
-    }
-    const connector = isLast ? "└" : "├";
-    const namePart = child.name !== this.kind
-      ? `${theme.bold(theme.fg("toolTitle", child.name))} `
-      : "";
-    child.text.setText(`${theme.fg("muted", connector)} ${namePart}${theme.fg("muted", child.detail)} ${tail}`);
-  }
-
-  private repaintHeader(): void {
-    const icon = GROUP_ICONS[this.kind] ?? "▶";
-    this.headerText.setText(`${theme.fg("warning", icon)} ${theme.bold(theme.fg("toolTitle", this.kind))}`);
+    const hidden = evicted.length === 0
+      ? null
+      : {
+          count: evicted.length,
+          ok: evicted.every((c) => !c.status || c.status.exitCode === null || c.status.exitCode === 0),
+        };
+    const model: ToolGroupModel = {
+      kind: this.kind,
+      icon: GROUP_ICONS[this.kind] ?? "▶",
+      children: this.allChildren.slice(start),
+      hidden,
+    };
+    this.view.update(model);
   }
 }

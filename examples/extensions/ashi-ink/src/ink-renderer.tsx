@@ -19,6 +19,7 @@ import {
   type MountEnv,
   type Reducer,
   type RenderModel,
+  type Segment,
   type ToolDisplay,
   type ViewState,
 } from "@guanyilun/ashi/render";
@@ -39,6 +40,9 @@ import type {
   SelectView,
   TextView,
   ToolCallView,
+  ToolGroupChild,
+  ToolGroupModel,
+  ToolGroupView,
   ToolResultView,
 } from "@guanyilun/ashi/renderer";
 
@@ -241,6 +245,50 @@ function makeToolMount(req: () => void) {
       };
     },
   };
+}
+
+// A tool group, drawn with the gutter instead of pi-tui's ├/└ tree: every row
+// (header, summary, children) is channeled by the violet ▌.
+function makeToolGroup(req: () => void): ToolGroupView {
+  const v: VNode = { kind: "container", children: [] };
+  const ch = v.kind === "container" ? v.children : [];
+  const line = (s: string): VNode => ({ kind: "text", lines: [s], fn: null });
+  const update = (model: ToolGroupModel): void => {
+    ch.length = 0;
+    ch.push({ kind: "spacer", rows: 1 });
+    ch.push(line(OK_GUTTER + segmentsToString([
+      { text: model.icon, style: { color: "warning" } },
+      { text: " " },
+      { text: model.kind, style: { bold: true, color: "toolTitle" } },
+    ])));
+    if (model.hidden) {
+      const noun = model.hidden.count === 1 ? "earlier call" : "earlier calls";
+      ch.push(line(OK_GUTTER + segmentsToString([
+        { text: `⋯ ${model.hidden.count} ${noun} `, style: { color: "muted" } },
+        { text: model.hidden.ok ? "✓" : "✗", style: { color: model.hidden.ok ? "success" : "error" } },
+      ])));
+    }
+    for (const child of model.children) {
+      const ok = !child.status || child.status.exitCode === null || child.status.exitCode === 0;
+      ch.push(line((ok ? OK_GUTTER : ERR_GUTTER) + groupChildRow(child, model.kind)));
+    }
+    req();
+  };
+  return { node: asNode(v), update };
+}
+
+function groupChildRow(child: ToolGroupChild, kind: string): string {
+  const segs: Segment[] = [{ text: "  " }]; // indent under the gutter
+  if (child.name !== kind) segs.push({ text: `${child.name} `, style: { bold: true, color: "toolTitle" } });
+  segs.push({ text: child.detail, style: { color: "muted" } });
+  if (!child.status) {
+    segs.push({ text: "  " }, { text: "…", style: { color: "muted" } });
+  } else {
+    const ok = child.status.exitCode === null || child.status.exitCode === 0;
+    segs.push({ text: "  " }, { text: ok ? "✓" : "✗", style: { color: ok ? "success" : "error" } });
+    if (child.status.summary) segs.push({ text: ` ${child.status.summary}`, style: { color: "muted" } });
+  }
+  return segmentsToString(segs);
 }
 
 export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | null {
@@ -468,6 +516,7 @@ function buildRenderer(): { renderer: Renderer; harness: () => InkHarness } {
     measureWidth,
     mountToolCall,
     mountToolResult: (model, args, env) => tool.mountResult(model, args, env),
+    mountToolGroup: () => makeToolGroup(req),
     mount: () => makeApp(store, req).app,
   };
   const harness = (): InkHarness => {

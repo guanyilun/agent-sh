@@ -4,6 +4,7 @@ import { render } from "ink-testing-library";
 import { createInkRenderer, __renderNode, __harness } from "../src/ink-renderer.js";
 import type { RenderModel } from "@guanyilun/ashi/render";
 import type { RenderNode } from "@guanyilun/ashi/renderer";
+import { ToolGroup } from "../../ashi/src/chat/tool-group.js";
 
 const r = createInkRenderer();
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -86,4 +87,16 @@ test("mounts a tool call + result through the renderer", () => {
   assert.match(f, /▌ file1/);
   // call line picks up the ✓ from the shared cell after finalize
   assert.match(frameOf(call.node), /▌ .*\$ ls -la\s+✓/);
+});
+
+test("a tool group is drawn with the gutter, not pi-tui's tree connectors", () => {
+  const g = new ToolGroup(r as never, "read");
+  g.addCall("1", "read_file", "src/app.ts");
+  g.addCall("2", "ls", "src/");
+  g.recordCompletion("1", 0, "120 lines");
+  const frame = frameOf(g.node);
+  assert.match(frame, /▌ ◆ read/);
+  assert.match(frame, /▌ {3}src\/app\.ts.*✓ 120 lines/);
+  assert.match(frame, /ls src\//); // child name shown when it differs from the kind
+  assert.doesNotMatch(frame, /[├└]/);
 });
