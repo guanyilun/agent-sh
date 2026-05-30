@@ -35,6 +35,7 @@ import { registerDefaultSchemaRenderers } from "./default-schema-renderers.js";
 import { createPiTuiRenderer } from "./renderers/pi-tui/index.js";
 import type { Renderer } from "./renderer.js";
 import { loadRendererPreference } from "./display-config.js";
+import { applyOutputMode } from "./terminal-mode.js";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -221,6 +222,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const renderer = ctx.call(rendererKey) as Renderer;
+  applyOutputMode(renderer.capabilities.rawOutput);
   registerRenderDefaults(ctx, renderer);
   registerDefaultSchemaRenderers(ctx);
 

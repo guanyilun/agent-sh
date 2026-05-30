@@ -11,6 +11,7 @@ export function createPiTuiRenderer(): Renderer {
     capabilities: {
       images: true,
       markdownStreaming: true,
+      rawOutput: true,
     },
     measureWidth: (text) => visibleWidth(text),
     mountToolCall: (model, args, env) => mountCall(model, args, env),

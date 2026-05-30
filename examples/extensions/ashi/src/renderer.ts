@@ -154,6 +154,11 @@ export interface RendererCapabilities {
   images: boolean;
   /** When false, assistant/thinking fall back to plain styled text. */
   markdownStreaming: boolean;
+  /** Set true only if the renderer emits its own carriage returns and wants the
+   *  raw (OPOST-off) terminal — pi-tui does. Omit/false for libraries that emit
+   *  lone `\n` (Ink, most others); the substrate keeps OPOST on so they don't
+   *  staircase. agent-sh's shell clears OPOST on boot, so this is load-bearing. */
+  rawOutput?: boolean;
 }
 
 /** What ashi depends on: content-node factories + app shell + capabilities. */

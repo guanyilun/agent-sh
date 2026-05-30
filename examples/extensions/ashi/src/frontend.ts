@@ -21,6 +21,7 @@ import { classifySubmit, deriveChangeHandlerResult } from "./shell-mode.js";
 import { UserShellIntents } from "./user-shell-intents.js";
 import { BusAutocompleteProvider } from "./autocomplete.js";
 import { StatusFooter } from "./status-footer.js";
+import { applyOutputMode } from "./terminal-mode.js";
 import type { MultiSessionStore } from "./multi-session-store.js";
 import { stripContextWrappers, type SessionEntry } from "agent-sh/session-store";
 import { formatSessionRow } from "./session-commands.js";
@@ -957,6 +958,7 @@ export function mountAshi(
   const resumeFromSuspend = (): void => {
     if (!suspended) return;
     suspended = false;
+    applyOutputMode(renderer.capabilities.rawOutput);
     app.start();
     app.requestRender(true);
   };

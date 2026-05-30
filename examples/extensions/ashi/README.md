@@ -238,6 +238,13 @@ and a `capabilities` list so a renderer can declare gaps and the substrate degra
 rather than crashes. This is how you build a different TUI frontend (Ink, a
 remote/web bridge…) without forking ashi.
 
+The substrate also owns terminal setup so renderers don't each rediscover it.
+agent-sh's shell clears OPOST on boot (pi-tui emits its own `\r`); ashi reads
+`capabilities.rawOutput` and restores OPOST for renderers that emit lone `\n`
+(Ink and most libraries — the default), so they don't staircase. A new renderer
+gets the conventional terminal for free; only a raw driver like pi-tui sets
+`rawOutput: true`.
+
 See [`examples/extensions/ashi-ink`](../ashi-ink) for a worked example — a **working**
 Ink (React) renderer (`ASHI_RENDERER=ink ashi -e ashi-ink`), verified with
 `ink-testing-library`.
