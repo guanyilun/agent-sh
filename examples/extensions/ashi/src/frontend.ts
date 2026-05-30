@@ -944,16 +944,14 @@ export function mountAshi(
 
   const toggleThinking = (): void => {
     hideThinking = !hideThinking;
-    if (processing) {
-      // Mid-turn: only show/hide existing nodes. Group-merging respects the
-      // new flag for future calls; next idle rebuild reflows everything.
-      for (const e of chatEntries) {
-        if (e.t === "thinking") e.ctrl.setHidden(hideThinking);
-      }
-      app.requestRender();
-      return;
+    // Show/hide the thinking blocks currently in the chat. Reasoning isn't
+    // persisted, so rebuilding from the store would just drop them — the toggle
+    // has to act on the live controllers. Group-merging picks up the new flag
+    // for future calls; the next genuine rebuild reflows everything.
+    for (const e of chatEntries) {
+      if (e.t === "thinking") e.ctrl.setHidden(hideThinking);
     }
-    void rebuildChat();
+    app.requestRender();
   };
 
   const jobControl = process.platform !== "win32";
