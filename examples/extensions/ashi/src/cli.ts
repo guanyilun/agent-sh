@@ -29,7 +29,7 @@ import { MultiSessionStore } from "./multi-session-store.js";
 import { registerForkCommands, applyBranchMessages } from "./commands.js";
 import { registerSessionCommands } from "./session-commands.js";
 import { registerCompaction } from "./compaction.js";
-import { registerCapture } from "./capture.js";
+import { registerCapture, type Capture } from "./capture.js";
 import { registerRenderDefaults } from "./hooks.js";
 import { registerDefaultSchemaRenderers } from "./default-schema-renderers.js";
 import { createPiTuiRenderer } from "./renderers/pi-tui/index.js";
@@ -142,7 +142,11 @@ async function main(): Promise<void> {
   let stopFrontend: (() => void) | null = null;
 
   let shellRef: { kill(): void } | null = null;
-  const cleanup = (): void => {
+  let captureRef: Capture | null = null;
+  const cleanup = async (): Promise<void> => {
+    // Persist any just-completed turn before tearing down — the per-turn flush is
+    // fire-and-forget, so a quick exit would otherwise drop it.
+    try { await captureRef?.flush(); } catch {}
     try { stopFrontend?.(); } catch {}
     try { shellRef?.kill(); } catch {}
     try { core.kill(); } catch {}
@@ -193,6 +197,7 @@ async function main(): Promise<void> {
   }
 
   const capture = registerCapture(ctx, getStore);
+  captureRef = capture;
   registerCompaction(ctx, getStore, capture);
 
   // Renderers are extensions: ashi registers the built-in pi-tui renderer, and

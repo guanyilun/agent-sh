@@ -32,13 +32,21 @@ export function registerCapture(
     return { ...m, meta: { ...m.meta, diff: meta.diff, filePath: meta.filePath } };
   };
 
-  const flush = async (): Promise<void> => {
+  const writeNewMessages = async (): Promise<void> => {
     const messages = ctx.call("conversation:get-messages") as AgentMessage[] | undefined;
     if (!messages || messages.length <= liveEntryIds.length) return;
     const newMessages = messages.slice(liveEntryIds.length).map(enrich);
     const newIds = await getStore().current().appendMessages(newMessages);
     liveEntryIds = [...liveEntryIds, ...newIds];
     getStore().markLastSession();
+  };
+
+  // Serialize flushes through a chain so an exit-time flush can't race a
+  // processing-done flush and double-append the same messages.
+  let chain: Promise<void> = Promise.resolve();
+  const flush = (): Promise<void> => {
+    chain = chain.then(writeNewMessages, writeNewMessages);
+    return chain;
   };
 
   ctx.bus.on("agent:processing-done", () => { void flush(); });
