@@ -229,10 +229,9 @@ has two halves — content-node factories (`text` / `markdown` / `image` /
 declare gaps and the substrate degrades rather than crashes. This is how you build
 a different TUI frontend (Ink, OpenTUI, a remote/web bridge…) without forking ashi.
 
-- [`examples/extensions/ashi-ink`](../ashi-ink) — a **working** Ink (React) renderer
-  (`ASHI_RENDERER=ink ashi -e ashi-ink`), verified with `ink-testing-library`.
-- [`examples/extensions/ashi-opentui-renderer.ts`](../ashi-opentui-renderer.ts) — a
-  type-checked OpenTUI skeleton (OpenTUI needs Bun, so it's a shape reference).
+See [`examples/extensions/ashi-ink`](../ashi-ink) for a worked example — a **working**
+Ink (React) renderer (`ASHI_RENDERER=ink ashi -e ashi-ink`), verified with
+`ink-testing-library`.
 
 For non-render concerns (commands, settings, tools, providers) use the standard `agent-sh` extension API. See the [agent-sh extension docs](https://github.com/guanyilun/agent-sh/blob/main/docs/extensions.md).
 
