@@ -1,9 +1,9 @@
 # agent-sh
 
-A composable agent runtime — pair any frontend with any agent backend, over one shared extension layer.
-
 [![npm version](https://img.shields.io/npm/v/agent-sh.svg)](https://www.npmjs.com/package/agent-sh)
 [![license](https://img.shields.io/npm/l/agent-sh.svg)](https://github.com/guanyilun/agent-sh/blob/main/LICENSE)
+
+A composable agent runtime — pair any frontend with any agent backend, over one shared extension layer.
 
 ## Three example apps built on agent-sh
 
@@ -51,6 +51,8 @@ The frontend and the agent backend are both just components on the bus, so you *
 For the kernel design in full — the bus, handlers, the compositor, and the shell ↔ agent boundary — see [Architecture](docs/architecture.md). To embed the runtime in your own frontend, see the [Library Guide](docs/library.md). The rest of this README covers the bundled shell.
 
 ## Quick Start
+
+**This sets up the agent-sh shell** — the frontend bundled in the `agent-sh` package. (For the other frontends, install [ashi](examples/extensions/ashi/) or [asHub](https://github.com/firslov/asHub) instead.)
 
 ### Installation
 
@@ -167,22 +169,6 @@ The built-in agent (`ash`) is the default, but agent-sh can host a different cod
 All three bridges receive agent-sh's per-query shell context (`<shell_events>`) and follow the PTY-tracked cwd, so the hosted agent sees what you ran and where you are. Switching at runtime with `/backend <name>` persists the choice across sessions automatically; the `--backend` flag above is per-session only.
 
 **Caveat:** pi, claude-code, and opencode each manage their own tool surfaces, so agent-sh extensions that register tools (or skills, instructions, etc.) for the built-in `ash` agent generally won't be visible to a hosted backend. Frontend extensions (themes, content transforms, slash commands, the TUI renderer) keep working — only the agent-side capabilities differ. Use the bridges when you want that agent's toolset; stay on `ash` when you want agent-sh's extension ecosystem.
-
-## Key Features
-
-**Pure kernel, everything is an extension.** `createCore()` is a frontend-agnostic runtime — event bus, handler registry, compositor, backend coordinator, and nothing else. The agent, its tools, provider management, shell tracking, and the TUI renderer all load as extensions through one public API. Even the built-in agent can be disabled.
-
-**Real terminal, zero compromise.** Full PTY with your shell config, aliases, and environment. Shell starts instantly — the agent connects asynchronously in the background.
-
-**One entry point, smart tool selection.** Type `>` and agent-sh figures out how to help. Scratchpad tools (`bash`, `read_file`, `grep`, `glob`) for investigation. Extensions add capabilities like running commands in your live shell. No modes to pick — the agent reasons about which tools to use based on your intent.
-
-**Context that just works.** Every query includes your cwd, recent commands, and their output. Run a failing test, type `> fix this`, and agent-sh knows exactly what happened. Context management works like shell history — continuous, persistent across restarts, no sessions to manage. See [Context Management](docs/context-management.md).
-
-**Any LLM, any backend.** agent-sh works with any OpenAI-compatible API out of the box. Define multiple providers in settings and switch models at runtime with `/model <name>`. Or swap in a completely different agent — bundled bridges run [pi](examples/extensions/pi-bridge/), [claude-code](examples/extensions/claude-code-bridge/), or [opencode](examples/extensions/opencode-bridge/) as a drop-in backend (see [Bring your own agent](#bring-your-own-agent)).
-
-**Extensible by design.** The entire system is built on a typed event bus. Extensions can add custom input modes, content transforms (render LaTeX as images, Mermaid as diagrams), themes, slash commands, or replace the agent backend entirely. The built-in TUI renderer is itself just an extension.
-
-**Embeddable as a library.** The core is a headless kernel — `import { createCore } from "agent-sh"` to build WebSocket servers, REST APIs, Electron apps, alternate TUIs, or test harnesses. No terminal required. [ashi](examples/extensions/ashi/) and [asHub](https://github.com/firslov/asHub) are exactly this.
 
 ## Documentation
 
