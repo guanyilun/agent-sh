@@ -37,14 +37,13 @@ const model: RenderModel<SchemeInit> = {
       titleIcon: "scheme",
       title,
       status: s.status,
+      // The title already carries the source; the body shows the evaluation
+      // result (ash-scheme streams it into the framework-tracked `output`).
       body: failed
-        ? { kind: "compound", parts: [
-            { kind: "code", lang: "scheme", text: s.source },
-            { kind: "text", segments: [
-              { text: `✗ ${s.output.trim()}`, style: { color: "error" } },
-            ] },
+        ? { kind: "text", segments: [
+            { text: `✗ ${s.output.trim()}`, style: { color: "error" } },
           ] }
-        : { kind: "code", lang: "scheme", text: s.source },
+        : { kind: "stream", text: s.output },
       expandable: true,
       defaultExpanded: failed,
     };
