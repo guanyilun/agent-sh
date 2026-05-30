@@ -759,7 +759,7 @@ function buildRenderer(): { renderer: Renderer; harness: () => InkHarness } {
   const mountToolCall: Renderer["mountToolCall"] = (model, args, env) => tool.mountCall(model, args, env);
   const renderer: Renderer = {
     ...nodes,
-    capabilities: { images: false, markdownStreaming: true },
+    capabilities: { images: false, markdownStreaming: true, diffFrame: false },
     measureWidth,
     mountToolCall,
     mountToolResult: (model, args, env) => tool.mountResult(model, args, env),

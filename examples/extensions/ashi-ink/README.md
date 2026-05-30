@@ -50,6 +50,10 @@ Ink follows Claude Code's chat design (a different look from pi-tui's):
   **read/search groups** show `⏺ Reading N files… (ctrl+o to expand)` with the
   in-flight path(s) under `⎿` while active, settle to `⏺ Read N files` when done,
   and expand (Ctrl+O) to the full `⎿` list with per-file summaries,
+- **diffs** hang box-less under the `⎿` gutter — line-numbered, `+`/`-`, with
+  green/red backgrounds — Claude Code style; pi-tui keeps its rounded box frame. The
+  diff content is the shared core `renderDiff`; the renderer picks frame-or-not via
+  the `diffFrame` capability,
 - one blank line between top-level blocks (a tool result stays tight under its
   call) — the renderer owns the inter-block rhythm, like Claude Code's `marginTop`,
 - tables grow to their content and only wrap once they'd exceed the terminal.

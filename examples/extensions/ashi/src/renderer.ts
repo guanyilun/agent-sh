@@ -224,6 +224,10 @@ export interface RendererCapabilities {
    *  lone `\n` (Ink, most others); the substrate keeps OPOST on so they don't
    *  staircase. agent-sh's shell clears OPOST on boot, so this is load-bearing. */
   rawOutput?: boolean;
+  /** Wrap a diff in a box frame (`╭─ path +N -M ─╮`). Default (omitted) is framed,
+   *  as pi-tui draws it. A renderer that hangs the diff under its own gutter, Claude
+   *  Code style, sets this false to receive the bare hunk lines instead. */
+  diffFrame?: boolean;
 }
 
 /** What ashi depends on: content-node factories + app shell + capabilities. */

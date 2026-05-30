@@ -205,6 +205,28 @@ test("a read group: gerund + in-flight path while active, count when done, full 
   assert.doesNotMatch(expanded, /\(ctrl\+o to expand\)/);
 });
 
+test("a diff result hangs under the ⎿ gutter with no box frame (Claude Code style)", () => {
+  const env = { width: 80, mode: "preview" as const, previewLines: 50 };
+  const args = { toolCallId: "d1", name: "edit_file", title: "edit", displayDetail: "src/app.ts", rawInput: {} };
+  const diffModel: RenderModel<Record<string, never>> = {
+    initial: () => ({}),
+    view: (s) => ({
+      title: [{ text: "Edit", style: { bold: true } }],
+      status: s.status,
+      body: s.hasDiff ? { kind: "diff" } : undefined,
+      expandable: true,
+    }),
+  };
+  const result = r.mountToolResult(diffModel as RenderModel<unknown>, args, env);
+  result.setDiffRenderer(() => ["1 │   const x = 1", "2 │ - const y = 2", "2 │ + const y = 3"]);
+  result.finalize({ exitCode: 0 });
+  const f = frameOf(result.node);
+  assert.match(f, /⎿  1 │   const x = 1/); // first hunk line under the gutter
+  assert.match(f, /- const y = 2/);
+  assert.match(f, /\+ const y = 3/);
+  assert.doesNotMatch(f, /[╭╰╮╯┌┐└┘]/); // no box frame corners
+});
+
 test("a wide markdown table is fit to the width and wraps cell content", () => {
   const desc = Object.getOwnPropertyDescriptor(process.stdout, "columns");
   Object.defineProperty(process.stdout, "columns", { value: 70, configurable: true });

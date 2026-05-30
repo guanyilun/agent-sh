@@ -43,8 +43,21 @@ interface DiffStats { added: number; removed: number; isNewFile: boolean; isIden
 function buildDiffRenderer(
   diff: DiffStats & Parameters<typeof renderDiff>[0],
   filePath: string,
+  boxed = true,
 ): (width: number) => string[] {
   return (width) => {
+    if (!boxed) {
+      // Claude Code style: no frame — the diff hangs under the renderer's own
+      // gutter. The file path is already on the call line, so drop renderDiff's
+      // header (lines[0]); the line-numbered, bg-colored hunks are the body.
+      const contentW = Math.max(20, width);
+      const inner = diff.isNewFile
+        ? renderNewFilePreview(diff, 30, filePath)
+        : renderDiff(diff, {
+            width: contentW, filePath, trueColor: true, maxLines: Number.MAX_SAFE_INTEGER, mode: "unified",
+          }).slice(1);
+      return trimBlankEdges(inner);
+    }
     const boxW = Math.max(40, width);
     const contentW = Math.max(20, boxW - 4);
     const inner = diff.isNewFile
@@ -61,6 +74,14 @@ function buildDiffRenderer(
       title: diffFrameTitle(filePath, diff),
     });
   };
+}
+
+function trimBlankEdges(lines: string[]): string[] {
+  const blank = (s: string): boolean => s.replace(/\x1b\[[0-9;]*m/g, "").trim() === "";
+  let a = 0, b = lines.length;
+  while (a < b && blank(lines[a])) a++;
+  while (b > a && blank(lines[b - 1])) b--;
+  return lines.slice(a, b);
 }
 
 function renderNewFilePreview(
@@ -487,7 +508,7 @@ export function mountAshi(
         if (meta?.diff && typeof meta.filePath === "string") {
           const diff = meta.diff as DiffStats & Parameters<typeof renderDiff>[0];
           if (!diff.isIdentical) {
-            found.pair.result.setDiffRenderer(buildDiffRenderer(diff, meta.filePath));
+            found.pair.result.setDiffRenderer(buildDiffRenderer(diff, meta.filePath, renderer.capabilities.diffFrame !== false));
           }
         }
         found.pair.result.finalize({ exitCode: 0, summary });
@@ -613,7 +634,7 @@ export function mountAshi(
     if (body?.kind === "diff") {
       const diff = body.diff as DiffStats & Parameters<typeof renderDiff>[0];
       if (!diff.isIdentical) {
-        pair.result.setDiffRenderer(buildDiffRenderer(diff, body.filePath));
+        pair.result.setDiffRenderer(buildDiffRenderer(diff, body.filePath, renderer.capabilities.diffFrame !== false));
       }
     }
     pair.call.setStatus({ exitCode: e.exitCode, elapsedMs: Date.now() - pair.startedAt, summary });
