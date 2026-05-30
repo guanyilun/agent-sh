@@ -10,10 +10,9 @@ import { Marked } from "marked";
 import { markedTerminal } from "marked-terminal";
 import Table from "cli-table3";
 import {
-  iconString,
   renderBody,
   segmentsToString,
-  statusSuffix,
+  type Color,
   type DiffSlot,
   type Env,
   type MountArgs,
@@ -44,7 +43,6 @@ import type {
   ToolGroupView,
   ToolResultView,
 } from "@guanyilun/ashi/renderer";
-import { renderToolGroupLines } from "@guanyilun/ashi/renderer";
 import { INSPECT_FILE, inspectBump, inspectConsole, inspectReentrantBump, makeCommitWatcher } from "./inspect.js";
 
 const commitWatcher = INSPECT_FILE ? makeCommitWatcher() : null;
@@ -264,23 +262,38 @@ interface Cell {
   env: Env;
   diff: DiffSlot;
   model: RenderModel<unknown>;
+  args: MountArgs;
 }
 
-// Tool calls/results render like pi-tui: the call line carries the one-space
-// pad (paddingX on the node); the result body is prefixed with a `└` corner-arrow
-// and continuation lines are indented under it.
+// Claude Code tool look (ink owns the presentation; the schema supplies only the
+// data — name/detail/status/body). A tool call is `⏺ Name(detail)`, the ⏺ colored
+// by status (amber running, green ok, red error); the result hangs under a `⎿`
+// gutter (⎿ at col 2, content at col 5), matching the assistant ⏺ bullet rhythm.
+const RESULT_GUTTER = "     "; // 5 cols — continuation under "  ⎿  "
+
+function prettyToolName(name: string): string {
+  const base = (name || "tool").replace(/_file$/i, "").replace(/[_-]+/g, " ").trim();
+  const words = base.split(" ").filter(Boolean).map((w) => w[0]!.toUpperCase() + w.slice(1));
+  return words.join(" ") || "Tool";
+}
+
+function statusColor(s?: { exitCode: number | null }): Color {
+  if (!s) return "warning"; // still running
+  return s.exitCode === null || s.exitCode === 0 ? "success" : "error";
+}
+
 function paintCall(cell: Cell, width: number): string {
   const display = cell.model.view(cell.state, cell.env) as ToolDisplay;
-  const icon = iconString(display.titleIcon);
-  const title = segmentsToString(display.title);
-  const status = statusSuffix(display.status);
-  if (display.titleRight && display.titleRight.length > 0) {
-    const right = segmentsToString(display.titleRight);
-    const used = measureWidth(icon) + measureWidth(title) + measureWidth(status) + measureWidth(right);
-    const pad = " ".repeat(Math.max(2, width - 2 - used));
-    return `${icon}${title}${status}${pad}${right}`;
-  }
-  return `${icon}${title}${status}`;
+  const bullet = segmentsToString([{ text: "⏺", style: { color: statusColor(display.status) } }]);
+  const name = prettyToolName(cell.args.name);
+  let detail = (cell.args.displayDetail ?? "").trim()
+    || segmentsToString(display.title).replace(ANSI, "").replace(/^\$\s*/, "").trim();
+  const sum = display.status?.summary;
+  const tail = sum ? ` ${segmentsToString([{ text: sum, style: { color: "muted" } }])}` : "";
+  const room = Math.max(8, width - 2 - measureWidth(name) - 2 - (sum ? sum.length + 1 : 0));
+  if (detail.length > room) detail = `${detail.slice(0, Math.max(1, room - 1))}…`;
+  const nameStyled = segmentsToString([{ text: name, style: { bold: true } }]);
+  return detail ? `${bullet} ${nameStyled}(${detail})${tail}` : `${bullet} ${nameStyled}${tail}`;
 }
 
 function paintResult(cell: Cell, width: number): string[] {
@@ -290,15 +303,14 @@ function paintResult(cell: Cell, width: number): string[] {
   if (display.body.kind === "diff" && !env.expanded && env.mode !== "preview") return [];
   const policied = display.body.kind === "stream" || display.body.kind === "diff";
   if (!policied && !env.expanded && !display.defaultExpanded) return [];
-  const indent = "   ";
-  const bodyEnv: Env = { ...env, width: Math.max(1, width - indent.length) };
+  const bodyEnv: Env = { ...env, width: Math.max(1, width - RESULT_GUTTER.length) };
   const rendered = renderBody(display.body, bodyEnv, cell.diff);
   if (!rendered.trim()) return [];
   const ok = display.status?.exitCode === null || display.status?.exitCode === 0;
-  const arrow = segmentsToString([{ text: "└", style: { color: ok ? "muted" : "error" } }]);
+  const elbow = segmentsToString([{ text: "⎿", style: { color: ok ? "muted" : "error" } }]);
   const lines = rendered.split("\n");
-  lines[0] = ` ${arrow} ${lines[0]}`;
-  for (let i = 1; i < lines.length; i++) lines[i] = `${indent}${lines[i]}`;
+  lines[0] = `  ${elbow}  ${lines[0]}`;
+  for (let i = 1; i < lines.length; i++) lines[i] = `${RESULT_GUTTER}${lines[i]}`;
   return lines;
 }
 
@@ -317,6 +329,7 @@ function makeToolMount(req: () => void) {
       env: { ...env, expanded: false, finalized: false },
       diff: { lastWidth: -1, cached: [] },
       model,
+      args,
     };
     handles.set(args.toolCallId, cell);
     return cell;
@@ -337,7 +350,7 @@ function makeToolMount(req: () => void) {
   return {
     mountCall(model: RenderModel<unknown>, args: MountArgs, env: MountEnv): ToolCallView {
       const cell = cellFor(model, args, env);
-      const v: VNode = { kind: "text", lines: [], fn: (w) => [paintCall(cell, w)], paddingX: 1 };
+      const v: VNode = { kind: "text", lines: [], fn: (w) => [paintCall(cell, w)], paddingX: 0 };
       return { node: asNode(v), setStatus: (o) => dispatch(cell, "status", o) };
     },
     mountResult(model: RenderModel<unknown>, args: MountArgs, env: MountEnv): ToolResultView {
@@ -354,17 +367,36 @@ function makeToolMount(req: () => void) {
   };
 }
 
-// A tool group: render the substrate's default ├/└ lines into Ink text nodes
-// (one-space pad each, matching pi-tui). The model is still ours to draw any way
-// we like — we just opt into the shared default.
+// A read/search group, Claude Code style: a single `⏺ Read N files` summary line
+// (not a ├/└ tree, no "+N earlier" eviction). Expanding (Ctrl+O) lists each call
+// under a `⎿` gutter. The whole count is summarized whether or not the substrate
+// evicted older calls — ink reads the model and draws it however it likes.
+function summarizeGroup(kind: string, n: number): string {
+  if (kind === "read") return `Read ${n} file${n === 1 ? "" : "s"}`;
+  if (kind === "search") return `Searched ${n} pattern${n === 1 ? "" : "s"}`;
+  return `${n} ${kind} call${n === 1 ? "" : "s"}`;
+}
+function childOk(c: ToolGroupModel["children"][number]): boolean {
+  return !c.status || c.status.exitCode === null || c.status.exitCode === 0;
+}
 function makeToolGroup(req: () => void): ToolGroupView {
   const v: VNode = { kind: "container", children: [] };
   const ch = v.kind === "container" ? v.children : [];
   const update = (model: ToolGroupModel): void => {
     ch.length = 0;
     ch.push({ kind: "spacer", rows: 1 });
-    for (const l of renderToolGroupLines(model)) {
-      ch.push({ kind: "text", lines: [l], fn: null, paddingX: 1 });
+    const total = model.children.length + (model.hidden?.count ?? 0);
+    const running = model.children.some((c) => !c.status);
+    const anyErr = model.children.some((c) => !childOk(c)) || (model.hidden ? !model.hidden.ok : false);
+    const color: Color = running ? "warning" : anyErr ? "error" : "success";
+    const bullet = segmentsToString([{ text: "⏺", style: { color } }]);
+    ch.push({ kind: "text", lines: [`${bullet} ${summarizeGroup(model.kind, total)}`], fn: null, paddingX: 0 });
+    if (model.expanded) {
+      for (const c of model.children) {
+        const elbow = segmentsToString([{ text: "⎿", style: { color: childOk(c) ? "muted" : "error" } }]);
+        const sum = c.status?.summary ? ` ${segmentsToString([{ text: c.status.summary, style: { color: "muted" } }])}` : "";
+        ch.push({ kind: "text", lines: [`  ${elbow}  ${c.detail}${sum}`], fn: null, paddingX: 0 });
+      }
     }
     req();
   };

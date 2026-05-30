@@ -123,7 +123,8 @@ test("mounts a tool call + result through the renderer", () => {
   const args = { toolCallId: "t1", name: "bash", title: "bash", rawInput: { command: "ls -la" } };
 
   const call = r.mountToolCall(bashModel as RenderModel<unknown>, args, env);
-  assert.match(frameOf(call.node), /\$ ls -la/);
+  // Claude Code look: ⏺ Name(detail), no schema icon / $ prefix.
+  assert.match(frameOf(call.node), /⏺ Bash\(ls -la\)/);
 
   const result = r.mountToolResult(bashModel as RenderModel<unknown>, args, env);
   result.appendChunk("file1\nfile2\n");
@@ -131,22 +132,26 @@ test("mounts a tool call + result through the renderer", () => {
   const f = frameOf(result.node);
   assert.match(f, /file1/);
   assert.match(f, /file2/);
-  // Output is prefixed with a └ corner-arrow, like pi-tui.
-  assert.match(f, /└ file1/);
-  // call line picks up the ✓ from the shared cell after finalize
-  assert.match(frameOf(call.node), /\$ ls -la\s+✓/);
+  // Output hangs under a ⎿ gutter, not a └ corner-arrow.
+  assert.match(f, /⎿  file1/);
+  assert.doesNotMatch(f, /└/);
+  // call line keeps the ⏺ header after finalize (status is the bullet's color).
+  assert.match(frameOf(call.node), /⏺ Bash\(ls -la\)/);
 });
 
-test("a tool group renders the shared ├/└ tree, like pi-tui", () => {
+test("a read/search group renders a summary line; expands to a ⎿ list", () => {
   const g = new ToolGroup(r as never, "read");
   g.addCall("1", "read_file", "src/app.ts");
   g.addCall("2", "ls", "src/");
   g.recordCompletion("1", 0, "120 lines");
-  const frame = frameOf(g.node);
-  assert.match(frame, / ◆ read/);
-  assert.match(frame, /├ src\/app\.ts.*✓ 120 lines/);
-  assert.match(frame, /└ ls src\//); // last child + name shown when it differs from the kind
-  assert.doesNotMatch(frame, /▌/);
+  const collapsed = frameOf(g.node);
+  assert.match(collapsed, /⏺ Read 2 files/); // one summary line, no tree
+  assert.doesNotMatch(collapsed, /[├└]/);
+  g.toggleExpanded();
+  const expanded = frameOf(g.node);
+  assert.match(expanded, /⏺ Read 2 files/);
+  assert.match(expanded, /⎿  src\/app\.ts.*120 lines/);
+  assert.match(expanded, /⎿  src\//);
 });
 
 test("a wide markdown table is fit to the width and wraps cell content", () => {

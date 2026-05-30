@@ -74,6 +74,7 @@ export class ToolGroup {
       icon: GROUP_ICONS[this.kind] ?? "▶",
       children: this.allChildren.slice(start),
       hidden,
+      expanded: this.expanded,
     };
     this.view.update(model);
   }

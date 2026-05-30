@@ -171,6 +171,7 @@ export interface ToolGroupModel {
   icon: string; // glyph (◆ / ⌕ / ▶), mapped from kind by the substrate
   children: ToolGroupChild[]; // currently visible, tail order
   hidden: { count: number; ok: boolean } | null; // collapsed older calls, or null
+  expanded: boolean; // user toggled the group open (renderers may list children)
 }
 
 export interface ToolGroupView {

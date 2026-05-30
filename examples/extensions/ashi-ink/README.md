@@ -37,22 +37,23 @@ settings > `pi-tui` (default).
 
 ## Its look
 
-Ink gives the *chrome* a light identity, while rendering messages and tool
-output exactly like pi-tui:
+Ink follows Claude Code's chat design (a different look from pi-tui's):
 
-- each sent user turn on a **faint gray band with a violet `❯` marker** (the
-  Claude Code pattern — stock Ink's `<Box>` can't fill a rect, but a padded
+- each sent user turn on a **faint gray band with a light-gray `❯` marker at
+  column 0** (stock Ink's `<Box>` can't fill a rect, but a padded
   `<Text backgroundColor>` does, once `marked-terminal`'s `\x1b[0m` resets are
   stripped so they can't punch a hole in the background),
-- a **`❯` prompt** between top/bottom violet rules,
-- content reflowed to the terminal width with each wrapped line indented one
-  space, and a single violet accent (`#c778dd`) for the chrome.
+- each assistant turn under a **`⏺` bullet at column 0**, content hanging-indented
+  to column 2; markdown is flush-left (`tab: 0`),
+- **tools** as `⏺ Name(detail)` (the `⏺` colored by status) with output under a
+  `⎿` gutter; **read/search groups** collapse to a one-line `⏺ Read N files`
+  summary and expand (Ctrl+O) to a `⎿` list,
+- tables grow to their content and only wrap once they'd exceed the terminal.
 
-Tool calls, results, and grouped `read`/`search` runs use the substrate's shared
-default rendering (`renderToolGroupLines` + the `└` corner-arrow), so they look
-the same as pi-tui — Ink opts into the default rather than featuring tool calls.
-The tool look is still fully the renderer's to change (see below); Ink just
-chooses not to.
+The entire tool look lives in the renderer (`paintCall` / `paintResult` /
+`makeToolGroup`) consuming the substrate's schema data — the substrate decides
+*what* a tool call is; Ink decides *how* it looks. pi-tui draws the same data as a
+`├`/`└` tree; that they diverge is the proof the renderer fully owns presentation.
 
 ## How it works
 
