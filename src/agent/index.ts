@@ -28,6 +28,7 @@ import activateOpenaiCompatible from "./providers/openai-compatible.js";
 import activateDeepseek from "./providers/deepseek.js";
 import activateOllama from "./providers/ollama.js";
 import activateZaiCodingPlan from "./providers/zai-coding-plan.js";
+import activateKimiCodingPlan from "./providers/kimi-coding-plan.js";
 import activateOpencode from "./providers/opencode.js";
 import { findBash } from "../utils/executor.js";
 import { createBashTool } from "./tools/bash.js";
@@ -566,5 +567,6 @@ export function activateAgent(ctx: ExtensionContext): void {
   activateDeepseek(agentCtx);
   activateOllama(agentCtx);
   activateZaiCodingPlan(agentCtx);
+  activateKimiCodingPlan(agentCtx);
   activateOpencode(agentCtx);
 }
