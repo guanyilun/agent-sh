@@ -1454,10 +1454,15 @@ function splitArgs(
   return { positionals, opts };
 }
 
+// Cache executors on globalThis (survives reload's module-cache bust): in
+// schemeOnly the built-ins get unregistered, but the tool objects outlive it.
+const EXECUTOR_CACHE: Record<string, ToolExecutor> =
+  ((globalThis as any).__ashSchemeExecutors ??= {});
 function resolveExecutor(ctx: AgentContext, name: string): ToolExecutor {
   const tool = ctx.agent.getTools().find((t) => t.name === name);
-  if (!tool) throw new Error(`scheme bridge: tool '${name}' not registered`);
-  return (args) => tool.execute(args);
+  if (tool) return (EXECUTOR_CACHE[name] = (args) => tool.execute(args));
+  if (EXECUTOR_CACHE[name]) return EXECUTOR_CACHE[name];
+  throw new Error(`scheme bridge: tool '${name}' not registered`);
 }
 
 function installBindings(
