@@ -248,14 +248,14 @@ test("revealed thinking is dim-tinted and survives marked's resets", () => {
   assert.match(frame, /\x1b\[2m/);
 });
 
-test("the thinking loader is coral and shows a per-turn elapsed timer", () => {
+test("the thinking loader uses the accent color and shows a per-turn elapsed timer", () => {
   const h = __harness();
   const loader = h.app.createLoader("thinking…", (t) => t, (t) => t);
   const inst = render(__renderNode(loader.node));
   const frame = inst.lastFrame() ?? "";
   inst.unmount();
   loader.stop();
-  assert.match(frame, /38;2;217;119;87m/); // coral accent
+  assert.match(frame, /38;2;138;190;183m/); // accent, matches the footer model name
   assert.match(frame, /thinking… \(\d+s\)/);
 });
 

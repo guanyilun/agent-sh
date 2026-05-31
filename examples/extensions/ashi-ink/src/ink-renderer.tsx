@@ -92,7 +92,7 @@ function truncateVisible(s: string, width: number): string {
   return `${out}…\x1b[0m`;
 }
 
-const ACCENT_HEX = "#d97757"; // coral accent — thinking spinner + select picker highlight
+const ACCENT_HEX = "#8abeb7"; // thinking spinner + select-picker highlight; matches the footer model name
 const RESET = "\x1b[39m";
 const BOLD = "\x1b[1m";
 const BOLD_OFF = "\x1b[22m";
