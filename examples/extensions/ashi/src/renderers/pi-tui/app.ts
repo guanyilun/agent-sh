@@ -77,7 +77,9 @@ export function createApp(): App {
   const tui = new TUI(terminal);
 
   const scrollback = nodes.container();
-  const footerSlot = footerContainer();
+  const footerSlot = footerContainer(
+    () => (scrollback.node as unknown as { children: unknown[] }).children.length > 0,
+  );
   const queueSlot = nodes.container();
   const status = nodes.text({ paddingX: 1 });
   const belowInput = nodes.container();

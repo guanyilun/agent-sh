@@ -46,8 +46,9 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 // OSC 133 zone brackets let terminals navigate between user prompts.
 class ZonedMarkdown extends Markdown {
   override render(width: number): string[] {
-    const lines = super.render(width);
-    if (lines.length === 0) return lines;
+    const base = super.render(width);
+    if (base.length === 0) return base;
+    const lines = base.slice();
     lines[0] = OSC133_ZONE_START + lines[0];
     lines[lines.length - 1] = lines[lines.length - 1] + OSC133_ZONE_END + OSC133_ZONE_FINAL;
     return lines;
@@ -55,13 +56,17 @@ class ZonedMarkdown extends Markdown {
 }
 
 class FooterSlot extends Container {
+  constructor(private readonly hasContentAbove: () => boolean) {
+    super();
+  }
   override render(width: number): string[] {
-    return this.children.length === 0 ? [""] : super.render(width);
+    if (this.children.length > 0) return super.render(width);
+    return this.hasContentAbove() ? [""] : [];
   }
 }
 
-export function footerContainer(): ContainerView {
-  const c = new FooterSlot();
+export function footerContainer(hasContentAbove: () => boolean): ContainerView {
+  const c = new FooterSlot(hasContentAbove);
   return {
     node: asNode(c),
     addChild: (child) => c.addChild(asComponent(child)),

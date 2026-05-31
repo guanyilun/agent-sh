@@ -105,6 +105,22 @@ test("streaming markdown (stable-prefix) converges to the one-shot render", () =
   }
 });
 
+test("a long list item wraps with a hanging indent, not back to column 0", () => {
+  const desc = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+  Object.defineProperty(process.stdout, "columns", { value: 40, configurable: true });
+  try {
+    const md = r.markdown();
+    md.setText("- this is a fairly long list item that should wrap across the width here");
+    const lines = frameOf(md.node).split("\n").filter((l) => l.trim());
+    assert.ok(lines.length >= 2, `expected the item to wrap, got ${lines.length} line(s)`);
+    assert.match(lines[0], /^\* this is/); // bullet at column 0
+    assert.match(lines[1], /^ {2}\S/); // continuation hangs under the bullet text, not col 0
+  } finally {
+    if (desc) Object.defineProperty(process.stdout, "columns", desc);
+    else delete (process.stdout as { columns?: number }).columns;
+  }
+});
+
 test("committed scrollback renders via <Static>, alongside the live tail", () => {
   const h = __harness();
   const a = h.nodes.text(); a.setText("first turn");
@@ -304,6 +320,15 @@ test("Shift+Enter inserts a newline; Enter submits", () => {
   h.feedInput("\r"); // Enter
   assert.equal(submitted, "ab\ncd");
   assert.equal(h.editor.text, ""); // onSubmit cleared it
+});
+
+test("the input box border color follows setBorderColor (shell mode)", () => {
+  const h = __harness();
+  const before = render(h.element).lastFrame() ?? "";
+  assert.doesNotMatch(before, /38;2;220;180;0/); // default gray, not yellow
+  h.app.input.setBorderColor((t) => `\x1b[38;2;220;180;0m${t}\x1b[39m`); // a theme.fg-style yellow styler
+  const after = render(h.element).lastFrame() ?? "";
+  assert.match(after, /38;2;220;180;0/); // border now carries the shell-mode color
 });
 
 test("the input box border uses the same gray as the ❯ marker", () => {

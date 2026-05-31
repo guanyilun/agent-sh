@@ -4,7 +4,7 @@ import React from "react";
 import { Box, Static, Text, render as inkRender, type Instance } from "ink";
 import Spinner from "ink-spinner";
 import { LineEditor } from "agent-sh/utils/line-editor.js";
-import { ProcessTerminal, matchesKey, isKeyRelease, isKeyRepeat, type KeyId } from "@earendil-works/pi-tui";
+import { ProcessTerminal, matchesKey, isKeyRelease, isKeyRepeat, wrapTextWithAnsi, type KeyId } from "@earendil-works/pi-tui";
 import { Marked } from "marked";
 import { markedTerminal } from "marked-terminal";
 import Table from "cli-table3";
@@ -110,6 +110,13 @@ const DOT_ERR = "\x1b[38;2;255;107;128m";
 const DIM_ON = "\x1b[2m";
 const DIM_OFF = "\x1b[22m";
 
+// The frontend hands border color as a text styler (theme.fg truecolor); Ink's
+// borderColor wants a value, so pull the RGB back out as hex.
+function hexFromStyler(fn: (t: string) => string): string {
+  const m = fn("x").match(/38;2;(\d+);(\d+);(\d+)/);
+  return m ? `#${[m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, "0")).join("")}` : MARKER_GRAY_HEX;
+}
+
 // marked-terminal's legacy table renderer hands us marker-delimited cells sized to
 // content with no max; we split them and rebuild with cli-table3 colWidths that fit.
 const TABLE_CELL_SPLIT = "^*||*^";
@@ -148,6 +155,27 @@ function fitTable(header: string, body: string, width: number): string {
   return `${t.toString()}\n`;
 }
 
+// marked-terminal doesn't reflow list items; reflow each so its list() hang-indents the wraps.
+function makeWrappingList(width: number) {
+  return (body: string, ordered: boolean): string => {
+    const out: string[] = [];
+    let num = 0;
+    let hang = 2;
+    for (const line of body.trim().split("\n")) {
+      if (!line) continue;
+      if (line.startsWith("* ")) {
+        const marker = ordered ? `${++num}. ` : "* ";
+        hang = marker.length;
+        wrapTextWithAnsi(line.slice(2), Math.max(1, width - hang))
+          .forEach((wl, i) => out.push((i === 0 ? marker : " ".repeat(hang)) + wl));
+      } else {
+        wrapTextWithAnsi(line, Math.max(1, width - hang)).forEach((wl) => out.push(" ".repeat(hang) + wl));
+      }
+    }
+    return out.join("\n");
+  };
+}
+
 // marked-terminal defaults to width 80 / no reflow; reflow at the real width (cached).
 const markedCache = new Map<number, Marked>();
 function markedFor(width: number): Marked {
@@ -155,7 +183,7 @@ function markedFor(width: number): Marked {
   if (!m) {
     m = new Marked();
     // tab 0 = flush-left markdown (the bullet is the only indent); flattens nested lists.
-    m.use(markedTerminal({ width, reflowText: true, tab: 0 }) as Parameters<Marked["use"]>[0]);
+    m.use(markedTerminal({ width, reflowText: true, tab: 0, list: makeWrappingList(width) }) as Parameters<Marked["use"]>[0]);
     m.use({ renderer: { table: (h: unknown, b: unknown): string => fitTable(String(h), String(b), width) } } as Parameters<Marked["use"]>[0]);
     markedCache.set(width, m);
   }
@@ -555,6 +583,7 @@ interface AppState {
   keyHandlers: KeyHandler[];
   // [0, committedCount) are settled and render via <Static>; the rest is the live turn.
   committedCount: number;
+  borderColor: string;
 }
 
 // Global key matching shares pi-tui's matcher, so it behaves identically to the
@@ -584,7 +613,7 @@ function Root({ store, state }: { store: Store; state: AppState }): React.ReactE
       {live.map((child, i) => renderBlock(child, cc + i))}
       {renderVNode(state.footer)}
       {renderVNode(state.queue)}
-      <Box marginTop={1} borderStyle="single" borderLeft={false} borderRight={false} borderColor={MARKER_GRAY_HEX}>
+      <Box marginTop={1} borderStyle="single" borderLeft={false} borderRight={false} borderColor={state.borderColor}>
         <Text>{paintInput(state.editor, state.focus === "input")}</Text>
       </Box>
       {renderVNode(state.belowInput)}
@@ -620,6 +649,7 @@ function makeApp(store: Store, req: () => void): {
     activeSelect: null,
     keyHandlers: [],
     committedCount: 0,
+    borderColor: MARKER_GRAY_HEX,
   };
 
   let ink: Instance | null = null;
@@ -718,8 +748,8 @@ function makeApp(store: Store, req: () => void): {
     },
     onChange: (fn) => { state.onChange = fn; },
     onSubmit: (fn) => { state.onSubmit = fn; },
-    defaultBorderColor: (t) => t,
-    setBorderColor: () => {},
+    defaultBorderColor: (t) => `${MARKER_GRAY}${t}${RESET}`,
+    setBorderColor: (fn) => { state.borderColor = hexFromStyler(fn); req(); },
     invalidate: () => req(),
   };
 
