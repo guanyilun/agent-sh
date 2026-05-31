@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { createPiTuiRenderer } from "../src/renderers/pi-tui/index.js";
 import { InfoLine, ErrorLine } from "../src/chat/lines.js";
 import { AssistantMessage } from "../src/chat/assistant.js";
+import { UserMessage } from "../src/chat/user-message.js";
+import { footerContainer } from "../src/renderers/pi-tui/nodes.js";
 import { ThinkingBlock } from "../src/chat/thinking.js";
 import { ToolGroup } from "../src/chat/tool-group.js";
 import { registerDefaultSchemaRenderers } from "../src/default-schema-renderers.js";
@@ -42,6 +44,22 @@ test("AssistantMessage streams text and renders markdown", () => {
 test("AssistantMessage hasContent is false before any text", () => {
   const am = new AssistantMessage(renderer);
   assert.equal(am.hasContent(), false);
+});
+
+test("FooterSlot reserves a gap only when there is content above", () => {
+  const render = (n: RenderNode) => (n as unknown as { render(w: number): string[] }).render(80);
+  assert.deepEqual(render(footerContainer(() => false).node), [], "no blank line at launch (empty transcript)");
+  assert.deepEqual(render(footerContainer(() => true).node), [""], "one gap line once a transcript exists");
+});
+
+test("UserMessage renders identically across repeated renders", () => {
+  const um = new UserMessage(renderer, "Hello **world**, a wrapping user message for the test.");
+  const comp = um.node as unknown as { render(w: number): string[] };
+  const first = comp.render(80);
+  const second = comp.render(80);
+  const third = comp.render(80);
+  assert.deepEqual(second, first, "second render must be byte-identical to the first");
+  assert.deepEqual(third, first, "third render must be byte-identical to the first");
 });
 
 test("ThinkingBlock hides and restores its buffer", () => {
