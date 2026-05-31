@@ -1,16 +1,17 @@
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { getCapabilities, visibleWidth } from "@earendil-works/pi-tui";
 import type { Renderer } from "../../renderer.js";
 import { createNodes } from "./nodes.js";
 import { createApp } from "./app.js";
 import { mountCall, mountResult } from "./schema-mount.js";
 import { createPiTuiToolGroup } from "./tool-group.js";
+import { loadImageScale } from "../../display-config.js";
 
 export function createPiTuiRenderer(): Renderer {
-  const nodes = createNodes();
+  const nodes = createNodes({ imageScale: loadImageScale() });
   return {
     ...nodes,
     capabilities: {
-      images: true,
+      images: getCapabilities().images !== null,
       markdownStreaming: true,
       rawOutput: true,
     },

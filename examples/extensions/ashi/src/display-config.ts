@@ -31,6 +31,7 @@ interface AshiSettings extends Record<string, unknown> {
   display?: Record<string, Partial<ToolEntryConfig>>;
   groupMaxVisible?: number;
   renderer?: string;
+  imageScale?: number;
 }
 
 export function loadRendererPreference(): string | undefined {
@@ -43,6 +44,12 @@ export function loadGroupMaxVisible(): number {
   const v = ashi.groupMaxVisible;
   if (typeof v !== "number" || !Number.isFinite(v) || v < 2) return Infinity;
   return Math.floor(v);
+}
+
+export function loadImageScale(): number {
+  const v = getExtensionSettings<AshiSettings>("ashi", {}).imageScale;
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return 1;
+  return v;
 }
 
 function mergeEntry(base: ToolEntryConfig, patch?: Partial<ToolEntryConfig>): ToolEntryConfig {

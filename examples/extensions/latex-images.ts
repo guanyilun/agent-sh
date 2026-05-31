@@ -96,6 +96,42 @@ function renderEquation(equation: string): Buffer | null {
   }
 }
 
+const equationCache = new Map<string, Buffer | null>();
+function renderEquationCached(equation: string): Buffer | null {
+  if (!equationCache.has(equation)) {
+    equationCache.set(equation, renderEquation(equation));
+  }
+  return equationCache.get(equation) ?? null;
+}
+
+const EQ_DELIM = "$$";
+
+type Block =
+  | { type: "text"; text: string }
+  | { type: "image"; data: Buffer }
+  | { type: "code-block"; language: string; code: string };
+type ContentPipe = { blocks: Block[]; images?: boolean };
+
+function splitEquations(text: string): Block[] {
+  const out: Block[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const open = text.indexOf(EQ_DELIM, i);
+    if (open === -1) {
+      const rest = text.slice(i);
+      if (rest) out.push({ type: "text", text: rest });
+      break;
+    }
+    const close = text.indexOf(EQ_DELIM, open + EQ_DELIM.length);
+    if (close === -1) { out.push({ type: "text", text: text.slice(i) }); break; }
+    if (open > i) out.push({ type: "text", text: text.slice(i, open) });
+    const png = renderEquationCached(text.slice(open + EQ_DELIM.length, close).trim());
+    out.push(png ? { type: "image", data: png } : { type: "text", text: text.slice(open, close + EQ_DELIM.length) });
+    i = close + EQ_DELIM.length;
+  }
+  return out;
+}
+
 // ── Extension entry point ────────────────────────────────────────
 
 export default function activate(ctx: ExtensionContext) {
@@ -115,26 +151,38 @@ export default function activate(ctx: ExtensionContext) {
     return;
   }
 
-  ctx.define("latex:render-equation", (equation: string): Buffer | null => renderEquation(equation));
+  ctx.define("latex:render-equation", (equation: string): Buffer | null => renderEquationCached(equation));
 
-  // Shell-only — ashi has no shell surface; it uses the capability above instead.
   if (ctx.shell) {
+    // Shell streams output, so it buffers $$ spanning chunks; finalized-content
+    // renderers (below) get whole blocks instead.
     ctx.shell.createBlockTransform({
-      open: "$$",
-      close: "$$",
-      transform(latex) {
-        const png = renderEquation(latex);
-        if (!png) return null;
-        return { type: "image", data: png };
+      open: EQ_DELIM,
+      close: EQ_DELIM,
+      transform(latex: string) {
+        const png = renderEquationCached(latex);
+        return png ? { type: "image" as const, data: png } : null;
       },
     });
 
     ctx.advise("render:code-block", (next, language: string, code: string, width: number) => {
       if (language !== "latex" && language !== "tex") return next(language, code, width);
-      const png = renderEquation(code);
+      const png = renderEquationCached(code);
       if (!png) return next(language, code, width);
       ctx.call("render:image", png);
     });
+  } else {
+    (bus.onPipe as unknown as (e: string, fn: (p: ContentPipe) => ContentPipe) => void)(
+      "render:assistant-content",
+      (payload) => {
+        // Can't show images reliably → leave $$…$$ as text.
+        if (!payload.images) return payload;
+        return {
+          ...payload,
+          blocks: payload.blocks.flatMap((b) => (b.type === "text" ? splitEquations(b.text) : [b])),
+        };
+      },
+    );
   }
 
   process.on("exit", () => {
