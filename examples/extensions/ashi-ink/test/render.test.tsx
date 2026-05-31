@@ -5,6 +5,7 @@ import { createInkRenderer, __renderNode, __harness } from "../src/ink-renderer.
 import type { RenderModel } from "@guanyilun/ashi/render";
 import type { RenderNode } from "@guanyilun/ashi/renderer";
 import { ToolGroup } from "../../ashi/src/chat/tool-group.js";
+import { ThinkingBlock } from "../../ashi/src/chat/thinking.js";
 import { createAutocompleteController } from "../../ashi/src/autocomplete-controller.js";
 import type { AutocompleteProvider } from "@guanyilun/ashi/renderer";
 
@@ -236,6 +237,15 @@ test("a read group: tail pinned + flashing while open, summary-only once sealed,
   assert.match(expanded, /⎿  src\/app\.ts.*120 lines/);
   assert.match(expanded, /⎿  src\/util\.ts.*45 lines/);
   assert.doesNotMatch(expanded, /\(ctrl\+o to expand\)/);
+});
+
+test("revealed thinking is dim-tinted and survives marked's resets", () => {
+  const tb = new ThinkingBlock(r as never);
+  tb.appendText("Let me think about this plainly.");
+  const frame = render(__renderNode(tb.node)).lastFrame() ?? "";
+  assert.match(strip(frame), /Let me think about this plainly\./);
+  assert.match(frame, /\x1b\[38;2;128;128;128m[^\x1b]/);
+  assert.match(frame, /\x1b\[2m/);
 });
 
 test("a diff result hangs under the ⎿ gutter with no box frame (flush gutter)", () => {

@@ -96,6 +96,7 @@ class Theme {
   bg(color: ThemeColor, text: string): string { return `${this.bgCodes.get(color)}${text}\x1b[49m`; }
   bgCode(color: ThemeColor): string { return this.bgCodes.get(color) ?? ""; }
   bold(text: string): string { return chalk.bold(text); }
+  dim(text: string): string { return chalk.dim(text); }
   italic(text: string): string { return chalk.italic(text); }
   underline(text: string): string { return chalk.underline(text); }
   strikethrough(text: string): string { return chalk.strikethrough(text); }

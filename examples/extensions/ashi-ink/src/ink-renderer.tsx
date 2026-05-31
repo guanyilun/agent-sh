@@ -225,6 +225,16 @@ function renderMarkdownStreaming(v: { source: string; mdc?: MdCache }, width: nu
   return `${c.out}\n\n${tailOut}`;
 }
 
+const FULL_RESET = /\x1b\[0?m/g;
+function tintMarkdown(md: string, styler: (t: string) => string): string {
+  const probe = styler(" ");
+  const cut = probe.indexOf(" ");
+  const open = cut > 0 ? probe.slice(0, cut) : "";
+  return md.split("\n")
+    .map((line) => styler(open ? line.replace(FULL_RESET, (m) => m + open) : line))
+    .join("\n");
+}
+
 interface Store {
   bump: () => void;
   subscribe: (l: () => void) => () => void;
@@ -487,14 +497,14 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
       if (v.bullet) {
         let md = renderMarkdownStreaming(v, w - 2);
         if (md.replace(ANSI, "").trim() === "") return null;
-        if (v.color) md = md.split("\n").map(v.color).join("\n");
+        if (v.color) md = tintMarkdown(md, v.color);
         const out = md.split("\n").map((l, i) => (i === 0 ? ASSISTANT_MARKER : "  ") + l).join("\n");
         return <Text key={key}>{out}</Text>;
       }
       const pad = v.paddingX ?? 0;
       let md = renderMarkdownStreaming(v, w - pad);
       if (md.replace(ANSI, "").trim() === "") return null;
-      if (v.color) md = md.split("\n").map(v.color).join("\n");
+      if (v.color) md = tintMarkdown(md, v.color);
       const indent = " ".repeat(pad);
       return <Text key={key}>{md.split("\n").map((l) => indent + l).join("\n")}</Text>;
     }
