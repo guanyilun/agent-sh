@@ -11,7 +11,7 @@ import {
   type SelectItem as PiSelectItem,
 } from "@earendil-works/pi-tui";
 import { editorTheme, selectListTheme } from "./theme-adapters.js";
-import { createNodes } from "./nodes.js";
+import { createNodes, footerContainer } from "./nodes.js";
 import type {
   App,
   InputView,
@@ -54,13 +54,20 @@ function makeSelect(items: SelectItem[], visibleRows: number): SelectView {
   };
 }
 
+class FlushLoader extends Loader {
+  override render(width: number): string[] {
+    const lines = super.render(width);
+    return lines[0] === "" ? lines.slice(1) : lines;
+  }
+}
+
 function makeLoader(
   tui: TUI,
   label: string,
   color: (t: string) => string,
   muted: (t: string) => string,
 ): LoaderView {
-  const loader = new Loader(tui, color, muted, label);
+  const loader = new FlushLoader(tui, color, muted, label);
   return { node: asNode(loader), stop: () => loader.stop() };
 }
 
@@ -70,7 +77,7 @@ export function createApp(): App {
   const tui = new TUI(terminal);
 
   const scrollback = nodes.container();
-  const footerSlot = nodes.container();
+  const footerSlot = footerContainer();
   const queueSlot = nodes.container();
   const status = nodes.text({ paddingX: 1 });
   const belowInput = nodes.container();
