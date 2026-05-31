@@ -55,7 +55,7 @@ type VNode =
   | { kind: "markdown"; source: string; color?: (t: string) => string; userMsg?: boolean; bullet?: boolean; paddingX?: number; mdc?: MdCache }
   | { kind: "spacer"; rows: number }
   | { kind: "container"; children: VNode[] }
-  | { kind: "loader"; label: string }
+  | { kind: "loader"; label: string; startedAt: number }
   | { kind: "select"; state: SelectState };
 
 const asNode = (v: VNode): RenderNode => v as unknown as RenderNode;
@@ -92,7 +92,7 @@ function truncateVisible(s: string, width: number): string {
   return `${out}…\x1b[0m`;
 }
 
-const ACCENT_HEX = "#c778dd"; // loader spinner + focused input border
+const ACCENT_HEX = "#d97757"; // coral accent — thinking spinner + select picker highlight
 const RESET = "\x1b[39m";
 const BOLD = "\x1b[1m";
 const BOLD_OFF = "\x1b[22m";
@@ -223,6 +223,16 @@ function renderMarkdownStreaming(v: { source: string; mdc?: MdCache }, width: nu
   if (!c.out) return tailOut;
   if (!tailOut) return c.out;
   return `${c.out}\n\n${tailOut}`;
+}
+
+const FULL_RESET = /\x1b\[0?m/g;
+function tintMarkdown(md: string, styler: (t: string) => string): string {
+  const probe = styler(" ");
+  const cut = probe.indexOf(" ");
+  const open = cut > 0 ? probe.slice(0, cut) : "";
+  return md.split("\n")
+    .map((line) => styler(open ? line.replace(FULL_RESET, (m) => m + open) : line))
+    .join("\n");
 }
 
 interface Store {
@@ -435,11 +445,10 @@ function childOk(c: ToolGroupModel["children"][number]): boolean {
 }
 function groupSummaryLine(model: ToolGroupModel, blinkOn: boolean): string {
   const total = model.children.length + (model.hidden?.count ?? 0);
-  const running = model.children.some((c) => !c.status);
   const anyErr = model.children.some((c) => !childOk(c)) || (model.hidden ? !model.hidden.ok : false);
-  const dot = statusDot(running ? undefined : { exitCode: anyErr ? 1 : 0 }, blinkOn);
+  const dot = statusDot(model.open ? undefined : { exitCode: anyErr ? 1 : 0 }, blinkOn);
   const hint = model.expanded ? "" : ` ${DIM_ON}(ctrl+o to expand)${DIM_OFF}`;
-  return `${dot} ${summarizeGroup(model.kind, total, running)}${running ? "…" : ""}${hint}`;
+  return `${dot} ${summarizeGroup(model.kind, total, model.open)}${model.open ? "…" : ""}${hint}`;
 }
 function makeToolGroup(req: () => void, blink: Blink): ToolGroupView {
   const v: VNode = { kind: "container", children: [] };
@@ -448,14 +457,14 @@ function makeToolGroup(req: () => void, blink: Blink): ToolGroupView {
   let acquired = false;
   const update = (m: ToolGroupModel): void => {
     model = m;
-    const running = m.children.some((c) => !c.status);
-    if (running && !acquired) { blink.start(v); acquired = true; }
-    else if (!running && acquired) { blink.stop(v); acquired = false; }
+    if (m.open && !acquired) { blink.start(v); acquired = true; }
+    else if (!m.open && acquired) { blink.stop(v); acquired = false; }
     ch.length = 0;
     // Summary via a render fn so the blink clock repaints it in place.
     ch.push({ kind: "text", lines: [], fn: () => (model ? [groupSummaryLine(model, blink.on())] : []), paddingX: 0 });
-    // Collapsed shows only in-flight files; expanded shows every call + summary.
-    const rows = m.expanded ? m.children : m.children.filter((c) => !c.status);
+    const rows = m.expanded
+      ? m.children
+      : m.open && m.children.length > 0 ? [m.children[m.children.length - 1]!] : [];
     for (const c of rows) {
       const elbow = segmentsToString([{ text: "⎿", style: { color: childOk(c) ? "muted" : "error" } }]);
       const sum = m.expanded && c.status?.summary ? ` ${segmentsToString([{ text: c.status.summary, style: { color: "muted" } }])}` : "";
@@ -464,6 +473,11 @@ function makeToolGroup(req: () => void, blink: Blink): ToolGroupView {
     req();
   };
   return { node: asNode(v), update };
+}
+
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
 export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | null {
@@ -488,14 +502,14 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
       if (v.bullet) {
         let md = renderMarkdownStreaming(v, w - 2);
         if (md.replace(ANSI, "").trim() === "") return null;
-        if (v.color) md = md.split("\n").map(v.color).join("\n");
+        if (v.color) md = tintMarkdown(md, v.color);
         const out = md.split("\n").map((l, i) => (i === 0 ? ASSISTANT_MARKER : "  ") + l).join("\n");
         return <Text key={key}>{out}</Text>;
       }
       const pad = v.paddingX ?? 0;
       let md = renderMarkdownStreaming(v, w - pad);
       if (md.replace(ANSI, "").trim() === "") return null;
-      if (v.color) md = md.split("\n").map(v.color).join("\n");
+      if (v.color) md = tintMarkdown(md, v.color);
       const indent = " ".repeat(pad);
       return <Text key={key}>{md.split("\n").map((l) => indent + l).join("\n")}</Text>;
     }
@@ -506,13 +520,15 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
       if (kids.length === 0) return null; // an empty block renders nothing, like pi-tui
       return <Box key={key} flexDirection="column">{kids}</Box>;
     }
-    case "loader":
+    case "loader": {
+      const elapsed = fmtElapsed(Date.now() - v.startedAt);
       return (
         <Box key={key}>
           <Text color={ACCENT_HEX}><Spinner type="dots" /></Text>
-          <Text color={ACCENT_HEX}>{" " + v.label}</Text>
+          <Text color={ACCENT_HEX}>{` ${v.label} (${elapsed})`}</Text>
         </Box>
       );
+    }
     case "select": {
       // Drawn here; navigated by raw keys in the input dispatch (focus === "select").
       const s = v.state;
@@ -793,8 +809,10 @@ function makeApp(store: Store, req: () => void): {
       };
     },
     createLoader: (label): LoaderView => {
-      const v: VNode = { kind: "loader", label };
-      return { node: asNode(v), stop: () => {} };
+      const v: VNode = { kind: "loader", label, startedAt: Date.now() };
+      const timer = setInterval(req, 1000);
+      (timer as { unref?: () => void }).unref?.();
+      return { node: asNode(v), stop: () => clearInterval(timer) };
     },
   };
   return { app, element, dispatch, editor };

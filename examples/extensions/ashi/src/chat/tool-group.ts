@@ -20,6 +20,7 @@ export class ToolGroup {
   private allChildren: ToolGroupChild[] = [];
   private callsById = new Map<string, ToolGroupChild>();
   private expanded = false;
+  private open = true;
 
   constructor(renderer: Renderer, kind: string, maxVisible: number = Infinity) {
     this.kind = kind;
@@ -48,6 +49,12 @@ export class ToolGroup {
     this.repaint();
   }
 
+  seal(): void {
+    if (!this.open) return;
+    this.open = false;
+    this.repaint();
+  }
+
   // When collapsed and over-cap, one visible slot is reserved for the summary.
   private visibleSliceStart(): number {
     if (this.expanded || !Number.isFinite(this.maxVisible)) return 0;
@@ -70,6 +77,7 @@ export class ToolGroup {
       children: this.allChildren.slice(start),
       hidden,
       expanded: this.expanded,
+      open: this.open,
     };
     this.view.update(model);
   }

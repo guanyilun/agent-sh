@@ -2,7 +2,7 @@
 import type { ContainerView, MarkdownView, RenderNode, RenderNodes } from "../renderer.js";
 import { theme } from "../theme.js";
 
-const thinkingColor = (t: string): string => theme.italic(theme.fg("thinkingText", t));
+const thinkingColor = (t: string): string => theme.dim(theme.italic(theme.fg("thinkingText", t)));
 
 export class ThinkingBlock {
   readonly node: RenderNode;

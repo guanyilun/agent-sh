@@ -5,6 +5,7 @@ import { createInkRenderer, __renderNode, __harness } from "../src/ink-renderer.
 import type { RenderModel } from "@guanyilun/ashi/render";
 import type { RenderNode } from "@guanyilun/ashi/renderer";
 import { ToolGroup } from "../../ashi/src/chat/tool-group.js";
+import { ThinkingBlock } from "../../ashi/src/chat/thinking.js";
 import { createAutocompleteController } from "../../ashi/src/autocomplete-controller.js";
 import type { AutocompleteProvider } from "@guanyilun/ashi/renderer";
 
@@ -213,28 +214,49 @@ test("multi-line tool output is consistently colored (not first-line-only)", () 
   for (const l of out) assert.match(l, /\x1b\[38;2;/);
 });
 
-test("a read group: gerund + in-flight path while active, count when done, full list on expand", () => {
+test("a read group: tail pinned + flashing while open, summary-only once sealed, full list on expand", () => {
   const g = new ToolGroup(r as never, "read");
   g.addCall("1", "read_file", "src/app.ts");
   g.addCall("2", "read_file", "src/util.ts");
   g.recordCompletion("1", 0, "120 lines");
-  // call 2 still running → active: gerund, ellipsis, ctrl+o hint, in-flight path shown
   let collapsed = frameOf(g.node);
   assert.match(collapsed, /⏺ Reading 2 files…/);
   assert.match(collapsed, /\(ctrl\+o to expand\)/);
-  assert.match(collapsed, /⎿  src\/util\.ts/); // the file being read, not just a count
+  assert.match(collapsed, /⎿  src\/util\.ts/);
   assert.doesNotMatch(collapsed, /[├└]/);
-  // finish it → past tense, no path under the collapsed summary
   g.recordCompletion("2", 0, "45 lines");
+  collapsed = frameOf(g.node);
+  assert.match(collapsed, /⏺ Reading 2 files…/);
+  assert.match(collapsed, /⎿  src\/util\.ts/);
+  g.seal();
   collapsed = frameOf(g.node);
   assert.match(collapsed, /⏺ Read 2 files/);
   assert.doesNotMatch(collapsed, /⎿/);
-  // expand → full list with per-file summaries, no hint
   g.toggleExpanded();
   const expanded = frameOf(g.node);
   assert.match(expanded, /⎿  src\/app\.ts.*120 lines/);
   assert.match(expanded, /⎿  src\/util\.ts.*45 lines/);
   assert.doesNotMatch(expanded, /\(ctrl\+o to expand\)/);
+});
+
+test("revealed thinking is dim-tinted and survives marked's resets", () => {
+  const tb = new ThinkingBlock(r as never);
+  tb.appendText("Let me think about this plainly.");
+  const frame = render(__renderNode(tb.node)).lastFrame() ?? "";
+  assert.match(strip(frame), /Let me think about this plainly\./);
+  assert.match(frame, /\x1b\[38;2;128;128;128m[^\x1b]/);
+  assert.match(frame, /\x1b\[2m/);
+});
+
+test("the thinking loader is coral and shows a per-turn elapsed timer", () => {
+  const h = __harness();
+  const loader = h.app.createLoader("thinking…", (t) => t, (t) => t);
+  const inst = render(__renderNode(loader.node));
+  const frame = inst.lastFrame() ?? "";
+  inst.unmount();
+  loader.stop();
+  assert.match(frame, /38;2;217;119;87m/); // coral accent
+  assert.match(frame, /thinking… \(\d+s\)/);
 });
 
 test("a diff result hangs under the ⎿ gutter with no box frame (flush gutter)", () => {
