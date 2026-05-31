@@ -53,6 +53,11 @@ const { Pair, nil, LSymbol, LNumber, Macro, bootstrap, LString } = lips as any;
 // shims and host bridge (which assume JS strings) operate on them correctly.
 const toJsStr = (x: any): any => (x instanceof LString ? x.toString() : x);
 
+// LIPS 1.0 stores a symbol's name in `__name__`; `.name` is undefined (the 0.x
+// build used `.name`). Read every symbol name through this so both builds work.
+const symName = (x: any): string | undefined =>
+  x instanceof LSymbol ? ((x as any).__name__ ?? (x as any).name) : undefined;
+
 const LOG_PATH = path.join(os.homedir(), ".agent-sh", "scheme-eval.log");
 const SCHEME_DEFINE_DIR = path.join(os.homedir(), ".agent-sh", "scheme-define");
 const MAX_OUTPUT_LEN = 128 * 1024;
@@ -76,7 +81,7 @@ function installSchemeDefine(
       throw new Error("scheme-define: expected (scheme-define name (args …) \"doc\" body …)");
     }
     const nameSym = code.car;
-    const name = nameSym.name;
+    const name = symName(nameSym)!;
     const argsForm = code.cdr instanceof Pair ? code.cdr.car : nil;
     let rest = code.cdr instanceof Pair ? code.cdr.cdr : nil;
     let doc = "";
@@ -219,7 +224,7 @@ function lookup(result: unknown, key: string): unknown {
   let node: any = result;
   while (node && node instanceof Pair) {
     const entry = node.car;
-    if (entry && entry.car && entry.car.name === key) return entry.cdr;
+    if (entry && entry.car && symName(entry.car) === key) return entry.cdr;
     node = node.cdr;
   }
   return undefined;
@@ -265,7 +270,9 @@ function format(v: unknown): string {
   if (v === undefined || v === null) return "";
   if (v instanceof LString) v = v.toString();
   if (typeof v === "string") return JSON.stringify(v);
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  // Render JS booleans Scheme-style, matching how #t/#f print inside records.
+  if (typeof v === "boolean") return v ? "#t" : "#f";
+  if (typeof v === "number") return String(v);
   if (v && typeof (v as any).toString === "function") {
     try { return (v as any).toString(); } catch {}
   }
@@ -427,27 +434,26 @@ function formatParenDiagnostic(source: string, baseMsg: string): string {
 
 async function evaluate(env: any, source: string, timeoutMs: number) {
   const preprocessed = preprocessSchemeSource(source);
-  // Install a per-eval stdout buffer so (display …) output is captured into
-  // the result instead of vanishing to console.log. Also override `display`
-  // to drop LIPS' string-quoting (its default writes `"hello"` with literal
-  // quote marks; R7RS display should be raw).
-  const prevStdout = (env as any).get("stdout", { throwError: false });
-  const prevDisplay = (env as any).get("display", { throwError: false });
+  // Capture output into the result instead of letting it vanish to console.log.
+  // LIPS 1.0's native display/write resolve the *functions* from the env (the
+  // stdout-port override alone misses them), so shadow each output procedure.
+  const OUTPUT_PROCS = ["stdout", "display", "write", "write-string", "write-char"];
+  const prev: Record<string, any> = {};
+  for (const name of OUTPUT_PROCS) prev[name] = (env as any).get(name, { throwError: false });
   const buf: string[] = [];
-  (env as any).set("stdout", {
-    write: (...args: any[]) => {
-      for (const a of args) buf.push(typeof a === "string" ? a : String(a));
-    },
+  const raw = (a: any): string => {
+    if (a === null || a === undefined) return "";
+    if (typeof a === "string") return a;
+    if (a && typeof (a as any).toString === "function") return (a as any).toString();
+    return String(a);
+  };
+  (env as any).set("stdout", { write: (...args: any[]) => { for (const a of args) buf.push(raw(a)); } });
+  (env as any).set("display", (...args: any[]) => { buf.push(args.map(raw).join("")); });
+  (env as any).set("write", (...args: any[]) => {
+    buf.push(args.map((a) => (typeof toJsStr(a) === "string" ? JSON.stringify(toJsStr(a)) : raw(a))).join(""));
   });
-  (env as any).set("display", (...args: any[]) => {
-    const out = args.map((a) => {
-      if (a === null || a === undefined) return "";
-      if (typeof a === "string") return a;
-      if (a && typeof (a as any).toString === "function") return (a as any).toString();
-      return String(a);
-    }).join("");
-    buf.push(out);
-  });
+  (env as any).set("write-string", (...args: any[]) => { buf.push(raw(args[0])); });
+  (env as any).set("write-char", (...args: any[]) => { buf.push(raw(args[0])); });
   try {
     const results = await Promise.race<any>([
       (lips as any).exec(preprocessed, { env }),
@@ -477,8 +483,9 @@ async function evaluate(env: any, source: string, timeoutMs: number) {
     }
     return { ok: false as const, error: msg };
   } finally {
-    if (prevStdout !== undefined) (env as any).set("stdout", prevStdout);
-    if (prevDisplay !== undefined) (env as any).set("display", prevDisplay);
+    for (const name of OUTPUT_PROCS) {
+      if (prev[name] !== undefined) (env as any).set(name, prev[name]);
+    }
   }
 }
 
@@ -498,7 +505,6 @@ function installStdShims(env: any): void {
   };
   const truthy = (v: any) => v !== false;
 
-  // ── R7RS equality ─────────────────────────────────────────
   // LIPS wraps numbers as LNumber instances, so `===` fails on equal-valued
   // numbers from different sources. Handle the wrapper types before recursing.
   const atomEqual = (a: any, b: any): boolean => {
@@ -506,7 +512,7 @@ function installStdShims(env: any): void {
     if (a instanceof LNumber && b instanceof LNumber) return a.cmp(b) === 0;
     if (typeof a === "number" && b instanceof LNumber) return LNumber(a).cmp(b) === 0;
     if (typeof b === "number" && a instanceof LNumber) return LNumber(b).cmp(a) === 0;
-    if (a instanceof LSymbol && b instanceof LSymbol) return a.name === b.name;
+    if (a instanceof LSymbol && b instanceof LSymbol) return symName(a) === symName(b);
     return false;
   };
   const lipsEqual = (a: any, b: any): boolean => {
@@ -523,7 +529,6 @@ function installStdShims(env: any): void {
     return false;
   };
 
-  // ── SRFI-1 list helpers ──────────────────────────────────
   defineIfMissing("first",  (lst: any) => pairToArray(lst)[0]);
   defineIfMissing("second", (lst: any) => pairToArray(lst)[1]);
   defineIfMissing("third",  (lst: any) => pairToArray(lst)[2]);
@@ -573,7 +578,6 @@ function installStdShims(env: any): void {
     return new Pair(toSchemeList(t), toSchemeList(f));
   });
 
-  // ── R7RS string ops ──────────────────────────────────────
   defineIfMissing("string-trim-both", (s: any) => String(s).trim());
   // Pattern can be string or (regexp "pat"). Racket (?i:…) / (?m:…) inline
   // flag groups are translated to JS RegExp flags.
@@ -622,30 +626,25 @@ function installStdShims(env: any): void {
     return new Pair(full, nil);
   });
 
-  // ── Racket spellings ─────────────────────────────────────
   defineIfMissing("displayln", function (this: any, x: any) {
     const display = (env as any).get("display", { throwError: false });
     if (display) { display(x); display("\n"); }
   });
 
-  // ── R7RS error/exit ──────────────────────────────────────
   defineIfMissing("error", (...msgs: any[]) => {
     throw new Error(msgs.map((m) => (typeof m === "string" ? m : String(m))).join(" "));
   });
   defineIfMissing("void", () => undefined);
 
-  // ── R7RS write (LIPS' display is good enough; write quotes strings) ──
   defineIfMissing("write", function (this: any, x: any) {
     const display = (env as any).get("display", { throwError: false });
     if (display) display(typeof x === "string" ? JSON.stringify(x) : x);
   });
 
-  // ── R7RS numbers (gaps) ────────────────────────────────────
   defineIfMissing("add1", (n: any) => Number(n) + 1);
   defineIfMissing("sub1", (n: any) => Number(n) - 1);
   defineIfMissing("sqr",  (n: any) => Number(n) * Number(n));
 
-  // ── R7RS strings (gaps) ────────────────────────────────────
   defineIfMissing("string-trim",       (s: any) => String(s).trim());
   defineIfMissing("string-trim-left",  (s: any) => String(s).replace(/^\s+/, ""));
   defineIfMissing("string-trim-right", (s: any) => String(s).replace(/\s+$/, ""));
@@ -662,7 +661,6 @@ function installStdShims(env: any): void {
     return i < 0 ? false : i;
   });
 
-  // ── R7RS / SRFI-1 list gaps ────────────────────────────────
   defineIfMissing("list-index", (pred: any, lst: any) => {
     let i = 0, cur: any = lst;
     while (cur instanceof Pair) {
@@ -795,7 +793,6 @@ function installStdShims(env: any): void {
     return toSchemeList(groups.map((g) => toSchemeList(g.items)));
   });
 
-  // ── Regex (Racket) ─────────────────────────────────────────
   const reCompile = (pat: any): RegExp => {
     if (pat instanceof RegExp) return pat;
     let p = String(pat);
@@ -827,7 +824,6 @@ function installStdShims(env: any): void {
     return typeof s === "string" ? toSchemeList(s.split(reCompile(pat))) : nil;
   });
 
-  // ── Format (Racket) ────────────────────────────────────────
   // format: simple ~a ~s ~v ~n support — covers most logging/inspection
   defineIfMissing("format", (fmt: any, ...rest: any[]) => {
     const f = String(fmt);
@@ -856,7 +852,6 @@ function installStdShims(env: any): void {
   defineIfMissing("~v", (...xs: any[]) =>
     xs.map((x) => typeof x === "string" ? JSON.stringify(x) : (x === undefined ? "" : x.toString())).join(""));
 
-  // ── Hash tables (Racket) ───────────────────────────────────
   // Backed by JS Map. Stored as `LipsHash` symbol so we can pattern-match.
   class LipsHash {
     map: Map<any, any> = new Map();
@@ -864,7 +859,7 @@ function installStdShims(env: any): void {
       if (entries) for (const [k, v] of entries) this.map.set(this._key(k), v);
     }
     _key(k: any): any {
-      if (k instanceof LSymbol) return "::sym::" + (k as any).name;
+      if (k instanceof LSymbol) return "::sym::" + symName(k);
       if (typeof k === "object" && k !== null) return JSON.stringify(k);
       return k;
     }
@@ -921,7 +916,6 @@ function installStdShims(env: any): void {
   defineIfMissing("hash-values", (h: any) => h instanceof LipsHash ? toSchemeList(h.values()) : nil);
   defineIfMissing("hash-count",  (h: any) => h instanceof LipsHash ? h.size() : 0);
 
-  // ── Sort (R7RS-large / SRFI-132 / Racket) ──────────────────
   // V8's Array.prototype.sort is stable (ES2019), so one impl serves all.
   const sortImpl = (lst: any, less: any) => {
     const arr = pairToArray(lst).slice();
@@ -932,7 +926,6 @@ function installStdShims(env: any): void {
   // SRFI-132 / R7RS-large flips the argument order.
   defineIfMissing("list-sort", (less: any, lst: any) => sortImpl(lst, less));
 
-  // ── Racket list aliases & gaps ─────────────────────────────
   defineIfMissing("empty",  nil);
   defineIfMissing("cons?",  (v: any) => v instanceof Pair);
   defineIfMissing("andmap", (pred: any, lst: any) => pairToArray(lst).every((x) => truthy(pred(x))));
@@ -1092,7 +1085,6 @@ function installStdShims(env: any): void {
     return toSchemeList(arr.filter((x) => !targets.some((t) => lipsEqual(t, x))));
   });
 
-  // ── Racket numbers (gaps) ──────────────────────────────────
   defineIfMissing("pi", Math.PI);
   // Racket overloads: (random) 0≤x<1, (random k) 0≤i<k, (random lo hi).
   defineIfMissing("exact-floor",    (n: any) => Math.floor(Number(n)));
@@ -1113,7 +1105,6 @@ function installStdShims(env: any): void {
     return Number(n).toFixed(d);
   });
 
-  // ── Racket strings & chars (gaps) ──────────────────────────
   defineIfMissing("string-titlecase", (s: any) =>
     String(s).replace(/\b([a-z])/g, (_, c) => c.toUpperCase()));
   defineIfMissing("string-pad", (s: any, width: any, ch?: any) => {
@@ -1141,7 +1132,6 @@ function installStdShims(env: any): void {
     return out;
   });
 
-  // ── Racket hash (gaps) ─────────────────────────────────────
   defineIfMissing("hash-update!", (h: any, k: any, upd: any, dflt: any) => {
     if (!(h instanceof LipsHash)) return h;
     const cur = h.has(k) ? h.get(k) : (typeof dflt === "function" ? dflt() : dflt);
@@ -1220,14 +1210,12 @@ function installStdShims(env: any): void {
   defineIfMissing("make-hasheqv",          (alist?: any) => (env as any).get("make-hash")(alist));
   defineIfMissing("make-immutable-hash",   (alist?: any) => (env as any).get("make-hash")(alist));
 
-  // ── Racket boxes (mutable cells) ───────────────────────────
   class LipsBox { constructor(public v: any) {} }
   defineIfMissing("box",      (v: any) => new LipsBox(v));
   defineIfMissing("box?",     (x: any) => x instanceof LipsBox);
   defineIfMissing("unbox",    (b: any) => b instanceof LipsBox ? b.v : b);
   defineIfMissing("set-box!", (b: any, v: any) => { if (b instanceof LipsBox) b.v = v; return undefined; });
 
-  // ── Environment introspection ──────────────────────────────
   const collectEnvNames = (): string[] => {
     const seen = new Set<string>();
     let cur: any = env;
@@ -1239,18 +1227,17 @@ function installStdShims(env: any): void {
     return Array.from(seen).sort();
   };
   defineIfMissing("defined?", (sym: any) => {
-    const name = sym instanceof LSymbol ? (sym as any).name : String(sym);
+    const name = sym instanceof LSymbol ? symName(sym) : String(sym);
     return (env as any).get(name, { throwError: false }) !== undefined;
   });
   const aproposImpl = (pat: any) => {
-    const needle = pat instanceof LSymbol ? (pat as any).name : String(pat ?? "");
+    const needle = pat instanceof LSymbol ? (symName(pat) ?? "") : String(pat ?? "");
     const re = pat instanceof RegExp ? pat : null;
     const match = (n: string) => re ? re.test(n) : n.includes(needle);
     return toSchemeList(collectEnvNames().filter(match).map((n) => new LSymbol(n)));
   };
   defineIfMissing("apropos-list", aproposImpl);
 
-  // ── Misc Racket ────────────────────────────────────────────
   defineIfMissing("current-seconds",      () => Math.floor(Date.now() / 1000));
   defineIfMissing("current-milliseconds", () => Date.now());
   defineIfMissing("current-inexact-milliseconds", () => performance.now());
@@ -1380,7 +1367,7 @@ function auditShimCoverage(env: any): { defined: number; missing: string[] } {
 function unwrapSchemeBool(v: any): any {
   if (v === true || v === false) return v;
   if (v instanceof LSymbol) {
-    const n = (v as any).name;
+    const n = symName(v);
     if (n === "#t") return true;
     if (n === "#f") return false;
   }
@@ -1389,32 +1376,82 @@ function unwrapSchemeBool(v: any): any {
   return v;
 }
 
-// Convert a Scheme alist ((kebab-key . val) …) into the JS object shape
-// the underlying tool expects. Renames keys (kebab→snake), coerces numeric
-// values, and normalizes booleans. Returns {} for non-Pair input.
-function readOptions(
-  value: any,
-  keyMap: Record<string, string>,
-  numericKeys?: Set<string>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (!(value instanceof Pair)) return out;
-  let node: any = value;
-  while (node instanceof Pair) {
-    const entry = node.car;
-    if (entry instanceof Pair && entry.car instanceof LSymbol) {
-      const k = (entry.car as any).name;
-      const tgt = keyMap[k];
-      if (tgt !== undefined) {
-        let v: any = entry.cdr;
-        if (numericKeys && numericKeys.has(tgt)) v = Number(v);
-        else v = unwrapSchemeBool(v);
-        out[tgt] = v;
+// Single source of truth for the host primitive surface: drives both the tool
+// description and `(help …)`, so what the model reads matches what it can
+// introspect at runtime. Each binding returns the natural Scheme value for its
+// job; bash returns a record because the exit code has nowhere else to live (a
+// plain bash tool call drops it before the model ever sees it).
+type HostSig = { name: string; sig: string; ret: string; doc: string };
+const HOST_SIGS: HostSig[] = [
+  { name: "bash", sig: '(bash "cmd" [timeout-sec])',
+    ret: "((output . str) (exit-code . n) (error . bool))",
+    doc: "run a shell command; full result. Accessors: output-of exit-code-of ok? error?" },
+  { name: "sh", sig: '(sh "cmd" [timeout-sec])', ret: "str",
+    doc: "run a shell command, return stdout only (stderr text on failure)" },
+  { name: "read-file", sig: '(read-file "path" [offset] [limit])', ret: "str | #f",
+    doc: "file contents, or #f on error. offset is 1-indexed; limit caps lines" },
+  { name: "write-file", sig: '(write-file "path" "content")', ret: "#t | err-str",
+    doc: "overwrite a file" },
+  { name: "edit-file", sig: '(edit-file "path" "old" "new" [replace-all])', ret: "#t | err-str",
+    doc: "replace exact text; pass #t to replace every occurrence" },
+  { name: "grep", sig: '(grep "pat" ["dir"] [:opt val …])',
+    ret: "(listof ((file . str) (line . n) (text . str)))",
+    doc: "ripgrep search. options: :include :case-insensitive :context-before :context-after :limit :offset" },
+  { name: "grep-files", sig: '(grep-files "pat" ["dir"] [:opt val …])', ret: "(listof str)",
+    doc: "files containing a match. options: :include :case-insensitive :limit :offset" },
+  { name: "glob", sig: '(glob "pat" ["dir"])', ret: "(listof str)",
+    doc: "paths matching a glob, mtime-sorted" },
+];
+const sigLine = (h: HostSig): string => `${h.sig} → ${h.ret}`;
+const sigForName = (name: string): string => {
+  const h = HOST_SIGS.find((s) => s.name === name);
+  return h ? sigLine(h) : name;
+};
+
+// Append a primitive's signature to any exception it throws, so a malformed
+// call teaches the right shape in one round-trip instead of a bare stack.
+function withSig(name: string, fn: (...a: any[]) => Promise<any>) {
+  return async (...a: any[]) => {
+    try {
+      return await fn(...a);
+    } catch (e: any) {
+      const base = e?.message ?? String(e);
+      if (!String(base).includes("signature:")) {
+        try { e.message = `${base}\n  signature: ${sigForName(name)}`; } catch { /* frozen */ }
       }
+      throw e;
     }
-    node = node.cdr;
+  };
+}
+
+const isKwSym = (x: any): boolean => {
+  const n = symName(x);
+  return typeof n === "string" && n.startsWith(":");
+};
+
+// Split a host primitive's evaluated arg list into leading positionals and a
+// trailing :key value option map. LIPS has no keyword args, so the grep macros
+// quote leading-colon symbols (otherwise they'd be looked up as unbound
+// variables); they arrive here as plain LSymbols named ":foo".
+function splitArgs(
+  args: any[], keyMap: Record<string, string>, numericKeys?: Set<string>,
+): { positionals: any[]; opts: Record<string, unknown> } {
+  const positionals: any[] = [];
+  let i = 0;
+  while (i < args.length && !isKwSym(args[i])) { positionals.push(args[i]); i++; }
+  const opts: Record<string, unknown> = {};
+  while (i < args.length) {
+    if (!isKwSym(args[i])) { i++; continue; }
+    const tgt = keyMap[symName(args[i])!.slice(1)];
+    if (tgt !== undefined) {
+      const raw = args[i + 1];
+      opts[tgt] = numericKeys && numericKeys.has(tgt)
+        ? Number(raw)
+        : unwrapSchemeBool(toJsStr(raw));
+    }
+    i += 2;
   }
-  return out;
+  return { positionals, opts };
 }
 
 function resolveExecutor(ctx: AgentContext, name: string): ToolExecutor {
@@ -1437,50 +1474,40 @@ function installBindings(
     const args: Record<string, unknown> = { command: toJsStr(command) };
     if (typeof timeoutSec === "number") args.timeout = timeoutSec;
     const result = await bash(args);
-    let content = typeof result.content === "string" ? result.content : String(result.content ?? "");
+    let output = typeof result.content === "string" ? result.content : String(result.content ?? "");
     // Undo bash.ts's "(no output)" sentinel so `(eq? out "")` works.
-    if (content === "(no output)") content = "";
-    return {
-      exitCode: result.exitCode ?? (result.isError ? 1 : 0),
-      stdout: content,
-      stderr: result.isError ? content : "",
-      success: !result.isError,
-    };
+    if (output === "(no output)") output = "";
+    // stdout and stderr are merged upstream — the bash tool surfaces only a
+    // combined `content` — so the record exposes one `output`, not a fabricated
+    // split. `exit-code` is the real shell code and the only channel that
+    // carries it: a plain bash tool call drops it before the model.
+    return { exitCode: result.exitCode ?? (result.isError ? 1 : 0), output, error: result.isError };
   };
-  env.set("bash", async (command: string, timeoutSec?: number) => {
+  env.set("bash", withSig("bash", async (command: string, timeoutSec?: number) => {
     try {
       const r = await runBash(command, timeoutSec);
       return alist([
+        ["output",    r.output],
         ["exit-code", r.exitCode],
-        ["stdout",    r.stdout],
-        ["stderr",    r.stderr],
-        ["success",   r.success],
+        ["error",     r.error],
       ]);
     } catch (e: any) {
       logErr("bash", e, { command, typeofCommand: typeof command });
       throw e;
     }
-  });
-  // Shortcut: return stdout as string. Use `bash` when you need exit-code/stderr.
-  env.set("sh", async (command: string, timeoutSec?: number) => {
+  }));
+  // Shortcut: stdout as a string. Use `bash` when you need the exit code, or
+  // `(ok? (bash "…"))` for a success predicate.
+  env.set("sh", withSig("sh", async (command: string, timeoutSec?: number) => {
     try {
-      const r = await runBash(command, timeoutSec);
-      return r.stdout;
+      return (await runBash(command, timeoutSec)).output;
     } catch (e: any) {
       logErr("sh", e, { command });
       return "";
     }
-  });
-  env.set("sh-ok?", async (command: string, timeoutSec?: number) => {
-    try {
-      const r = await runBash(command, timeoutSec);
-      return r.success;
-    } catch {
-      return false;
-    }
-  });
+  }));
 
-  env.set("read-file", async (filePath: string, offset?: any, limit?: any) => {
+  env.set("read-file", withSig("read-file", async (filePath: string, offset?: any, limit?: any) => {
     const args: Record<string, unknown> = { path: toJsStr(filePath), bypass_cache: true };
     if (offset !== undefined && offset !== null) {
       const n = Number(offset);
@@ -1492,9 +1519,9 @@ function installBindings(
     }
     const result = await readFile(args);
     return result.isError ? false : result.content;
-  });
+  }));
 
-  env.set("write-file", async (filePath: string, content: string) => {
+  env.set("write-file", withSig("write-file", async (filePath: string, content: string) => {
     filePath = toJsStr(filePath); content = toJsStr(content);
     // Re-emit tool lifecycle events so the TUI shows diffs.
     const result = await withDisplay(
@@ -1502,10 +1529,10 @@ function installBindings(
       () => writeFile({ path: filePath, content }),
     );
     return result.isError ? result.content : true;
-  });
+  }));
 
   if (editFile) {
-    env.set("edit-file", async (filePath: string, oldStr: string, newStr: string, replaceAll?: any) => {
+    env.set("edit-file", withSig("edit-file", async (filePath: string, oldStr: string, newStr: string, replaceAll?: any) => {
       filePath = toJsStr(filePath); oldStr = toJsStr(oldStr); newStr = toJsStr(newStr);
       const toolArgs: Record<string, unknown> = { path: filePath, old_text: oldStr, new_text: newStr };
       if (unwrapSchemeBool(replaceAll) === true) toolArgs.replace_all = true;
@@ -1514,18 +1541,18 @@ function installBindings(
         () => editFile(toolArgs),
       );
       return result.isError ? result.content : true;
-    });
+    }));
   }
 
   if (grep) {
-    const GREP_KEYMAP = {
+    const GREP_KEYMAP: Record<string, string> = {
       "include":          "include",
       "case-insensitive": "case_insensitive",
       "context-before":   "context_before",
       "context-after":    "context_after",
       "limit":            "head_limit",
       "offset":           "offset",
-    } as const;
+    };
     const GREP_NUMERIC = new Set([
       "context_before", "context_after", "head_limit", "offset",
     ]);
@@ -1542,60 +1569,76 @@ function installBindings(
         .replace(/\\\+/g, "+").replace(/\\\?/g, "?");
     };
 
-    env.set("%grep", async (pattern: string, p?: string, third?: any) => {
-      const pStr = toJsStr(p);
-      const args: Record<string, unknown> = { pattern: normalizePattern(String(pattern ?? "")), output_mode: "content" };
+    // pattern [path] are positional; everything after is :key value options,
+    // split out by splitArgs (the grep macro quotes the colon symbols).
+    env.set("%grep", withSig("grep", async (...rest: any[]) => {
+      const { positionals, opts } = splitArgs(rest, GREP_KEYMAP, GREP_NUMERIC);
+      const pStr = toJsStr(positionals[1]);
+      const args: Record<string, unknown> = {
+        pattern: normalizePattern(String(positionals[0] ?? "")), output_mode: "content", ...opts,
+      };
       if (typeof pStr === "string") args.path = pStr;
-      if (third instanceof Pair) {
-        Object.assign(args, readOptions(third, GREP_KEYMAP, GREP_NUMERIC));
-      } else if (third !== undefined && third !== null) {
-        // Back-compat: third positional arg as numeric limit.
-        const n = Number(third);
-        if (!isNaN(n)) args.head_limit = n;
-      }
       const result = await grep(args);
       if (result.isError) return nil;
       if (result.content === "No matches found.") return nil;
       const rows: unknown[] = [];
-      for (const line of stripPagination(result.content)) {
+      for (const line of stripPagination(result.content as string)) {
         const parsed = parseGrepLine(line, typeof pStr === "string" ? pStr : undefined);
         if (parsed) rows.push(parsed);
       }
       return toSchemeList(rows);
-    });
+    }));
 
-    env.set("%grep-files", async (pattern: string, p?: string, opts?: any) => {
-      const pStr = toJsStr(p);
-      const args: Record<string, unknown> = { pattern: normalizePattern(String(pattern ?? "")), output_mode: "files_with_matches" };
+    env.set("%grep-files", withSig("grep-files", async (...rest: any[]) => {
+      const { positionals, opts } = splitArgs(rest, GREP_KEYMAP, GREP_NUMERIC);
+      const pStr = toJsStr(positionals[1]);
+      const args: Record<string, unknown> = {
+        pattern: normalizePattern(String(positionals[0] ?? "")), output_mode: "files_with_matches", ...opts,
+      };
       if (typeof pStr === "string") args.path = pStr;
-      if (opts instanceof Pair) Object.assign(args, readOptions(opts, GREP_KEYMAP, GREP_NUMERIC));
       const result = await grep(args);
       if (result.isError || result.content === "No matches found.") return nil;
-      return toSchemeList(stripPagination(result.content));
-    });
+      return toSchemeList(stripPagination(result.content as string));
+    }));
   }
 
   if (glob) {
     // Strip leading "./" so glob paths match grep's — otherwise eq? on the
     // file field fails across the two.
-    env.set("glob", async (pattern: string, p?: string) => {
+    env.set("glob", withSig("glob", async (pattern: string, p?: string) => {
       const pStr = toJsStr(p);
       const args: Record<string, unknown> = { pattern: toJsStr(pattern) };
       if (typeof pStr === "string") args.path = pStr;
       const result = await glob(args);
       if (result.isError || result.content === "No files matched.") return nil;
-      const paths = stripPagination(result.content).map((l) =>
+      const paths = stripPagination(result.content as string).map((l) =>
         l.startsWith("./") ? l.slice(2) : l,
       );
       return toSchemeList(paths);
-    });
+    }));
   }
 
-  // Shell-result accessors — JS-side so they're never missing.
+  // Accessors on a bash result — JS-side so they're never missing.
+  env.set("output-of",    (r: unknown) => lookup(r, "output"));
   env.set("exit-code-of", (r: unknown) => lookup(r, "exit-code"));
-  env.set("stdout-of",    (r: unknown) => lookup(r, "stdout"));
-  env.set("stderr-of",    (r: unknown) => lookup(r, "stderr"));
-  env.set("success?",     (r: unknown) => lookup(r, "success") === true);
+  env.set("error?",       (r: unknown) => lookup(r, "error") === true);
+  env.set("ok?",          (r: unknown) => lookup(r, "error") === false);
+
+  // Runtime discovery: (help) lists available host primitives; (help 'grep)
+  // shows one. Filtered to what actually got bound this session.
+  const availableNames = new Set<string>(["bash", "sh", "read-file", "write-file"]);
+  if (editFile) availableNames.add("edit-file");
+  if (grep) { availableNames.add("grep"); availableNames.add("grep-files"); }
+  if (glob) availableNames.add("glob");
+  const availableSigs = HOST_SIGS.filter((h) => availableNames.has(h.name));
+  env.set("help", (name?: any) => {
+    if (name === undefined || name === null) {
+      return availableSigs.map(sigLine).join("\n");
+    }
+    const key = String(name instanceof LSymbol ? symName(name) : toJsStr(name)).replace(/^:/, "");
+    const h = availableSigs.find((s) => s.name === key);
+    return h ? `${sigLine(h)}\n    ${h.doc}` : `no host primitive named ${key}; try (help) for the list`;
+  });
 
   // R7RS / string helpers LIPS doesn't ship.
   const stringContains = (s: unknown, needle: unknown) => {
@@ -1626,101 +1669,63 @@ function installBindings(
 }
 
 // ── tool registration ─────────────────────────────────────────────
+// Generated from HOST_SIGS so the catalog the model reads matches what
+// `(help …)` reports at runtime.
+const HOST_BINDINGS_BLOCK = HOST_SIGS.map(
+  (h) => `  ${h.sig.padEnd(44)} → ${h.ret}\n      ${h.doc}`,
+).join("\n");
+
 const DESCRIPTION = [
   "Evaluate a Scheme expression (R7RS-compatible).",
   "",
-  "A Scheme runtime with host bindings to the shell, filesystem, search,",
-  "and file editing. Each submission is parsed and evaluated against an",
-  "environment that persists across calls within the session — `define`s",
-  "in one submission are available in the next.",
+  "A Scheme runtime with host bindings to the shell, filesystem, and search.",
+  "The environment persists across calls within a session — `define`s in one",
+  "submission are visible in the next.",
   "",
-  "Productive patterns:",
-  "  - Host bindings (`grep`, `glob`, `read-file`, …) return Scheme data,",
-  "    so the output of one can feed into the next without re-parsing.",
-  "    `(map proc (grep \"pat\" \"src/\"))` is the natural shape.",
-  "  - Read-only calls (`read-file`, `grep`, `glob`, `sh` for queries) have",
-  "    no side effects and can be batched in one submission — bind several",
-  "    with `let`/`define` and assemble the answer locally, instead of",
-  "    issuing each as a separate tool round. Side-effecting calls",
-  "    (`write-file`, `edit-file`, mutating `bash`) are clearer one step",
-  "    at a time so you can react to each result.",
-  "  - The env persists across submissions, so binding intermediate",
-  "    results once (e.g. `(define files (glob …))`) avoids recomputing",
-  "    them in later calls.",
-  "  - `(bash …)` calls a real shell — natural for shell-shaped work",
-  "    (tests, builds, git, system commands). Three variants of the shell",
-  "    binding return different shapes:",
-  "      `(sh \"cmd\")`     → just the output as a string. Fits \"run this,",
-  "                          show me the result\" without unwrapping.",
-  "      `(sh-ok? \"cmd\")` → just a boolean. Fits `(if (sh-ok? \"…\") …)`",
-  "                          branches and existence checks.",
-  "      `(bash \"cmd\")`   → full alist when you need stdout *and* exit",
-  "                          code *and* stderr separately (e.g. capture",
-  "                          stderr while letting stdout flow on).",
-  "    For file content work, the host bindings (`grep`, `read-file`,",
-  "    `glob`) avoid shell-quoting entirely and return structured data.",
-  "  - `scheme-define` saves a procedure to disk so it auto-loads next",
-  "    session — useful when you've worked out something reusable.",
+  "You already know the language: assume the full R7RS / SRFI-1 / Racket stdlib",
+  "is present (map filter fold assoc, string-* and list ops, cond/when/unless,",
+  "char and hash-table ops, …). The only novel surface is the host bindings.",
+  "",
+  "Calling convention:",
+  "  - Required arguments are positional: (read-file \"x\"), (grep \"pat\" \"src/\").",
+  "  - grep / grep-files options are :key value pairs:",
+  "      (grep \"TODO\" \"src/\" :include \"*.ts\" :context-after 2)",
+  "  - Each binding returns the natural Scheme value for its job (a string, a",
+  "    list, a boolean); bash returns a record because you usually want the code.",
   "",
   "Host bindings:",
-  "  (bash cmd [timeout-sec])               → alist ((exit-code . N) (stdout . S) (stderr . S) (success . #t/#f))",
-  "    cmd is run via `bash -c`. Pipes/redirects/$VARS/&&/||/here-docs work",
-  "    inside the string; there's no piping between separate bash calls.",
-  "  (sh cmd [timeout-sec])                 → stdout string (stderr text on failure)",
-  "  (sh-ok? cmd [timeout-sec])             → #t if exit code 0, else #f",
-  "  (read-file path)                       → string, or #f on error",
-  "  (read-file path offset)                → from line offset (1-indexed) to end",
-  "  (read-file path offset limit)          → offset + N lines",
-  "  (write-file path content)              → #t on success, error string on failure",
-  "  (edit-file path old new)               → #t on success, error string on failure",
-  "  (edit-file path old new #t)            → replace every occurrence (not just one)",
-  "  (grep pattern [path] [limit|opts])     → list of ((file . S) (line . N) (text . S))",
-  "  (grep-files pattern [path] [opts])     → list of file paths",
-  "    Patterns are ripgrep regex (Rust). Both POSIX BRE escapes (`\\|`,",
-  "    `\\(`, `\\)`, `\\{`, `\\}`, `\\+`, `\\?`) and bare ERE-style metacharacters",
-  "    (`|`, `(`, `)`, `{`, `}`, `+`, `?`) work — the bridge translates BRE to",
-  "    ERE before invoking ripgrep. `.` is any char, `\\b` is a word boundary.",
-  "    opts: ((include . \"*.ts\")           ; filename glob filter",
-  "           (case-insensitive . #t)",
-  "           (context-before . N) (context-after . N)  ; grep only",
-  "           (limit . N) (offset . N))",
-  "    The opts alist is auto-quoted, so `((k . v) …)` and `'((k . v) …)` both work.",
-  "  (glob pattern [base-dir])              → list of file paths (mtime-sorted)",
-  "Accessors on bash result: (stdout-of r) (stderr-of r) (exit-code-of r) (success? r)",
-  "Strings: (string-length s) (string-contains? s n) (string-append . parts)",
-  "         (string-replace old new s) (number->string n) (string->number s)",
-  "         (lines s) (split sep s) (replace pat repl s)  (max …) (min …)",
+  HOST_BINDINGS_BLOCK,
   "",
-  "Standard Scheme: if cond when unless begin and or not  |  let let* define set! lambda",
-  "  map filter fold reduce for-each  |  eq? null? pair? number? string? empty?",
-  "  list car cdr cons length append reverse assoc  |  define-macro",
+  "  Discover at runtime: (help) lists these, (help 'grep) shows one.",
+  "  bash runs via `bash -c` — pipes/redirects/$VARS/&&/here-docs work inside the",
+  "  string; stdout+stderr are merged into `output`, and `exit-code` is the real",
+  "  shell code. grep/grep-files patterns are ripgrep regex (Rust); POSIX BRE",
+  "  escapes (\\|, \\(, \\), \\{, \\}, \\+, \\?) and bare ERE metacharacters both work.",
+  "",
+  "Composition is the point: chain read-only bindings in one submission so",
+  "intermediate results stay in the Scheme heap instead of the conversation.",
+  "  (map (lambda (m) (read-file (cdr (assoc 'file m)) (cdr (assoc 'line m)) 3))",
+  "       (grep \"TODO\" \"src/\"))",
+  "Side-effecting calls (write-file, edit-file, mutating bash) are clearer one",
+  "at a time so you can react to each result.",
+  "",
+  "scheme-define saves a procedure to ~/.agent-sh/scheme-define/{name}.scm so it",
+  "auto-loads next session:",
+  "  (scheme-define name (args …) \"docstring\" body …)",
   "",
   "Dialect notes:",
-  "  - R7RS truthy semantics: anything that isn't `#f` is true. `(if str …)`,",
-  "    `(if 0 …)`, `(if '() …)` all take the then-branch.",
-  "  - `#t`/`#f` work as expected. `equal?`, `eq?`, `eqv?`, `string=?` all work.",
-  "  - Characters are a real R7RS type. `#\\A`, `#\\newline`, `#\\space`,",
-  "    `#\\tab`, `#\\return`, `#\\null`, `#\\delete`, `#\\xNN` literals read as",
-  "    characters; `char->integer`/`integer->char`/`char?`/`char=?`/",
-  "    `char-whitespace?` etc. operate on them.",
-  "  - SRFI-1: `member`, `assq`/`assv`/`assoc`, `delete-duplicates`, `first`",
-  "    through `fifth`, `last`, `take`, `drop`, `iota`, `any`, `every`, `count`,",
-  "    `find`, `filter-map`, `append-map`, `concatenate`, `partition`, `remove`,",
-  "    `delete`, `zip`, `take-while`, `drop-while`, `fold-right` are all bound.",
-  "  - R7RS extras: `string-upcase`/`-downcase`, `string-split`/`-join`,",
-  "    `zero?`/`positive?`/`negative?`/`odd?`/`even?`, `modulo`, `quotient`,",
-  "    `remainder`, `expt`, `ceiling`, `error`, `newline`, `displayln`.",
-  "",
-  "  (scheme-define name (args …) \"docstring\" body …)",
-  "    Defines like `define`, and also saves to",
-  "    ~/.agent-sh/scheme-define/{name}.scm so it auto-loads next session.",
+  "  - R7RS truthy semantics: only `#f` is false. `(if 0 …)`, `(if '() …)`,",
+  "    `(if \"\" …)` all take the then-branch.",
+  "  - Characters are a real type: `#\\A` `#\\newline` `#\\space` `#\\tab` `#\\xNN`.",
+  "  - String escapes are JSON-style (`\\\\` `\\\"` `\\n` `\\r` `\\t` `\\uXXXX`);",
+  "    for a literal backslash write `\\\\`.",
   "",
   "Default timeout 15s; pass timeout_ms to override (max 60s).",
 ].join("\n");
 
 // Scheme prelude (Lisp `define-macro`s), run after std is bootstrapped.
 // cond/when/unless/newline/assq for convenience; the grep/grep-files macros
-// auto-quote an alist-literal opts arg so callers can omit the leading quote.
+// quote :key option symbols so the bridge can read them as an option map.
 const PRELUDE = `
 (define-macro (cond . clauses)
   (if (null? clauses)
@@ -1742,30 +1747,20 @@ const PRELUDE = `
 (define (newline) (display "\n"))
 (define assq assoc)
 
-;; grep / grep-files: auto-quote alist-literal opts so callers can write
-;; either ((k . v) ...) or '((k . v) ...). Without this, the bare form is
-;; read as a function call on (k . v) and errors with an unbound-variable
-;; message that doesn't point at the cause.
-(define (%alist-literal? x)
-  (and (pair? x) (pair? (car x)) (symbol? (car (car x)))))
+;; grep / grep-files take :key value options. LIPS has no keyword args, so a
+;; bare :include would be evaluated as an unbound variable; the macro quotes
+;; leading-colon symbols and the %grep bridge splits them from the positionals.
+(define (%kw-symbol? s)
+  (and (symbol? s)
+       (let ((str (symbol->string s)))
+         (and (> (string-length str) 0)
+              (string=? (substring str 0 1) ":")))))
 
-(define-macro (grep . args)
-  (if (and (>= (length args) 3) (%alist-literal? (car (cdr (cdr args)))))
-      (cons '%grep
-            (cons (car args)
-                  (cons (car (cdr args))
-                        (cons (list 'quote (car (cdr (cdr args))))
-                              (cdr (cdr (cdr args)))))))
-      (cons '%grep args)))
+(define (%quote-kw args)
+  (map (lambda (a) (if (%kw-symbol? a) (list 'quote a) a)) args))
 
-(define-macro (grep-files . args)
-  (if (and (>= (length args) 3) (%alist-literal? (car (cdr (cdr args)))))
-      (cons '%grep-files
-            (cons (car args)
-                  (cons (car (cdr args))
-                        (cons (list 'quote (car (cdr (cdr args))))
-                              (cdr (cdr (cdr args)))))))
-      (cons '%grep-files args)))
+(define-macro (grep . args)       (cons '%grep       (%quote-kw args)))
+(define-macro (grep-files . args) (cons '%grep-files (%quote-kw args)))
 `;
 
 export default function activate(ctx: AgentContext): void {
@@ -1847,11 +1842,8 @@ export default function activate(ctx: AgentContext): void {
     },
     getDisplayInfo: () => ({ kind: "execute", icon: "λ", sourceLanguage: "scheme" }),
     formatResult: (args, result) => {
-      // Output is usually a long alist or file dump — the LLM still gets full
-      // content via tool_result, but the TUI body shows the SOURCE so Ctrl+O
-      // reveals what ran rather than what came back. scheme-render.ts (if
-      // loaded) honors this; ashi's default renderer currently ignores
-      // body.kind === "lines", which is fine — summary still carries the gist.
+      // TUI body shows the SOURCE, not the result (Ctrl+O reveals what ran);
+      // the LLM still gets full content via tool_result.
       const sourceLines = String(args.source ?? "").split("\n");
       if (!result.isError) {
         return {
@@ -1882,44 +1874,24 @@ export default function activate(ctx: AgentContext): void {
     },
   });
 
-  // schemeOnly: registerInstruction carries the full tool surface since
-  // deferred-lookup mode strips tool descriptions from the system prompt.
-  // coreTools puts scheme_eval's schema in the API tool list already; we
-  // add behavioral framing here — specifically the context-preservation
-  // nudge that would be lost in the long tool description.
+  // Behavioral framing in the system prompt (the API + examples live in the
+  // tool description). Keep it short and non-duplicative: just when to reach
+  // for scheme_eval over a direct tool call.
   const baseInstruction = schemeOnly
     ? [
         "# Scheme runtime",
-        "scheme_eval is your only tool; see its description for the API.",
-        "",
-        "## Context preservation",
-        "Each tool round-trip permanently consumes context. Prefer composing",
-        "multi-step operations into a single scheme_eval call so intermediate",
-        "results stay in the Scheme heap instead of the conversation. Example:",
-        "  (let ((files (glob \"src/**/*.ts\"))",
-        "         (matches (grep \"TODO\" \"src/\")))",
-        "    (filter (lambda (f) (member f (map (lambda (m) (cdr (assoc 'file m))) matches)))",
-        "            files))",
-        "This does glob + grep + filter in one round-trip. Use `define` to",
-        "cache results across calls: `(define files (glob …))` once, reuse later.",
+        "scheme_eval is your only tool; see its description for the API. Each tool",
+        "round-trip consumes context permanently, so compose multi-step work into a",
+        "single call — intermediate results stay in the Scheme heap, not the",
+        "conversation. `define` caches across calls.",
       ].join("\n")
     : [
         "# Scheme runtime",
-        "scheme_eval evaluates Scheme with host bindings to bash, read-file, grep, glob, etc.",
-        "See its description for the full API.",
-        "",
-        "## When to reach for scheme_eval",
-        "The direct tools (grep, read_file, bash, etc.) are the right default for",
-        "single operations. scheme_eval becomes valuable when you'd chain 2+ read-only",
-        "tool calls that don't need inspection between steps — composing them inside",
-        "Scheme keeps intermediate results in the Scheme heap instead of the",
-        "conversation, saving context. Example:",
-        "  (let ((matches (grep \"pattern\" \"src/\")))",
-        "    (map (lambda (m) (list (cdr (assoc 'file m))",
-        "                           (read-file (cdr (assoc 'file m)) (cdr (assoc 'line m)) 3)))",
-        "         (take matches 5)))",
-        "does grep + read-file × 5 in one round-trip. `define` caches across",
-        "calls: `(define files (glob …))` once, reuse in later submissions.",
+        "scheme_eval evaluates Scheme with host bindings (bash, read-file, grep, glob,",
+        "…); see its description for the API. Direct tools are the right default for",
+        "single operations; reach for scheme_eval to chain 2+ read-only calls that",
+        "don't need inspection between steps — composing them keeps intermediate",
+        "results in the Scheme heap instead of the conversation.",
       ].join("\n");
   // Re-register when the scheme-define registry changes so the index stays
   // current within a session.
