@@ -158,6 +158,7 @@ export interface ToolGroupModel {
   children: ToolGroupChild[];
   hidden: { count: number; ok: boolean } | null;
   expanded: boolean;
+  open: boolean;
 }
 
 export interface ToolGroupView {

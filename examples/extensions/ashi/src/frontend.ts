@@ -306,6 +306,11 @@ export function mountAshi(
   const activeTools = new Map<string, LiveToolEntry>();
   const groupMaxVisible = loadGroupMaxVisible();
 
+  let openGroup: ToolGroup | null = null;
+  const sealOpenGroup = (): void => {
+    if (openGroup) { openGroup.seal(); openGroup = null; }
+  };
+
   /** Visible thinking acts as a hard separator; hidden thinking is transparent. */
   const findMergeableGroup = (kind: string): ToolGroup | null => {
     for (let i = chatEntries.length - 1; i >= 0; i--) {
@@ -536,16 +541,19 @@ export function mountAshi(
     activeAssistant = null;
     activeThinking = null;
     activeTools.clear();
+    openGroup = null;
     clearChat();
     const branch = getStore().current().getBranch();
     const toolMap = new Map<string, ReplayEntry>();
     for (const e of branch) replayEntry(e, toolMap);
+    for (const entry of chatEntries) if (entry.t === "group") entry.group.seal();
     app.commitScrollback?.();
     app.requestRender();
   };
 
   bus.on("agent:query", ({ query }) => {
     app.commitScrollback?.();
+    sealOpenGroup();
     appendEntry(renderUserMessage(query), { t: "plain" });
     activeAssistant = null;
     app.requestRender();
@@ -560,6 +568,7 @@ export function mountAshi(
   const appendImage = (data: Buffer): void => {
     const img = renderer.image(data);
     if (!img) return;
+    sealOpenGroup();
     if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
     appendEntry(img, { t: "plain" });
   };
@@ -589,6 +598,7 @@ export function mountAshi(
   });
 
   bus.on("agent:response-chunk", ({ blocks }) => {
+    sealOpenGroup();
     finalizeThinking();
     for (const b of blocks) {
       if (b.type === "text") ensureAssistant().appendText(b.text);
@@ -599,6 +609,7 @@ export function mountAshi(
   });
 
   bus.on("agent:thinking-chunk", ({ text }) => {
+    if (!hideThinking) sealOpenGroup();
     if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
     ensureThinking().appendText(text);
     app.requestRender();
@@ -620,14 +631,17 @@ export function mountAshi(
     const kind = e.kind ?? "";
     if (GROUPABLE_KINDS.has(kind) && renderer.mountToolGroup) {
       const mergeable = findMergeableGroup(kind);
+      if (!mergeable) sealOpenGroup();
       const group = mergeable
         ?? (() => { const g = new ToolGroup(renderer, kind, groupMaxVisible); appendEntry(g.node, { t: "group", group: g }); return g; })();
       group.addCall(id, lookupName, detail);
+      openGroup = group;
       activeTools.set(id, { kind: "group", group });
       app.requestRender();
       return;
     }
 
+    sealOpenGroup();
     const pair = renderToolPair({
       toolCallId: id, name: lookupName, title, kind: e.kind,
       displayDetail: detail, rawInput: e.rawInput,
@@ -719,6 +733,7 @@ export function mountAshi(
   bus.on("agent:processing-done", () => {
     processing = false;
     stopLoader();
+    sealOpenGroup();
     finalizeThinking();
     if (activeAssistant) activeAssistant.finalize();
     refreshFooterStats();
@@ -750,6 +765,7 @@ export function mountAshi(
   bus.on("agent:cancelled", () => {
     processing = false;
     stopLoader();
+    sealOpenGroup();
     appendEntry(new InfoLine(renderer, "cancelled").node, { t: "plain" });
     app.requestRender();
   });
@@ -757,6 +773,7 @@ export function mountAshi(
   bus.on("agent:error", ({ message }) => {
     processing = false;
     stopLoader();
+    sealOpenGroup();
     appendEntry(new ErrorLine(renderer, message).node, { t: "plain" });
     app.requestRender();
   });

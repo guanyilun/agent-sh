@@ -435,11 +435,10 @@ function childOk(c: ToolGroupModel["children"][number]): boolean {
 }
 function groupSummaryLine(model: ToolGroupModel, blinkOn: boolean): string {
   const total = model.children.length + (model.hidden?.count ?? 0);
-  const running = model.children.some((c) => !c.status);
   const anyErr = model.children.some((c) => !childOk(c)) || (model.hidden ? !model.hidden.ok : false);
-  const dot = statusDot(running ? undefined : { exitCode: anyErr ? 1 : 0 }, blinkOn);
+  const dot = statusDot(model.open ? undefined : { exitCode: anyErr ? 1 : 0 }, blinkOn);
   const hint = model.expanded ? "" : ` ${DIM_ON}(ctrl+o to expand)${DIM_OFF}`;
-  return `${dot} ${summarizeGroup(model.kind, total, running)}${running ? "…" : ""}${hint}`;
+  return `${dot} ${summarizeGroup(model.kind, total, model.open)}${model.open ? "…" : ""}${hint}`;
 }
 function makeToolGroup(req: () => void, blink: Blink): ToolGroupView {
   const v: VNode = { kind: "container", children: [] };
@@ -448,14 +447,14 @@ function makeToolGroup(req: () => void, blink: Blink): ToolGroupView {
   let acquired = false;
   const update = (m: ToolGroupModel): void => {
     model = m;
-    const running = m.children.some((c) => !c.status);
-    if (running && !acquired) { blink.start(v); acquired = true; }
-    else if (!running && acquired) { blink.stop(v); acquired = false; }
+    if (m.open && !acquired) { blink.start(v); acquired = true; }
+    else if (!m.open && acquired) { blink.stop(v); acquired = false; }
     ch.length = 0;
     // Summary via a render fn so the blink clock repaints it in place.
     ch.push({ kind: "text", lines: [], fn: () => (model ? [groupSummaryLine(model, blink.on())] : []), paddingX: 0 });
-    // Collapsed shows only in-flight files; expanded shows every call + summary.
-    const rows = m.expanded ? m.children : m.children.filter((c) => !c.status);
+    const rows = m.expanded
+      ? m.children
+      : m.open && m.children.length > 0 ? [m.children[m.children.length - 1]!] : [];
     for (const c of rows) {
       const elbow = segmentsToString([{ text: "⎿", style: { color: childOk(c) ? "muted" : "error" } }]);
       const sum = m.expanded && c.status?.summary ? ` ${segmentsToString([{ text: c.status.summary, style: { color: "muted" } }])}` : "";
