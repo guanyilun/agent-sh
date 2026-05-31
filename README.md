@@ -38,9 +38,19 @@ npm install -g @guanyilun/ashi
 ashi
 ```
 
+ashi makes the runtime's **decoupled rendering** concrete: the frontend is itself an extension, and even *how* it draws tool calls and results is a swappable render extension. Same agent backend, same conversation — load a different render extension and the whole TUI restyles, no code changes:
+
+| pi-style rendering | claude-code-style rendering |
+|---|---|
+| ![ashi rendering tool calls pi-style](assets/ashi-pi-style.png) | ![ashi rendering tool calls claude-code-style](assets/ashi-claude-code-style.png) |
+
 ### 3. asHub — a GUI coding agent
 
 [**firslov/asHub**](https://github.com/firslov/asHub) is a third-party cross-platform desktop app (Electron) built on the agent-sh runtime: a multi-session sidebar, persistence across restarts, and a live-streaming interface with Markdown, syntax-highlighted code, diffs, and tool-call rendering. macOS / Windows / Linux.
+
+It pushes the same decoupling one step further — the frontend isn't a terminal at all, but a full desktop GUI on the same runtime, backends, and tools:
+
+![asHub desktop GUI](assets/ashub.png)
 
 ## How it works
 
