@@ -251,15 +251,9 @@ export function mountAshi(
         bus.emit("command:execute", { name: action.name, args: action.args });
         return;
       case "agent": {
-        const imgs = pendingImages.filter((p) => action.query.includes(`[Image #${p.id}]`));
+        const matched = pendingImages.filter((p) => action.query.includes(`[Image #${p.id}]`));
         pendingImages = [];
-        if (processing) {
-          queuedQueries.push({ query: action.query, images: imgs });
-          renderQueueSlot();
-          app.requestRender();
-          return;
-        }
-        bus.emit("agent:submit", { query: action.query, images: imgs.length ? toImageContent(imgs) : undefined });
+        submitAgentQuery(action.query, matched);
         return;
       }
     }
@@ -325,7 +319,10 @@ export function mountAshi(
   let loader: LoaderView | null = null;
   let loaderGap: RenderNode | null = null;
   let processing = false;
-  type PendingImage = { id: number; data: string; mimeType: string };
+  // The [Image #N] marker text — not these bytes — is the source of truth for which images
+  // a message carries; the slot starts byte-less and `settled` resolves true once the
+  // background read fills data/mimeType, false if it found no image or errored.
+  type PendingImage = { id: number; data: string; mimeType: string; settled: Promise<boolean> };
   let pendingImages: PendingImage[] = [];
   let imageCounter = 0;
   const toImageContent = (imgs: PendingImage[]) =>
@@ -359,6 +356,52 @@ export function mountAshi(
     pendingUserShell.push({ private: !!opts?.private });
     if (opts?.private) bus.emit("shell:user-exec-exclude-next", {});
     bus.emit("shell:pty-write", { data: line + "\n" });
+  };
+
+  const stripImageMarker = (text: string, id: number): string =>
+    text.replace(`[Image #${id}] `, "").replace(`[Image #${id}]`, "");
+
+  /** Pull a marker out of the live input when its clipboard read came back empty. */
+  const dropPendingImage = (id: number): void => {
+    pendingImages = pendingImages.filter((p) => p.id !== id);
+    const text = input.getText();
+    const cleaned = stripImageMarker(text, id);
+    if (cleaned !== text) {
+      input.setText(cleaned);
+      app.requestRender();
+    }
+  };
+
+  const dispatchAgentQuery = (query: string, images: PendingImage[]): void => {
+    if (processing) {
+      queuedQueries.push({ query, images });
+      renderQueueSlot();
+      app.requestRender();
+      return;
+    }
+    bus.emit("agent:submit", { query, images: images.length ? toImageContent(images) : undefined });
+  };
+
+  // A submit carrying a still-loading image must await its read; later submits join the
+  // same chain so a text-only query can't overtake the image query ahead of it (FIFO).
+  // With no submit in flight (the common case) we dispatch synchronously.
+  let submitChain: Promise<void> = Promise.resolve();
+  let submitsInFlight = 0;
+  const submitAgentQuery = (query: string, matched: PendingImage[]): void => {
+    if (matched.length === 0 && submitsInFlight === 0) {
+      dispatchAgentQuery(query, []);
+      return;
+    }
+    submitsInFlight++;
+    submitChain = submitChain.catch(() => {}).then(async () => {
+      const ready: PendingImage[] = [];
+      let q = query;
+      for (const img of matched) {
+        if (await img.settled) ready.push(img);
+        else q = stripImageMarker(q, img.id);
+      }
+      dispatchAgentQuery(q, ready);
+    }).finally(() => { submitsInFlight--; });
   };
   let hideThinking = true;
 
@@ -579,19 +622,24 @@ export function mountAshi(
     app.requestRender();
   });
 
-  // Only [Image #N] markers still in the text at submit are sent — deleting one drops its image.
-  const attachImage = (img: { data: string; mimeType: string }): void => {
+  // Ctrl+V (wired below) and /paste attach a clipboard image; Cmd+V stays text paste.
+  const captureClipboardImage = (): void => {
     const id = ++imageCounter;
-    pendingImages.push({ id, data: img.data, mimeType: img.mimeType });
+    const slot: PendingImage = { id, data: "", mimeType: "", settled: Promise.resolve(false) };
+    slot.settled = (async () => {
+      const img = await readClipboardImage();
+      if (img) {
+        slot.data = img.data;
+        slot.mimeType = img.mimeType;
+        return true;
+      }
+      dropPendingImage(id);
+      bus.emit("ui:info", { message: "No image found on the clipboard." });
+      return false;
+    })().catch(() => false); // settled must never reject, or a submit awaiting it wedges
+    pendingImages.push(slot);
     input.replaceBeforeCursor(0, `[Image #${id}] `);
     app.requestRender();
-  };
-  // Ctrl+V (wired below) and /paste capture a clipboard image; Cmd+V stays text paste.
-  const captureClipboardImage = (): void => {
-    void readClipboardImage().then((img) => {
-      if (img) attachImage(img);
-      else bus.emit("ui:info", { message: "No image found on the clipboard." });
-    });
   };
   ctx.registerCommand("paste", "Attach an image from the clipboard to your next message", async () => {
     captureClipboardImage();

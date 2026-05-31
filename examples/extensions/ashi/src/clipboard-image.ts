@@ -25,7 +25,7 @@ export async function readClipboardImage(): Promise<CapturedImage | null> {
       "-e", `set fp to open for access POSIX file ${JSON.stringify(tmp)} with write permission`,
       "-e", "write png_data to fp",
       "-e", "close access fp",
-    ]);
+    ], { timeout: 10_000 });
   } catch {
     return null;
   }
