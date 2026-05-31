@@ -40,7 +40,17 @@ export function applyBranchMessages(
   capture: Capture,
 ): void {
   const store = getStore().current();
-  ctx.call("conversation:replace-messages", store.buildMessages());
+  const messages = store.buildMessages();
+  ctx.call("conversation:replace-messages", messages);
+
+  // replace-messages no-ops until the agent backend is active; seeding then desyncs
+  // capture's baseline against an empty conversation and silently drops later turns.
+  const live = ctx.call("conversation:get-messages") as unknown[] | undefined;
+  if ((live?.length ?? 0) !== messages.length) {
+    throw new Error(
+      `applyBranchMessages: conversation not seeded (live ${live?.length ?? 0} vs ${messages.length}); call after the agent backend is active`,
+    );
+  }
 
   const branch = store.getBranch();
   let compaction: { firstKeptId: string } | null = null;

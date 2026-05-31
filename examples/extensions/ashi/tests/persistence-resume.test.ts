@@ -111,6 +111,23 @@ test("the exit race: processing-done leaves the turn un-persisted until flush is
   assert.equal(onDisk(), 4, "awaiting the pending flush on exit persists the turn");
 });
 
+test("seeding before the agent backend is active throws instead of silently dropping resumed turns", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ashi-persist-"));
+  const cwd = "/tmp/ashi-persist-cwd-order";
+  const sid = await seededSession(dir, cwd);
+
+  const store = new MultiSessionStore(dir, cwd, { resumeSessionId: sid });
+
+  const handlers = new Map<string, (p?: unknown) => unknown>();
+  const ctx = { bus: { on() {}, emit() {} }, call: (n: string, a?: unknown) => handlers.get(n)?.(a) };
+  const capture = registerCapture(ctx as never, () => store);
+
+  assert.throws(
+    () => applyBranchMessages(ctx as never, () => store, capture),
+    /conversation not seeded/,
+  );
+});
+
 test("a new turn in a session resumed via the in-app picker is persisted", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ashi-persist-"));
   const cwd = "/tmp/ashi-persist-cwd2";

@@ -237,13 +237,14 @@ async function main(): Promise<void> {
     rebuildChat: handle.rebuildChat,
   });
 
+  await core.activateBackend(config.backend ?? getSettings().defaultBackend);
+
   if (resumeId) {
+    // After activateBackend: conversation:replace-messages is a no-op until the agent backend exists.
     applyBranchMessages(ctx, getStore, capture);
     await handle.rebuildChat();
     ctx.bus.emit("ui:info", { message: `continued session ${resumeId.slice(0, 12)}…` });
   }
-
-  await core.activateBackend(config.backend ?? getSettings().defaultBackend);
 
   process.on("SIGTERM", cleanup);
   process.on("SIGHUP", cleanup);
