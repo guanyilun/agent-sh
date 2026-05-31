@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "agent-sh/types";
 import type { Renderer, RenderNodes, ToolCallView, ToolResultView } from "./renderer.js";
 import { UserMessage } from "./chat/user-message.js";
-import { AssistantMessage, type EquationRenderer } from "./chat/assistant.js";
+import { AssistantMessage, type RenderBlock } from "./chat/assistant.js";
 import { ThinkingBlock } from "./chat/thinking.js";
 import { loadDisplayResolver, type ToolResultMode } from "./display-config.js";
 import { isRenderModel, type RenderModel } from "./schema.js";
@@ -19,22 +19,16 @@ export interface ThinkingArgs extends RenderState { text: string; hidden: boolea
 const SCHEMA_PREFIX = "ashi:render-tool:";
 
 export function registerRenderDefaults(ctx: ExtensionContext, renderer: Renderer): void {
-  // Cache the PNG, not the node: finalize/rehydrate can render an equation twice.
-  const equationPng = new Map<string, Buffer | null>();
-  const renderEquation: EquationRenderer = (src) => {
-    if (!equationPng.has(src)) {
-      equationPng.set(src, (ctx.call("latex:render-equation", src) as Buffer | null) ?? null);
-    }
-    const png = equationPng.get(src) ?? null;
-    return png && renderer.capabilities.images ? renderer.image(png) : null;
-  };
+  const transformContent = (blocks: RenderBlock[]): RenderBlock[] =>
+    (ctx.bus.emitPipe as unknown as (e: string, p: { blocks: RenderBlock[]; images: boolean }) => { blocks: RenderBlock[] })(
+      "render:assistant-content", { blocks, images: renderer.capabilities.images },
+    ).blocks;
 
   ctx.define("ashi:render-user-message", (args: UserMessageArgs) =>
     new UserMessage(renderer, args.text));
 
   ctx.define("ashi:render-assistant", (args: AssistantArgs) => {
-    const eq = ctx.list().includes("latex:render-equation") ? renderEquation : undefined;
-    const msg = new AssistantMessage(renderer, eq);
+    const msg = new AssistantMessage(renderer, transformContent);
     if (args.text) {
       msg.appendText(args.text);
       msg.finalize();
