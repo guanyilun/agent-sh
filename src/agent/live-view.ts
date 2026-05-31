@@ -43,8 +43,17 @@ export class LiveView {
     this.cachedMessagesJson = null;
   }
 
-  addUserMessage(text: string): void {
-    this.messages.push({ role: "user", content: text });
+  addUserMessage(text: string, images?: ImageContent[]): void {
+    if (images?.length) {
+      const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [];
+      if (text) parts.push({ type: "text", text });
+      for (const img of images) {
+        parts.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.data}` } });
+      }
+      this.messages.push({ role: "user", content: parts } as unknown as ChatCompletionMessageParam);
+    } else {
+      this.messages.push({ role: "user", content: text });
+    }
     this.invalidateMessagesCache();
   }
 

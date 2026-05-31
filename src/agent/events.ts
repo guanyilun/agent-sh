@@ -1,7 +1,7 @@
 /** Agent-protocol events. Speak this to be a backend; consume it to be a frontend. */
 import type { ContentBlock } from "../core/event-bus.js";
 import type { ProviderRegistration } from "./host-types.js";
-import type { ToolDefinition, ToolResultDisplay } from "./types.js";
+import type { ImageContent, ToolDefinition, ToolResultDisplay } from "./types.js";
 
 export interface AgentIdentity {
   name: string;
@@ -31,7 +31,7 @@ declare module "../core/event-bus.js" {
     "agent:instructions": { instructions: Array<{ name: string; text: string }> };
     "agent:skills": { skills: Array<{ name: string; description: string; filePath: string }> };
 
-    "agent:submit": { query: string };
+    "agent:submit": { query: string; images?: ImageContent[] };
     "agent:cancel-request": { silent?: boolean };
     "agent:append-user-message": { text: string };
     "agent:query": { query: string };

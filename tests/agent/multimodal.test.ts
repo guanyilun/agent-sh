@@ -165,6 +165,46 @@ test("LiveView.addToolResult with error ImageContent[] still marks error", () =>
   assert.ok(toolMsg.content[0].text.startsWith("Error:"));
 });
 
+// ── LiveView.addUserMessage ─────────────────────────────────
+
+test("LiveView.addUserMessage without images stays a plain string", () => {
+  const conv = new LiveView();
+  conv.addUserMessage("just text");
+
+  const msg = conv.get()[0] as any;
+  assert.equal(msg.role, "user");
+  assert.equal(msg.content, "just text");
+});
+
+test("LiveView.addUserMessage with images produces text + image_url parts", () => {
+  const conv = new LiveView();
+  conv.addUserMessage("look at this", [
+    { type: "image", data: "Zm9v", mimeType: "image/png" },
+    { type: "image", data: "YmFy", mimeType: "image/jpeg" },
+  ]);
+
+  const msg = conv.get()[0] as any;
+  assert.equal(msg.role, "user");
+  assert.ok(Array.isArray(msg.content), "content should be array of content parts");
+  assert.equal(msg.content.length, 3);
+
+  assert.equal(msg.content[0].type, "text");
+  assert.equal(msg.content[0].text, "look at this");
+  assert.equal(msg.content[1].type, "image_url");
+  assert.equal(msg.content[1].image_url.url, "data:image/png;base64,Zm9v");
+  assert.equal(msg.content[2].image_url.url, "data:image/jpeg;base64,YmFy");
+});
+
+test("LiveView.addUserMessage with empty text omits the text part", () => {
+  const conv = new LiveView();
+  conv.addUserMessage("", [{ type: "image", data: "Zm9v", mimeType: "image/png" }]);
+
+  const msg = conv.get()[0] as any;
+  assert.ok(Array.isArray(msg.content));
+  assert.equal(msg.content.length, 1);
+  assert.equal(msg.content[0].type, "image_url");
+});
+
 // ── System prompt ───────────────────────────────────────────────────
 
 test("system prompt includes Image Support when model has image modality", async () => {
