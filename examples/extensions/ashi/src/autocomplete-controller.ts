@@ -79,6 +79,7 @@ export function createAutocompleteController(opts: {
   };
 
   app.onKey((key: KeyEvent): { consume: boolean } | void => {
+    if (key.isRelease() || key.isRepeat()) return;
     if (!view || items.length === 0) {
       if (key.matches("tab")) { refresh(); return { consume: true }; }
       return;

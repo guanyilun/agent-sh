@@ -361,3 +361,26 @@ test("autocomplete: the shared controller drives a suggestion list in the ink re
   h.feedInput("\t"); // Tab → apply
   assert.equal(h.editor.text, "/clear");
 });
+
+test("autocomplete: a kitty key release doesn't double-step the selection", async () => {
+  const h = __harness();
+  const provider: AutocompleteProvider = {
+    async getSuggestions(lines, _l, col) {
+      const before = (lines[0] ?? "").slice(0, col);
+      if (!before.startsWith("/")) return null;
+      const items = ["/alpha", "/bravo", "/charlie"]
+        .filter((c) => c.startsWith(before))
+        .map((c) => ({ value: c, label: c }));
+      return items.length ? { items, prefix: before } : null;
+    },
+  };
+  const ctrl = createAutocompleteController({ app: h.app, input: h.app.input, provider, suppressed: () => false });
+  h.app.input.setText("/");
+  ctrl.refresh();
+  await new Promise((r) => setTimeout(r, 0));
+
+  h.feedInput("\x1b[B");
+  h.feedInput("\x1b[1;1:3B");
+  h.feedInput("\t");
+  assert.equal(h.editor.text, "/bravo");
+});
