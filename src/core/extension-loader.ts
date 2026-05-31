@@ -132,7 +132,9 @@ function createScopedContext(ctx: ExtensionContext, extensionName: string): { sc
   };
 
   const dispose = () => {
-    for (const fn of cleanups) {
+    // Snapshot: a re-registering cleanup appends a new cleanup, and iterating
+    // the live array would run it and undo the restore in the same pass.
+    for (const fn of cleanups.slice()) {
       try { fn(); } catch { /* ignore */ }
     }
     cleanups.length = 0;

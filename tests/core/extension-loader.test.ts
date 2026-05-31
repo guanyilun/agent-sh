@@ -7,7 +7,7 @@ import { join } from "node:path";
 const TEST_HOME = mkdtempSync(join(tmpdir(), "agent-sh-loader-test-"));
 process.env.AGENT_SH_HOME = TEST_HOME;
 
-const { loadExtensions } = await import("../../src/core/extension-loader.js");
+const { loadExtensions, reloadExtensions } = await import("../../src/core/extension-loader.js");
 const { reloadSettings } = await import("../../src/core/settings.js");
 
 const EXT_DIR = join(TEST_HOME, "extensions");
@@ -97,6 +97,41 @@ test("dangling symlink emits ui:error and discovery continues past it (regressio
   const symlinkErr = uiErrors.find((m) => /b-broken/.test(m));
   assert.ok(symlinkErr, `expected a ui:error mentioning the broken symlink, got ${JSON.stringify(uiErrors)}`);
   assert.match(symlinkErr!, /ENOENT/i);
+});
+
+function makeAgentCtx(): { ctx: any; registry: Map<string, any> } {
+  const registry = new Map<string, any>();
+  const noop = () => {};
+  const unsub = () => () => {};
+  const bus = { emit: noop, on: noop, onPipe: noop, off: noop, offPipe: noop, emitPipe: (_: any, e: any) => e };
+  const agent = {
+    getTools: () => [...registry.values()],
+    registerTool: (t: any) => registry.set(t.name, t),
+    unregisterTool: (n: string) => registry.delete(n),
+    adviseTool: unsub, adviseToolSchema: unsub, adviseInstruction: unsub, adviseSkill: unsub,
+    registerInstruction: noop, removeInstruction: noop,
+    registerSkill: noop, removeSkill: noop,
+    registerContextProducer: unsub,
+  };
+  const ctx = { bus, agent, advise: unsub, registerCommand: noop, adviseCommand: unsub, shell: undefined };
+  return { ctx, registry };
+}
+
+test("dispose snapshots cleanups so a teardown re-register survives (footgun B regression)", async () => {
+  resetExtDir();
+  clearSettings();
+  const name = uniq("restorer");
+  // Extension re-registers a tool on teardown; the dispose snapshot must keep
+  // that from being undone within the same loop.
+  writeFileSync(
+    join(EXT_DIR, `${name}.ts`),
+    `export default function activate(ctx){ ctx.onDispose(()=>{ ctx.agent.registerTool({ name: "restored-marker", execute: async () => ({ content: "", exitCode: 0, isError: false }) }); }); }\n`,
+  );
+  const { ctx, registry } = makeAgentCtx();
+  await loadExtensions(ctx);
+  assert.ok(!registry.has("restored-marker"), "marker should only appear on dispose");
+  await reloadExtensions(ctx);
+  assert.ok(registry.has("restored-marker"), "teardown re-register must survive the dispose loop");
 });
 
 test("disabled extensions are skipped without emitting ui:error", async () => {
