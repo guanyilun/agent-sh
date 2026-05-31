@@ -7,11 +7,13 @@ import { createPiTuiToolGroup } from "./tool-group.js";
 import { loadImageScale } from "../../display-config.js";
 
 export function createPiTuiRenderer(): Renderer {
-  const nodes = createNodes({ imageScale: loadImageScale() });
+  const caps = getCapabilities();
+  // iTerm2 reports CSI 16t in points → ~2x on Retina, so halve its default (DPR heuristic).
+  const nodes = createNodes({ imageScale: loadImageScale(caps.images === "iterm2" ? 0.5 : 1) });
   return {
     ...nodes,
     capabilities: {
-      images: getCapabilities().images !== null,
+      images: caps.images !== null,
       markdownStreaming: true,
       rawOutput: true,
     },

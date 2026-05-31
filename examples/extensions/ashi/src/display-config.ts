@@ -46,9 +46,9 @@ export function loadGroupMaxVisible(): number {
   return Math.floor(v);
 }
 
-export function loadImageScale(): number {
+export function loadImageScale(fallback: number): number {
   const v = getExtensionSettings<AshiSettings>("ashi", {}).imageScale;
-  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return 1;
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return fallback;
   return v;
 }
 
