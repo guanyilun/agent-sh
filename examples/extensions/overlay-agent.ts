@@ -22,8 +22,8 @@
  */
 import type { AgentContext, ShellContext, RemoteSession } from "agent-sh/types";
 import type { RenderSurface } from "agent-sh/utils/compositor";
-import { FloatingPanel } from "agent-sh/utils/floating-panel";
-import { formatScreenContext, type TerminalBuffer } from "agent-sh/utils/terminal-buffer";
+import type { FloatingPanel, FloatingPanelConfig } from "agent-sh/utils/floating-panel";
+import type { TerminalBuffer } from "agent-sh/utils/terminal-buffer";
 
 /** Adapt a FloatingPanel to the RenderSurface interface. */
 function createPanelSurface(panel: FloatingPanel): RenderSurface {
@@ -72,11 +72,11 @@ export default function activate(ctx: AgentContext & ShellContext): void {
   const { createRemoteSession } = ctx.shell;
   const terminalBuffer: TerminalBuffer | null = ctx.call("terminal-buffer");
 
-  const panel = new FloatingPanel(bus, {
+  const panel: FloatingPanel = ctx.call("floating-panel:create", {
     trigger: "\x1c", // Ctrl+\
     dimBackground: true,
     terminalBuffer: terminalBuffer ?? undefined,
-  });
+  } satisfies FloatingPanelConfig, bus);
 
   const panelSurface = createPanelSurface(panel);
   let session: RemoteSession | null = null;
@@ -89,7 +89,7 @@ export default function activate(ctx: AgentContext & ShellContext): void {
   // `<shell_events>` already covers the visible scrollback — skip to dedupe.
   ctx.agent.registerContextProducer("terminal-screen", () => {
     if (!session?.active || !terminalBuffer?.altScreen) return null;
-    return formatScreenContext(terminalBuffer.readScreen(), 80);
+    return terminalBuffer.formatScreen(80);
   });
 
   registerInstruction("Interactive Overlay Sessions", [

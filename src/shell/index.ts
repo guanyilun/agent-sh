@@ -5,9 +5,11 @@
  */
 import "./events.js"; // augments BusEvents with shell-owned events
 import type { ExtensionContext, RemoteSession, RemoteSessionOptions, ShellSurface } from "./host-types.js";
+import type { EventBus } from "../core/event-bus.js";
 import { Shell } from "./shell.js";
 import { DefaultCompositor } from "../utils/compositor.js";
 import { TerminalBuffer } from "../utils/terminal-buffer.js";
+import { FloatingPanel, type FloatingPanelConfig } from "../utils/floating-panel.js";
 import { setPalette } from "../utils/palette.js";
 import * as streamTransform from "../utils/stream-transform.js";
 import activateShellContext from "./shell-context.js";
@@ -97,6 +99,13 @@ export function registerShellHandlers(ctx: ExtensionContext): void {
     terminalBufferSingleton = TerminalBuffer.createWired(ctx.bus);
     return terminalBufferSingleton;
   });
+
+  // bus override lets callers pass their scoped bus, so the panel's
+  // listeners unwire when the extension reloads.
+  ctx.define("floating-panel:create", (config: FloatingPanelConfig, bus?: EventBus): FloatingPanel =>
+    new FloatingPanel(bus ?? ctx.bus, config),
+  );
+
   activateShellContext(ctx);
   activateTuiRenderer(ctx);
 }

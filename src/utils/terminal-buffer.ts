@@ -151,6 +151,11 @@ export class TerminalBuffer {
     };
   }
 
+  /** Read the screen and wrap it as a `<terminal_buffer>` context block. */
+  formatScreen(maxLines?: number, baseContext?: string): string {
+    return formatScreenContext(this.readScreen(), maxLines, baseContext);
+  }
+
   /**
    * Get terminal screen as lines, padded/trimmed to exactly `rows` lines.
    * Clean text only (ANSI stripped).  Reads from the active buffer's
