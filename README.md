@@ -5,13 +5,9 @@
 
 A composable agent runtime — pair any frontend with any agent backend, over one shared extension layer.
 
-## Three example apps built on agent-sh
+## A shell with the agent one keystroke away
 
-agent-sh is small at its core and does its real work through extensions, so the same runtime drives very different apps. Three to start with — all sharing the same agent backends, tools, providers, and `~/.agent-sh/settings.json`:
-
-### 1. A shell with the agent one keystroke away — bundled with agent-sh
-
-A normal shell on top of node-pty — your rc config, your aliases, vim and tmux all just work. But at the start of any line, type `>` and you're talking to a small agent that already sees your cwd, your last command, and its output. Nothing to set up, no project to explain.
+The frontend bundled with agent-sh: a normal shell on top of node-pty — your rc config, your aliases, vim and tmux all just work. But at the start of any line, type `>` and you're talking to an agent that already sees your cwd, your last command, and its output. Nothing to set up, no project to explain.
 
 ![demo](assets/demo.gif)
 
@@ -23,42 +19,7 @@ A normal shell on top of node-pty — your rc config, your aliases, vim and tmux
 ~ $ > draft a commit message     # agent reads your diff and shell history
 ```
 
-```bash
-npm install -g agent-sh
-```
-
-[Quick Start ↓](#quick-start)
-
-### 2. ashi — a standalone coding agent
-
-[**`@guanyilun/ashi`**](examples/extensions/ashi/) is the same `ash` agent in a chat-style TUI, with no shell underneath — just the agent. Installed separately, it reuses agent-sh's backend, tools, slash commands, providers, and skills, and adds session history, in-session branching, and LLM-driven compaction.
-
-```bash
-npm install -g @guanyilun/ashi
-ashi
-```
-
-ashi makes the runtime's **decoupled rendering** concrete: the frontend is itself an extension, and even *how* it draws tool calls and results is a swappable render extension. Same agent backend, same conversation — load a different render extension and the whole TUI restyles, no code changes:
-
-| pi-style rendering | claude-code-style rendering |
-|---|---|
-| ![ashi rendering tool calls pi-style](assets/ashi-pi-style.png) | ![ashi rendering tool calls claude-code-style](assets/ashi-claude-code-style.png) |
-
-### 3. asHub — a GUI coding agent
-
-[**firslov/asHub**](https://github.com/firslov/asHub) is a third-party cross-platform desktop app (Electron) built on the agent-sh runtime: a multi-session sidebar, persistence across restarts, and a live-streaming interface with Markdown, syntax-highlighted code, diffs, and tool-call rendering. macOS / Windows / Linux.
-
-It pushes the same decoupling one step further — the frontend isn't a terminal at all, but a full desktop GUI on the same runtime, backends, and tools:
-
-![asHub desktop GUI](assets/ashub.png)
-
-## How it works
-
-agent-sh is a **composable agent runtime**. At its center is a pure kernel — a typed event bus, a named-handler registry, and an extension loader — that knows nothing about terminals, LLMs, shells, or rendering. Everything else plugs into it: the agent backend, its tools, provider management, and the frontend that drives it.
-
-The frontend and the agent backend are both just components on the bus, so you **mix and match** them freely — wire several frontends to one backend, or keep one frontend and swap the backend underneath — all sharing the **same extension layer** of tools, content transforms, slash commands, and themes. `import { createCore } from "agent-sh"` gives you the headless kernel; load the pieces you want and wire your own I/O.
-
-For the kernel design in full — the bus, handlers, the compositor, and the shell ↔ agent boundary — see [Architecture](docs/architecture.md). To embed the runtime in your own frontend, see the [Library Guide](docs/library.md). The rest of this README covers the bundled shell.
+**The agent behind `>` is swappable — the terminal stays the same.** Out of the box it's **`ash`**, agent-sh's own lightweight agent: it works with any OpenAI-compatible API and shares its tool surface with every extension you install. Already invested in another coding agent? The same `>` and the same shell-context wiring can host **pi**, **claude-code**, or **opencode** instead through in-the-box bridges — bring your own backend, keep the workflow. The Quick Start below walks through both.
 
 ## Quick Start
 
@@ -179,6 +140,41 @@ The built-in agent (`ash`) is the default, but agent-sh can host a different cod
 All three bridges receive agent-sh's per-query shell context (`<shell_events>`) and follow the PTY-tracked cwd, so the hosted agent sees what you ran and where you are. Switching at runtime with `/backend <name>` persists the choice across sessions automatically; the `--backend` flag above is per-session only.
 
 **Caveat:** pi, claude-code, and opencode each manage their own tool surfaces, so agent-sh extensions that register tools (or skills, instructions, etc.) for the built-in `ash` agent generally won't be visible to a hosted backend. Frontend extensions (themes, content transforms, slash commands, the TUI renderer) keep working — only the agent-side capabilities differ. Use the bridges when you want that agent's toolset; stay on `ash` when you want agent-sh's extension ecosystem.
+
+## Same runtime, other frontends
+
+The shell is just one frontend. Because the frontend is itself an extension on the bus, the same runtime — same agent backends, tools, providers, and `~/.agent-sh/settings.json` — drives completely different apps.
+
+### ashi — a standalone coding agent
+
+[**`@guanyilun/ashi`**](examples/extensions/ashi/) is the same `ash` agent in a chat-style TUI, with no shell underneath — just the agent. Installed separately, it reuses agent-sh's backend, tools, slash commands, providers, and skills, and adds session history, in-session branching, and LLM-driven compaction.
+
+```bash
+npm install -g @guanyilun/ashi
+ashi
+```
+
+ashi makes the runtime's **decoupled rendering** concrete: the frontend is itself an extension, and even *how* it draws tool calls and results is a swappable render extension. Same agent backend, same conversation — load a different render extension and the whole TUI restyles, no code changes:
+
+| pi-style rendering | claude-code-style rendering |
+|---|---|
+| ![ashi rendering tool calls pi-style](assets/ashi-pi-style.png) | ![ashi rendering tool calls claude-code-style](assets/ashi-claude-code-style.png) |
+
+### asHub — a GUI coding agent
+
+[**firslov/asHub**](https://github.com/firslov/asHub) is a third-party cross-platform desktop app (Electron) built on the agent-sh runtime: a multi-session sidebar, persistence across restarts, and a live-streaming interface with Markdown, syntax-highlighted code, diffs, and tool-call rendering. macOS / Windows / Linux.
+
+It pushes the same decoupling one step further — the frontend isn't a terminal at all, but a full desktop GUI on the same runtime, backends, and tools:
+
+![asHub desktop GUI](assets/ashub.png)
+
+## How it works
+
+At agent-sh's center is a pure kernel — a typed event bus, a named-handler registry, and an extension loader — that knows nothing about terminals, LLMs, shells, or rendering. Everything else plugs into it: the agent backend, its tools, provider management, and the frontend that drives it.
+
+The frontend and the agent backend are both just components on the bus, so you **mix and match** them freely — wire several frontends to one backend, or keep one frontend and swap the backend underneath — all sharing the **same extension layer** of tools, content transforms, slash commands, and themes. The shell swapping `ash` for a bridged agent, and ashi/asHub putting a different UI on the same backend, are the same idea seen from two directions. `import { createCore } from "agent-sh"` gives you the headless kernel; load the pieces you want and wire your own I/O.
+
+For the kernel design in full — the bus, handlers, the compositor, and the shell ↔ agent boundary — see [Architecture](docs/architecture.md). To embed the runtime in your own frontend, see the [Library Guide](docs/library.md).
 
 ## Documentation
 

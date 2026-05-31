@@ -10,6 +10,8 @@ The look follows Claude Code's chat design: a `❯` user prompt on a faint band,
 read & search groups that collapse to `Read N files`, and box-less diffs with a
 line-numbered green/red gutter.
 
+![ashi-ink rendering tool calls, claude-code-style](https://raw.githubusercontent.com/guanyilun/agent-sh/main/assets/ashi-claude-code-style.png)
+
 > Requires `@guanyilun/ashi` ≥ 0.2.0.
 
 ## Use

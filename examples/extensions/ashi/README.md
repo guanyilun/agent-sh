@@ -7,6 +7,14 @@
 
 Same backend, tools, slash commands, providers, and skills as `agent-sh`, mounted in a chat-style interface with session history, branching, and LLM-driven compaction.
 
+Rendering is **decoupled** — even *how* ashi draws tool calls and results is a swappable render extension. Same agent, same conversation; load a different render extension and the whole TUI restyles, no code changes:
+
+| pi-style rendering | claude-code-style rendering |
+|---|---|
+| ![ashi rendering tool calls pi-style](https://raw.githubusercontent.com/guanyilun/agent-sh/main/assets/ashi-pi-style.png) | ![ashi rendering tool calls claude-code-style](https://raw.githubusercontent.com/guanyilun/agent-sh/main/assets/ashi-claude-code-style.png) |
+
+The claude-code-style renderer is [ashi-ink](../ashi-ink), a working Ink (React) renderer; see [Extending ashi](#extending-ashi) for the contract.
+
 ## Install
 
 ```bash
@@ -151,7 +159,7 @@ Each tool inherits from `default` and is overridden by its own block. Unknown to
 ## Extending ashi
 
 Other extensions can customize chat and tool-result rendering — and even swap the whole
-TUI renderer (pi-tui, Ink, …) — without forking ashi. See **[EXTENDING.md](EXTENDING.md)**
+TUI renderer (pi-tui, [Ink](../ashi-ink), …) — without forking ashi. See **[EXTENDING.md](EXTENDING.md)**
 for the chat/tool render hooks, the declarative tool render schema, and the renderer
 contract. For non-render concerns (commands, settings, tools, providers), use the
 standard [agent-sh extension API](https://github.com/guanyilun/agent-sh/blob/main/docs/extensions.md).
