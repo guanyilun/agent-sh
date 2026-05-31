@@ -129,7 +129,7 @@ test("active mode missing from refreshed catalog stays as ghost + emits ui:info 
   const settings = {
     defaultProvider: "openrouter",
     providers: {
-      openrouter: { apiKey: "x", defaultModel: "m-b" },
+      openrouter: { apiKey: "x", baseURL: "https://openrouter.ai/api/v1", defaultModel: "m-b" },
     },
   };
 
@@ -165,7 +165,7 @@ test("active mode missing from refreshed catalog stays as ghost + emits ui:info 
 test("persisted default not in initial catalog → stub used as initial active mode", async () => {
   const settings = {
     defaultProvider: "openrouter",
-    providers: { openrouter: { apiKey: "x", defaultModel: "future/model" } },
+    providers: { openrouter: { apiKey: "x", baseURL: "https://openrouter.ai/api/v1", defaultModel: "future/model" } },
   };
 
   const result = await runDriver(settings, {
@@ -190,7 +190,7 @@ test("persisted default not in initial catalog → stub used as initial active m
 test("late catalog containing persisted default does not switch away from active override", async () => {
   const settings = {
     defaultProvider: "openrouter",
-    providers: { openrouter: { apiKey: "x", defaultModel: "persisted/m" } },
+    providers: { openrouter: { apiKey: "x", baseURL: "https://openrouter.ai/api/v1", defaultModel: "persisted/m" } },
   };
 
   const result = await runDriver(settings, {

@@ -1,8 +1,4 @@
-/** Regression coverage for the "fresh install + `auth login deepseek` →
- *  no backend found" bug. Two invariants:
- *    1. Built-ins still register without a key (auth-discovery feature).
- *    2. With only one keyed provider, the ash backend activates against it
- *       — the default-provider fallback must skip keyless entries. */
+/** Provider resolution at backend activation. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -16,6 +12,7 @@ const DRIVER = fileURLToPath(new URL("../fixtures/builtin-provider-driver.ts", i
 interface DriverResult {
   registeredIds: string[];
   backendRegistrations: { name: string }[];
+  uiErrors: string[];
 }
 
 async function run(opts: {
@@ -75,13 +72,36 @@ test("only deepseek keyed: ash backend registers against deepseek", async () => 
   assert.ok(ash, `ash backend did not register; got ${JSON.stringify(result.backendRegistrations)}`);
 });
 
-test("only deepseek keyed but settings.defaultProvider=openrouter: ash does not register", async () => {
-  // Explicit user choice must still win — this guards against an overly
-  // aggressive fallback that ignores defaultProvider.
+test("defaultProvider keyless but another provider usable: warn + fall through", async () => {
   const result = await run({
     keys: { deepseek: "sk-test" },
     settings: { defaultProvider: "openrouter" },
   });
   const ash = result.backendRegistrations.find((b) => b.name === "ash");
-  assert.equal(ash, undefined, "ash should not register when user pointed at keyless openrouter");
+  assert.ok(ash, `ash should fall through to the keyed provider; got ${JSON.stringify(result.backendRegistrations)}`);
+  const warn = result.uiErrors.join("\n");
+  assert.match(warn, /openrouter/, `expected a warning naming openrouter; got: ${warn}`);
+  assert.match(warn, /falling back/i);
+});
+
+test("keyed provider without an endpoint never silently routes to OpenAI", async () => {
+  const result = await run({
+    settings: { defaultProvider: "myproxy", providers: { myproxy: { apiKey: "sk-orphan", defaultModel: "m1" } } },
+  });
+  const ash = result.backendRegistrations.find((b) => b.name === "ash");
+  assert.equal(ash, undefined, "ash must not register an endpointless provider against the OpenAI default");
+  const err = result.uiErrors.join("\n");
+  assert.match(err, /myproxy/);
+  assert.match(err, /endpoint/i);
+});
+
+test("custom settings provider with both key and endpoint registers", async () => {
+  const result = await run({
+    settings: {
+      defaultProvider: "myproxy",
+      providers: { myproxy: { apiKey: "sk-p", baseURL: "https://proxy.local/v1", defaultModel: "m1" } },
+    },
+  });
+  const ash = result.backendRegistrations.find((b) => b.name === "ash");
+  assert.ok(ash, `ash should register a fully-configured custom provider; got ${JSON.stringify(result)}`);
 });

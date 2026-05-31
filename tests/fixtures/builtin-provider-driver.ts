@@ -10,9 +10,13 @@ import type { ProviderRegistration } from "../../src/agent/host-types.js";
 async function main() {
   const core = createCore({} as AppConfig);
   const backendRegistrations: Array<{ name: string }> = [];
+  const uiErrors: string[] = [];
 
   core.bus.on("agent:register-backend" as never, (payload: { name: string }) => {
     backendRegistrations.push({ name: payload.name });
+  });
+  core.bus.on("ui:error" as never, (payload: { message: string }) => {
+    uiErrors.push(payload.message);
   });
 
   const ctx = core.extensionContext({ quit: () => {} });
@@ -26,7 +30,7 @@ async function main() {
   });
   const registeredIds = providers.map((p) => p.id).sort();
 
-  process.stdout.write(JSON.stringify({ registeredIds, backendRegistrations }) + "\n");
+  process.stdout.write(JSON.stringify({ registeredIds, backendRegistrations, uiErrors }) + "\n");
   process.exit(0);
 }
 
