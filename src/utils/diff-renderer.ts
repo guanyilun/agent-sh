@@ -247,17 +247,14 @@ function findChangePairs(hunk: DiffHunk): Map<number, ChangePair> {
   let i = 0;
 
   while (i < lines.length) {
-    // Find a run of removed lines
     const removedStart = i;
     while (i < lines.length && lines[i].type === "removed") i++;
     const removedEnd = i;
 
-    // Find a run of added lines immediately after
     const addedStart = i;
     while (i < lines.length && lines[i].type === "added") i++;
     const addedEnd = i;
 
-    // Pair them 1:1
     const removedCount = removedEnd - removedStart;
     const addedCount = addedEnd - addedStart;
     const pairCount = Math.min(removedCount, addedCount);
@@ -545,21 +542,18 @@ function buildSplitRows(hunk: DiffHunk): SplitRow[] {
       continue;
     }
 
-    // Collect a run of removed lines
     const removed: DiffLine[] = [];
     while (i < lines.length && lines[i].type === "removed") {
       removed.push(lines[i]);
       i++;
     }
 
-    // Collect a run of added lines
     const added: DiffLine[] = [];
     while (i < lines.length && lines[i].type === "added") {
       added.push(lines[i]);
       i++;
     }
 
-    // Pair them side by side
     const maxLen = Math.max(removed.length, added.length);
     for (let k = 0; k < maxLen; k++) {
       rows.push({
@@ -663,7 +657,6 @@ function trimHunksToFit(hunks: DiffHunk[], maxLines: number): DiffHunk[] {
     }
   }
 
-  // Separators between hunks
   const separators = Math.max(0, hunks.length - 1);
 
   // How many context lines can we afford?

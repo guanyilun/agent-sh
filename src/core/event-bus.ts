@@ -44,7 +44,7 @@ export interface BusMeta {
   source: string;   // emitting agent's instanceId
   ts: number;       // milliseconds since epoch
   id: string;       // monotonic per-bus, "<source>:<n>"
-  name: string;     // event name
+  name: string;
 }
 
 export type AnyListener = (name: string, payload: unknown, meta: BusMeta) => void;
@@ -239,10 +239,8 @@ export class EventBus {
     event: K,
     payload: BusEvents[K],
   ): Promise<BusEvents[K]> {
-    // Phase 1: notify (lets renderers prepare for interactive I/O)
     this.dispatch(event, payload);
 
-    // Phase 2: transform (extensions provide decisions)
     const listeners = this.asyncPipeListeners.get(event);
     if (!listeners) return payload;
     let result = payload;

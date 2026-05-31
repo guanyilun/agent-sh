@@ -308,7 +308,6 @@ export default function activate(ctx: ExtensionContext): void {
       }
     }
   });
-  // Track token usage for display
   let pendingUsage: { prompt_tokens: number; completion_tokens: number } | null = null;
   bus.on("agent:usage", (e) => { pendingUsage = e; });
 

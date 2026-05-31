@@ -322,10 +322,8 @@ export class LineEditor {
   /** Add a line to history (most recent first). */
   pushHistory(line: string): void {
     if (!line.trim()) return;
-    // Deduplicate: remove if already at top
     if (this.history.length > 0 && this.history[0] === line) return;
     this.history.unshift(line);
-    // Cap history size
     if (this.history.length > 100) this.history.pop();
   }
 

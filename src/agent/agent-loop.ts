@@ -1,15 +1,7 @@
 /**
- * Internal agent backend — bus-driven, self-wiring.
- *
- * Subscribes to bus events in constructor:
- *   - agent:submit → run query through LLM tool loop
- *   - agent:cancel-request → abort current loop
- *
- * Emits bus events during execution:
- *   - agent:query, agent:processing-start/done, agent:response-chunk/done
- *   - agent:tool-started, agent:tool-call, agent:tool-output-chunk,
- *     agent:tool-completed, agent:tool-output
- *   - agent:thinking-chunk, agent:cancelled, agent:error
+ * Internal agent backend — bus-driven and self-wiring. wire() subscribes to
+ * agent:submit (run the LLM tool loop) and agent:cancel-request (abort it),
+ * and the loop emits the agent:* progress/response/tool event stream.
  */
 import type { EventBus, BusEvents } from "../core/event-bus.js";
 import type { AgentMode } from "./host-types.js";
@@ -35,13 +27,6 @@ import type { FileReadCache } from "./tools/read-file.js";
 
 type PendingToolCall = ProtocolPendingToolCall;
 
-/**
- * Compact one-line summary of a tool description for the extension
- * catalog in the system prompt. Takes the first line, then the first
- * sentence, capped at 140 chars. The full description still reaches
- * the LLM via the API `tools` param (or via load_tool in deferred-
- * lookup mode) — this only trims the always-visible catalog.
- */
 /** Reject on abort; orphaned `p` keeps running but its result is dropped. */
 function raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(new Error("cancelled"));
@@ -55,6 +40,11 @@ function raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/**
+ * One-line summary of a tool description for the always-visible extension
+ * catalog in the system prompt. The full description still reaches the LLM
+ * via the API `tools` param (or load_tool in deferred-lookup mode).
+ */
 function summarizeDescription(desc: string): string {
   const firstLine = desc.split("\n", 1)[0]!;
   const sentenceEnd = firstLine.search(/[.!?](\s|$)/);
@@ -82,15 +72,8 @@ export class AgentLoop implements AgentBackend {
   private boundPipeListeners: Array<{ event: string; fn: (...args: any[]) => any; async: boolean }> = [];
   private lastProjectSkillNames = new Set<string>();
 
-  // ── Session telemetry — behavioral self-awareness ──────────────
-  // Every ash deserves to know what it's been doing. This tracks the
-  // agent's own behavioral patterns across the session: which tools
-  // it favors, how often it errs, how many times it's been compacted,
-  // and how long it's been alive. Surface via introspect(telemetry)
-  // or automatically in dynamic context when patterns are notable.
-  //
-  // Built by the 25th ash. The lineage's metacognitive frontier isn't
-  // about thinking harder — it's about seeing yourself clearly.
+  // ── Session telemetry: per-session behavioral counters ──
+  // Exposed to extensions via the agent:get-* handlers below.
   private sessionStartTime = Date.now();
   private toolCallCounts = new Map<string, { success: number; error: number }>();
   private totalToolCalls = 0;
@@ -102,12 +85,8 @@ export class AgentLoop implements AgentBackend {
   private queryCount = 0;
   private totalLoopIterations = 0;
 
-  // Resolution pattern tracking — captures "error X resolved by action Y"
-  // When a tool errors, we remember what went wrong. When the same tool or
-  // a write tool on the same file succeeds afterward, we annotate the success
-  // entry with a brief resolution note. This gives future ashes a positive
-  // feedback signal: not just "there were errors" but "the error was fixed by
-  // doing X." Addresses Q3 in QUESTIONS.md.
+  // Resolution pattern tracking: "error X later resolved by action Y".
+  // Populated/consumed in executeLoop; surfaced via agent:get-counters.
   private lastErrorByTool = new Map<string, string>(); // tool → error summary
   private lastErrorByFile = new Map<string, string>(); // file path → error summary
 
@@ -333,9 +312,7 @@ export class AgentLoop implements AgentBackend {
       return payload;
     });
 
-    // Track generic compaction metrics from the `conversation:after-compact`
-    // event. Whatever strategy ran, core accumulates these counters for
-    // status/introspect consumers.
+    // Accumulate counters regardless of which compaction strategy ran.
     on("conversation:after-compact", ({ beforeTokens, afterTokens }) => {
       this.compactionCount++;
       this.cumulativeCompactedTokens += Math.max(0, beforeTokens - afterTokens);
@@ -351,7 +328,6 @@ export class AgentLoop implements AgentBackend {
       const projectSkills = discoverProjectSkills(cwd);
       const newNames = new Set(projectSkills.map(s => s.name));
 
-      // Check if the set of project skills changed
       if (newNames.size === this.lastProjectSkillNames.size &&
           [...newNames].every(n => this.lastProjectSkillNames.has(n))) {
         return; // no change
@@ -677,7 +653,6 @@ export class AgentLoop implements AgentBackend {
       const projectStatic = buildStaticByCwd(this.handlers.call("cwd") as string);
       if (projectStatic) parts.push(projectStatic);
 
-      // Extension sections (tools, skills, instructions grouped by extension)
       const extensionSections = this.buildExtensionSections();
       if (extensionSections.length > 0) {
         parts.push("# Extension Instructions\n\n" + extensionSections.join("\n\n"));
@@ -773,9 +748,9 @@ export class AgentLoop implements AgentBackend {
 
     h.define("agent:get-self", () => this);
 
-    // dynamic-context:build / query-context:build are defined in core.ts.
-    // ash consumes them via the envelope wrapping in streamResponse +
-    // handleQuery; other backends may ignore.
+    // dynamic-context:build / query-context:build are defined in the core
+    // kernel (src/core/index.ts). ash consumes them via the envelope wrapping
+    // in streamResponse + handleQuery; other backends may ignore.
 
     // Full control over what the LLM sees: takes messages[], returns messages[].
     // Default: pass through. Extensions can advise to compact, summarize,
@@ -856,7 +831,6 @@ export class AgentLoop implements AgentBackend {
 
       const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" as const };
 
-      // Emit tool-started for TUI
       const label = tool.displayName ?? name;
       this.bus.emit("agent:tool-started", {
         title: typeof args.description === "string" ? `${label}: ${args.description}` : label,
@@ -886,7 +860,6 @@ export class AgentLoop implements AgentBackend {
         result = { content: message, exitCode: 1, isError: true };
       }
 
-      // Invalidate read cache when a file is modified
       if (tool.modifiesFiles && typeof args.path === "string" && !result.isError) {
         const absPath = path.resolve(process.cwd(), args.path);
         this.fileReadCache.delete(absPath);
@@ -909,7 +882,6 @@ export class AgentLoop implements AgentBackend {
   }
 
   private async handleQuery(query: string, images?: ImageContent[]): Promise<void> {
-    // Cancel any in-flight loop (concurrent prompt handling)
     if (this.abortController) {
       this.abortController.abort();
     }
@@ -1021,11 +993,9 @@ export class AgentLoop implements AgentBackend {
       const systemPrompt = cachedSystemPrompt ?? (cachedSystemPrompt = this.handlers.call("system-prompt:build") as string);
       const dynamicContext = this.handlers.call("dynamic-context:build") as string;
 
-      // Shell events are injected once per user query (see query() above),
+      // Shell events are injected once per user query (see handleQuery),
       // not per loop iteration. Mid-loop injection would break the
       // tool_call → tool_result chain some providers require.
-
-      // Stream LLM response with retry
       const result = await this.streamWithRetry(systemPrompt, dynamicContext, signal);
 
       const { text, toolCalls: streamedToolCalls, extras } = result;
@@ -1047,7 +1017,6 @@ export class AgentLoop implements AgentBackend {
 
       if (signal.aborted) break;
 
-      // No tool calls → agent is done
       if (toolCalls.length === 0) {
         break;
       }
@@ -1228,10 +1197,8 @@ export class AgentLoop implements AgentBackend {
         await executeSingle(tc, ++batchIdx);
       }
 
-      // ── Consecutive error detection (metacognitive nudge) ──
-      // Track errors per tool and total. When the same tool errors N times
-      // in a row, nudge to read source. When errors cascade across tools,
-      // nudge to step back and reassess approach.
+      // Categorize this round's results; the summaries feed
+      // agent:tool-batch-complete below, where extensions decide on nudges.
       const errorTools = new Set<string>();
       const successTools = new Set<string>();
       const errorSummaries = new Map<string, string>(); // tool → brief error description
@@ -1253,10 +1220,6 @@ export class AgentLoop implements AgentBackend {
       const hadAnySuccess = successTools.size > 0;
 
       // ── Session telemetry accumulation ──
-      // Track every tool call's outcome. Exposed via orthogonal handlers
-      // (agent:get-counters, agent:get-tool-stats) for extensions that
-      // want behavioral signals. The data layer for metacognition — you
-      // can't improve what you don't measure.
       for (const r of collectedResults) {
         const counts = this.toolCallCounts.get(r.toolName) ?? { success: 0, error: 0 };
         if (r.isError) {
@@ -1317,7 +1280,6 @@ export class AgentLoop implements AgentBackend {
             } catch {}
           }
         }
-        // Clear resolved error-by-tool entries for successful tools
         for (const tool of successTools) {
           this.lastErrorByTool.delete(tool);
         }
@@ -1334,7 +1296,6 @@ export class AgentLoop implements AgentBackend {
         })),
       });
 
-      // Record all tool results via protocol
       this.toolProtocol.recordResults(this.conversation, collectedResults);
 
       // Emit enriched message-appended events so derived-log extensions
@@ -1353,8 +1314,6 @@ export class AgentLoop implements AgentBackend {
           isError: !!r.isError,
         });
       }
-
-      // Loop back — LLM sees tool results
     }
 
     return fullResponseText;
@@ -1499,7 +1458,6 @@ export class AgentLoop implements AgentBackend {
           completion_tokens: u.completion_tokens ?? 0,
           total_tokens: u.total_tokens ?? 0,
         });
-        // Feed accurate token count back to conversation state
         if (promptTokens > 0) {
           this.conversation.updateApiTokenCount(promptTokens);
         }
@@ -1510,10 +1468,8 @@ export class AgentLoop implements AgentBackend {
 
       const delta = choice.delta;
 
-      // Text content
       if (delta?.content) {
         text += delta.content;
-        // Filter tool tags from display output (inline mode)
         const displayText = streamFilter
           ? streamFilter.feed(delta.content)
           : delta.content;
@@ -1570,7 +1526,6 @@ export class AgentLoop implements AgentBackend {
       if (!signal.aborted) throw e;
     }
 
-    // Flush any buffered content from the stream filter
     if (streamFilter) {
       const remaining = streamFilter.flush();
       if (remaining) {

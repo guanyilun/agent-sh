@@ -181,7 +181,6 @@ export class InlineToolProtocol implements ToolProtocol {
         const obj = JSON.parse(body);
         const name = obj.tool;
         if (typeof name !== "string") continue;
-        // Separate tool name from args
         const { tool: _, ...args } = obj;
         calls.push({
           id: `inline_${++this.callCounter}`,
@@ -235,7 +234,6 @@ class CodeBlockFilter implements StreamFilter {
 
     while (this.buf.length > 0) {
       if (this.inFence) {
-        // Look for closing ```
         const closeIdx = this.buf.indexOf("```");
         if (closeIdx !== -1) {
           // Skip past closing ``` and any trailing whitespace on that line
@@ -249,7 +247,6 @@ class CodeBlockFilter implements StreamFilter {
         break;
       }
 
-      // Look for opening ```tool
       const openIdx = this.buf.indexOf("```tool");
       if (openIdx !== -1) {
         // Emit everything before the fence, trimming trailing newline
@@ -293,7 +290,6 @@ class CodeBlockFilter implements StreamFilter {
       this.buf = "";
     }
 
-    // Collapse runs of 3+ newlines into 2 (one blank line max)
     return this.collapseNewlines(raw);
   }
 
@@ -320,7 +316,6 @@ class CodeBlockFilter implements StreamFilter {
       text = text.slice(leading);
     }
 
-    // Collapse internal runs
     text = text.replace(/\n{3,}/g, "\n\n");
 
     // Track trailing newlines for next call
@@ -450,9 +445,7 @@ export class DeferredToolProtocol implements ToolProtocol {
         const validParams = new Set(Object.keys(schemaProps));
         const providedParams = Object.keys(targetArgs);
 
-        // Check for unknown params (likely wrong names)
         const unknown = providedParams.filter((p) => !validParams.has(p));
-        // Check for missing required params
         const missing = [...requiredParams].filter((p) => !targetArgs[p]);
 
         if (unknown.length > 0 || missing.length > 0) {

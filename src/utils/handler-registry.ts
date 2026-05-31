@@ -99,16 +99,11 @@ export class HandlerRegistry {
     return fn(...args);
   }
 
-  /**
-   * Check if a named handler exists.
-   */
   has(name: string): boolean {
     return this.entries.has(name);
   }
 
-  /**
-   * Names of all registered handlers. For diagnostic/introspection use.
-   */
+  /** Names of all registered handlers — for diagnostics/introspection. */
   list(): string[] {
     return [...this.entries.keys()];
   }
