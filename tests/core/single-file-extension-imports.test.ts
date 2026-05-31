@@ -16,8 +16,6 @@ const KNOWN_OFFENDERS: ReadonlySet<string> = new Set([
   `interactive-prompts.ts: from "agent-sh/utils/palette.js"`,
   `interactive-prompts.ts: from "agent-sh/utils/diff.js"`,
   `questionnaire.ts: from "agent-sh/utils/palette.js"`,
-  `overlay-agent.ts: from "agent-sh/utils/floating-panel"`,
-  `overlay-agent.ts: from "agent-sh/utils/terminal-buffer"`,
   `subagents.ts: from "agent-sh/agent/subagent"`,
 ]);
 
