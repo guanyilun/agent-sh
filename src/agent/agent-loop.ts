@@ -17,7 +17,7 @@ import type { LlmClient } from "./llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
 import * as path from "node:path";
-import { contentText, type AgentBackend, type SkillView, type ToolDefinition, type ToolExecutionContext } from "./types.js";
+import { contentText, type AgentBackend, type ImageContent, type SkillView, type ToolDefinition, type ToolExecutionContext } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { normalizeToolArgs } from "./normalize-args.js";
 import { LiveView, type CompactResult } from "./live-view.js";
@@ -197,8 +197,8 @@ export class AgentLoop implements AgentBackend {
     });
 
 
-    on("agent:submit", ({ query }) => {
-      this.handleQuery(query).catch(() => {});
+    on("agent:submit", ({ query, images }) => {
+      this.handleQuery(query, images).catch(() => {});
     });
     on("agent:cancel-request", (e) => {
       this.abortController?.abort(e.silent ? "silent" : undefined);
@@ -908,7 +908,7 @@ export class AgentLoop implements AgentBackend {
     });
   }
 
-  private async handleQuery(query: string): Promise<void> {
+  private async handleQuery(query: string, images?: ImageContent[]): Promise<void> {
     // Cancel any in-flight loop (concurrent prompt handling)
     if (this.abortController) {
       this.abortController.abort();
@@ -934,7 +934,15 @@ export class AgentLoop implements AgentBackend {
         ? `<query_context>\n${queryContext}\n</query_context>\n\n${query}`
         : query;
 
-      this.conversation.addUserMessage(userContent);
+      // Fail closed: an image sent to a non-vision model errors and leaves an
+      // unsendable message poisoning history, so require declared image support.
+      let userImages = images?.length ? images : undefined;
+      if (userImages && !this.currentMode.modalities?.includes("image")) {
+        this.bus.emit("ui:info", { message: `Current model has no declared image support — ${userImages.length} image(s) dropped.` });
+        userImages = undefined;
+      }
+
+      this.conversation.addUserMessage(userContent, userImages);
       this.bus.emit("conversation:message-appended", { role: "user", content: query });
 
       responseText = await this.executeLoop(signal);

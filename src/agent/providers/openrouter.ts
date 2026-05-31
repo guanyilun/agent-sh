@@ -29,6 +29,15 @@ interface OpenRouterModel {
   id: string;
   supported_parameters?: string[];
   context_length?: number;
+  architecture?: { input_modalities?: string[] };
+}
+
+/** OpenRouter's input_modalities → the text/image subset; undefined when absent
+ *  so the fail-closed image guard treats the model as text-only. */
+function toModalities(input?: string[]): ("text" | "image")[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const out = input.filter((v): v is "text" | "image" => v === "text" || v === "image");
+  return out.length ? out : undefined;
 }
 
 export default function activate(ctx: AgentContext): void {
@@ -58,6 +67,7 @@ export default function activate(ctx: AgentContext): void {
         reasoning: m.supported_parameters?.includes("reasoning") ?? false,
         contextWindow: m.context_length,
         echoReasoning: userOverrides.get(m.id) ?? patterns.some((re) => re.test(m.id)),
+        modalities: toModalities(m.architecture?.input_modalities),
       })),
     });
   }).catch(() => { /* keep curated defaults */ });

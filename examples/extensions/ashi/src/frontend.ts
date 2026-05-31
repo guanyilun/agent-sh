@@ -31,6 +31,7 @@ import { resumeSession } from "./session-commands.js";
 import { applyBranchMessages } from "./commands.js";
 import type { Capture } from "./capture.js";
 import { execSync } from "node:child_process";
+import { readClipboardImage } from "./clipboard-image.js";
 import { renderDiff, detectLanguage, highlightLine } from "agent-sh/utils/diff-renderer.js";
 import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
 
@@ -249,15 +250,18 @@ export function mountAshi(
       case "command":
         bus.emit("command:execute", { name: action.name, args: action.args });
         return;
-      case "agent":
+      case "agent": {
+        const imgs = pendingImages.filter((p) => action.query.includes(`[Image #${p.id}]`));
+        pendingImages = [];
         if (processing) {
-          queuedQueries.push(action.query);
+          queuedQueries.push({ query: action.query, images: imgs });
           renderQueueSlot();
           app.requestRender();
           return;
         }
-        bus.emit("agent:submit", { query: action.query });
+        bus.emit("agent:submit", { query: action.query, images: imgs.length ? toImageContent(imgs) : undefined });
         return;
+      }
     }
   });
 
@@ -316,7 +320,12 @@ export function mountAshi(
   let loader: LoaderView | null = null;
   let loaderGap: RenderNode | null = null;
   let processing = false;
-  const queuedQueries: string[] = [];
+  type PendingImage = { id: number; data: string; mimeType: string };
+  let pendingImages: PendingImage[] = [];
+  let imageCounter = 0;
+  const toImageContent = (imgs: PendingImage[]) =>
+    imgs.map(({ data, mimeType }) => ({ type: "image" as const, data, mimeType }));
+  const queuedQueries: { query: string; images: PendingImage[] }[] = [];
   const queuedShellLines: { line: string; private: boolean }[] = [];
   const pendingUserShell = new UserShellIntents();
 
@@ -329,7 +338,7 @@ export function mountAshi(
       app.queueSlot.addChild(new InfoLine(renderer, `↳ ${tag}: ${preview}`).node);
     }
     for (const q of queuedQueries) {
-      const oneLine = q.replace(/\s+/g, " ");
+      const oneLine = q.query.replace(/\s+/g, " ");
       const preview = oneLine.length > 80 ? oneLine.slice(0, 77) + "…" : oneLine;
       app.queueSlot.addChild(new InfoLine(renderer, `↳ queued: ${preview}`).node);
     }
@@ -452,7 +461,14 @@ export function mountAshi(
     }
     const m = entry.message;
     if (m.role === "user") {
-      const raw = typeof m.content === "string" ? m.content : "";
+      const raw = typeof m.content === "string"
+        ? m.content
+        : Array.isArray(m.content)
+          ? (m.content as Array<{ type?: string; text?: string }>)
+              .filter((p) => p.type === "text")
+              .map((p) => p.text ?? "")
+              .join("")
+          : "";
       if (raw.startsWith("[Compacted conversation summary]")) return;
       appendEntry(renderUserMessage(stripContextWrappers(raw)), { t: "plain" });
     } else if (m.role === "assistant") {
@@ -552,6 +568,24 @@ export function mountAshi(
   ctx.define("render:image", (data: Buffer) => {
     appendImage(data);
     app.requestRender();
+  });
+
+  // Only [Image #N] markers still in the text at submit are sent — deleting one drops its image.
+  const attachImage = (img: { data: string; mimeType: string }): void => {
+    const id = ++imageCounter;
+    pendingImages.push({ id, data: img.data, mimeType: img.mimeType });
+    input.replaceBeforeCursor(0, `[Image #${id}] `);
+    app.requestRender();
+  };
+  // Ctrl+V (wired below) and /paste capture a clipboard image; Cmd+V stays text paste.
+  const captureClipboardImage = (): void => {
+    void readClipboardImage().then((img) => {
+      if (img) attachImage(img);
+      else bus.emit("ui:info", { message: "No image found on the clipboard." });
+    });
+  };
+  ctx.registerCommand("paste", "Attach an image from the clipboard to your next message", async () => {
+    captureClipboardImage();
   });
 
   bus.on("agent:response-chunk", ({ blocks }) => {
@@ -699,7 +733,7 @@ export function mountAshi(
     const next = queuedQueries.shift();
     if (next !== undefined) {
       renderQueueSlot();
-      bus.emit("agent:submit", { query: next });
+      bus.emit("agent:submit", { query: next.query, images: next.images.length ? toImageContent(next.images) : undefined });
     } else {
       renderQueueSlot();
     }
@@ -1010,6 +1044,10 @@ export function mountAshi(
 
   app.onKey((key: KeyEvent) => {
     if (key.isRelease() || key.isRepeat()) return;
+    if (key.matches("ctrl+v")) {
+      captureClipboardImage();
+      return { consume: true };
+    }
     if (key.matches("escape")) {
       if (processing) {
         bus.emit("agent:cancel-request", {});
@@ -1042,7 +1080,8 @@ export function mountAshi(
     if (key.matches("up") && queuedQueries.length > 0 && input.getText().length === 0) {
       const last = queuedQueries.pop()!;
       renderQueueSlot();
-      input.setText(last);
+      input.setText(last.query);
+      pendingImages = last.images;
       app.requestRender();
       return { consume: true };
     }
