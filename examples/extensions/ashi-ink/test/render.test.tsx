@@ -248,6 +248,17 @@ test("revealed thinking is dim-tinted and survives marked's resets", () => {
   assert.match(frame, /\x1b\[2m/);
 });
 
+test("the thinking loader is coral and shows a per-turn elapsed timer", () => {
+  const h = __harness();
+  const loader = h.app.createLoader("thinking…", (t) => t, (t) => t);
+  const inst = render(__renderNode(loader.node));
+  const frame = inst.lastFrame() ?? "";
+  inst.unmount();
+  loader.stop();
+  assert.match(frame, /38;2;217;119;87m/); // coral accent
+  assert.match(frame, /thinking… \(\d+s\)/);
+});
+
 test("a diff result hangs under the ⎿ gutter with no box frame (flush gutter)", () => {
   const env = { width: 80, mode: "preview" as const, previewLines: 50 };
   const args = { toolCallId: "d1", name: "edit_file", title: "edit", displayDetail: "src/app.ts", rawInput: {} };

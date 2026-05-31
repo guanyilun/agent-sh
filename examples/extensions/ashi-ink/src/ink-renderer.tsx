@@ -55,7 +55,7 @@ type VNode =
   | { kind: "markdown"; source: string; color?: (t: string) => string; userMsg?: boolean; bullet?: boolean; paddingX?: number; mdc?: MdCache }
   | { kind: "spacer"; rows: number }
   | { kind: "container"; children: VNode[] }
-  | { kind: "loader"; label: string }
+  | { kind: "loader"; label: string; startedAt: number }
   | { kind: "select"; state: SelectState };
 
 const asNode = (v: VNode): RenderNode => v as unknown as RenderNode;
@@ -92,7 +92,7 @@ function truncateVisible(s: string, width: number): string {
   return `${out}…\x1b[0m`;
 }
 
-const ACCENT_HEX = "#c778dd"; // loader spinner + focused input border
+const ACCENT_HEX = "#d97757"; // coral accent — thinking spinner + select picker highlight
 const RESET = "\x1b[39m";
 const BOLD = "\x1b[1m";
 const BOLD_OFF = "\x1b[22m";
@@ -475,6 +475,11 @@ function makeToolGroup(req: () => void, blink: Blink): ToolGroupView {
   return { node: asNode(v), update };
 }
 
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
 export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | null {
   switch (v.kind) {
     case "text": {
@@ -515,13 +520,15 @@ export function renderVNode(v: VNode, key?: React.Key): React.ReactElement | nul
       if (kids.length === 0) return null; // an empty block renders nothing, like pi-tui
       return <Box key={key} flexDirection="column">{kids}</Box>;
     }
-    case "loader":
+    case "loader": {
+      const elapsed = fmtElapsed(Date.now() - v.startedAt);
       return (
         <Box key={key}>
           <Text color={ACCENT_HEX}><Spinner type="dots" /></Text>
-          <Text color={ACCENT_HEX}>{" " + v.label}</Text>
+          <Text color={ACCENT_HEX}>{` ${v.label} (${elapsed})`}</Text>
         </Box>
       );
+    }
     case "select": {
       // Drawn here; navigated by raw keys in the input dispatch (focus === "select").
       const s = v.state;
@@ -802,8 +809,10 @@ function makeApp(store: Store, req: () => void): {
       };
     },
     createLoader: (label): LoaderView => {
-      const v: VNode = { kind: "loader", label };
-      return { node: asNode(v), stop: () => {} };
+      const v: VNode = { kind: "loader", label, startedAt: Date.now() };
+      const timer = setInterval(req, 1000);
+      (timer as { unref?: () => void }).unref?.();
+      return { node: asNode(v), stop: () => clearInterval(timer) };
     },
   };
   return { app, element, dispatch, editor };
