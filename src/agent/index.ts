@@ -45,6 +45,13 @@ function persistedModelFor(providerName: string | undefined): string | undefined
   return getSettings().providers?.[providerName]?.defaultModel;
 }
 
+/** The OpenAI SDK silently defaults an empty baseURL to api.openai.com, so a
+ *  provider with a key but no endpoint would misroute its key there. `openai`
+ *  is exempt: that default is its endpoint. */
+function usableProvider(p: ResolvedProvider | null | undefined): boolean {
+  return !!p?.apiKey && (!!p.baseURL || p.id === "openai");
+}
+
 type ModelCap = { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean; modalities?: ("text" | "image")[] };
 
 function defaultReasoningBuilder(level: string): Record<string, unknown> {
@@ -296,6 +303,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     const out: AgentMode[] = [];
     for (const [id, p] of resolvedProviders) {
       if (!p.apiKey) continue;
+      if (!usableProvider(p)) continue;
       const shapeId = p.reasoningShape ?? id;
       for (const model of p.models) {
         const mc = p.modelCapabilities?.get(model);
@@ -365,13 +373,32 @@ export default function agentBackend(ctx: ExtensionContext): void {
     resolvedProviders = computeResolvedProviders();
 
     const settings = getSettings();
-    // Built-ins register unconditionally so `auth list` can enumerate them;
-    // the fallback must skip keyless entries or it lands on openrouter and
-    // bails at the `!effectiveApiKey` guard below.
-    const providerName = config.provider
-      ?? settings.defaultProvider
-      ?? [...resolvedProviders].find(([, p]) => p.apiKey)?.[0];
-    const activeProvider = providerName ? resolvedProviders.get(providerName) ?? null : null;
+
+    let providerName: string | undefined = config.provider ?? settings.defaultProvider;
+    let activeProvider = providerName ? resolvedProviders.get(providerName) ?? null : null;
+
+    // Inline CLI credentials carry their own endpoint, so they skip the
+    // usable-provider fallback that registry-driven selection needs.
+    if (!config.apiKey) {
+      if (!providerName) {
+        const first = [...resolvedProviders].find(([, p]) => usableProvider(p));
+        providerName = first?.[0];
+        activeProvider = first?.[1] ?? null;
+      } else if (!usableProvider(activeProvider)) {
+        const reason = !activeProvider ? "is not registered"
+          : !activeProvider.apiKey ? "has no API key configured"
+          : "has no endpoint configured";
+        const next = [...resolvedProviders].find(([, p]) => usableProvider(p));
+        if (next) {
+          bus.emit("ui:error", { message: `Provider "${providerName}" ${reason}; falling back to "${next[0]}".` });
+          providerName = next[0];
+          activeProvider = next[1];
+        } else {
+          bus.emit("ui:error", { message: `Provider "${providerName}" ${reason}, and no other configured provider has both an API key and an endpoint. Run \`agent-sh auth\` to configure one.` });
+          return;
+        }
+      }
+    }
 
     // Persisted defaultModel wins over openrouter's hardcoded DEFAULT_MODELS[0].
     const effectiveApiKey = config.apiKey ?? activeProvider?.apiKey;
@@ -492,6 +519,10 @@ export default function agentBackend(ctx: ExtensionContext): void {
     }
     if (!p.apiKey) {
       bus.emit("ui:error", { message: `Provider "${name}" has no API key configured` });
+      return;
+    }
+    if (!p.baseURL && p.id !== "openai") {
+      bus.emit("ui:error", { message: `Provider "${name}" has no endpoint configured` });
       return;
     }
     const switchModel = p.defaultModel ?? p.models[0];

@@ -38,7 +38,7 @@ interface DriverResult {
 }
 
 async function runDriver(
-  provider: { id: string; apiKey?: string; models: Array<{ id: string; modalities?: ("text" | "image")[] }> },
+  provider: { id: string; apiKey?: string; baseURL?: string; models: Array<{ id: string; modalities?: ("text" | "image")[] }> },
 ): Promise<DriverResult> {
   const home = mkdtempSync(join(tmpdir(), "agent-sh-mm-"));
   try {
@@ -211,6 +211,7 @@ test("system prompt includes Image Support when model has image modality", async
   const result = await runDriver({
     id: "test-vision",
     apiKey: "sk-test",
+    baseURL: "https://vision.test/v1",
     models: [{ id: "vision-model", modalities: ["text", "image"] }],
   });
 
@@ -224,6 +225,7 @@ test("system prompt excludes Image Support when model has no modalities", async 
   const result = await runDriver({
     id: "test-text",
     apiKey: "sk-test",
+    baseURL: "https://text.test/v1",
     models: [{ id: "text-model" }],
   });
 
@@ -237,6 +239,7 @@ test("system prompt excludes Image Support when modalities is text-only", async 
   const result = await runDriver({
     id: "test-text-only",
     apiKey: "sk-test",
+    baseURL: "https://text.test/v1",
     models: [{ id: "text-model", modalities: ["text"] }],
   });
 
