@@ -63,16 +63,16 @@ export interface ProviderRegistration {
   noAuth?: boolean;
 }
 
-/** A model entry in the cycling list, optionally tied to a provider. */
-export interface AgentMode {
-  model: string;
-  /** Provider id — when cycling changes provider, LlmClient is reconfigured. */
-  provider?: string;
-  /** Provider-specific config for reconfiguring LlmClient on switch. */
-  providerConfig?: { apiKey: string; baseURL?: string };
+/** A selectable (provider, model) target the frontend lists and switches.
+ *  Serializable — identity + capabilities only; the secret + closures needed to
+ *  invoke it live in ModelEndpoint, so this can safely cross to frontends and
+ *  out-of-process bridges. */
+export interface Model {
+  id: string;
+  provider: string;
   /** Context window size in tokens (for usage display). */
   contextWindow?: number;
-  /** Max output tokens for this mode. */
+  /** Max output tokens. */
   maxTokens?: number;
   /** Model supports reasoning/thinking tokens. */
   reasoning?: boolean;
@@ -83,6 +83,14 @@ export interface AgentMode {
   echoReasoning?: boolean;
   /** Input modalities the model supports. Defaults to ["text"]. */
   modalities?: ("text" | "image")[];
+}
+
+/** Credentials + provider-shape transforms for invoking a Model, resolved by
+ *  (provider, id). Internal: holds a secret (apiKey) and non-serializable
+ *  closures, so it must never ride a bus event. */
+export interface ModelEndpoint {
+  apiKey: string;
+  baseURL?: string;
   buildReasoningParams?: (level: string) => Record<string, unknown>;
   extractCachedTokens?: (usage: Record<string, unknown>) => number | undefined;
 }

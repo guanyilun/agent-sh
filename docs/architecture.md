@@ -142,8 +142,8 @@ agent-sh/
 │   │
 │   ├── agent/                # Agent host — ash backend, providers, tools, skills
 │   │   ├── index.ts          # activateAgent — attaches ctx.agent, registers core tools + ash backend
-│   │   ├── events.ts         # BusEvents augmentation (agent:providers, agent:modes-changed, ...)
-│   │   ├── host-types.ts     # AgentSurface, AgentContext, ProviderRegistration, AgentMode
+│   │   ├── events.ts         # BusEvents augmentation (agent:providers, agent:models-changed, ...)
+│   │   ├── host-types.ts     # AgentSurface, AgentContext, ProviderRegistration, Model, ModelEndpoint
 │   │   ├── types.ts          # AgentBackend, ToolDefinition, ToolResult
 │   │   ├── agent-loop.ts     # ash AgentLoop (constructed lazily in start())
 │   │   ├── llm-client.ts, llm-facade.ts  # ash LLM transport + ctx.agent.llm facade

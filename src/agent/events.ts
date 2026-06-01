@@ -1,6 +1,6 @@
 /** Agent-protocol events. Speak this to be a backend; consume it to be a frontend. */
 import type { ContentBlock } from "../core/event-bus.js";
-import type { ProviderRegistration } from "./host-types.js";
+import type { Model, ProviderRegistration } from "./host-types.js";
 import type { ImageContent, ToolDefinition, ToolResultDisplay } from "./types.js";
 
 export interface AgentIdentity {
@@ -24,7 +24,7 @@ declare module "../core/event-bus.js" {
       cacheTokens?: (usage: Record<string, unknown>) => number | undefined;
     };
 
-    "agent:modes-changed": Record<string, never>;
+    "agent:models-changed": Record<string, never>;
     "config:switch-provider": { provider: string };
 
     "agent:info": AgentIdentity;
@@ -132,8 +132,8 @@ declare module "../core/event-bus.js" {
       stats?: { before: number; after: number; evictedCount: number };
     };
 
-    "config:switch-model": { model: string };
-    "config:get-models": { models: { model: string; provider: string }[]; active: { model: string; provider: string } | null };
+    "config:switch-model": { id: string; provider: string };
+    "config:get-models": { models: Model[]; active: Model | null };
     "config:set-thinking": { level: string };
     "config:get-thinking": { level: string; levels: string[]; supported: boolean };
 

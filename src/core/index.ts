@@ -20,7 +20,7 @@ import { CONFIG_DIR } from "./settings.js";
 export { EventBus } from "./event-bus.js";
 export type { BusEvents, ContentBlock, BackendRegistration } from "./event-bus.js";
 export type { CoreContext, CoreConfig } from "./types.js";
-export type { AgentContext, AgentConfig, AgentSurface, AgentConfigSurface, AgentMode, LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
+export type { AgentContext, AgentConfig, AgentSurface, AgentConfigSurface, Model, LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
 export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, ExtensionContext, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, AppConfig } from "../shell/host-types.js";
 export { palette, setPalette, resetPalette } from "../utils/palette.js";
 export type { ColorPalette } from "../utils/palette.js";

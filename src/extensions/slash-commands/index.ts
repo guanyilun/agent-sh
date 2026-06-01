@@ -55,15 +55,21 @@ export default function activate(ctx: ExtensionContext): void {
     description: "Cycle to next model, or switch to a specific one",
     handler: (args) => {
       const name = args.trim();
+      const { models, active } = bus.emitPipe("config:get-models", { models: [], active: null });
       if (!name) {
-        const { active } = bus.emitPipe("config:get-models", { models: [], active: null });
-        const label = active
-          ? `${active.model}${active.provider ? ` [${active.provider}]` : ""}`
-          : "none";
+        const label = active ? `${active.id} [${active.provider}]` : "none";
         bus.emit("ui:info", { message: `Model: ${label}` });
-      } else {
-        bus.emit("config:switch-model", { model: name });
+        return;
       }
+      const atIdx = name.lastIndexOf("@");
+      const id = atIdx > 0 ? name.slice(0, atIdx) : name;
+      const providerHint = atIdx > 0 ? name.slice(atIdx + 1) : undefined;
+      const found = models.find((m) => m.id === id && (!providerHint || m.provider === providerHint));
+      if (!found) {
+        bus.emit("ui:error", { message: `Unknown model: ${name}` });
+        return;
+      }
+      bus.emit("config:switch-model", { id: found.id, provider: found.provider });
     },
   });
 
@@ -187,16 +193,16 @@ export default function activate(ctx: ExtensionContext): void {
     const partial = (payload.commandArgs ?? "").toLowerCase();
     const { models, active } = bus.emitPipe("config:get-models", { models: [], active: null });
     const counts = new Map<string, number>();
-    for (const m of models) counts.set(m.model, (counts.get(m.model) ?? 0) + 1);
+    for (const m of models) counts.set(m.id, (counts.get(m.id) ?? 0) + 1);
     const items = models
-      .filter((m) => m.model.toLowerCase().includes(partial))
+      .filter((m) => m.id.toLowerCase().includes(partial))
       .slice(0, 15)
       .map((m) => {
-        const ambiguous = (counts.get(m.model) ?? 0) > 1 && m.provider;
-        const qualified = ambiguous ? `${m.model}@${m.provider}` : m.model;
+        const ambiguous = (counts.get(m.id) ?? 0) > 1;
+        const qualified = ambiguous ? `${m.id}@${m.provider}` : m.id;
         return {
           name: `/model ${qualified}`,
-          description: `${m.provider ? `[${m.provider}]` : ""}${active && m.model === active.model && m.provider === active.provider ? " (active)" : ""}`,
+          description: `[${m.provider}]${active && m.id === active.id && m.provider === active.provider ? " (active)" : ""}`,
         };
       });
     if (items.length === 0) return payload;

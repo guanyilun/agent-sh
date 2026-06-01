@@ -3,12 +3,12 @@
 import { createCore } from "../../src/core/index.js";
 import agentBackend from "../../src/agent/index.js";
 import type { AppConfig, ExtensionContext } from "../../src/shell/host-types.js";
-import type { AgentMode, AgentSurface, ProviderRegistration } from "../../src/agent/host-types.js";
+import type { Model, ModelEndpoint, AgentSurface, ProviderRegistration } from "../../src/agent/host-types.js";
 
 interface Scenario {
   config?: Partial<AppConfig>;
   capture: string[];
-  dumpModes?: boolean;
+  dumpModels?: boolean;
   probeCacheTokens?: Array<{ model: string; usage: Record<string, unknown> }>;
   steps: Array<
     | { kind: "providers.register"; payload: ProviderRegistration }
@@ -65,26 +65,37 @@ async function main() {
   }
 
   await new Promise((r) => setImmediate(r));
-  let modes: AgentMode[] | undefined;
-  if (scenario.dumpModes || scenario.probeCacheTokens) {
+  const endpointFor = (m: Model): ModelEndpoint | undefined => {
     try {
-      modes = ctx.call("agent:get-modes") as AgentMode[];
+      return ctx.call("agent:resolve-endpoint", { provider: m.provider, id: m.id }) as ModelEndpoint | undefined;
     } catch {
-      modes = undefined;
+      return undefined;
+    }
+  };
+
+  let models: Model[] | undefined;
+  if (scenario.dumpModels || scenario.probeCacheTokens) {
+    try {
+      models = ctx.call("agent:get-models") as Model[];
+    } catch {
+      models = undefined;
     }
   }
 
   let cacheProbes: Array<{ model: string; result: number | undefined; found: boolean }> | undefined;
   if (scenario.probeCacheTokens) {
     cacheProbes = scenario.probeCacheTokens.map(({ model, usage }) => {
-      const mode = modes?.find((m) => m.model === model);
-      return { model, found: !!mode, result: mode?.extractCachedTokens?.(usage) };
+      const m = models?.find((x) => x.id === model);
+      const ep = m ? endpointFor(m) : undefined;
+      return { model, found: !!m, result: ep?.extractCachedTokens?.(usage) };
     });
   }
 
+  const dumped = models?.map((m) => ({ ...m, endpoint: endpointFor(m) }));
+
   process.stdout.write(JSON.stringify({
     events: captured,
-    modes: scenario.dumpModes ? stripFns(modes) : undefined,
+    models: scenario.dumpModels ? stripFns(dumped) : undefined,
     cacheProbes,
   }) + "\n");
   process.exit(0);
