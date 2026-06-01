@@ -29,9 +29,6 @@ const model: RenderModel<SchemeInit> = {
       { text: "scheme ", style: { bold: true, color: "toolTitle" } },
       { text: env.expanded ? s.source : compact(s.source), highlight: "scheme" },
     ];
-    // A successful eval echoes no body (the source is in the title), so on expand
-    // the result line is otherwise empty — move the completion summary there
-    // (└ ✓ N lines) rather than stranding it on the wrapped title line.
     const summaryOnResult = env.expanded && env.finalized && !failed && !!s.status;
     return {
       titleIcon: "scheme",

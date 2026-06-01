@@ -112,8 +112,6 @@ function diffFrameTitle(filePath: string, diff: DiffStats): string {
   return `${theme.fg("muted", filePath)}  ${stats}`;
 }
 
-/** The +N/-M completion summary an edit shows on its call line — recovered from
- *  the persisted diff on resume, since resultDisplay.summary isn't stored. */
 function diffStatsSummary(diff: DiffStats): string {
   return diff.isNewFile ? `+${diff.added}` : `+${diff.added} -${diff.removed}`;
 }
@@ -584,24 +582,21 @@ export function mountAshi(
         appendEntry(new InfoLine(renderer, `tool result (no matching call): ${text.slice(0, 80)}`).node, { t: "plain" });
         return;
       }
-      let summary = inferSummary(found.name, text);
+      const meta = m.meta as { diff?: unknown; filePath?: string; diffs?: NestedDiff[]; summary?: string } | undefined;
+      // Persisted summary wins; diff stats and inferSummary are resume fallbacks for older sessions.
+      let summary = meta?.summary ?? inferSummary(found.name, text);
       if (found.kind === "group") {
         found.group.recordCompletion(id, 0, summary);
       } else {
-        const meta = m.meta as { diff?: unknown; filePath?: string; diffs?: NestedDiff[] } | undefined;
         if (meta?.diff && typeof meta.filePath === "string") {
           const diff = meta.diff as DiffStats & Parameters<typeof renderDiff>[0];
-          // Recover the +N/-M summary from the diff — inferSummary has no edit case,
-          // and the boxed title that used to carry the stats is gone now.
-          summary = diffStatsSummary(diff);
+          if (!meta.summary) summary = diffStatsSummary(diff);
           if (!diff.isIdentical) {
             found.pair.result.setDiffRenderer(buildDiffRenderer(diff, meta.filePath, renderer.capabilities.diffFrame !== false));
           }
         }
         found.pair.result.finalize({ exitCode: 0, summary });
         found.pair.call.setStatus({ exitCode: 0, elapsedMs: 0, summary });
-        // Edits made inside a scheme_eval are re-emitted live as their own pairs but
-        // aren't conversation messages, so replay them from the persisted bucket.
         meta?.diffs?.forEach((nd, i) => replayNestedEdit(`${id}-edit-${i}`, nd));
       }
       if (id) toolMap.delete(id);

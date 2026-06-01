@@ -158,8 +158,6 @@ test("scheme-bridged edits persist their diff under the enclosing scheme_eval ca
   const { ctx, bus } = makeCtx(conv);
   const capture = registerCapture(ctx as never, () => store);
 
-  // scheme_eval (real LLM call) edits a file via the host edit_file bridge, which
-  // re-emits the lifecycle under a synthetic `scheme-*` id.
   await bus.emit("agent:tool-started", { toolCallId: "call_1", name: "scheme_eval", title: "scheme" });
   await bus.emit("agent:tool-started", { toolCallId: "scheme-edit_file-1", title: "edit_file" });
   await bus.emit("agent:tool-completed", {
@@ -186,4 +184,31 @@ test("scheme-bridged edits persist their diff under the enclosing scheme_eval ca
   assert.ok(Array.isArray(diffs) && diffs.length === 1, "nested edit diff bucketed onto the scheme_eval tool message");
   assert.equal(diffs![0].name, "edit_file");
   assert.equal(diffs![0].filePath, "/x/a.ts");
+});
+
+test("a tool's call-line summary is persisted for resume (any tool, not just diffs)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ashi-persist-"));
+  const cwd = "/tmp/ashi-persist-summary";
+  const store = new MultiSessionStore(dir, cwd);
+  const conv = { messages: [] as Msg[] };
+  const { ctx, bus } = makeCtx(conv);
+  const capture = registerCapture(ctx as never, () => store);
+
+  await bus.emit("agent:tool-started", { toolCallId: "call_x", name: "bash", title: "bash" });
+  await bus.emit("agent:tool-completed", { toolCallId: "call_x", exitCode: 0, resultDisplay: { summary: "0.3s" } });
+
+  conv.messages.push({
+    role: "assistant", content: "",
+    tool_calls: [{ id: "call_x", type: "function", function: { name: "bash", arguments: "ls" } }],
+  } as never);
+  conv.messages.push({ role: "tool", tool_call_id: "call_x", content: "out" } as never);
+  await capture.flush();
+
+  const branch = new MultiSessionStore(dir, cwd, { resumeSessionId: store.current().id }).current().getBranch();
+  const toolMsg = branch
+    .filter((e) => e.type === "message")
+    .map((e) => (e as { message: { role: string; meta?: { summary?: string } } }).message)
+    .find((m) => m.role === "tool");
+  assert.ok(toolMsg, "tool result persisted");
+  assert.equal(toolMsg!.meta?.summary, "0.3s", "the bash summary is persisted for resume");
 });

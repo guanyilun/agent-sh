@@ -93,8 +93,6 @@ class SchemaCallComponent extends Container {
     this.handle.dispatch("status", opts);
   }
 
-  // Shared env guard: whichever sibling renders first observes the width change,
-  // so it must re-layout both halves.
   override render(width: number): string[] {
     if (this.handle.cell.env.width !== width) {
       this.handle.cell.env = { ...this.handle.cell.env, width };
