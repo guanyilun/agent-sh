@@ -29,16 +29,25 @@ const model: RenderModel<SchemeInit> = {
       { text: "scheme ", style: { bold: true, color: "toolTitle" } },
       { text: env.expanded ? s.source : compact(s.source), highlight: "scheme" },
     ];
+    // A successful eval echoes no body (the source is in the title), so on expand
+    // the result line is otherwise empty — move the completion summary there
+    // (└ ✓ N lines) rather than stranding it on the wrapped title line.
+    const summaryOnResult = env.expanded && env.finalized && !failed && !!s.status;
     return {
       titleIcon: "scheme",
       title,
       status: s.status,
-      // Title carries the source; body shows the eval result, not an echo of it.
+      hideTitleStatus: summaryOnResult,
       body: failed
         ? { kind: "text", segments: [
             { text: `✗ ${s.output.trim()}`, style: { color: "error" } },
           ] }
-        : { kind: "stream", text: s.output },
+        : summaryOnResult
+          ? { kind: "text", segments: [
+              { text: "✓", style: { color: "success" } },
+              { text: ` ${s.status!.summary ?? "ok"}`, style: { color: "muted" } },
+            ] }
+          : { kind: "stream", text: s.output },
       expandable: true,
       defaultExpanded: failed,
     };

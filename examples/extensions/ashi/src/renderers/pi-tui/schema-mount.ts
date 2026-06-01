@@ -108,7 +108,7 @@ class SchemaCallComponent extends Container {
     const display = this.handle.model.view(this.handle.cell.state as ViewState<unknown>, this.handle.cell.env);
     const icon = iconString(display.titleIcon);
     const title = segmentsToString(display.title);
-    const status = statusSuffix(display.status);
+    const status = display.hideTitleStatus ? "" : statusSuffix(display.status);
     if (display.titleRight && display.titleRight.length > 0) {
       const right = segmentsToString(display.titleRight);
       // width − 2: Text has paddingX=1 each side.

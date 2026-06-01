@@ -40,6 +40,8 @@ export interface ToolDisplay {
   /** Right-aligned on the title line; framework handles padding and status-suffix spacing. */
   titleRight?: Segment[];
   status?: DisplayStatus;
+  /** Drop the status suffix from the title line — for renderers that surface it on the result line instead. */
+  hideTitleStatus?: boolean;
   body?: Body;
   expandable?: boolean;
   defaultExpanded?: boolean;
@@ -189,6 +191,7 @@ const DEFAULT_EXPANDED_LINES = 200;
 function renderStream(buffer: string, env: Env): string {
   const display = buffer.replace(/\n+$/, "");
   if (env.expanded) {
+    if (!display) return "";
     const cap = env.expandedLines ?? DEFAULT_EXPANDED_LINES;
     const lines = display.split("\n");
     if (lines.length <= cap) return theme.fg("toolOutput", display);
