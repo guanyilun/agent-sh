@@ -93,6 +93,17 @@ class SchemaCallComponent extends Container {
     this.handle.dispatch("status", opts);
   }
 
+  // Shared env guard: whichever sibling renders first observes the width change,
+  // so it must re-layout both halves.
+  override render(width: number): string[] {
+    if (this.handle.cell.env.width !== width) {
+      this.handle.cell.env = { ...this.handle.cell.env, width };
+      this.repaint();
+      this.handle.cell.resultView?.repaint();
+    }
+    return super.render(width);
+  }
+
   repaint(): void {
     const display = this.handle.model.view(this.handle.cell.state as ViewState<unknown>, this.handle.cell.env);
     const icon = iconString(display.titleIcon);
@@ -137,6 +148,7 @@ class SchemaResultComponent extends Container {
     if (this.handle.cell.env.width !== width) {
       this.handle.cell.env = { ...this.handle.cell.env, width };
       this.repaint();
+      this.handle.cell.callView?.repaint();
     }
     return super.render(width);
   }
