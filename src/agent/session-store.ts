@@ -297,7 +297,7 @@ export class SessionStore {
     for (const e of this.entries.values()) {
       if (e.type === "message" && e.message.role === "user") {
         const raw = typeof e.message.content === "string" ? e.message.content : "";
-        const txt = stripContextWrappers(raw);
+        const txt = stripContextWrappers(raw).replace(/\s+/g, " ").trim();
         if (txt) return txt.slice(0, 80);
       }
     }
