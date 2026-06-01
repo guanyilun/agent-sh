@@ -152,7 +152,7 @@ contract has no free-placement layer yet. Use the dock, dialogs, and notices abo
 
 ## Working example
 
-[`ashi-ui-demo.ts`](https://github.com/guanyilun/agent-sh/blob/main/examples/extensions/ashi-ui-demo.ts) exercises every surface through the typed helper. Load
+[`ashi-ui-demo.ts`](../../ashi-ui-demo.ts) exercises every surface through the typed helper. Load
 it and try the commands:
 
 ```
