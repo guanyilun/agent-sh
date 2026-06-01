@@ -167,7 +167,17 @@ export interface ToolGroupView {
 }
 
 /** Default tool-group rendering (`├`/`└` tree): one styled line per row, no indent. */
-export function renderToolGroupLines(model: ToolGroupModel): string[] {
+/** Tail-biased middle truncation — keeps the end (e.g. a filename) visible. */
+function truncateMiddle(s: string, max: number): string {
+  if (max <= 0) return "";
+  if (s.length <= max) return s;
+  if (max === 1) return "…";
+  const keep = max - 1;
+  const tail = Math.ceil(keep * 0.65);
+  return (keep - tail > 0 ? s.slice(0, keep - tail) : "") + "…" + s.slice(s.length - tail);
+}
+
+export function renderToolGroupLines(model: ToolGroupModel, width?: number): string[] {
   const lines: string[] = [
     segmentsToString([
       { text: model.icon, style: { color: "warning" } },
@@ -187,7 +197,17 @@ export function renderToolGroupLines(model: ToolGroupModel): string[] {
   model.children.forEach((child, idx) => {
     const segs: Segment[] = [{ text: idx === model.children.length - 1 ? "└" : "├", style: { color: "muted" } }, " "];
     if (child.name !== model.kind) segs.push({ text: child.name, style: { bold: true, color: "toolTitle" } }, " ");
-    segs.push({ text: child.detail, style: { color: "muted" } }, " ");
+    let detail = child.detail;
+    if (width && width > 0) {
+      // Everything else on the row is fixed-width; truncate the detail (path/
+      // command) so the row stays one line instead of wrapping.
+      let overhead = 3; // tree char + space, and the space after detail
+      if (child.name !== model.kind) overhead += child.name.length + 1;
+      if (!child.status) overhead += 2;
+      else overhead += 2 + (child.status.summary ? 1 + child.status.summary.length : 0);
+      detail = truncateMiddle(detail, Math.max(8, width - overhead));
+    }
+    segs.push({ text: detail, style: { color: "muted" } }, " ");
     if (!child.status) {
       segs.push(" ", { text: "…", style: { color: "muted" } });
     } else {

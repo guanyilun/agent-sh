@@ -3,18 +3,15 @@ import { createNodes } from "./nodes.js";
 
 export function createPiTuiToolGroup(): ToolGroupView {
   const nodes = createNodes();
-  const rows = nodes.container();
   const container = nodes.container();
   container.addChild(nodes.spacer(1));
-  container.addChild(rows.node);
+  const text = nodes.text({ paddingX: 1 });
+  container.addChild(text.node);
 
   const update = (model: ToolGroupModel): void => {
-    rows.clear();
-    for (const line of renderToolGroupLines(model)) {
-      const t = nodes.text({ paddingX: 1 });
-      t.setText(line);
-      rows.addChild(t.node);
-    }
+    // paddingX:1 on both sides → content area is width-2; render width-aware so
+    // long paths truncate to fit rather than wrap.
+    text.setRenderFn((width) => renderToolGroupLines(model, Math.max(1, width - 2)));
   };
 
   return { node: container.node, update };
