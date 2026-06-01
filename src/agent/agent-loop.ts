@@ -1458,10 +1458,12 @@ export class AgentLoop implements AgentBackend {
       if ((chunk as any).usage) {
         const u = (chunk as any).usage;
         const promptTokens = u.prompt_tokens ?? 0;
+        const cachedPromptTokens = this.currentMode.extractCachedTokens?.(u);
         this.bus.emit("agent:usage", {
           prompt_tokens: promptTokens,
           completion_tokens: u.completion_tokens ?? 0,
           total_tokens: u.total_tokens ?? 0,
+          ...(typeof cachedPromptTokens === "number" ? { cached_prompt_tokens: cachedPromptTokens } : {}),
         });
         if (promptTokens > 0) {
           this.conversation.updateApiTokenCount(promptTokens);

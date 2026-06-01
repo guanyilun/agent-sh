@@ -21,6 +21,7 @@ declare module "../core/event-bus.js" {
     "provider:configure": {
       id: string;
       reasoningParams?: (level: string, model?: string) => Record<string, unknown>;
+      cacheTokens?: (usage: Record<string, unknown>) => number | undefined;
     };
 
     "agent:modes-changed": Record<string, never>;
@@ -41,7 +42,7 @@ declare module "../core/event-bus.js" {
     "agent:thinking-chunk": { text: string };
     "agent:response-chunk": { blocks: ContentBlock[] };
     "agent:response-done": { response: string };
-    "agent:usage": { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    "agent:usage": { prompt_tokens: number; completion_tokens: number; total_tokens: number; cached_prompt_tokens?: number };
 
     "agent:processing-start": Record<string, never>;
     "agent:processing-done": Record<string, never>;
