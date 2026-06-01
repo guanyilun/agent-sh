@@ -16,6 +16,9 @@ export function createPiTuiRenderer(): Renderer {
       images: caps.images !== null,
       markdownStreaming: true,
       rawOutput: true,
+      // Bare hunk lines under the └ elbow, no box frame — the file path and
+      // +N/-M stats already live on the call line, so the frame just repeats them.
+      diffFrame: false,
     },
     measureWidth: (text) => visibleWidth(text),
     mountToolCall: (model, args, env) => mountCall(model, args, env),
