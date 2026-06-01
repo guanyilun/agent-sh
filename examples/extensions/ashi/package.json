@@ -29,7 +29,8 @@
   "files": [
     "dist",
     "README.md",
-    "EXTENDING.md"
+    "EXTENDING.md",
+    "docs"
   ],
   "scripts": {
     "dev": "tsx src/cli.ts",
