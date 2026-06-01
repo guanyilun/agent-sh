@@ -60,7 +60,10 @@ function formatLocal(ts: number): string {
 export function formatSessionRow(s: SessionInfo, isCurrent: boolean): string {
   const marker = isCurrent ? "●" : " ";
   const when = s.createdAt ? formatLocal(s.createdAt) : "?";
-  const label = s.name ?? s.preview;
+  // A picker row must stay one line: SelectList truncates to width but not across
+  // newlines, so a multi-line name/preview would render tall and corrupt its
+  // frame-clear. Flatten here regardless of where the text came from.
+  const label = (s.name ?? s.preview).replace(/\s+/g, " ").trim();
   return `${marker} ${when}  ${label}  (${s.entryCount})`;
 }
 
