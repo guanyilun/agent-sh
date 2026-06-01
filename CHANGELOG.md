@@ -8,6 +8,12 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- The published package now ships `docs/` and `src/`, so the system prompt's
+  `STATIC_GUIDE` pointers (agent-sh docs + source) resolve in npm installs
+  instead of dead-ending and sending the agent hunting.
+
 ## [0.15.0] - 2026-06-01
 
 ### Changed

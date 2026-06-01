@@ -140,6 +140,8 @@
   },
   "files": [
     "dist",
+    "src",
+    "docs",
     "examples/extensions"
   ],
   "scripts": {
