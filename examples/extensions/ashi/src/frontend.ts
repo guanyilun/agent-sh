@@ -11,7 +11,10 @@ import type {
   ToolCallView,
   ToolResultView,
 } from "./renderer.js";
-import { ErrorLine, InfoLine } from "./chat/lines.js";
+import { ErrorLine, InfoLine, NoticeLine } from "./chat/lines.js";
+import { createDock } from "./docks.js";
+import { createDialogs, type ConfirmOpts, type SelectOpts } from "./dialogs.js";
+import { createInputPrompt, type InputOpts } from "./input-prompt.js";
 import { AssistantMessage } from "./chat/assistant.js";
 import { ThinkingBlock } from "./chat/thinking.js";
 import { UserMessage } from "./chat/user-message.js";
@@ -198,15 +201,31 @@ export function mountAshi(
   const app = renderer.mount();
   const input = app.input;
 
-  const statusFooter = new StatusFooter(app.status, renderer.measureWidth);
+  const statusFooter = new StatusFooter(
+    app.status,
+    renderer.measureWidth,
+    () => bus.emitPipe("ui:status", { segments: [] }).segments,
+  );
+  createDock(app, renderer, bus);
 
   let shellMode = false;
   let pendingPrivate = false;
+  let pickerOpen = false;
+
+  const modalGuard = { isOpen: () => pickerOpen, setOpen: (open: boolean) => { pickerOpen = open; } };
+  const inputPrompt = createInputPrompt(app, renderer, input, modalGuard);
+  const dialogs = createDialogs(app, renderer, modalGuard);
+  ctx.define("ui:select", (opts: SelectOpts) => dialogs.select(opts));
+  ctx.define("ui:confirm", (opts: ConfirmOpts) => dialogs.confirm(opts));
+  ctx.define("ui:input", (opts: InputOpts) => inputPrompt.prompt(opts));
+  ctx.define("ui:editor:get-text", () => input.getText());
+  ctx.define("ui:editor:set-text", (text: string) => { input.setText(text); });
+
   const autocomplete = createAutocompleteController({
     app,
     input,
     provider: new BusAutocompleteProvider(bus),
-    suppressed: () => shellMode,
+    suppressed: () => shellMode || inputPrompt.isActive(),
   });
 
   const defaultBorderColor = input.defaultBorderColor;
@@ -235,6 +254,7 @@ export function mountAshi(
   };
 
   input.onChange((text) => {
+    if (inputPrompt.isActive()) return;
     const r = deriveChangeHandlerResult(shellMode, pendingPrivate, text);
     // setText fires onChange synchronously; set mode/private before setText or the recursive call clobbers it.
     if (r.mode !== shellMode) setShellMode(r.mode);
@@ -244,6 +264,7 @@ export function mountAshi(
   });
 
   input.onSubmit((text) => {
+    if (inputPrompt.handleSubmit(text)) return;
     const action = classifySubmit(text, shellMode, pendingPrivate);
     if (action.kind === "noop") return;
     input.setText("");
@@ -862,6 +883,16 @@ export function mountAshi(
     app.requestRender();
   });
 
+  bus.on("ui:notify", ({ message, level }) => {
+    appendEntry(new NoticeLine(renderer, message, level).node, { t: "plain" });
+    app.requestRender();
+  });
+
+  bus.on("ui:status:invalidate", () => {
+    statusFooter.refresh();
+    app.requestRender();
+  });
+
   bus.on("agent:info", (info) => {
     statusFooter.update({
       model: info.model,
@@ -886,7 +917,6 @@ export function mountAshi(
 
   refreshFooterStats();
 
-  let pickerOpen = false;
   let activeSessionPicker: SelectView | null = null;
   let activeSessionRepopulate: ((keepIndex?: number) => boolean) | null = null;
   let activeSessionClose: (() => void) | null = null;

@@ -2,6 +2,8 @@
 
 Other extensions can customize how chat entries and tool results render — and even swap the whole TUI renderer — without forking ashi. For non-render concerns (commands, settings, tools, providers) use the standard `agent-sh` extension API; see the [agent-sh extension docs](https://github.com/guanyilun/agent-sh/blob/main/docs/extensions.md).
 
+To **drive** the UI from an extension — post a notice, add a status segment, pin a dock widget, or open a select/confirm/input dialog — use the UI-surface protocol (bus events + named handlers, no `ctx.ui` object); see [`docs/ui-surface-protocol.md`](docs/ui-surface-protocol.md) and the worked example `examples/extensions/ashi-ui-demo.ts`.
+
 ## Chat hooks
 
 These return a renderer-agnostic chat-entry view built from the active renderer's
