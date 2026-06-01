@@ -26,10 +26,14 @@ export function registerCapture(
   const bridgedNames = new Map<string, string>();
   let activeRealToolId: string | undefined;
 
+  // `nested` is a bridge-set bus convention (a host tool run inside another tool),
+  // not on the core event type — read it defensively.
+  const isNested = (e: unknown): boolean => !!(e as { nested?: boolean }).nested;
+
   ctx.bus.on("agent:tool-started", (e) => {
     const id = e.toolCallId;
     if (!id) return;
-    if (id.startsWith("scheme-")) bridgedNames.set(id, e.name ?? e.title);
+    if (isNested(e)) bridgedNames.set(id, e.name ?? e.title);
     else activeRealToolId = id;
   });
 
@@ -38,7 +42,7 @@ export function registerCapture(
     if (!id) return;
     const display = e.resultDisplay;
     const body = display?.body;
-    if (id.startsWith("scheme-")) {
+    if (isNested(e)) {
       if (body?.kind === "diff" && activeRealToolId) {
         const arr = nestedDiffs.get(activeRealToolId) ?? [];
         arr.push({ name: bridgedNames.get(id) ?? "edit_file", diff: body.diff, filePath: body.filePath });
