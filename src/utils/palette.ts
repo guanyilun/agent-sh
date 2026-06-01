@@ -38,10 +38,10 @@ const defaultPalette: ColorPalette = {
   error:   "\x1b[31m",   // red
   muted:   "\x1b[90m",   // gray
 
-  successBg:     "\x1b[48;2;0;60;0m",
-  errorBg:       "\x1b[48;2;50;0;0m",
-  successBgEmph: "\x1b[48;2;0;112;0m",
-  errorBgEmph:   "\x1b[48;2;90;0;0m",
+  successBg:     "\x1b[48;2;34;92;43m",
+  errorBg:       "\x1b[48;2;122;41;54m",
+  successBgEmph: "\x1b[48;2;56;166;96m",
+  errorBgEmph:   "\x1b[48;2;179;89;107m",
 
   bold:      "\x1b[1m",
   dim:       "\x1b[2m",
