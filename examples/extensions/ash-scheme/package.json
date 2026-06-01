@@ -6,6 +6,6 @@
   "main": "index.ts",
   "dependencies": {
     "@jcubic/lips": "1.0.0-beta.20",
-    "agent-sh": "^0.14.0"
+    "agent-sh": "^0.15.0"
   }
 }
