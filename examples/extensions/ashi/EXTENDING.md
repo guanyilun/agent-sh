@@ -58,7 +58,7 @@ const myModel: RenderModel<...> = {
 ## Renderers
 
 The whole TUI is swappable. ashi (the substrate) depends only on the `Renderer`
-contract from [`@guanyilun/ashi/renderer`](src/renderer.ts) — the schema, theme,
+contract from [`@guanyilun/ashi/renderer`](https://github.com/guanyilun/agent-sh/blob/main/examples/extensions/ashi/src/renderer.ts) — the schema, theme,
 chat controllers, and frontend never import a concrete TUI library. The built-in
 renderer is pi-tui (`src/renderers/pi-tui`).
 
@@ -113,6 +113,6 @@ agent-sh's shell clears OPOST on boot (pi-tui emits its own `\r`); ashi reads
 gets the conventional terminal for free; only a raw driver like pi-tui sets
 `rawOutput: true`.
 
-See [`examples/extensions/ashi-ink`](../ashi-ink) for a worked example — a **working**
+See [`examples/extensions/ashi-ink`](https://github.com/guanyilun/agent-sh/tree/main/examples/extensions/ashi-ink) for a worked example — a **working**
 Ink (React) renderer (`ASHI_RENDERER=ink ashi -e ashi-ink`), verified with
 `ink-testing-library`.
