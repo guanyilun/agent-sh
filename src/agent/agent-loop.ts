@@ -13,7 +13,7 @@ import { contentText, type AgentBackend, type ImageContent, type SkillView, type
 import { ToolRegistry } from "./tool-registry.js";
 import { normalizeToolArgs } from "./normalize-args.js";
 import { LiveView, type CompactResult } from "./live-view.js";
-import { STATIC_SYSTEM_PROMPT, buildStaticByCwd, formatSkillsBlock, loadGlobalAgentsMd } from "./system-prompt.js";
+import { STATIC_IDENTITY, STATIC_GUIDE, buildStaticByCwd, formatSkillsBlock, loadGlobalAgentsMd } from "./system-prompt.js";
 import type { Compositor } from "../utils/compositor.js";
 import { createToolUI } from "../utils/tool-interactive.js";
 import { RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW } from "./token-budget.js";
@@ -633,9 +633,14 @@ export class AgentLoop implements AgentBackend {
 
     // System prompt: static identity + behavioral instructions.
     // Extensions can use registerInstruction() for a managed section,
-    // or advise this handler directly for full control.
+    // advise system-prompt:frontend to describe their surface high in the
+    // prompt, or advise this handler directly for full control.
     h.define("system-prompt:build", () => {
-      const parts: string[] = [STATIC_SYSTEM_PROMPT];
+      // The active frontend's surface goes right after the identity; omitted if none.
+      const frontend = ((this.handlers.call("system-prompt:frontend") as string) ?? "").trim();
+      const parts: string[] = [STATIC_IDENTITY];
+      if (frontend) parts.push(frontend);
+      parts.push(STATIC_GUIDE);
 
       // Global behavioral rules (~/.agent-sh/AGENTS.md) — persistent agent memory
       const agentsMd = loadGlobalAgentsMd();
@@ -1453,10 +1458,12 @@ export class AgentLoop implements AgentBackend {
       if ((chunk as any).usage) {
         const u = (chunk as any).usage;
         const promptTokens = u.prompt_tokens ?? 0;
+        const cachedPromptTokens = this.currentMode.extractCachedTokens?.(u);
         this.bus.emit("agent:usage", {
           prompt_tokens: promptTokens,
           completion_tokens: u.completion_tokens ?? 0,
           total_tokens: u.total_tokens ?? 0,
+          ...(typeof cachedPromptTokens === "number" ? { cached_prompt_tokens: cachedPromptTokens } : {}),
         });
         if (promptTokens > 0) {
           this.conversation.updateApiTokenCount(promptTokens);

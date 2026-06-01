@@ -38,6 +38,18 @@ import { loadRendererPreference } from "./display-config.js";
 import { applyOutputMode } from "./terminal-mode.js";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Package root (dist/cli.js and src/cli.ts both sit one level down) — the running copy.
+const ASHI_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const ASHI_SURFACE = `You're attached through ashi, an interactive terminal UI. A person is at the keyboard reading your replies as they render — address them directly and keep the exchange conversational.
+
+Your working directory is ${process.cwd()}; your tools run there and it stays fixed. The user can also run shell commands with a \`!\` prefix — those run in a separate shell that may sit elsewhere, and don't change your working directory.
+
+ashi's own source lives at ${ASHI_ROOT}. Read it when the user asks how the TUI works, or wants to change how it looks or behaves:
+- ${path.join(ASHI_ROOT, "README.md")} — what ashi is and how rendering decouples into swappable render extensions
+- ${path.join(ASHI_ROOT, "EXTENDING.md")} — the render-extension contract
+- ${path.join(ASHI_ROOT, "src")} — the frontend, session capture/resume, and the pi-tui renderer`;
 
 function parseArgs(argv: string[]): AppConfig & { extensions?: string[]; continueLast: boolean; renderer?: string } {
   let model: string | undefined;
@@ -167,7 +179,7 @@ async function main(): Promise<void> {
 
   activateAgent(ctx);
   activateShellContext(ctx);
-  await loadBuiltinExtensions(ctx, ["rolling-history"]);
+  const builtinExtensions = await loadBuiltinExtensions(ctx);
 
   const shell = new Shell({
     bus: core.bus,
@@ -226,7 +238,10 @@ async function main(): Promise<void> {
   registerRenderDefaults(ctx, renderer);
   registerDefaultSchemaRenderers(ctx);
 
-  ctx.advise("system-prompt:build", (next) => `${next()}\n\n<cwd>${process.cwd()}</cwd>`);
+  ctx.advise("system-prompt:frontend", (next) => {
+    const base = (next() as string) ?? "";
+    return base ? `${base}\n\n${ASHI_SURFACE}` : ASHI_SURFACE;
+  });
 
   const handle = mountAshi(ctx, getStore, capture, renderer);
   stopFrontend = handle.stop;
@@ -246,6 +261,12 @@ async function main(): Promise<void> {
     applyBranchMessages(ctx, getStore, capture);
     await handle.rebuildChat();
     ctx.bus.emit("ui:info", { message: `continued session ${resumeId.slice(0, 12)}…` });
+  } else {
+    // New-session only: skip on resume so a restored transcript isn't prefixed with this.
+    const loadedExtensions = [...new Set([...builtinExtensions, ...loaded])];
+    if (loadedExtensions.length > 0) {
+      ctx.bus.emit("ui:info", { message: `extensions: ${loadedExtensions.join(" · ")}` });
+    }
   }
 
   process.on("SIGTERM", cleanup);

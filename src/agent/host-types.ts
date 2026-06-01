@@ -84,6 +84,7 @@ export interface AgentMode {
   /** Input modalities the model supports. Defaults to ["text"]. */
   modalities?: ("text" | "image")[];
   buildReasoningParams?: (level: string) => Record<string, unknown>;
+  extractCachedTokens?: (usage: Record<string, unknown>) => number | undefined;
 }
 
 // ── Agent-host extension surface ─────────────────────────────────
@@ -99,7 +100,10 @@ export interface AgentSurface {
     /** Re-registering the same id replaces the prior contribution. */
     register: (reg: ProviderRegistration) => () => void;
     unregister: (id: string) => void;
-    configure: (id: string, opts: { reasoningParams?: (level: string, model?: string) => Record<string, unknown> }) => void;
+    configure: (id: string, opts: {
+      reasoningParams?: (level: string, model?: string) => Record<string, unknown>;
+      cacheTokens?: (usage: Record<string, unknown>) => number | undefined;
+    }) => void;
   };
 
   // ── Tool registration ────────────────────────────────────────

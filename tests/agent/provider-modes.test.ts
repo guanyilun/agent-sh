@@ -15,9 +15,16 @@ interface CapturedEvent {
   payload: any;
 }
 
+interface CacheProbe {
+  model: string;
+  result: number | undefined;
+  found: boolean;
+}
+
 interface DriverResult {
   events: CapturedEvent[];
   modes?: any[];
+  cacheProbes?: CacheProbe[];
   stderr: string;
   stdout: string;
   exitCode: number | null;
@@ -25,7 +32,8 @@ interface DriverResult {
 
 async function runDriver(
   settings: Record<string, unknown>,
-  scenario: { config?: Record<string, unknown>; capture: string[]; dumpModes?: boolean; steps: unknown[] },
+  scenario: { config?: Record<string, unknown>; capture: string[]; dumpModes?: boolean; probeCacheTokens?: unknown[]; steps: unknown[] },
+  envOverride: Record<string, string> = {},
 ): Promise<DriverResult> {
   const home = mkdtempSync(join(tmpdir(), "agent-sh-pmodes-"));
   writeFileSync(join(home, "settings.json"), JSON.stringify(settings, null, 2));
@@ -44,6 +52,7 @@ async function runDriver(
             OPENAI_API_KEY: "",
             DEEPSEEK_API_KEY: "",
             OPENAI_BASE_URL: "",
+            ...envOverride,
           },
           stdio: ["ignore", "pipe", "pipe"],
         },
@@ -57,8 +66,8 @@ async function runDriver(
         clearTimeout(timer);
         try {
           const line = stdout.trim().split(/\r?\n/).pop() ?? "";
-          const parsed = JSON.parse(line) as { events: CapturedEvent[]; modes?: any[] };
-          resolve({ events: parsed.events, modes: parsed.modes, stderr, stdout, exitCode: code });
+          const parsed = JSON.parse(line) as { events: CapturedEvent[]; modes?: any[]; cacheProbes?: CacheProbe[] };
+          resolve({ events: parsed.events, modes: parsed.modes, cacheProbes: parsed.cacheProbes, stderr, stdout, exitCode: code });
         } catch (err) {
           reject(new Error(`driver output not JSON.\nexit=${code}\nstdout:\n${stdout}\nstderr:\n${stderr}\nparse error: ${(err as Error).message}`));
         }
@@ -210,4 +219,46 @@ test("late catalog containing persisted default does not switch away from active
 
   const infos = pickEvents(result.events, "agent:info");
   assert.equal(infos[infos.length - 1].model, "override/m", "active model stays on the override");
+});
+
+test("default mode cache extractor reads OpenAI-standard prompt_tokens_details.cached_tokens", async () => {
+  const settings = {
+    providers: { openrouter: { apiKey: "x", baseURL: "https://openrouter.ai/api/v1" } },
+  };
+
+  const result = await runDriver(settings, {
+    capture: [],
+    probeCacheTokens: [
+      { model: "std/m", usage: { prompt_tokens: 200, prompt_tokens_details: { cached_tokens: 120 } } },
+      { model: "std/m", usage: { prompt_tokens: 200 } },
+    ],
+    steps: [
+      { kind: "providers.register", payload: { id: "openrouter", apiKey: "x", defaultModel: "std/m", models: ["std/m"] } },
+    ],
+  });
+
+  const probes = result.cacheProbes!;
+  assert.ok(probes[0].found, "openrouter mode std/m should exist");
+  assert.equal(probes[0].result, 120, "cached_tokens flows through the default extractor");
+  assert.equal(probes[1].result, undefined, "no cached_tokens field → undefined (no cache chip)");
+});
+
+test("native DeepSeek's flat hit count overrides the default cache extractor", async () => {
+  const result = await runDriver(
+    {},
+    {
+      capture: [],
+      probeCacheTokens: [
+        { model: "deepseek-v4-flash", usage: { prompt_tokens: 200, prompt_cache_hit_tokens: 80, prompt_cache_miss_tokens: 120 } },
+        { model: "deepseek-v4-flash", usage: { prompt_tokens: 200, prompt_tokens_details: { cached_tokens: 50 } } },
+      ],
+      steps: [{ kind: "activate-provider", name: "deepseek" }],
+    },
+    { DEEPSEEK_API_KEY: "sk-test" },
+  );
+
+  const probes = result.cacheProbes!;
+  assert.ok(probes[0].found, "deepseek mode should be built when DEEPSEEK_API_KEY is set");
+  assert.equal(probes[0].result, 80, "flat prompt_cache_hit_tokens used as the cached count");
+  assert.equal(probes[1].result, undefined, "deepseek hook ignores the OpenAI-standard shape");
 });

@@ -59,6 +59,11 @@ function defaultReasoningBuilder(level: string): Record<string, unknown> {
   return { reasoning_effort: level === "xhigh" ? "high" : level };
 }
 
+function defaultCacheTokens(usage: Record<string, unknown>): number | undefined {
+  const details = usage.prompt_tokens_details as { cached_tokens?: number } | undefined;
+  return typeof details?.cached_tokens === "number" ? details.cached_tokens : undefined;
+}
+
 function mergeCaps(
   settingsCaps: Map<string, ModelCap> | undefined,
   payloadCaps: Map<string, ModelCap>,
@@ -116,13 +121,19 @@ export default function agentBackend(ctx: ExtensionContext): void {
     if (p) settingsProviders.set(name, p);
   }
 
-  const providerHooks = new Map<string, { reasoningParams?: (level: string, model?: string) => Record<string, unknown> }>();
+  const providerHooks = new Map<string, {
+    reasoningParams?: (level: string, model?: string) => Record<string, unknown>;
+    cacheTokens?: (usage: Record<string, unknown>) => number | undefined;
+  }>();
 
   // Bakes model id so AgentMode.buildReasoningParams keeps its (level) signature.
   const bindReasoning = (shapeId: string, model: string) => {
     const hook = providerHooks.get(shapeId)?.reasoningParams;
     return hook ? (level: string) => hook(level, model) : defaultReasoningBuilder;
   };
+
+  const bindCacheTokens = (shapeId: string) =>
+    providerHooks.get(shapeId)?.cacheTokens ?? defaultCacheTokens;
 
   const agentSurface: AgentSurface = {
     llm: createLlmFacade({ list: ctx.list, call: ctx.call }),
@@ -318,6 +329,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
           echoReasoning: mc?.echoReasoning,
           modalities: mc?.modalities,
           buildReasoningParams: bindReasoning(shapeId, model),
+          extractCachedTokens: bindCacheTokens(shapeId),
         });
       }
     }
@@ -362,9 +374,10 @@ export default function agentBackend(ctx: ExtensionContext): void {
     }
   });
 
-  bus.on("provider:configure", ({ id, reasoningParams }) => {
+  bus.on("provider:configure", ({ id, reasoningParams, cacheTokens }) => {
     const prev = providerHooks.get(id) ?? {};
     if (reasoningParams !== undefined) prev.reasoningParams = reasoningParams;
+    if (cacheTokens !== undefined) prev.cacheTokens = cacheTokens;
     providerHooks.set(id, prev);
   });
 

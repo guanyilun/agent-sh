@@ -5,9 +5,10 @@ const HELP_TEXT = `agent-sh — a shell-first terminal where AI is one keystroke
 
 Usage: agent-sh [options]
        agent-sh init [--force]            Scaffold ~/.agent-sh/ (settings, examples, AGENTS.md)
-       agent-sh install <spec> [--force] [--sync-deps]
+       agent-sh install <spec> [--force] [--sync-deps] [--dev]
                                           Install an extension (bundled name, file:, npm:, github:)
                                           --sync-deps rewrites a stale agent-sh pin to the host version
+                                          --dev links the extension against the running host's core (local development)
        agent-sh uninstall <name>          Remove an installed extension
        agent-sh list                      List installed extensions
        agent-sh auth login [provider]     Store an API key for a built-in provider

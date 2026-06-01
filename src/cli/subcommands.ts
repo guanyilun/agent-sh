@@ -9,6 +9,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   install: (args) => runInstall(args[0] ?? "", {
     force: args.includes("--force"),
     syncDeps: args.includes("--sync-deps"),
+    dev: args.includes("--dev"),
   }),
   uninstall: (args) => runUninstall(args[0] ?? ""),
   list: () => runList(),

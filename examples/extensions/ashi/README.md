@@ -175,6 +175,14 @@ export PATH="$HOME/.agent-sh/bin:$PATH"
 
 `agent-sh install` runs `npm install` and `npm run build` in the copied directory and symlinks the built bin into `~/.agent-sh/bin/`.
 
+By default the copy pulls the **published** `agent-sh` from npm. When ashi's source depends on an unreleased core — a kernel change you haven't published yet — add `--dev` so the install links against the checkout you're running instead:
+
+```bash
+agent-sh install ashi --dev --force
+```
+
+`--dev` repoints the copied package's `agent-sh` dependency at the running host's checkout (the one the global `agent-sh` is linked to). The build then sees the local types, and a later `npm run build` at the repo root flows through without reinstalling — the kernel rebuild rule from [Development](#development) applies. Re-run the install to refresh ashi's own dist after frontend changes.
+
 ## Development
 
 `@guanyilun/ashi` depends on the published `agent-sh` package. To iterate against a local checkout, use `npm link`:

@@ -828,7 +828,10 @@ export function mountAshi(
 
   bus.on("agent:usage", (u) => {
     if (u.prompt_tokens > 0) {
-      statusFooter.update({ tokens: u.prompt_tokens });
+      const cacheRatio = typeof u.cached_prompt_tokens === "number"
+        ? u.cached_prompt_tokens / u.prompt_tokens
+        : undefined;
+      statusFooter.update({ tokens: u.prompt_tokens, cacheRatio });
       app.requestRender();
     }
   });
@@ -984,10 +987,12 @@ export function mountAshi(
     const picker = app.createSelectList(items, { visibleRows: 15 });
     const activeIdx = items.findIndex((it) => it.value === `tip:${activeLeaf}`);
     picker.setSelectedIndex(activeIdx >= 0 ? activeIdx : items.length - 1);
+    const hint = new InfoLine(renderer, "↑↓ move · enter: select · esc: cancel");
 
     const close = (): void => {
       pickerOpen = false;
       app.footerSlot.removeChild(picker.node);
+      app.footerSlot.removeChild(hint.node);
       app.focusInput();
       app.requestRender();
     };
@@ -1018,6 +1023,7 @@ export function mountAshi(
     picker.onCancel(close);
 
     pickerOpen = true;
+    app.footerSlot.addChild(hint.node);
     app.footerSlot.addChild(picker.node);
     app.setFocus(picker.node);
     app.requestRender();

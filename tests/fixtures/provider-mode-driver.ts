@@ -9,14 +9,22 @@ interface Scenario {
   config?: Partial<AppConfig>;
   capture: string[];
   dumpModes?: boolean;
+  probeCacheTokens?: Array<{ model: string; usage: Record<string, unknown> }>;
   steps: Array<
     | { kind: "providers.register"; payload: ProviderRegistration }
     | { kind: "providers.unregister"; id: string }
+    | { kind: "activate-provider"; name: keyof typeof PROVIDER_MODULES }
     | { kind: "core:extensions-loaded"; names?: string[] }
     | { kind: "activate-backend"; name: string }
     | { kind: "wait" }
   >;
 }
+
+const PROVIDER_MODULES = {
+  deepseek: () => import("../../src/agent/providers/deepseek.js"),
+  openrouter: () => import("../../src/agent/providers/openrouter.js"),
+  openai: () => import("../../src/agent/providers/openai.js"),
+} as const;
 
 async function main() {
   const raw = process.argv[2];
@@ -44,6 +52,9 @@ async function main() {
       agent.providers.register(step.payload);
     } else if (step.kind === "providers.unregister") {
       agent.providers.unregister(step.id);
+    } else if (step.kind === "activate-provider") {
+      const mod = await PROVIDER_MODULES[step.name]();
+      mod.default(ctx as ExtensionContext & { agent: AgentSurface });
     } else if (step.kind === "core:extensions-loaded") {
       core.bus.emit("core:extensions-loaded", { names: step.names ?? [] });
     } else if (step.kind === "activate-backend") {
@@ -55,14 +66,27 @@ async function main() {
 
   await new Promise((r) => setImmediate(r));
   let modes: AgentMode[] | undefined;
-  if (scenario.dumpModes) {
+  if (scenario.dumpModes || scenario.probeCacheTokens) {
     try {
       modes = ctx.call("agent:get-modes") as AgentMode[];
     } catch {
       modes = undefined;
     }
   }
-  process.stdout.write(JSON.stringify({ events: captured, modes: stripFns(modes) }) + "\n");
+
+  let cacheProbes: Array<{ model: string; result: number | undefined; found: boolean }> | undefined;
+  if (scenario.probeCacheTokens) {
+    cacheProbes = scenario.probeCacheTokens.map(({ model, usage }) => {
+      const mode = modes?.find((m) => m.model === model);
+      return { model, found: !!mode, result: mode?.extractCachedTokens?.(usage) };
+    });
+  }
+
+  process.stdout.write(JSON.stringify({
+    events: captured,
+    modes: scenario.dumpModes ? stripFns(modes) : undefined,
+    cacheProbes,
+  }) + "\n");
   process.exit(0);
 }
 

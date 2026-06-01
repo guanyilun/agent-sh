@@ -20,7 +20,15 @@ function buildReasoningParams(level: string, _model?: string): Record<string, un
 }
 
 export default function activate(ctx: AgentContext): void {
-  ctx.agent.providers.configure("deepseek", { reasoningParams: buildReasoningParams });
+  ctx.agent.providers.configure("deepseek", {
+    reasoningParams: buildReasoningParams,
+    // Native DeepSeek reports caching as flat hit/miss counts, not the
+    // OpenAI-standard prompt_tokens_details.cached_tokens the default reads.
+    cacheTokens: (u) => {
+      const hit = u.prompt_cache_hit_tokens;
+      return typeof hit === "number" ? hit : undefined;
+    },
+  });
   ctx.agent.providers.register({
     id: "deepseek",
     apiKey: resolveApiKey("deepseek").key ?? undefined,

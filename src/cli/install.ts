@@ -18,6 +18,7 @@ const EXT_DIR = path.join(CONFIG_DIR, "extensions");
 interface InstallOpts {
   force?: boolean;
   syncDeps?: boolean;
+  dev?: boolean;
 }
 
 interface ResolvedSource {
@@ -208,6 +209,29 @@ function rewriteFileDeps(target: string, sourcePath: string): void {
   if (changed) fs.writeFileSync(pkgJson, `${JSON.stringify(pkg, null, 2)}\n`);
 }
 
+/** --dev: repoint the extension's agent-sh dep at the running host's package
+ *  root, so the install builds and runs against the local (possibly unreleased)
+ *  core instead of the published registry version. npm links the file: path, so
+ *  later core rebuilds flow through without reinstalling. */
+function pinHostCore(target: string): void {
+  const pkgJson = path.join(target, "package.json");
+  if (!fs.existsSync(pkgJson)) return;
+  const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf-8")) as Record<string, unknown>;
+  const sections = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] as const;
+  let changed = false;
+  for (const section of sections) {
+    const deps = pkg[section];
+    if (!deps || typeof deps !== "object") continue;
+    const d = deps as Record<string, string>;
+    if (typeof d["agent-sh"] !== "string") continue;
+    d["agent-sh"] = `file:${PACKAGE_ROOT}`;
+    changed = true;
+  }
+  if (!changed) return;
+  fs.writeFileSync(pkgJson, `${JSON.stringify(pkg, null, 2)}\n`);
+  console.log(`agent-sh: --dev — linking ${path.basename(target)} against host core at ${PACKAGE_ROOT}`);
+}
+
 function maybeNpmInstall(target: string, pkg: PackageJson): void {
   const deps = { ...(pkg.dependencies ?? {}), ...(pkg.peerDependencies ?? {}) };
   if (Object.keys(deps).length === 0) return;
@@ -264,7 +288,7 @@ function linkBins(target: string, pkg: PackageJson): string[] {
 export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<void> {
   if (!spec) {
     console.error(
-      "Usage: agent-sh install <name|file:|npm:|github:> [--force] [--sync-deps]\n\n" +
+      "Usage: agent-sh install <name|file:|npm:|github:> [--force] [--sync-deps] [--dev]\n\n" +
         "Bundled extensions:\n" +
         listBundled()
           .map((n) => `  ${n}`)
@@ -302,6 +326,7 @@ export async function runInstall(spec: string, opts: InstallOpts = {}): Promise<
     });
     try {
       rewriteFileDeps(target, resolved.sourcePath);
+      if (opts.dev) pinHostCore(target);
       syncAgentShVersion(target, opts.syncDeps ?? false);
       const pkg = readPackageJson(target);
       if (pkg) {
