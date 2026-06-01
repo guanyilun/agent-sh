@@ -828,7 +828,10 @@ export function mountAshi(
 
   bus.on("agent:usage", (u) => {
     if (u.prompt_tokens > 0) {
-      statusFooter.update({ tokens: u.prompt_tokens });
+      const cacheRatio = typeof u.cached_prompt_tokens === "number"
+        ? u.cached_prompt_tokens / u.prompt_tokens
+        : undefined;
+      statusFooter.update({ tokens: u.prompt_tokens, cacheRatio });
       app.requestRender();
     }
   });

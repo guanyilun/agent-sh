@@ -10,6 +10,7 @@ interface StatusFields {
   branch?: string;
   leaf?: number;
   tokens?: number;
+  cacheRatio?: number;
   compactions?: number;
   thinking?: string;
   shellMode?: "off" | "on" | "private";
@@ -52,7 +53,7 @@ export class StatusFooter {
   }
 
   private buildLine(): string {
-    const { model, provider, contextWindow, cwd, branch, leaf, tokens, compactions, thinking } = this.fields;
+    const { model, provider, contextWindow, cwd, branch, leaf, tokens, cacheRatio, compactions, thinking } = this.fields;
     const sep = theme.fg("dim", " | ");
     const parts: string[] = [];
     if (model) {
@@ -69,6 +70,11 @@ export class StatusFooter {
       const tokStr = contextWindow ? `${fmtTokens(tokens)}/${fmtTokens(contextWindow)}` : fmtTokens(tokens);
       const pct = contextWindow ? ` ${theme.fg("dim", `${Math.round((tokens / contextWindow) * 100)}%`)}` : "";
       parts.push(`${theme.fg("muted", tokStr)}${pct}`);
+    }
+    if (cacheRatio != null) {
+      const cachePct = cacheRatio * 100;
+      const color = cachePct >= 80 ? "success" : cachePct >= 40 ? "warning" : "muted";
+      parts.push(`${theme.fg("muted", "cache ")}${theme.fg(color, `${cachePct.toFixed(1)}%`)}`);
     }
     if (compactions && compactions > 0) parts.push(theme.fg("muted", `⊟ ${compactions}`));
     return parts.length === 0 ? "" : parts.join(sep);
