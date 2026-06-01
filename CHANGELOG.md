@@ -8,6 +8,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-06-01
+
 ### Fixed
 
 - The published package now ships `docs/` and `src/`, so the system prompt's
