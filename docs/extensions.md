@@ -498,7 +498,7 @@ export default function activate(ctx: AgentContext): void {
 
 Settings overlay registered providers: `providers.<id>.apiKey/baseURL/defaultModel/models/modelCapabilities` in `~/.agent-sh/settings.json` wins over the extension's payload, so users can pin keys, endpoints, and per-model overrides without touching extension code.
 
-Re-register to refresh (e.g. after fetching a catalog asynchronously); listeners are notified via `agent:providers:changed` and `agent:modes-changed`. To configure provider hooks like custom reasoning-effort encoding, use `ctx.agent.providers.configure(id, { reasoningParams })`.
+Re-register to refresh (e.g. after fetching a catalog asynchronously); listeners are notified via `agent:providers:changed` and `agent:models-changed`. To configure provider hooks like custom reasoning-effort encoding, use `ctx.agent.providers.configure(id, { reasoningParams })`.
 
 ## Named Handlers (Advice System)
 

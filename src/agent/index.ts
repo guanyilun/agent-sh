@@ -4,7 +4,7 @@
  */
 import "./events.js";
 import type { ExtensionContext } from "../shell/host-types.js";
-import type { AgentContext, AgentMode, AgentSurface, ProviderRegistration } from "../agent/host-types.js";
+import type { AgentContext, Model, ModelEndpoint, AgentSurface, ProviderRegistration } from "../agent/host-types.js";
 import type { AppConfig } from "../shell/host-types.js";
 import { AgentLoop } from "./agent-loop.js";
 import { LlmClient } from "./llm-client.js";
@@ -126,7 +126,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     cacheTokens?: (usage: Record<string, unknown>) => number | undefined;
   }>();
 
-  // Bakes model id so AgentMode.buildReasoningParams keeps its (level) signature.
+  // Bakes model id so ModelEndpoint.buildReasoningParams keeps its (level) signature.
   const bindReasoning = (shapeId: string, model: string) => {
     const hook = providerHooks.get(shapeId)?.reasoningParams;
     return hook ? (level: string) => hook(level, model) : defaultReasoningBuilder;
@@ -310,33 +310,42 @@ export default function agentBackend(ctx: ExtensionContext): void {
     return out;
   };
 
-  const buildModes = (): AgentMode[] => {
-    const out: AgentMode[] = [];
+  const buildModels = (): Model[] => {
+    const out: Model[] = [];
     for (const [id, p] of resolvedProviders) {
       if (!p.apiKey) continue;
       if (!usableProvider(p)) continue;
-      const shapeId = p.reasoningShape ?? id;
       for (const model of p.models) {
         const mc = p.modelCapabilities?.get(model);
         out.push({
-          model,
+          id: model,
           provider: id,
-          providerConfig: { apiKey: p.apiKey, baseURL: p.baseURL },
           contextWindow: mc?.contextWindow ?? p.contextWindow,
           maxTokens: mc?.maxTokens ?? (mc?.contextWindow ? Math.min(Math.floor(mc.contextWindow * 0.4), 65536) : undefined),
           reasoning: mc?.reasoning,
           supportsReasoningEffort: p.supportsReasoningEffort,
           echoReasoning: mc?.echoReasoning,
           modalities: mc?.modalities,
-          buildReasoningParams: bindReasoning(shapeId, model),
-          extractCachedTokens: bindCacheTokens(shapeId),
         });
       }
     }
     return out;
   };
 
-  ctx.define("agent:get-modes", () => buildModes());
+  const resolveEndpoint = (providerId: string, modelId: string): ModelEndpoint | undefined => {
+    const p = resolvedProviders.get(providerId);
+    if (!p?.apiKey) return undefined;
+    const shapeId = p.reasoningShape ?? providerId;
+    return {
+      apiKey: p.apiKey,
+      baseURL: p.baseURL,
+      buildReasoningParams: bindReasoning(shapeId, modelId),
+      extractCachedTokens: bindCacheTokens(shapeId),
+    };
+  };
+
+  ctx.define("agent:get-models", () => buildModels());
+  ctx.define("agent:resolve-endpoint", ({ provider, id }: { provider: string; id: string }) => resolveEndpoint(provider, id));
 
   // Reconfigured at core:extensions-loaded; start() gates on `resolved`.
   const llmClient = new LlmClient({ apiKey: "not-configured", model: "not-configured" });
@@ -361,16 +370,16 @@ export default function agentBackend(ctx: ExtensionContext): void {
   bus.on("agent:providers:changed", () => {
     resolvedProviders = computeResolvedProviders();
     if (!resolved) return;
-    bus.emit("agent:modes-changed", {});
+    bus.emit("agent:models-changed", {});
     if (!ashActive) return;
-    if (buildModes().some((m) => m.model === llmClient.model)) return;
+    if (buildModels().some((m) => m.id === llmClient.model)) return;
     const pendingProvider = getSettings().defaultProvider;
     if (!pendingProvider) return;
     const p = resolvedProviders.get(pendingProvider);
     if (!p) return;
     const pendingModel = persistedModelFor(pendingProvider);
     if (pendingModel && p.models.includes(pendingModel) && llmClient.model !== pendingModel) {
-      bus.emit("config:switch-model", { model: pendingModel });
+      bus.emit("config:switch-model", { id: pendingModel, provider: pendingProvider });
     }
   });
 
@@ -421,17 +430,16 @@ export default function agentBackend(ctx: ExtensionContext): void {
     // No provider → don't register ash; let another backend own activation.
     if (!effectiveApiKey || !effectiveModel) return;
 
-    const foundInModes = buildModes().find(
-      (m) => m.model === effectiveModel && (!activeProvider || m.provider === activeProvider.id),
+    const foundModel = buildModels().find(
+      (m) => m.id === effectiveModel && (!activeProvider || m.provider === activeProvider.id),
     );
     // Stub when openrouter's async catalog hasn't returned yet; reconciled
     // later via agent:providers:changed → config:switch-model.
-    const initialMode: AgentMode = foundInModes ?? (activeProvider ? {
-      model: effectiveModel,
-      provider: activeProvider.id,
-      providerConfig: { apiKey: effectiveApiKey, baseURL: effectiveBaseURL },
-      supportsReasoningEffort: activeProvider.supportsReasoningEffort,
-    } : { model: effectiveModel });
+    const initialModel: Model = foundModel ?? {
+      id: effectiveModel,
+      provider: activeProvider?.id ?? providerName ?? "custom",
+      supportsReasoningEffort: activeProvider?.supportsReasoningEffort,
+    };
 
     llmClient.reconfigure({ apiKey: effectiveApiKey, baseURL: effectiveBaseURL, model: effectiveModel });
     resolved = true;
@@ -450,7 +458,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
           bus,
           llmClient,
           handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list },
-          initialMode,
+          initialModel,
           compositor: ctx.shell?.compositor,
           instanceId: ctx.instanceId,
         });
@@ -544,8 +552,8 @@ export default function agentBackend(ctx: ExtensionContext): void {
       return;
     }
     llmClient.reconfigure({ apiKey: p.apiKey, baseURL: p.baseURL, model: switchModel });
-    bus.emit("agent:modes-changed", {});
-    bus.emit("config:switch-model", { model: switchModel });
+    bus.emit("agent:models-changed", {});
+    bus.emit("config:switch-model", { id: switchModel, provider: name });
     bus.emit("ui:info", { message: `Switched to ${name} (${switchModel})` });
   });
 
@@ -569,7 +577,7 @@ export { ToolRegistry } from "./tool-registry.js";
 export { runSubagent, type SubagentOptions } from "./subagent.js";
 
 /** Built-in providers register unconditionally so `auth list` can
- *  enumerate them; buildModes() skips entries without an apiKey. */
+ *  enumerate them; buildModels() skips entries without an apiKey. */
 export function activateAgent(ctx: ExtensionContext): void {
   agentBackend(ctx);
   const agentCtx = ctx as AgentContext;

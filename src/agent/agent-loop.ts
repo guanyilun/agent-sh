@@ -4,7 +4,7 @@
  * and the loop emits the agent:* progress/response/tool event stream.
  */
 import type { EventBus, BusEvents } from "../core/event-bus.js";
-import type { AgentMode } from "./host-types.js";
+import type { Model, ModelEndpoint } from "./host-types.js";
 import type { LlmClient } from "./llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
@@ -56,7 +56,7 @@ export interface AgentLoopConfig {
   bus: EventBus;
   llmClient: LlmClient;
   handlers: HandlerFunctions;
-  initialMode?: AgentMode;
+  initialModel?: Model;
   compositor?: Compositor;
   /** Instance ID from core — ensures history entries match the ID in prompts. */
   instanceId?: string;
@@ -67,7 +67,8 @@ export class AgentLoop implements AgentBackend {
   private toolRegistry: ToolRegistry;
   private conversation: LiveView;
   private fileReadCache: FileReadCache;
-  private activeMode: AgentMode;
+  private activeModel: Model;
+  private activeEndpoint: ModelEndpoint | undefined;
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
   private boundPipeListeners: Array<{ event: string; fn: (...args: any[]) => any; async: boolean }> = [];
   private lastProjectSkillNames = new Set<string>();
@@ -111,7 +112,8 @@ export class AgentLoop implements AgentBackend {
 
     this.conversation = new LiveView(this.handlers, this.instanceId);
 
-    this.activeMode = config.initialMode ?? { model: config.llmClient.model };
+    this.activeModel = config.initialModel ?? { id: config.llmClient.model, provider: "custom" };
+    this.activeEndpoint = this.resolveEndpoint(this.activeModel);
 
     // Tool protocol — controls how tools are presented to the LLM
     const { names: fromExtensions } = this.bus.emitPipe("agent:core-tools:collect", { names: [] });
@@ -186,86 +188,75 @@ export class AgentLoop implements AgentBackend {
       this.conversation.appendUserMessage(text);
       this.bus.emit("conversation:message-appended", { role: "user", content: text });
     });
-    on("config:switch-model", ({ model: target }) => {
-      const atIdx = target.lastIndexOf("@");
-      const modelId = atIdx > 0 ? target.slice(0, atIdx) : target;
-      const providerHint = atIdx > 0 ? target.slice(atIdx + 1) : undefined;
-      const modes = this.pullModes();
-      const found = modes.find((m) =>
-        m.model === modelId && (!providerHint || m.provider === providerHint),
-      );
+    on("config:switch-model", ({ id, provider }) => {
+      const found = this.pullModels().find((m) => m.id === id && m.provider === provider);
       if (!found) {
-        this.bus.emit("ui:error", { message: `Unknown model: ${target}` });
+        this.bus.emit("ui:error", { message: `Unknown model: ${provider}:${id}` });
         return;
       }
-      this.activeMode = found;
-      if (found.providerConfig) {
-        this.llmClient.reconfigure({ ...found.providerConfig, model: found.model });
+      this.activeModel = found;
+      this.activeEndpoint = this.resolveEndpoint(found);
+      if (this.activeEndpoint) {
+        this.llmClient.reconfigure({ apiKey: this.activeEndpoint.apiKey, baseURL: this.activeEndpoint.baseURL, model: found.id });
       } else {
-        this.llmClient.model = found.model;
+        this.llmClient.model = found.id;
       }
-      const label = found.provider ? `${found.provider}: ${found.model}` : found.model;
       this.emitIdentity();
 
-      // Persist as the new default — selection survives restart.
-      // Safe even for dynamic providers: agent-backend defers mode
-      // resolution to `core:extensions-loaded`, so the extension gets
-      // to re-register before the persisted default is looked up.
-      if (found.provider) {
-        updateSettings({
-          defaultProvider: found.provider,
-          providers: { [found.provider]: { defaultModel: found.model } },
-        });
-        this.bus.emit("ui:info", { message: `Model: ${label} (saved as default)` });
-      } else {
-        this.bus.emit("ui:info", { message: `Model: ${label}` });
-      }
+      // Persist as the new default — selection survives restart. Safe even for
+      // dynamic providers: agent-backend defers model resolution to
+      // core:extensions-loaded, so the extension re-registers before the
+      // persisted default is looked up.
+      updateSettings({
+        defaultProvider: found.provider,
+        providers: { [found.provider]: { defaultModel: found.id } },
+      });
+      this.bus.emit("ui:info", { message: `Model: ${found.provider}: ${found.id} (saved as default)` });
       this.bus.emit("config:changed", {});
     });
-    on("agent:modes-changed", () => {
-      const modes = this.pullModes();
-      const prev = this.activeMode;
-      const fresh = modes.find((m) => m.model === prev.model && m.provider === prev.provider);
+    on("agent:models-changed", () => {
+      const models = this.pullModels();
+      const prev = this.activeModel;
+      const fresh = models.find((m) => m.id === prev.id && m.provider === prev.provider);
       let identityChanged = false;
       if (fresh) {
-        this.activeMode = fresh;
-        if (fresh.providerConfig && fresh.providerConfig !== prev.providerConfig) {
-          this.llmClient.reconfigure({ ...fresh.providerConfig, model: fresh.model });
+        this.activeModel = fresh;
+        const ep = this.resolveEndpoint(fresh);
+        if (ep && (ep.apiKey !== this.activeEndpoint?.apiKey || ep.baseURL !== this.activeEndpoint?.baseURL)) {
+          this.llmClient.reconfigure({ apiKey: ep.apiKey, baseURL: ep.baseURL, model: fresh.id });
         }
-        identityChanged = fresh.model !== prev.model
-          || fresh.provider !== prev.provider
-          || fresh.contextWindow !== prev.contextWindow;
-      } else if (prev.provider) {
+        this.activeEndpoint = ep;
+        identityChanged = fresh.contextWindow !== prev.contextWindow;
+      } else {
         // Ghost: keep prev active so mid-turn stream() doesn't switch models.
         this.bus.emit("ui:info", {
-          message: `${prev.provider}:${prev.model} is not in the refreshed catalog — keeping it active until you /model to another.`,
+          message: `${prev.provider}:${prev.id} is not in the refreshed catalog — keeping it active until you /model to another.`,
         });
       }
       if (identityChanged) this.emitIdentity();
       this.bus.emit("config:changed", {});
     });
     onPipe("config:get-models", () => {
-      const modes = this.pullModes();
-      const models = modes.map((m) => ({ model: m.model, provider: m.provider ?? "" }));
-      // Surface a ghost active mode so /model still shows it.
-      if (!modes.some((m) => m.model === this.activeMode.model && m.provider === this.activeMode.provider)) {
-        models.push({ model: this.activeMode.model, provider: this.activeMode.provider ?? "" });
+      const models = this.pullModels();
+      const list = [...models];
+      // Surface a ghost active model so /model still shows it.
+      if (!models.some((m) => m.id === this.activeModel.id && m.provider === this.activeModel.provider)) {
+        list.push(this.activeModel);
       }
-      const active = { model: this.activeMode.model, provider: this.activeMode.provider ?? "" };
-      return { models, active };
+      return { models: list, active: this.activeModel };
     });
     on("config:set-thinking", ({ level }) => {
       if (!AgentLoop.THINKING_LEVELS.includes(level)) {
         this.bus.emit("ui:error", { message: `Unknown thinking level: ${level}. Use: ${AgentLoop.THINKING_LEVELS.join(", ")}` });
         return;
       }
-      const mode = this.currentMode;
+      const mode = this.activeModel;
       if (level !== "off" && mode.reasoning === false) {
-        this.bus.emit("ui:error", { message: `Model ${mode.model} does not support thinking.` });
+        this.bus.emit("ui:error", { message: `Model ${mode.id} does not support thinking.` });
         return;
       }
       if (level !== "off" && mode.supportsReasoningEffort === false) {
-        this.bus.emit("ui:error", { message: `Provider ${mode.provider ?? "unknown"} does not support reasoning_effort.` });
+        this.bus.emit("ui:error", { message: `Provider ${mode.provider} does not support reasoning_effort.` });
         return;
       }
       this.thinkingLevel = level;
@@ -273,7 +264,7 @@ export class AgentLoop implements AgentBackend {
       this.bus.emit("config:changed", {});
     });
     onPipe("config:get-thinking", () => {
-      const mode = this.currentMode;
+      const mode = this.activeModel;
       const supported = mode.reasoning !== false && mode.supportsReasoningEffort !== false;
       return { level: this.thinkingLevel, levels: AgentLoop.THINKING_LEVELS, supported };
     });
@@ -296,12 +287,12 @@ export class AgentLoop implements AgentBackend {
     onPipe("context:get-stats", () => ({
       activeTokens: this.conversation.estimateTokens(),
       totalTokens: this.conversation.estimatePromptTokens(),
-      budgetTokens: this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+      budgetTokens: this.activeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     }));
 
     onPipe("context:snapshot", (payload) => {
       payload.messages = this.conversation.get();
-      payload.contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+      payload.contextWindow = this.activeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
       payload.activeTokens = this.conversation.estimateTokens();
       return payload;
     });
@@ -460,41 +451,42 @@ export class AgentLoop implements AgentBackend {
   }
 
   private reasoningParams(): Record<string, unknown> {
-    const mode = this.currentMode;
-    if (mode.reasoning === false) return {};
-    if (mode.supportsReasoningEffort === false) return {};
-    if (mode.buildReasoningParams) return mode.buildReasoningParams(this.thinkingLevel);
+    const model = this.activeModel;
+    if (model.reasoning === false) return {};
+    if (model.supportsReasoningEffort === false) return {};
+    const build = this.activeEndpoint?.buildReasoningParams;
+    if (build) return build(this.thinkingLevel);
     if (this.thinkingLevel === "off") return {};
     const effort = this.thinkingLevel === "xhigh" ? "high" : this.thinkingLevel;
     return { reasoning_effort: effort };
   }
 
 
-  private get currentMode(): AgentMode {
-    return this.activeMode;
+  private resolveEndpoint(m: Model): ModelEndpoint | undefined {
+    try {
+      return this.handlers.call("agent:resolve-endpoint", { provider: m.provider, id: m.id }) as ModelEndpoint | undefined;
+    } catch {
+      return undefined;
+    }
   }
 
-  private pullModes(): AgentMode[] {
+  private pullModels(): Model[] {
     try {
-      return (this.handlers.call("agent:get-modes") as AgentMode[]) ?? [];
+      return (this.handlers.call("agent:get-models") as Model[]) ?? [];
     } catch {
       return [];
     }
   }
 
   private emitIdentity(): void {
-    const m = this.activeMode;
+    const m = this.activeModel;
     this.bus.emit("agent:info", {
       name: "ash",
       version: PACKAGE_VERSION,
-      model: m.model,
+      model: m.id,
       provider: m.provider,
       contextWindow: m.contextWindow,
     });
-  }
-
-  private get currentModel(): string {
-    return this.activeMode.model;
   }
 
   /**
@@ -584,9 +576,9 @@ export class AgentLoop implements AgentBackend {
   private formatError(e: unknown): string {
     const raw = e instanceof Error ? e.message : String(e);
     const status = (e as any).status;
-    const model = this.currentModel;
+    const model = this.activeModel.id;
     const baseURL = (this.llmClient as any).config?.baseURL;
-    const provider = this.currentMode.provider;
+    const provider = this.activeModel.provider;
 
     // Connection errors — most likely misconfigured provider
     if (raw.includes("ECONNREFUSED") || raw.includes("ECONNRESET") ||
@@ -663,7 +655,7 @@ export class AgentLoop implements AgentBackend {
         parts.push("# Extension Instructions\n\n" + extensionSections.join("\n\n"));
       }
 
-      if (this.currentMode.modalities?.includes("image")) {
+      if (this.activeModel.modalities?.includes("image")) {
         parts.push(
           "# Image Support\n\n"
           + "This model supports image input. When you need visual information, "
@@ -683,15 +675,15 @@ export class AgentLoop implements AgentBackend {
     // only happen for state the core genuinely owns (not state that
     // an extension could track by listening to events).
 
-    h.define("agent:get-mode", () => ({
-      model: this.currentMode.model,
-      provider: this.currentMode.provider ?? "",
+    h.define("agent:get-model", () => ({
+      model: this.activeModel.id,
+      provider: this.activeModel.provider,
       thinkingLevel: this.thinkingLevel,
-      contextWindow: this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+      contextWindow: this.activeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     }));
 
     h.define("agent:get-tokens", () => {
-      const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+      const contextWindow = this.activeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
       const promptTokens = this.conversation.estimatePromptTokens();
       return {
         active: this.conversation.estimateTokens(),
@@ -742,7 +734,7 @@ export class AgentLoop implements AgentBackend {
     }));
 
     h.define("agent:get-compaction-state", () => {
-      const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+      const contextWindow = this.activeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
       const ratio = getSettings().autoCompactThreshold ?? 0.5;
       return {
         count: this.compactionCount,
@@ -914,7 +906,7 @@ export class AgentLoop implements AgentBackend {
       // Fail closed: an image sent to a non-vision model errors and leaves an
       // unsendable message poisoning history, so require declared image support.
       let userImages = images?.length ? images : undefined;
-      if (userImages && !this.currentMode.modalities?.includes("image")) {
+      if (userImages && !this.activeModel.modalities?.includes("image")) {
         this.bus.emit("ui:info", { message: `Current model has no declared image support — ${userImages.length} image(s) dropped.` });
         userImages = undefined;
       }
@@ -968,7 +960,7 @@ export class AgentLoop implements AgentBackend {
     while (!signal.aborted) {
       // Auto-compact when total context approaches the window limit.
       const totalEstimate = this.conversation.estimatePromptTokens();
-      const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+      const contextWindow = this.activeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
       const s = getSettings();
       const threshold = Math.floor(
         (contextWindow - RESPONSE_RESERVE) * s.autoCompactThreshold,
@@ -1355,7 +1347,7 @@ export class AgentLoop implements AgentBackend {
 
         // Context overflow — aggressively compact and retry
         if (this.isContextOverflow(e)) {
-          const contextWindow = this.currentMode.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+          const contextWindow = this.activeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
           const target = Math.floor((contextWindow - RESPONSE_RESERVE) * 0.6);
           const stats = await this.compactWithHooks(target, 1);
           // If compaction freed nothing, retrying will hit the same error.
@@ -1441,8 +1433,8 @@ export class AgentLoop implements AgentBackend {
     const requestParams = {
       messages,
       tools: apiTools,
-      model: this.currentModel,
-      max_tokens: this.currentMode.maxTokens ?? 65536,
+      model: this.activeModel.id,
+      max_tokens: this.activeModel.maxTokens ?? 65536,
       ...this.reasoningParams(),
     };
     this.bus.emit("llm:request", requestParams);
@@ -1458,7 +1450,7 @@ export class AgentLoop implements AgentBackend {
       if ((chunk as any).usage) {
         const u = (chunk as any).usage;
         const promptTokens = u.prompt_tokens ?? 0;
-        const cachedPromptTokens = this.currentMode.extractCachedTokens?.(u);
+        const cachedPromptTokens = this.activeEndpoint?.extractCachedTokens?.(u);
         this.bus.emit("agent:usage", {
           prompt_tokens: promptTokens,
           completion_tokens: u.completion_tokens ?? 0,
@@ -1555,7 +1547,7 @@ export class AgentLoop implements AgentBackend {
 
     // Echo reasoning only for modes that opt in (e.g. DeepSeek-R1).
     const extras: Record<string, unknown> = {};
-    if (this.currentMode.echoReasoning) {
+    if (this.activeModel.echoReasoning) {
       if (reasoning && reasoningField) extras[reasoningField] = reasoning;
       if (reasoningDetailsByIndex.size > 0) {
         extras.reasoning_details = [...reasoningDetailsByIndex.entries()]

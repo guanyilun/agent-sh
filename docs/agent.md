@@ -249,7 +249,7 @@ The agent supports configurable thinking/reasoning levels for models that suppor
 
 DeepSeek-family models require their previous-turn `reasoning_content` / `reasoning_details` to be echoed back on the next assistant message. Most other reasoning models do **not** want that — feeding prior chain-of-thought back through lenient OpenAI-compatible shims can register as out-of-distribution input and degrade quality.
 
-agent-sh gates this behavior per-mode via the `AgentMode.echoReasoning` flag (default `false`). Reasoning extras are only attached to assistant messages when the active mode opts in.
+agent-sh gates this behavior per-model via the `Model.echoReasoning` flag (default `false`). Reasoning extras are only attached to assistant messages when the active model opts in.
 
 For OpenRouter, the flag is set automatically: model ids matching the built-in pattern `/deepseek/i` (V3, V3.2, V4, rebadges) get `echoReasoning: true`. You can extend or override this in `settings.json`:
 
@@ -361,23 +361,26 @@ The user can also trigger compaction manually with `/compact`.
 
 ash supports multiple models and providers, switchable at runtime.
 
-### Modes
+### Models
 
-Each mode is a model + optional provider configuration:
+Each entry is a `(provider, model)` target — a serializable identity plus capabilities:
 
 ```typescript
-interface AgentMode {
-  model: string;
-  provider?: string;
-  providerConfig?: {        // reconfigure LLM client on switch
-    apiKey: string;
-    baseURL?: string;
-  };
+interface Model {
+  id: string;               // model id, e.g. "openai/gpt-5"
+  provider: string;         // identity is the (provider, id) pair
   contextWindow?: number;   // per-model override for the auto-compact threshold
+  maxTokens?: number;
+  reasoning?: boolean;
+  supportsReasoningEffort?: boolean;
+  echoReasoning?: boolean;
+  modalities?: ("text" | "image")[];
 }
 ```
 
-When all modes share the same provider, switching just changes the model name. When modes span providers (e.g. OpenAI + Anthropic via OpenRouter), switching also reconfigures the LLM client with different credentials and base URL.
+The credentials and provider-shape transforms needed to actually call a model — `apiKey`/`baseURL` plus the reasoning/cache encoders — live in a separate `ModelEndpoint`, resolved internally by `(provider, id)`. It never travels on a frontend-facing event, so `Model` stays secret-free and serializable.
+
+`agent:get-models` returns the catalog; `agent:models-changed` fires when it changes. When all models share the same provider, switching just changes the model. When they span providers (e.g. OpenAI + Anthropic via OpenRouter), switching also reconfigures the LLM client with the new endpoint's credentials and base URL.
 
 ### Switching
 

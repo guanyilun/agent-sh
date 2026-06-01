@@ -434,10 +434,10 @@ function waitForModelsToSettle(
       timer = setTimeout(done, Math.max(0, Math.min(quietMs, remaining)));
     };
     const done = () => {
-      core.bus.off("agent:modes-changed", arm);
+      core.bus.off("agent:models-changed", arm);
       resolve();
     };
-    core.bus.on("agent:modes-changed", arm);
+    core.bus.on("agent:models-changed", arm);
     arm();
   });
 }
@@ -446,15 +446,14 @@ function getModelsPayload(): Record<string, unknown> | undefined {
   if (!core) return undefined;
   const info = core.bus.emitPipe("config:get-models", { models: [], active: null });
   if (!info.models.length) return undefined;
-  const idFor = (m: { model: string; provider: string }) =>
-    m.provider ? `${m.model}@${m.provider}` : m.model;
+  const idFor = (m: { id: string; provider: string }) => `${m.id}@${m.provider}`;
   const current = info.active ?? info.models[0]!;
   return {
     currentModelId: idFor(current),
     availableModels: info.models.map((m) => ({
       modelId: idFor(m),
-      name: m.provider ? `${m.provider}/${m.model}` : m.model,
-      description: m.provider ? `Provider: ${m.provider}` : "",
+      name: `${m.provider}/${m.id}`,
+      description: `Provider: ${m.provider}`,
     })),
   };
 }
@@ -601,7 +600,12 @@ function dispatch(msg: JsonRpcRequest): void {
       break;
     case "session/set_model":
       if (core && params?.modelId) {
-        core.bus.emit("config:switch-model", { model: params.modelId as string });
+        const raw = params.modelId as string;
+        const at = raw.lastIndexOf("@");
+        core.bus.emit("config:switch-model", {
+          id: at > 0 ? raw.slice(0, at) : raw,
+          provider: at > 0 ? raw.slice(at + 1) : "",
+        });
       }
       sendResult(id!, {
         models: getModelsPayload() ?? {},

@@ -331,34 +331,29 @@ export default function activate(ctx: ExtensionContext): void {
       const all = modelRegistry.getAvailable() as Array<{ id: string; provider: string }>;
       const cur = session.model;
       return {
-        models: all.map((m) => ({ model: m.id, provider: m.provider })),
-        active: cur ? { model: cur.id, provider: cur.provider } : null,
+        models: all.map((m) => ({ id: m.id, provider: m.provider })),
+        active: cur ? { id: cur.id, provider: cur.provider } : null,
       };
     };
 
-    // Slash command emits `model@provider` for disambiguation; pi looks up by (provider, id).
-    const onSwitchModel = async ({ model: target }: { model: string }) => {
+    const onSwitchModel = async ({ id, provider }: { id: string; provider: string }) => {
       if (!session || !modelRegistry) return;
-      const atIdx = target.lastIndexOf("@");
-      const modelId = atIdx > 0 ? target.slice(0, atIdx) : target;
-      const providerHint = atIdx > 0 ? target.slice(atIdx + 1) : undefined;
-
       const candidates = (modelRegistry.getAvailable() as Array<{ id: string; provider: string }>)
-        .filter((m) => m.id === modelId && (!providerHint || m.provider === providerHint));
+        .filter((m) => m.id === id && (!provider || m.provider === provider));
 
       if (candidates.length === 0) {
-        bus.emit("ui:error", { message: `Unknown model: ${target}` });
+        bus.emit("ui:error", { message: `Unknown model: ${provider}:${id}` });
         return;
       }
       if (candidates.length > 1) {
         const opts = candidates.map((m) => `${m.id}@${m.provider}`).join(", ");
-        bus.emit("ui:error", { message: `Ambiguous model "${modelId}". Use one of: ${opts}` });
+        bus.emit("ui:error", { message: `Ambiguous model "${id}". Use one of: ${opts}` });
         return;
       }
       const picked = candidates[0]!;
       const full = modelRegistry.find(picked.provider, picked.id);
       if (!full) {
-        bus.emit("ui:error", { message: `Model not found: ${target}` });
+        bus.emit("ui:error", { message: `Model not found: ${picked.provider}:${picked.id}` });
         return;
       }
       try {

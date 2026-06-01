@@ -23,7 +23,7 @@ interface CacheProbe {
 
 interface DriverResult {
   events: CapturedEvent[];
-  modes?: any[];
+  models?: any[];
   cacheProbes?: CacheProbe[];
   stderr: string;
   stdout: string;
@@ -32,7 +32,7 @@ interface DriverResult {
 
 async function runDriver(
   settings: Record<string, unknown>,
-  scenario: { config?: Record<string, unknown>; capture: string[]; dumpModes?: boolean; probeCacheTokens?: unknown[]; steps: unknown[] },
+  scenario: { config?: Record<string, unknown>; capture: string[]; dumpModels?: boolean; probeCacheTokens?: unknown[]; steps: unknown[] },
   envOverride: Record<string, string> = {},
 ): Promise<DriverResult> {
   const home = mkdtempSync(join(tmpdir(), "agent-sh-pmodes-"));
@@ -66,8 +66,8 @@ async function runDriver(
         clearTimeout(timer);
         try {
           const line = stdout.trim().split(/\r?\n/).pop() ?? "";
-          const parsed = JSON.parse(line) as { events: CapturedEvent[]; modes?: any[]; cacheProbes?: CacheProbe[] };
-          resolve({ events: parsed.events, modes: parsed.modes, cacheProbes: parsed.cacheProbes, stderr, stdout, exitCode: code });
+          const parsed = JSON.parse(line) as { events: CapturedEvent[]; models?: any[]; cacheProbes?: CacheProbe[] };
+          resolve({ events: parsed.events, models: parsed.models, cacheProbes: parsed.cacheProbes, stderr, stdout, exitCode: code });
         } catch (err) {
           reject(new Error(`driver output not JSON.\nexit=${code}\nstdout:\n${stdout}\nstderr:\n${stderr}\nparse error: ${(err as Error).message}`));
         }
@@ -99,8 +99,8 @@ test("settings.json apiKey/baseURL/defaultModel and modelsExplicit override regi
   };
 
   const result = await runDriver(settings, {
-    dumpModes: true,
-    capture: ["agent:modes-changed"],
+    dumpModels: true,
+    capture: ["agent:models-changed"],
     steps: [
       {
         kind: "providers.register",
@@ -115,22 +115,22 @@ test("settings.json apiKey/baseURL/defaultModel and modelsExplicit override regi
     ],
   });
 
-  const modes = result.modes!;
+  const models = result.models!;
   assert.deepEqual(
-    modes.map((m) => m.model),
+    models.map((m) => m.id),
     ["settings/m1", "settings/m2"],
     "settings.models replaces payload models when modelsExplicit",
   );
 
-  for (const m of modes) {
+  for (const m of models) {
     assert.equal(m.provider, "openrouter");
-    assert.equal(m.providerConfig.apiKey, "sk-from-settings", `apiKey override on mode ${m.model}`);
-    assert.equal(m.providerConfig.baseURL, "https://settings.example", `baseURL override on mode ${m.model}`);
+    assert.equal(m.endpoint.apiKey, "sk-from-settings", `apiKey override on model ${m.id}`);
+    assert.equal(m.endpoint.baseURL, "https://settings.example", `baseURL override on model ${m.id}`);
   }
 
-  const m2 = modes.find((m) => m.model === "settings/m2")!;
+  const m2 = models.find((m) => m.id === "settings/m2")!;
   assert.equal(m2.contextWindow, 99999, "settings modelCapabilities overlay");
-  const m1 = modes.find((m) => m.model === "settings/m1")!;
+  const m1 = models.find((m) => m.id === "settings/m1")!;
   assert.equal(m1.contextWindow, undefined, "no caps when neither settings nor payload supply them");
 });
 
@@ -143,8 +143,8 @@ test("active mode missing from refreshed catalog stays as ghost + emits ui:info 
   };
 
   const result = await runDriver(settings, {
-    dumpModes: true,
-    capture: ["agent:info", "ui:info", "agent:modes-changed"],
+    dumpModels: true,
+    capture: ["agent:info", "ui:info", "agent:models-changed"],
     steps: [
       { kind: "providers.register", payload: { id: "openrouter", apiKey: "x", defaultModel: "m-a", models: ["m-a", "m-b"] } },
       { kind: "core:extensions-loaded" },
@@ -165,9 +165,9 @@ test("active mode missing from refreshed catalog stays as ghost + emits ui:info 
   assert.equal(infos[infos.length - 1].model, "m-b", "active model preserved across refresh");
 
   assert.deepEqual(
-    result.modes!.map((m) => m.model),
+    result.models!.map((m) => m.id),
     ["m-a", "m-c"],
-    "agent:get-modes reflects the refreshed catalog (ghost lives in AgentLoop)",
+    "agent:get-models reflects the refreshed catalog (ghost lives in AgentLoop)",
   );
 });
 
@@ -178,7 +178,7 @@ test("persisted default not in initial catalog → stub used as initial active m
   };
 
   const result = await runDriver(settings, {
-    dumpModes: true,
+    dumpModels: true,
     capture: ["agent:info"],
     steps: [
       { kind: "providers.register", payload: { id: "openrouter", apiKey: "x", defaultModel: "existing/default", models: ["existing/m1"] } },
@@ -193,7 +193,7 @@ test("persisted default not in initial catalog → stub used as initial active m
   assert.equal(infos[0].provider, "openrouter");
   assert.equal(infos[0].contextWindow, undefined, "stub has no contextWindow");
 
-  assert.deepEqual(result.modes!.map((m) => m.model), ["existing/m1"], "registry has only the real catalog");
+  assert.deepEqual(result.models!.map((m) => m.id), ["existing/m1"], "registry has only the real catalog");
 });
 
 test("late catalog containing persisted default does not switch away from active override", async () => {
