@@ -1,6 +1,12 @@
 import { basename } from "node:path";
 import type { TextView } from "./renderer.js";
-import { theme } from "./theme.js";
+import { theme, type ThemeColor } from "./theme.js";
+
+export interface StatusSegment {
+  id: string;
+  text: string;
+  color?: ThemeColor;
+}
 
 interface StatusFields {
   model?: string;
@@ -18,10 +24,12 @@ interface StatusFields {
 
 export class StatusFooter {
   private fields: StatusFields = {};
+  private extSegments: StatusSegment[] = [];
 
   constructor(
     private view: TextView,
     private measure: (text: string) => number,
+    private pull?: () => StatusSegment[],
   ) {
     this.refresh();
   }
@@ -31,7 +39,8 @@ export class StatusFooter {
     this.refresh();
   }
 
-  private refresh(): void {
+  refresh(): void {
+    this.extSegments = this.pull?.() ?? [];
     this.view.setRenderFn((width) => [this.buildFooter(width)]);
   }
 
@@ -77,6 +86,9 @@ export class StatusFooter {
       parts.push(`${theme.fg("muted", "cache ")}${theme.fg(color, `${cachePct.toFixed(1)}%`)}`);
     }
     if (compactions && compactions > 0) parts.push(theme.fg("muted", `⊟ ${compactions}`));
+    for (const seg of this.extSegments) {
+      parts.push(seg.color ? theme.fg(seg.color, seg.text) : seg.text);
+    }
     return parts.length === 0 ? "" : parts.join(sep);
   }
 }

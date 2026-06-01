@@ -24,6 +24,7 @@ function headlessTerminal(): Terminal {
   };
 }
 
+import "./events.js";
 import { mountAshi } from "./frontend.js";
 import { MultiSessionStore } from "./multi-session-store.js";
 import { registerForkCommands, applyBranchMessages } from "./commands.js";
@@ -246,7 +247,7 @@ async function main(): Promise<void> {
   const handle = mountAshi(ctx, getStore, capture, renderer);
   stopFrontend = handle.stop;
 
-  (core.bus.emit as (event: string, payload: unknown) => void)("ashi:ready", {});
+  core.bus.emit("ashi:ready", {});
 
   registerForkCommands(ctx, getStore, handle.openTreePicker, handle.rebuildChat, capture);
   registerSessionCommands(ctx, getStore, capture, {

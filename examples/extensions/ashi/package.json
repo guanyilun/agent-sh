@@ -16,6 +16,14 @@
     "./renderer": {
       "types": "./dist/renderer.d.ts",
       "import": "./dist/renderer.js"
+    },
+    "./events": {
+      "types": "./dist/events.d.ts",
+      "import": "./dist/events.js"
+    },
+    "./ui": {
+      "types": "./dist/ui.d.ts",
+      "import": "./dist/ui.js"
     }
   },
   "files": [
