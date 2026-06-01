@@ -112,6 +112,12 @@ function diffFrameTitle(filePath: string, diff: DiffStats): string {
   return `${theme.fg("muted", filePath)}  ${stats}`;
 }
 
+/** The +N/-M completion summary an edit shows on its call line — recovered from
+ *  the persisted diff on resume, since resultDisplay.summary isn't stored. */
+function diffStatsSummary(diff: DiffStats): string {
+  return diff.isNewFile ? `+${diff.added}` : `+${diff.added} -${diff.removed}`;
+}
+
 function readReasoning(m: unknown): string {
   const mm = m as { reasoning?: unknown; reasoning_content?: unknown };
   const r = mm.reasoning ?? mm.reasoning_content;
@@ -487,7 +493,7 @@ export function mountAshi(
 
   const replayNestedEdit = (toolCallId: string, nd: NestedDiff): void => {
     const diff = nd.diff as DiffStats & Parameters<typeof renderDiff>[0];
-    const summary = diff.isNewFile ? `+${diff.added}` : `+${diff.added} -${diff.removed}`;
+    const summary = diffStatsSummary(diff);
     const pair = renderToolPair({
       toolCallId, name: nd.name, title: nd.name, kind: "edit",
       displayDetail: relativize(nd.filePath), rawInput: { file_path: nd.filePath },
@@ -578,13 +584,16 @@ export function mountAshi(
         appendEntry(new InfoLine(renderer, `tool result (no matching call): ${text.slice(0, 80)}`).node, { t: "plain" });
         return;
       }
-      const summary = inferSummary(found.name, text);
+      let summary = inferSummary(found.name, text);
       if (found.kind === "group") {
         found.group.recordCompletion(id, 0, summary);
       } else {
         const meta = m.meta as { diff?: unknown; filePath?: string; diffs?: NestedDiff[] } | undefined;
         if (meta?.diff && typeof meta.filePath === "string") {
           const diff = meta.diff as DiffStats & Parameters<typeof renderDiff>[0];
+          // Recover the +N/-M summary from the diff — inferSummary has no edit case,
+          // and the boxed title that used to carry the stats is gone now.
+          summary = diffStatsSummary(diff);
           if (!diff.isIdentical) {
             found.pair.result.setDiffRenderer(buildDiffRenderer(diff, meta.filePath, renderer.capabilities.diffFrame !== false));
           }
