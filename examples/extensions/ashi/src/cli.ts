@@ -179,7 +179,7 @@ async function main(): Promise<void> {
 
   activateAgent(ctx);
   activateShellContext(ctx);
-  await loadBuiltinExtensions(ctx, ["rolling-history"]);
+  const builtinExtensions = await loadBuiltinExtensions(ctx);
 
   const shell = new Shell({
     bus: core.bus,
@@ -261,6 +261,12 @@ async function main(): Promise<void> {
     applyBranchMessages(ctx, getStore, capture);
     await handle.rebuildChat();
     ctx.bus.emit("ui:info", { message: `continued session ${resumeId.slice(0, 12)}…` });
+  } else {
+    // New-session only: skip on resume so a restored transcript isn't prefixed with this.
+    const loadedExtensions = [...new Set([...builtinExtensions, ...loaded])];
+    if (loadedExtensions.length > 0) {
+      ctx.bus.emit("ui:info", { message: `extensions: ${loadedExtensions.join(" · ")}` });
+    }
   }
 
   process.on("SIGTERM", cleanup);
