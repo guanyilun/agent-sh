@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-tui": "^0.74.0",
-    "@guanyilun/ashi": "^0.2.0",
+    "@guanyilun/ashi": "^0.3.0",
     "agent-sh": "^0.15.0",
     "cli-table3": "^0.6.0",
     "ink": "^5.0.0",
