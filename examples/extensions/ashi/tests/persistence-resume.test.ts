@@ -149,3 +149,67 @@ test("a new turn in a session resumed via the in-app picker is persisted", async
   const reread = new MultiSessionStore(dir, cwd, { resumeSessionId: sid }).current().buildMessages();
   assert.equal(reread.length, 4, "the new turn should be on disk after flush");
 });
+
+test("a nested tool call's diff is bucketed onto the enclosing call (via the nested flag, not an id prefix)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ashi-persist-"));
+  const cwd = "/tmp/ashi-persist-nested";
+  const store = new MultiSessionStore(dir, cwd);
+  const conv = { messages: [] as Msg[] };
+  const { ctx, bus } = makeCtx(conv);
+  const capture = registerCapture(ctx as never, () => store);
+
+  // The bridged edit uses an arbitrary id — only `nested: true` marks it.
+  await bus.emit("agent:tool-started", { toolCallId: "call_1", name: "compose", title: "compose" });
+  await bus.emit("agent:tool-started", { toolCallId: "inner-xyz", name: "edit_file", title: "edit_file", nested: true });
+  await bus.emit("agent:tool-completed", {
+    toolCallId: "inner-xyz", exitCode: 0, nested: true,
+    resultDisplay: { body: { kind: "diff", filePath: "/x/a.ts",
+      diff: { added: 3, removed: 1, isNewFile: false, isIdentical: false, hunks: [] } } },
+  });
+  await bus.emit("agent:tool-completed", { toolCallId: "call_1", exitCode: 0 });
+
+  conv.messages.push({
+    role: "assistant", content: "",
+    tool_calls: [{ id: "call_1", type: "function", function: { name: "compose", arguments: "…" } }],
+  } as never);
+  conv.messages.push({ role: "tool", tool_call_id: "call_1", content: "ok" } as never);
+  await capture.flush();
+
+  const branch = new MultiSessionStore(dir, cwd, { resumeSessionId: store.current().id }).current().getBranch();
+  const toolMsg = branch
+    .filter((e) => e.type === "message")
+    .map((e) => (e as { message: { role: string; tool_call_id?: string; meta?: { diffs?: unknown[] } } }).message)
+    .find((m) => m.role === "tool" && m.tool_call_id === "call_1");
+  assert.ok(toolMsg, "enclosing tool result persisted");
+  const diffs = toolMsg!.meta?.diffs as Array<{ name: string; filePath: string }> | undefined;
+  assert.ok(Array.isArray(diffs) && diffs.length === 1, "nested edit diff bucketed onto the enclosing tool message");
+  assert.equal(diffs![0].name, "edit_file");
+  assert.equal(diffs![0].filePath, "/x/a.ts");
+});
+
+test("a tool's call-line summary is persisted for resume (any tool, not just diffs)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ashi-persist-"));
+  const cwd = "/tmp/ashi-persist-summary";
+  const store = new MultiSessionStore(dir, cwd);
+  const conv = { messages: [] as Msg[] };
+  const { ctx, bus } = makeCtx(conv);
+  const capture = registerCapture(ctx as never, () => store);
+
+  await bus.emit("agent:tool-started", { toolCallId: "call_x", name: "bash", title: "bash" });
+  await bus.emit("agent:tool-completed", { toolCallId: "call_x", exitCode: 0, resultDisplay: { summary: "0.3s" } });
+
+  conv.messages.push({
+    role: "assistant", content: "",
+    tool_calls: [{ id: "call_x", type: "function", function: { name: "bash", arguments: "ls" } }],
+  } as never);
+  conv.messages.push({ role: "tool", tool_call_id: "call_x", content: "out" } as never);
+  await capture.flush();
+
+  const branch = new MultiSessionStore(dir, cwd, { resumeSessionId: store.current().id }).current().getBranch();
+  const toolMsg = branch
+    .filter((e) => e.type === "message")
+    .map((e) => (e as { message: { role: string; meta?: { summary?: string } } }).message)
+    .find((m) => m.role === "tool");
+  assert.ok(toolMsg, "tool result persisted");
+  assert.equal(toolMsg!.meta?.summary, "0.3s", "the bash summary is persisted for resume");
+});

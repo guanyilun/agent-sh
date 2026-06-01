@@ -60,7 +60,8 @@ function formatLocal(ts: number): string {
 export function formatSessionRow(s: SessionInfo, isCurrent: boolean): string {
   const marker = isCurrent ? "●" : " ";
   const when = s.createdAt ? formatLocal(s.createdAt) : "?";
-  const label = s.name ?? s.preview;
+  // SelectList truncates to width but not across newlines, so keep the row one line.
+  const label = (s.name ?? s.preview).replace(/\s+/g, " ").trim();
   return `${marker} ${when}  ${label}  (${s.entryCount})`;
 }
 

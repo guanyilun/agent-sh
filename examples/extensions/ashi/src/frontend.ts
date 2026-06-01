@@ -29,7 +29,7 @@ import { stripContextWrappers, type SessionEntry } from "agent-sh/session-store"
 import { formatSessionRow } from "./session-commands.js";
 import { resumeSession } from "./session-commands.js";
 import { applyBranchMessages } from "./commands.js";
-import type { Capture } from "./capture.js";
+import type { Capture, NestedDiff } from "./capture.js";
 import { execSync } from "node:child_process";
 import { readClipboardImage } from "./clipboard-image.js";
 import { renderDiff, detectLanguage, highlightLine } from "agent-sh/utils/diff-renderer.js";
@@ -110,6 +110,10 @@ function diffFrameTitle(filePath: string, diff: DiffStats): string {
     ? theme.fg("success", `+${diff.added}`)
     : `${theme.fg("success", `+${diff.added}`)} ${theme.fg("error", `-${diff.removed}`)}`;
   return `${theme.fg("muted", filePath)}  ${stats}`;
+}
+
+function diffStatsSummary(diff: DiffStats): string {
+  return diff.isNewFile ? `+${diff.added}` : `+${diff.added} -${diff.removed}`;
 }
 
 function readReasoning(m: unknown): string {
@@ -485,6 +489,22 @@ export function mountAshi(
     | { kind: "pair"; pair: ToolPair; name: string }
     | { kind: "group"; group: ToolGroup; name: string };
 
+  const replayNestedEdit = (toolCallId: string, nd: NestedDiff): void => {
+    const diff = nd.diff as DiffStats & Parameters<typeof renderDiff>[0];
+    const summary = diffStatsSummary(diff);
+    const pair = renderToolPair({
+      toolCallId, name: nd.name, title: nd.name, kind: "edit",
+      displayDetail: relativize(nd.filePath), rawInput: { file_path: nd.filePath },
+    });
+    appendEntry(pair.call.node, { t: "plain" });
+    appendEntry(pair.result.node, { t: "pair", result: pair.result });
+    if (!diff.isIdentical) {
+      pair.result.setDiffRenderer(buildDiffRenderer(diff, nd.filePath, renderer.capabilities.diffFrame !== false));
+    }
+    pair.call.setStatus({ exitCode: 0, elapsedMs: 0, summary });
+    pair.result.finalize({ exitCode: 0, summary });
+  };
+
   const replayEntry = (entry: SessionEntry, toolMap: Map<string, ReplayEntry>): void => {
     if (entry.type === "session") return;
     if (entry.type === "compaction") {
@@ -562,19 +582,22 @@ export function mountAshi(
         appendEntry(new InfoLine(renderer, `tool result (no matching call): ${text.slice(0, 80)}`).node, { t: "plain" });
         return;
       }
-      const summary = inferSummary(found.name, text);
+      const meta = m.meta as { diff?: unknown; filePath?: string; diffs?: NestedDiff[]; summary?: string } | undefined;
+      // Persisted summary wins; diff stats and inferSummary are resume fallbacks for older sessions.
+      let summary = meta?.summary ?? inferSummary(found.name, text);
       if (found.kind === "group") {
         found.group.recordCompletion(id, 0, summary);
       } else {
-        const meta = m.meta as { diff?: unknown; filePath?: string } | undefined;
         if (meta?.diff && typeof meta.filePath === "string") {
           const diff = meta.diff as DiffStats & Parameters<typeof renderDiff>[0];
+          if (!meta.summary) summary = diffStatsSummary(diff);
           if (!diff.isIdentical) {
             found.pair.result.setDiffRenderer(buildDiffRenderer(diff, meta.filePath, renderer.capabilities.diffFrame !== false));
           }
         }
         found.pair.result.finalize({ exitCode: 0, summary });
         found.pair.call.setStatus({ exitCode: 0, elapsedMs: 0, summary });
+        meta?.diffs?.forEach((nd, i) => replayNestedEdit(`${id}-edit-${i}`, nd));
       }
       if (id) toolMap.delete(id);
     }

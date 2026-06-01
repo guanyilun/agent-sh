@@ -2,6 +2,9 @@ import type { ExtensionContext } from "agent-sh/types";
 import type { MultiSessionStore } from "./multi-session-store.js";
 import type { AgentShMessage as AgentMessage } from "agent-sh/session-store";
 
+interface DiffEntry { diff: unknown; filePath: string }
+export interface NestedDiff extends DiffEntry { name: string }
+
 // liveEntryIds is parallel to the live messages array; null slots are synthetics (e.g. compaction summaries) with no entry.
 export interface Capture {
   flush(): Promise<void>;
@@ -14,21 +17,56 @@ export function registerCapture(
   getStore: () => MultiSessionStore,
 ): Capture {
   let liveEntryIds: (string | null)[] = [];
-  const diffMeta = new Map<string, { diff: unknown; filePath: string }>();
+  // A bridged tool call re-emitted under a synthetic id has no conversation message
+  // of its own, so bucket its diff under the enclosing real call for replay as a
+  // separate edit pair.
+  const diffMeta = new Map<string, DiffEntry>();
+  const nestedDiffs = new Map<string, NestedDiff[]>();
+  const summaryMeta = new Map<string, string>();
+  const bridgedNames = new Map<string, string>();
+  let activeRealToolId: string | undefined;
+
+  // `nested` is a bridge-set bus convention (a host tool run inside another tool),
+  // not on the core event type — read it defensively.
+  const isNested = (e: unknown): boolean => !!(e as { nested?: boolean }).nested;
+
+  ctx.bus.on("agent:tool-started", (e) => {
+    const id = e.toolCallId;
+    if (!id) return;
+    if (isNested(e)) bridgedNames.set(id, e.name ?? e.title);
+    else activeRealToolId = id;
+  });
 
   ctx.bus.on("agent:tool-completed", (e) => {
     const id = e.toolCallId;
-    const body = e.resultDisplay?.body;
-    if (id && body?.kind === "diff") {
-      diffMeta.set(id, { diff: body.diff, filePath: body.filePath });
+    if (!id) return;
+    const display = e.resultDisplay;
+    const body = display?.body;
+    if (isNested(e)) {
+      if (body?.kind === "diff" && activeRealToolId) {
+        const arr = nestedDiffs.get(activeRealToolId) ?? [];
+        arr.push({ name: bridgedNames.get(id) ?? "edit_file", diff: body.diff, filePath: body.filePath });
+        nestedDiffs.set(activeRealToolId, arr);
+      }
+      return;
     }
+    // resultDisplay isn't persisted; capture the summary for every tool so resume
+    // doesn't fall back to re-deriving only a handful.
+    if (typeof display?.summary === "string" && display.summary) summaryMeta.set(id, display.summary);
+    if (body?.kind === "diff") diffMeta.set(id, { diff: body.diff, filePath: body.filePath });
   });
 
   const enrich = (m: AgentMessage): AgentMessage => {
     if (m.role !== "tool" || !m.tool_call_id) return m;
-    const meta = diffMeta.get(m.tool_call_id);
-    if (!meta) return m;
-    return { ...m, meta: { ...m.meta, diff: meta.diff, filePath: meta.filePath } };
+    const single = diffMeta.get(m.tool_call_id);
+    const nested = nestedDiffs.get(m.tool_call_id);
+    const summary = summaryMeta.get(m.tool_call_id);
+    if (!single && !nested && !summary) return m;
+    const meta: Record<string, unknown> = { ...m.meta };
+    if (single) { meta.diff = single.diff; meta.filePath = single.filePath; }
+    if (nested) meta.diffs = nested;
+    if (summary) meta.summary = summary;
+    return { ...m, meta };
   };
 
   const writeNewMessages = async (): Promise<void> => {

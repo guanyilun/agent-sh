@@ -27,7 +27,7 @@ async function withDisplay(
 ): Promise<ToolResult> {
   const toolCallId = `scheme-${toolName}-${++callCounter}`;
   bus.emit("agent:tool-started", {
-    title: toolName, toolCallId, kind, rawInput, displayDetail,
+    title: toolName, toolCallId, kind, rawInput, displayDetail, nested: true,
   });
   const result = await run();
   // Stream the result so the TUI's tracked `output` holds it, not just the summary.
@@ -38,6 +38,7 @@ async function withDisplay(
     rawOutput: result.content,
     kind,
     resultDisplay: result.display,
+    nested: true,
   });
   return result;
 }

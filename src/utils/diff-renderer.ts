@@ -343,7 +343,7 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
 
   const change = (no: string, sigil: string, bg: string, fg: string, text: string): string => {
     if (!gutterLine) {
-      return `${bg}${padToWidth(`${no} ${fg}${sigil}${preserveBg(text, bg)}`, textWidth)}${p.reset}`;
+      return `${bg}${fg}${padToWidth(`${no} ${sigil} ${preserveBg(text, bg)}`, textWidth)}${p.reset}`;
     }
     if (useTrueColor) return gutter(no) + padToWidth(`${bg}${fg}${sigil} ${preserveBg(text, bg)}`, bgWidth) + p.reset;
     return `${gutter(no)}${fg}${sigil} ${text}${p.reset}`;
@@ -359,7 +359,7 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
       const raw = truncateText(line.text, lineTextW);
       const text = lang ? highlightLine(raw, lang) : raw;
       // The flush gutter dims only the line number; the code stays normal/highlighted.
-      out.push(!gutterLine ? `${p.dim}${no}${p.reset}  ${text}` : `${gutter(no)}  ${p.dim}${text}${p.reset}`);
+      out.push(!gutterLine ? `${p.dim}${no}${p.reset}   ${text}` : `${gutter(no)}  ${p.dim}${text}${p.reset}`);
       continue;
     }
 

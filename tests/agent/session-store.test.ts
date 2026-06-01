@@ -120,6 +120,17 @@ describe("SessionStore", () => {
     assert.equal(s.getPreview(), "real question here");
   });
 
+  test("getPreview collapses newlines so the resume picker stays single-line", async () => {
+    const file = path.join(tmpDir, "preview-multiline.jsonl");
+    const s = new SessionStore(file, { create: { cwd: "/x", sessionId: "root" } });
+    await s.appendMessages([
+      { role: "user", content: "incorporate this as an extension?\n\n   Lev Landau's mentor said" },
+    ]);
+    const preview = s.getPreview();
+    assert.ok(!preview.includes("\n"), "no embedded newlines");
+    assert.equal(preview, "incorporate this as an extension? Lev Landau's mentor said");
+  });
+
   test("summarizeMessage formats roles distinctively", () => {
     assert.match(summarizeMessage({ role: "user", content: "hello" }), /^user: hello/);
     assert.match(summarizeMessage({ role: "tool", content: "result" }), /^tool result:/);

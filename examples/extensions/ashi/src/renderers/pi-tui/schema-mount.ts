@@ -93,11 +93,20 @@ class SchemaCallComponent extends Container {
     this.handle.dispatch("status", opts);
   }
 
+  override render(width: number): string[] {
+    if (this.handle.cell.env.width !== width) {
+      this.handle.cell.env = { ...this.handle.cell.env, width };
+      this.repaint();
+      this.handle.cell.resultView?.repaint();
+    }
+    return super.render(width);
+  }
+
   repaint(): void {
     const display = this.handle.model.view(this.handle.cell.state as ViewState<unknown>, this.handle.cell.env);
     const icon = iconString(display.titleIcon);
     const title = segmentsToString(display.title);
-    const status = statusSuffix(display.status);
+    const status = display.hideTitleStatus ? "" : statusSuffix(display.status);
     if (display.titleRight && display.titleRight.length > 0) {
       const right = segmentsToString(display.titleRight);
       // width − 2: Text has paddingX=1 each side.
@@ -137,6 +146,7 @@ class SchemaResultComponent extends Container {
     if (this.handle.cell.env.width !== width) {
       this.handle.cell.env = { ...this.handle.cell.env, width };
       this.repaint();
+      this.handle.cell.callView?.repaint();
     }
     return super.render(width);
   }
