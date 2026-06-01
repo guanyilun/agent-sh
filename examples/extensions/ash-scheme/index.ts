@@ -1383,23 +1383,23 @@ function unwrapSchemeBool(v: any): any {
 // plain bash tool call drops it before the model ever sees it).
 type HostSig = { name: string; sig: string; ret: string; doc: string };
 const HOST_SIGS: HostSig[] = [
-  { name: "bash", sig: '(bash "cmd" [timeout-sec])',
+  { name: "bash", sig: '(bash "cmd" [:timeout sec])',
     ret: "((output . str) (exit-code . n) (error . bool))",
     doc: "run a shell command; full result. Accessors: output-of exit-code-of ok? error?" },
-  { name: "sh", sig: '(sh "cmd" [timeout-sec])', ret: "str",
+  { name: "sh", sig: '(sh "cmd" [:timeout sec])', ret: "str",
     doc: "run a shell command, return stdout only (stderr text on failure)" },
-  { name: "read-file", sig: '(read-file "path" [offset] [limit])', ret: "str | #f",
-    doc: "file contents, or #f on error. offset is 1-indexed; limit caps lines" },
+  { name: "read-file", sig: '(read-file "path" [:offset n] [:limit n])', ret: "str | #f",
+    doc: "file contents, or #f on error. :offset is 1-indexed; :limit caps lines" },
   { name: "write-file", sig: '(write-file "path" "content")', ret: "#t | err-str",
     doc: "overwrite a file" },
-  { name: "edit-file", sig: '(edit-file "path" "old" "new" [replace-all])', ret: "#t | err-str",
-    doc: "replace exact text; pass #t to replace every occurrence" },
+  { name: "edit-file", sig: '(edit-file "path" "old" "new" [:replace-all #t])', ret: "#t | err-str",
+    doc: "replace exact text; :replace-all #t replaces every occurrence" },
   { name: "grep", sig: '(grep "pat" ["dir"] [:opt val …])',
     ret: "(listof ((file . str) (line . n) (text . str)))",
-    doc: "ripgrep search. options: :include :case-insensitive :context-before :context-after :limit :offset" },
+    doc: "ripgrep search. options: :path :include :case-insensitive :context-before :context-after :limit :offset" },
   { name: "grep-files", sig: '(grep-files "pat" ["dir"] [:opt val …])', ret: "(listof str)",
-    doc: "files containing a match. options: :include :case-insensitive :limit :offset" },
-  { name: "glob", sig: '(glob "pat" ["dir"])', ret: "(listof str)",
+    doc: "files containing a match. options: :path :include :case-insensitive :limit :offset" },
+  { name: "glob", sig: '(glob "pat" [:path "dir"])', ret: "(listof str)",
     doc: "paths matching a glob, mtime-sorted" },
 ];
 const sigLine = (h: HostSig): string => `${h.sig} → ${h.ret}`;
@@ -1429,10 +1429,8 @@ const isKwSym = (x: any): boolean => {
   return typeof n === "string" && n.startsWith(":");
 };
 
-// Split a host primitive's evaluated arg list into leading positionals and a
-// trailing :key value option map. LIPS has no keyword args, so the grep macros
-// quote leading-colon symbols (otherwise they'd be looked up as unbound
-// variables); they arrive here as plain LSymbols named ":foo".
+// Split a primitive's args into leading positionals and a trailing :key value
+// option map. An unknown key throws so a wrong option name teaches the valid set.
 function splitArgs(
   args: any[], keyMap: Record<string, string>, numericKeys?: Set<string>,
 ): { positionals: any[]; opts: Record<string, unknown> } {
@@ -1442,13 +1440,16 @@ function splitArgs(
   const opts: Record<string, unknown> = {};
   while (i < args.length) {
     if (!isKwSym(args[i])) { i++; continue; }
-    const tgt = keyMap[symName(args[i])!.slice(1)];
-    if (tgt !== undefined) {
-      const raw = args[i + 1];
-      opts[tgt] = numericKeys && numericKeys.has(tgt)
-        ? Number(raw)
-        : unwrapSchemeBool(toJsStr(raw));
+    const key = symName(args[i])!.slice(1);
+    const tgt = keyMap[key];
+    if (tgt === undefined) {
+      const valid = Object.keys(keyMap).map((k) => `:${k}`).join(" ");
+      throw new Error(`unknown option :${key}; valid options: ${valid || "(none)"}`);
     }
+    const raw = args[i + 1];
+    opts[tgt] = numericKeys && numericKeys.has(tgt)
+      ? Number(raw)
+      : unwrapSchemeBool(toJsStr(raw));
     i += 2;
   }
   return { positionals, opts };
@@ -1475,6 +1476,35 @@ function installBindings(
   grep: ToolExecutor | null,
   glob: ToolExecutor | null,
 ): void {
+  // Optional args are :key value pairs; a trailing positional is still accepted.
+  const READ_KEYMAP: Record<string, string> = { "offset": "offset", "limit": "limit" };
+  const READ_NUMERIC = new Set(["offset", "limit"]);
+  const BASH_KEYMAP: Record<string, string> = { "timeout": "timeout" };
+  const BASH_NUMERIC = new Set(["timeout"]);
+  const EDIT_KEYMAP: Record<string, string> = { "replace-all": "replace_all" };
+  const GLOB_KEYMAP: Record<string, string> = { "path": "path" };
+  const GREP_KEYMAP: Record<string, string> = {
+    "include":          "include",
+    "case-insensitive": "case_insensitive",
+    "context-before":   "context_before",
+    "context-after":    "context_after",
+    "limit":            "head_limit",
+    "offset":           "offset",
+    "path":             "path",
+  };
+  const GREP_NUMERIC = new Set([
+    "context_before", "context_after", "head_limit", "offset",
+  ]);
+
+  // LIPS has no keyword-argument syntax: bind each option key to a self-quoting
+  // symbol so a bare `:offset` yields the symbol instead of an unbound error.
+  for (const km of [READ_KEYMAP, BASH_KEYMAP, EDIT_KEYMAP, GLOB_KEYMAP, GREP_KEYMAP]) {
+    for (const key of Object.keys(km)) {
+      const kw = `:${key}`;
+      env.set(kw, new LSymbol(kw));
+    }
+  }
+
   const runBash = async (command: string, timeoutSec?: number) => {
     const args: Record<string, unknown> = { command: toJsStr(command) };
     if (typeof timeoutSec === "number") args.timeout = timeoutSec;
@@ -1488,9 +1518,17 @@ function installBindings(
     // carries it: a plain bash tool call drops it before the model.
     return { exitCode: result.exitCode ?? (result.isError ? 1 : 0), output, error: result.isError };
   };
-  env.set("bash", withSig("bash", async (command: string, timeoutSec?: number) => {
+  const bashTimeout = (positionals: any[], opts: Record<string, unknown>): number | undefined => {
+    const t = opts.timeout !== undefined ? opts.timeout : positionals[1];
+    if (t === undefined || t === null) return undefined;
+    const n = Number(t);
+    return isNaN(n) ? undefined : n;
+  };
+  env.set("bash", withSig("bash", async (...rest: any[]) => {
+    const { positionals, opts } = splitArgs(rest, BASH_KEYMAP, BASH_NUMERIC);
+    const command = positionals[0];
     try {
-      const r = await runBash(command, timeoutSec);
+      const r = await runBash(command, bashTimeout(positionals, opts));
       return alist([
         ["output",    r.output],
         ["exit-code", r.exitCode],
@@ -1503,17 +1541,22 @@ function installBindings(
   }));
   // Shortcut: stdout as a string. Use `bash` when you need the exit code, or
   // `(ok? (bash "…"))` for a success predicate.
-  env.set("sh", withSig("sh", async (command: string, timeoutSec?: number) => {
+  env.set("sh", withSig("sh", async (...rest: any[]) => {
+    const { positionals, opts } = splitArgs(rest, BASH_KEYMAP, BASH_NUMERIC);
+    const command = positionals[0];
     try {
-      return (await runBash(command, timeoutSec)).output;
+      return (await runBash(command, bashTimeout(positionals, opts))).output;
     } catch (e: any) {
       logErr("sh", e, { command });
       return "";
     }
   }));
 
-  env.set("read-file", withSig("read-file", async (filePath: string, offset?: any, limit?: any) => {
-    const args: Record<string, unknown> = { path: toJsStr(filePath), bypass_cache: true };
+  env.set("read-file", withSig("read-file", async (...rest: any[]) => {
+    const { positionals, opts } = splitArgs(rest, READ_KEYMAP, READ_NUMERIC);
+    const args: Record<string, unknown> = { path: toJsStr(positionals[0]), bypass_cache: true };
+    const offset = opts.offset !== undefined ? opts.offset : positionals[1];
+    const limit = opts.limit !== undefined ? opts.limit : positionals[2];
     if (offset !== undefined && offset !== null) {
       const n = Number(offset);
       if (!isNaN(n)) args.offset = n;
@@ -1537,8 +1580,12 @@ function installBindings(
   }));
 
   if (editFile) {
-    env.set("edit-file", withSig("edit-file", async (filePath: string, oldStr: string, newStr: string, replaceAll?: any) => {
-      filePath = toJsStr(filePath); oldStr = toJsStr(oldStr); newStr = toJsStr(newStr);
+    env.set("edit-file", withSig("edit-file", async (...rest: any[]) => {
+      const { positionals, opts } = splitArgs(rest, EDIT_KEYMAP);
+      const filePath = toJsStr(positionals[0]);
+      const oldStr = toJsStr(positionals[1]);
+      const newStr = toJsStr(positionals[2]);
+      const replaceAll = opts.replace_all !== undefined ? opts.replace_all : positionals[3];
       const toolArgs: Record<string, unknown> = { path: filePath, old_text: oldStr, new_text: newStr };
       if (unwrapSchemeBool(replaceAll) === true) toolArgs.replace_all = true;
       const result = await withDisplay(
@@ -1550,18 +1597,6 @@ function installBindings(
   }
 
   if (grep) {
-    const GREP_KEYMAP: Record<string, string> = {
-      "include":          "include",
-      "case-insensitive": "case_insensitive",
-      "context-before":   "context_before",
-      "context-after":    "context_after",
-      "limit":            "head_limit",
-      "offset":           "offset",
-    };
-    const GREP_NUMERIC = new Set([
-      "context_before", "context_after", "head_limit", "offset",
-    ]);
-
     // Ripgrep uses Rust/ERE regex, but models write BRE (the default flavor
     // of plain grep/sed) where \| \( \) \{ \} \+ \? are metacharacters.
     // Translate BRE escapes to their ERE equivalents so the model's intent is
@@ -1574,33 +1609,33 @@ function installBindings(
         .replace(/\\\+/g, "+").replace(/\\\?/g, "?");
     };
 
-    // pattern [path] are positional; everything after is :key value options,
-    // split out by splitArgs (the grep macro quotes the colon symbols).
-    env.set("%grep", withSig("grep", async (...rest: any[]) => {
+    // pattern is positional; search root is the 2nd positional or :path.
+    env.set("grep", withSig("grep", async (...rest: any[]) => {
       const { positionals, opts } = splitArgs(rest, GREP_KEYMAP, GREP_NUMERIC);
-      const pStr = toJsStr(positionals[1]);
       const args: Record<string, unknown> = {
         pattern: normalizePattern(String(positionals[0] ?? "")), output_mode: "content", ...opts,
       };
-      if (typeof pStr === "string") args.path = pStr;
+      const posPath = toJsStr(positionals[1]);
+      if (args.path === undefined && typeof posPath === "string") args.path = posPath;
+      const pStr = typeof args.path === "string" ? args.path : undefined;
       const result = await grep(args);
       if (result.isError) return nil;
       if (result.content === "No matches found.") return nil;
       const rows: unknown[] = [];
       for (const line of stripPagination(result.content as string)) {
-        const parsed = parseGrepLine(line, typeof pStr === "string" ? pStr : undefined);
+        const parsed = parseGrepLine(line, pStr);
         if (parsed) rows.push(parsed);
       }
       return toSchemeList(rows);
     }));
 
-    env.set("%grep-files", withSig("grep-files", async (...rest: any[]) => {
+    env.set("grep-files", withSig("grep-files", async (...rest: any[]) => {
       const { positionals, opts } = splitArgs(rest, GREP_KEYMAP, GREP_NUMERIC);
-      const pStr = toJsStr(positionals[1]);
       const args: Record<string, unknown> = {
         pattern: normalizePattern(String(positionals[0] ?? "")), output_mode: "files_with_matches", ...opts,
       };
-      if (typeof pStr === "string") args.path = pStr;
+      const posPath = toJsStr(positionals[1]);
+      if (args.path === undefined && typeof posPath === "string") args.path = posPath;
       const result = await grep(args);
       if (result.isError || result.content === "No matches found.") return nil;
       return toSchemeList(stripPagination(result.content as string));
@@ -1610,9 +1645,10 @@ function installBindings(
   if (glob) {
     // Strip leading "./" so glob paths match grep's — otherwise eq? on the
     // file field fails across the two.
-    env.set("glob", withSig("glob", async (pattern: string, p?: string) => {
-      const pStr = toJsStr(p);
-      const args: Record<string, unknown> = { pattern: toJsStr(pattern) };
+    env.set("glob", withSig("glob", async (...rest: any[]) => {
+      const { positionals, opts } = splitArgs(rest, GLOB_KEYMAP);
+      const args: Record<string, unknown> = { pattern: toJsStr(positionals[0]) };
+      const pStr = opts.path !== undefined ? String(opts.path) : toJsStr(positionals[1]);
       if (typeof pStr === "string") args.path = pStr;
       const result = await glob(args);
       if (result.isError || result.content === "No files matched.") return nil;
@@ -1692,9 +1728,13 @@ const DESCRIPTION = [
   "char and hash-table ops, …). The only novel surface is the host bindings.",
   "",
   "Calling convention:",
-  "  - Required arguments are positional: (read-file \"x\"), (grep \"pat\" \"src/\").",
-  "  - grep / grep-files options are :key value pairs:",
+  "  - Required arguments are positional: (read-file \"x\"), (grep \"pat\").",
+  "  - Optional arguments are :key value pairs, and the same key reads the same",
+  "    on every binding — :offset/:limit on read-file and grep, :timeout on bash:",
+  "      (read-file \"x\" :offset 40 :limit 20)",
   "      (grep \"TODO\" \"src/\" :include \"*.ts\" :context-after 2)",
+  "    (A trailing positional is still accepted for each optional, but :key is",
+  "    the canonical form and never depends on argument order.)",
   "  - Each binding returns the natural Scheme value for its job (a string, a",
   "    list, a boolean); bash returns a record because you usually want the code.",
   "",
@@ -1709,7 +1749,7 @@ const DESCRIPTION = [
   "",
   "Composition is the point: chain read-only bindings in one submission so",
   "intermediate results stay in the Scheme heap instead of the conversation.",
-  "  (map (lambda (m) (read-file (cdr (assoc 'file m)) (cdr (assoc 'line m)) 3))",
+  "  (map (lambda (m) (read-file (cdr (assoc 'file m)) :offset (cdr (assoc 'line m)) :limit 3))",
   "       (grep \"TODO\" \"src/\"))",
   "Side-effecting calls (write-file, edit-file, mutating bash) are clearer one",
   "at a time so you can react to each result.",
@@ -1729,8 +1769,7 @@ const DESCRIPTION = [
 ].join("\n");
 
 // Scheme prelude (Lisp `define-macro`s), run after std is bootstrapped.
-// cond/when/unless/newline/assq for convenience; the grep/grep-files macros
-// quote :key option symbols so the bridge can read them as an option map.
+// cond/when/unless/newline/assq for convenience.
 const PRELUDE = `
 (define-macro (cond . clauses)
   (if (null? clauses)
@@ -1751,21 +1790,6 @@ const PRELUDE = `
 ;; R7RS shims for things models commonly reach for that LIPS doesn't ship.
 (define (newline) (display "\n"))
 (define assq assoc)
-
-;; grep / grep-files take :key value options. LIPS has no keyword args, so a
-;; bare :include would be evaluated as an unbound variable; the macro quotes
-;; leading-colon symbols and the %grep bridge splits them from the positionals.
-(define (%kw-symbol? s)
-  (and (symbol? s)
-       (let ((str (symbol->string s)))
-         (and (> (string-length str) 0)
-              (string=? (substring str 0 1) ":")))))
-
-(define (%quote-kw args)
-  (map (lambda (a) (if (%kw-symbol? a) (list 'quote a) a)) args))
-
-(define-macro (grep . args)       (cons '%grep       (%quote-kw args)))
-(define-macro (grep-files . args) (cons '%grep-files (%quote-kw args)))
 `;
 
 export default function activate(ctx: AgentContext): void {
