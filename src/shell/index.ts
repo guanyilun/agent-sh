@@ -16,6 +16,8 @@ import activateShellContext from "./shell-context.js";
 import activateTuiRenderer from "./tui-renderer.js";
 import { type Terminal, processTerminal, surfaceFromTerminal } from "./terminal.js";
 
+const SHELL_SURFACE = `You're attached through a terminal shell. It shares the user's working directory, environment, and command history, and you can act on their live session — everything they run at the prompt is visible to you.`;
+
 export interface ShellActivateOptions {
   cols: number;
   rows: number;
@@ -48,6 +50,11 @@ export interface ShellHandle {
 export function registerShellHandlers(ctx: ExtensionContext): void {
   const { bus } = ctx;
   const compositor = new DefaultCompositor(bus);
+
+  ctx.advise("system-prompt:frontend", (next) => {
+    const base = (next() as string) ?? "";
+    return base ? `${base}\n\n${SHELL_SURFACE}` : SHELL_SURFACE;
+  });
 
   const shellSurface: ShellSurface = {
     compositor,

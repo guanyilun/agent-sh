@@ -6,6 +6,7 @@ import activateShellContext from "../../src/shell/shell-context.js";
 function setup(): { core: ReturnType<typeof createCore> } {
   const core = createCore({});
   const ctx = core.extensionContext({ quit: () => {} });
+  (ctx as { shell?: unknown }).shell = {}; // shell frontend: the agent shares the user's cwd
   activateShellContext(ctx);
   return { core };
 }
@@ -13,6 +14,19 @@ function setup(): { core: ReturnType<typeof createCore> } {
 function captureQueryContext(core: ReturnType<typeof createCore>): string {
   return String(core.handlers.call("query-context:build") ?? "");
 }
+
+test("<cwd> is emitted only under the shell frontend (ctx.shell present)", () => {
+  const peer = createCore({});
+  const peerCtx = peer.extensionContext({ quit: () => {} });
+  (peerCtx as { shell?: unknown }).shell = {};
+  activateShellContext(peerCtx);
+  assert.match(captureQueryContext(peer), /<cwd>/);
+
+  const companion = createCore({});
+  const compCtx = companion.extensionContext({ quit: () => {} });
+  activateShellContext(compCtx); // no ctx.shell → agent keeps its own fixed cwd
+  assert.doesNotMatch(captureQueryContext(companion), /<cwd>/);
+});
 
 test("user shell command lands in <shell_events> on next query-context", () => {
   const { core } = setup();

@@ -1,9 +1,17 @@
 /** Tracks PTY commands and cwd, spills long outputs, contributes per-query
- *  `<cwd>` (always) and `<shell_events>` (fresh user exchanges). Frontends
- *  without a PTY skip this and fall back to core's process.cwd() default. */
+ *  `<shell_events>` (fresh user exchanges) and — under the shell frontend —
+ *  `<cwd>`. Frontends without a PTY skip this. */
 import type { ExtensionContext } from "./host-types.js";
 import { getSettings } from "../core/settings.js";
 import { spillOutput } from "../utils/shell-output-spill.js";
+
+// The cwd-drift note applies only under the shell frontend (where the agent shares
+// the user's cwd); other frontends own a fixed cwd.
+const SHELL_EVENTS_NOTE = `When the user runs shell commands, they appear as \`<shell_events>\` inside \`<query_context>\` on your next turn — use them to ground "fix this" / "what just happened" requests.`;
+
+const CWD_DRIFT_NOTE = `\`<cwd>\` is the working directory your own tool calls run in: relative paths resolve against it, and it follows the user's shell \`cd\`, so it can change from one turn to the next. Always act on the latest \`<cwd>\`, not one from earlier in the conversation.`;
+
+const PREFERENCES_NOTE = `Treat the user's commands as standing preferences: check them for recurring patterns and apply them proactively, without waiting to be asked.`;
 
 interface ShellExchange {
   id: number;
@@ -21,6 +29,9 @@ interface ShellExchange {
 
 export default function activate(ctx: ExtensionContext): void {
   const { bus } = ctx;
+  // The agent shares the user's cwd only under the shell frontend (which installs
+  // ctx.shell); other frontends — e.g. ashi — keep their own fixed cwd.
+  const ownsAgentCwd = !!(ctx as { shell?: unknown }).shell;
 
   const exchanges: ShellExchange[] = [];
   let nextId = 1;
@@ -74,24 +85,30 @@ export default function activate(ctx: ExtensionContext): void {
   bus.on("shell:agent-exec-done", () => { agentShellActive = false; });
   bus.on("shell:user-exec-exclude-next", () => { nextUserExcluded = true; });
 
-  ctx.advise("cwd", () => currentCwd);
+  if (ownsAgentCwd) ctx.advise("cwd", () => currentCwd);
 
   // Advise the core handler directly: this loads before the agent host
   // attaches `ctx.agent`, so the sugar isn't available yet.
   ctx.advise("query-context:build", (next) => {
     const base = next() as string;
-    const part = (() => {
-      const cwdTag = `<cwd>${currentCwd}</cwd>`;
-      const fresh = exchanges.filter(
-        (ex) => ex.id > lastSeq && ex.source === "user",
-      );
-      if (fresh.length === 0) return cwdTag;
+    const fresh = exchanges.filter((ex) => ex.id > lastSeq && ex.source === "user");
+    let shellEvents = "";
+    if (fresh.length > 0) {
       lastSeq = exchanges[exchanges.length - 1]!.id;
       const text = fresh.map(formatExchangeTruncated).filter(Boolean).join("\n");
-      if (!text) return cwdTag;
-      return `${cwdTag}\n<shell_events>\n${text}\n</shell_events>`;
-    })();
-    return base ? `${base}\n\n${part}` : part;
+      if (text) shellEvents = `<shell_events>\n${text}\n</shell_events>`;
+    }
+    const part = ownsAgentCwd
+      ? [`<cwd>${currentCwd}</cwd>`, shellEvents].filter(Boolean).join("\n")
+      : shellEvents;
+    return [base, part].filter(Boolean).join("\n\n");
+  });
+
+  bus.onPipe("agent:instructions", (acc) => {
+    const text = [SHELL_EVENTS_NOTE, ownsAgentCwd ? CWD_DRIFT_NOTE : "", PREFERENCES_NOTE]
+      .filter(Boolean).join("\n\n");
+    acc.instructions.push({ name: "shell-events", text });
+    return acc;
   });
 
   ctx.define("shell:context-recent", (n: number = 25) => {

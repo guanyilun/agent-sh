@@ -51,10 +51,11 @@ export function createCore(config: AppConfig): AgentShellCore {
   handlers.define("config:get-app-config", () => config);
   handlers.define("cwd", () => process.cwd());
 
-  // Empty defaults so registerContextProducer can advise regardless of
-  // backend. Each backend chooses how to consume the strings.
+  // Empty defaults so advisors can wrap these regardless of load order;
+  // system-prompt:frontend is where the active frontend describes its surface.
   handlers.define("dynamic-context:build", () => "");
   handlers.define("query-context:build", () => "");
+  handlers.define("system-prompt:frontend", () => "");
 
   const backends = new Map<string, BackendRegistration>();
   let activeBackendName: string | null = null;
