@@ -180,7 +180,7 @@ async function main(): Promise<void> {
 
   activateAgent(ctx);
   activateShellContext(ctx);
-  const builtinExtensions = await loadBuiltinExtensions(ctx);
+  await loadBuiltinExtensions(ctx);
 
   const shell = new Shell({
     bus: core.bus,
@@ -263,10 +263,11 @@ async function main(): Promise<void> {
     await handle.rebuildChat();
     ctx.bus.emit("ui:info", { message: `continued session ${resumeId.slice(0, 12)}…` });
   } else {
-    // New-session only: skip on resume so a restored transcript isn't prefixed with this.
-    const loadedExtensions = [...new Set([...builtinExtensions, ...loaded])];
-    if (loadedExtensions.length > 0) {
-      ctx.bus.emit("ui:info", { message: `extensions: ${loadedExtensions.join(" · ")}` });
+    // New-session only: skip on resume so a restored transcript isn't prefixed
+    // with this. List user/installed extensions only — built-ins are always present.
+    const userExtensions = [...new Set(loaded)];
+    if (userExtensions.length > 0) {
+      ctx.bus.emit("ui:info", { message: `extensions: ${userExtensions.join(" · ")}` });
     }
   }
 
