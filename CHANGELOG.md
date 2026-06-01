@@ -8,6 +8,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-01
+
 ### Changed
 
 - **Breaking — model-selection surface renamed.** `AgentMode` is now `Model`: a
