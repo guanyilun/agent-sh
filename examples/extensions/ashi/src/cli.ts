@@ -6,7 +6,7 @@ import { createCore } from "agent-sh/core";
 import { loadBuiltinExtensions } from "agent-sh/extensions";
 import { loadExtensions } from "agent-sh/extension-loader";
 import { activateAgent } from "agent-sh/agent";
-import { getSettings } from "agent-sh/settings";
+import { getSettings, CONFIG_DIR } from "agent-sh/settings";
 import { Shell } from "agent-sh/shell";
 import { TerminalBuffer } from "agent-sh/utils/terminal-buffer";
 import type { Terminal } from "agent-sh/shell/terminal";
@@ -37,7 +37,6 @@ import { createPiTuiRenderer } from "./renderers/pi-tui/index.js";
 import type { Renderer } from "./renderer.js";
 import { loadRendererPreference } from "./display-config.js";
 import { applyOutputMode } from "./terminal-mode.js";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -150,7 +149,7 @@ async function main(): Promise<void> {
 
   const cwd = process.cwd();
   const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
-  const sessionsDir = path.join(os.homedir(), ".agent-sh", "ashi", "history", cwdSlug, "sessions");
+  const sessionsDir = path.join(CONFIG_DIR, "ashi", "history", cwdSlug, "sessions");
   const resumeId = config.continueLast
     ? MultiSessionStore.readLastSessionId(sessionsDir, { fallbackToLatest: true })
     : undefined;
