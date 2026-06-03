@@ -8,6 +8,21 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Added
+
+- `diffText` palette slot — the foreground color for diff row text, overridable
+  via `setPalette()`.
+
+### Changed
+
+- Diff rows render the `+`/`-` sigil in color but the line text in a readable
+  foreground (the new `diffText` slot), fixing the low-contrast red-on-maroon /
+  green-on-green text.
+- Diffs group git-style — the whole removed run, then the whole added run —
+  instead of interleaving removed and added lines one by one.
+- Changed tokens are no longer bold; the row tints and changed-token emphasis
+  backgrounds are softened.
+
 ## [0.15.3] - 2026-06-03
 
 ### Fixed

@@ -22,6 +22,7 @@ export interface ColorPalette {
   errorBg: string;        // subtle red tint for removed lines
   successBgEmph: string;  // stronger green for changed tokens
   errorBgEmph: string;    // stronger red for changed tokens
+  diffText: string;       // legible fg for diff row text on the tinted rows
 
   // ── Style modifiers ───────────────────────────────────────
   bold: string;
@@ -38,10 +39,11 @@ const defaultPalette: ColorPalette = {
   error:   "\x1b[31m",   // red
   muted:   "\x1b[90m",   // gray
 
-  successBg:     "\x1b[48;2;34;92;43m",
-  errorBg:       "\x1b[48;2;122;41;54m",
-  successBgEmph: "\x1b[48;2;56;166;96m",
-  errorBgEmph:   "\x1b[48;2;179;89;107m",
+  successBg:     "\x1b[48;2;26;70;34m",
+  errorBg:       "\x1b[48;2;92;32;42m",
+  successBgEmph: "\x1b[48;2;38;104;56m",
+  errorBgEmph:   "\x1b[48;2;124;50;64m",
+  diffText:      "\x1b[97m",   // bright white — readable on the red/green tints
 
   bold:      "\x1b[1m",
   dim:       "\x1b[2m",

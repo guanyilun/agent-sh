@@ -216,7 +216,7 @@ function highlightInlineChanges(
         result += palette.rowBg + preserveBg(text, palette.rowBg);
       } else {
         // Changed tokens: emphasis background, no syntax highlighting (emphasis stands out)
-        result += palette.emphBg + p.bold + tokens[i].text + p.reset;
+        result += palette.emphBg + tokens[i].text + p.reset;
       }
     }
     return result;
@@ -337,16 +337,27 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
   const out: string[] = [];
 
   const pairs = findChangePairs(hunk);
-  const renderedAsPartOfPair = new Set<number>();
   const bgWidth = Math.max(1, textWidth - noW - 3);
   const gutter = (n: string): string => `${p.dim}${n} │${p.reset} `;
 
   const change = (no: string, sigil: string, bg: string, fg: string, text: string): string => {
     if (!gutterLine) {
-      return `${bg}${fg}${padToWidth(`${no} ${sigil} ${preserveBg(text, bg)}`, textWidth)}${p.reset}`;
+      return `${bg}${padToWidth(`${fg}${no} ${sigil}${p.diffText} ${preserveBg(text, bg)}`, textWidth)}${p.reset}`;
     }
-    if (useTrueColor) return gutter(no) + padToWidth(`${bg}${fg}${sigil} ${preserveBg(text, bg)}`, bgWidth) + p.reset;
+    if (useTrueColor) return gutter(no) + padToWidth(`${bg}${fg}${sigil}${p.diffText} ${preserveBg(text, bg)}`, bgWidth) + p.reset;
     return `${gutter(no)}${fg}${sigil} ${text}${p.reset}`;
+  };
+
+  const hlCache = new Map<ChangePair, { old: string; new: string }>();
+  const highlightedPair = (pair: ChangePair): { old: string; new: string } => {
+    let h = hlCache.get(pair);
+    if (!h) {
+      h = highlightInlineChanges(
+        pair.removed.text, pair.added.text, removedPalette, addedPalette, useTrueColor, lang,
+      );
+      hlCache.set(pair, h);
+    }
+    return h;
   };
 
   for (let i = 0; i < hunk.lines.length; i++) {
@@ -358,42 +369,29 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
     if (line.type === "context") {
       const raw = truncateText(line.text, lineTextW);
       const text = lang ? highlightLine(raw, lang) : raw;
-      // The flush gutter dims only the line number; the code stays normal/highlighted.
       out.push(!gutterLine ? `${p.dim}${no}${p.reset}   ${text}` : `${gutter(no)}  ${p.dim}${text}${p.reset}`);
       continue;
     }
 
+    const pair = pairs.get(i);
     if (line.type === "removed") {
-      const pair = pairs.get(i);
       let removedText: string;
-      let addedText: string | null = null;
-      let addedNo: string | null = null;
-
-      if (pair && pair.removedIdx === i) {
-        const highlighted = highlightInlineChanges(
-          line.text, pair.added.text, removedPalette, addedPalette, useTrueColor, lang,
-        );
-        removedText = truncateText(highlighted.old, lineTextW);
-        addedText = truncateText(highlighted.new, lineTextW);
-        addedNo = String(pair.added.newNo ?? "").padStart(noW);
-        renderedAsPartOfPair.add(pair.addedIdx);
+      if (pair) {
+        removedText = truncateText(highlightedPair(pair).old, lineTextW);
       } else {
         const raw = truncateText(line.text, lineTextW);
         removedText = lang ? highlightLine(raw, lang) : raw;
       }
-
       out.push(change(no, "-", p.errorBg, p.error, removedText));
-      if (addedText !== null && addedNo !== null) {
-        out.push(change(addedNo, "+", p.successBg, p.success, addedText));
+    } else {
+      let addedText: string;
+      if (pair) {
+        addedText = truncateText(highlightedPair(pair).new, lineTextW);
+      } else {
+        const raw = truncateText(line.text, lineTextW);
+        addedText = lang ? highlightLine(raw, lang) : raw;
       }
-      continue;
-    }
-
-    if (line.type === "added") {
-      if (renderedAsPartOfPair.has(i)) continue;
-      const raw = truncateText(line.text, lineTextW);
-      const text = lang ? highlightLine(raw, lang) : raw;
-      out.push(change(no, "+", p.successBg, p.success, text));
+      out.push(change(no, "+", p.successBg, p.success, addedText));
     }
   }
   return out;
@@ -478,7 +476,7 @@ function renderSplitHunk(hunk: DiffHunk, layout: SplitLayout): string[] {
     } else if (row.left.type === "removed") {
       if (useTrueColor) {
         leftCol = padToWidth(
-          `${p.errorBg}${p.error}${leftNo} │ ${preserveBg(leftText, p.errorBg)}`, colWidth,
+          `${p.errorBg}${p.error}${leftNo} │${p.diffText} ${preserveBg(leftText, p.errorBg)}`, colWidth,
         ) + p.reset;
       } else {
         leftCol = padToWidth(`${p.error}${leftNo} │ ${leftText}${p.reset}`, colWidth);
@@ -492,7 +490,7 @@ function renderSplitHunk(hunk: DiffHunk, layout: SplitLayout): string[] {
     } else if (row.right.type === "added") {
       if (useTrueColor) {
         rightCol = padToWidth(
-          `${p.successBg}${p.success}${rightNo} │ ${preserveBg(rightText, p.successBg)}`, colWidth,
+          `${p.successBg}${p.success}${rightNo} │${p.diffText} ${preserveBg(rightText, p.successBg)}`, colWidth,
         ) + p.reset;
       } else {
         rightCol = padToWidth(`${p.success}${rightNo} │ ${rightText}${p.reset}`, colWidth);
