@@ -10,6 +10,13 @@ export type { StatusSegment } from "./status-footer.js";
 
 export type NoticeLevel = "info" | "warn" | "error" | "success";
 
+export interface DiffOpts {
+  before?: string | null;
+  after?: string;
+  filePath?: string;
+  boxed?: boolean;
+}
+
 export interface Contribution {
   /** Re-pull this surface (call after the content it depends on changes). */
   refresh(): void;
@@ -26,6 +33,7 @@ export interface Ui {
   notify(message: string, level?: NoticeLevel): void;
   select(opts: SelectOpts): Promise<string | undefined>;
   confirm(opts: ConfirmOpts): Promise<boolean>;
+  diff(opts: DiffOpts): (width: number) => string[];
   input(opts?: InputOpts): Promise<string | undefined>;
   getEditorText(): string;
   setEditorText(text: string): void;
@@ -49,6 +57,9 @@ export function createUi(ctx: ExtensionContext): Ui {
     confirm(opts) {
       if (!has("ui:confirm")) return Promise.resolve(false);
       return ctx.call("ui:confirm", opts) as Promise<boolean>;
+    },
+    diff(opts) {
+      return has("ui:diff") ? (ctx.call("ui:diff", opts) as (width: number) => string[]) : (() => []);
     },
     input(opts = {}) {
       if (!has("ui:input")) return Promise.resolve(undefined);

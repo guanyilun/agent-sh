@@ -36,6 +36,7 @@ import type { Capture, NestedDiff } from "./capture.js";
 import { execSync } from "node:child_process";
 import { readClipboardImage } from "./clipboard-image.js";
 import { renderDiff, detectLanguage, highlightLine } from "agent-sh/utils/diff-renderer.js";
+import { computeDiff } from "agent-sh/utils/diff.js";
 import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
 
 const GROUPABLE_KINDS = new Set(["read", "search"]);
@@ -217,6 +218,17 @@ export function mountAshi(
   const dialogs = createDialogs(app, renderer, modalGuard);
   ctx.define("ui:select", (opts: SelectOpts) => dialogs.select(opts));
   ctx.define("ui:confirm", (opts: ConfirmOpts) => dialogs.confirm(opts));
+  ctx.define(
+    "ui:diff",
+    (opts: { before?: string | null; after?: string; filePath?: string; boxed?: boolean }) => {
+      const diff = computeDiff(opts.before ?? null, opts.after ?? "");
+      return buildDiffRenderer(
+        diff as Parameters<typeof buildDiffRenderer>[0],
+        opts.filePath ?? "",
+        opts.boxed !== false,
+      );
+    },
+  );
   ctx.define("ui:input", (opts: InputOpts) => inputPrompt.prompt(opts));
   ctx.define("ui:editor:get-text", () => input.getText());
   ctx.define("ui:editor:set-text", (text: string) => { input.setText(text); });
