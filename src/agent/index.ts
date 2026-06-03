@@ -116,10 +116,14 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   // Settings overlay — fields here win over contributing extensions' payloads.
   const settingsProviders = new Map<string, ResolvedProvider>();
-  for (const name of getProviderNames()) {
-    const p = resolveProvider(name);
-    if (p) settingsProviders.set(name, p);
-  }
+  const refreshSettingsProviders = () => {
+    settingsProviders.clear();
+    for (const name of getProviderNames()) {
+      const p = resolveProvider(name);
+      if (p) settingsProviders.set(name, p);
+    }
+  };
+  refreshSettingsProviders();
 
   const providerHooks = new Map<string, {
     reasoningParams?: (level: string, model?: string) => Record<string, unknown>;
@@ -368,6 +372,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
   let loadedExtensionNames: string[] = [];
 
   bus.on("agent:providers:changed", () => {
+    refreshSettingsProviders();
     resolvedProviders = computeResolvedProviders();
     if (!resolved) return;
     bus.emit("agent:models-changed", {});
