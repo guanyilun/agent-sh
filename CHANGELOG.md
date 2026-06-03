@@ -8,6 +8,13 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- The settings provider overlay is now rebuilt on every `agent:providers:changed`
+  event, so a host `reloadSettings()` picks up `apiKey` / `baseURL` edits (and
+  added or removed providers) without a process restart. Previously it was read
+  once at load and went stale, so a changed key took effect only after a restart.
+
 ## [0.15.2] - 2026-06-02
 
 ### Added
