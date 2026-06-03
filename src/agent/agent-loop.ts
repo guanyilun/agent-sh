@@ -623,14 +623,15 @@ export class AgentLoop implements AgentBackend {
       streamedCalls: ProtocolPendingToolCall[];
     }) => this.toolProtocol.extractToolCalls(args.text, args.streamedCalls));
 
-    // System prompt: static identity + behavioral instructions.
-    // Extensions can use registerInstruction() for a managed section,
-    // advise system-prompt:frontend to describe their surface high in the
-    // prompt, or advise this handler directly for full control.
+    // System prompt: static identity + behavioral instructions. Extensions can
+    // use registerInstruction() for a managed section, advise system-prompt:identity
+    // to replace the kernel identity, advise system-prompt:frontend to describe their
+    // surface high in the prompt, or advise system-prompt:build directly for full control.
+    h.define("system-prompt:identity", () => STATIC_IDENTITY);
     h.define("system-prompt:build", () => {
       // The active frontend's surface goes right after the identity; omitted if none.
       const frontend = ((this.handlers.call("system-prompt:frontend") as string) ?? "").trim();
-      const parts: string[] = [STATIC_IDENTITY];
+      const parts: string[] = [this.handlers.call("system-prompt:identity") as string];
       if (frontend) parts.push(frontend);
       parts.push(STATIC_GUIDE);
 
