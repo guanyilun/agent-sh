@@ -264,9 +264,10 @@ async function main(): Promise<void> {
   } else {
     // New-session only: skip on resume so a restored transcript isn't prefixed
     // with this. List user/installed extensions only — built-ins are always present.
-    const userExtensions = [...new Set(loaded)];
-    if (userExtensions.length > 0) {
-      ctx.bus.emit("ui:info", { message: `extensions: ${userExtensions.join(" · ")}` });
+    const all = [...new Set(loaded)];
+    const shown = (core.bus.emitPipe("ashi:startup-extensions", { names: all }).names ?? []) as string[];
+    if (shown.length > 0) {
+      ctx.bus.emit("ui:info", { message: `extensions: ${shown.join(" · ")}` });
     }
   }
 

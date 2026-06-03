@@ -12,5 +12,6 @@ declare module "agent-sh/event-bus" {
     "ashi:dock:above-input": { nodes: RenderNodes; views: RenderNode[] };
     "ashi:dock:invalidate": Record<string, never>;
     "ashi:ready": Record<string, never>;
+    "ashi:startup-extensions": { names: string[] };
   }
 }
