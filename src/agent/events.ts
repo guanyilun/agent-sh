@@ -29,6 +29,8 @@ declare module "../core/event-bus.js" {
 
     "agent:info": AgentIdentity;
     "agent:tools": { tools: ToolDefinition[] };
+    /** Filter point: the assembled tool list as the model will see it, after getTools(). */
+    "agent:tools:visible": { tools: ToolDefinition[] };
     "agent:instructions": { instructions: Array<{ name: string; text: string }> };
     "agent:skills": { skills: Array<{ name: string; description: string; filePath: string }> };
 

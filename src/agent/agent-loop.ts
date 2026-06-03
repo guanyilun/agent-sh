@@ -1410,8 +1410,10 @@ export class AgentLoop implements AgentBackend {
     const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();
     const pendingToolCalls: PendingToolCall[] = [];
 
-    // Tool protocol controls what goes in the API tools param vs dynamic context
-    const toolView = this.getTools();
+    // Tool protocol controls what goes in the API tools param vs dynamic context.
+    // agent:tools:visible is a filter point on the assembled list — distinct from
+    // getTools(), which other code (e.g. tool bridges) needs unfiltered.
+    const toolView = this.bus.emitPipe("agent:tools:visible", { tools: this.getTools() }).tools;
     const apiTools = this.toolProtocol.getApiTools(toolView);
     const toolPrompt = this.toolProtocol.getToolPrompt(toolView);
 
@@ -1427,7 +1429,7 @@ export class AgentLoop implements AgentBackend {
 
     // Stream filter strips tool tags from display (inline mode only)
     const streamFilter = this.toolProtocol.createStreamFilter(
-      this.getTools().map((t) => t.name),
+      toolView.map((t) => t.name),
     );
 
     const requestParams = {
