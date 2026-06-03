@@ -14,6 +14,11 @@ Releases before this file are recorded in the git tags and GitHub releases.
   event, so a host `reloadSettings()` picks up `apiKey` / `baseURL` edits (and
   added or removed providers) without a process restart. Previously it was read
   once at load and went stale, so a changed key took effect only after a restart.
+- `agent:tool-output-chunk` now carries `toolCallId`, so streamed tool output
+  routes to the producing tool's display. Read-only tools run as a parallel
+  batch, so with positional routing each tool's streamed output landed in the
+  most-recently-started tool's body — concurrent calls cross-rendered. Frontends
+  that ignore the field still work (they fall back to most-recent).
 
 ## [0.15.2] - 2026-06-02
 

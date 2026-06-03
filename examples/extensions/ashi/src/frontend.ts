@@ -318,6 +318,7 @@ export function mountAshi(
     | { t: "thinking"; ctrl: ThinkingBlock }
     | { t: "assistant"; ctrl: AssistantMessage }
     | { t: "pair"; result: ToolResultView }
+    | { t: "user" }
     | { t: "plain" };
   const chatEntries: ChatEntry[] = [];
   const appendEntry = (node: RenderNode, entry: ChatEntry): void => {
@@ -580,7 +581,7 @@ export function mountAshi(
               .join("")
           : "";
       if (raw.startsWith("[Compacted conversation summary]")) return;
-      appendEntry(renderUserMessage(stripContextWrappers(raw)), { t: "plain" });
+      appendEntry(renderUserMessage(stripContextWrappers(raw)), { t: "user" });
     } else if (m.role === "assistant") {
       const reasoning = readReasoning(m);
       if (reasoning) {
@@ -661,7 +662,7 @@ export function mountAshi(
   bus.on("agent:query", ({ query }) => {
     app.commitScrollback?.();
     sealOpenGroup();
-    appendEntry(renderUserMessage(query), { t: "plain" });
+    appendEntry(renderUserMessage(query), { t: "user" });
     activeAssistant = null;
     app.requestRender();
   });
@@ -763,7 +764,13 @@ export function mountAshi(
     app.requestRender();
   });
 
-  bus.on("agent:tool-output-chunk", ({ chunk }) => {
+  bus.on("agent:tool-output-chunk", ({ chunk, toolCallId }) => {
+    const owner = toolCallId ? activeTools.get(toolCallId) : undefined;
+    if (owner?.kind === "pair") {
+      owner.pair.result.appendChunk(chunk);
+      app.requestRender();
+      return;
+    }
     for (const entry of [...activeTools.values()].reverse()) {
       if (entry.kind === "pair") {
         entry.pair.result.appendChunk(chunk);
@@ -1262,7 +1269,13 @@ export function mountAshi(
     }
     if (key.matches("ctrl+o")) {
       allExpanded = !allExpanded;
-      for (const e of chatEntries) {
+      // Toggle only the latest turn; re-rendering the whole transcript is O(history).
+      let start = 0;
+      for (let i = chatEntries.length - 1; i >= 0; i--) {
+        if (chatEntries[i]!.t === "user") { start = i; break; }
+      }
+      for (let i = start; i < chatEntries.length; i++) {
+        const e = chatEntries[i]!;
         if (e.t === "group") e.group.setExpanded(allExpanded);
         else if (e.t === "pair") e.result.setExpanded(allExpanded);
       }

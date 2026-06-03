@@ -1124,7 +1124,7 @@ export class AgentLoop implements AgentBackend {
         // Execute via handler — extensions can advise to add safe-mode,
         // logging, metrics, custom permission policies, etc.
         const defaultOnChunk = (chunk: string) => {
-          this.bus.emit("agent:tool-output-chunk", { chunk });
+          this.bus.emit("agent:tool-output-chunk", { chunk, toolCallId: tc.id });
         };
         const result = await this.handlers.call(
           "tool:execute",

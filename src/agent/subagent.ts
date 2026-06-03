@@ -157,7 +157,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       }
 
       const onChunk = bus && tool.showOutput !== false
-        ? (chunk: string) => { bus.emit("agent:tool-output-chunk", { chunk }); }
+        ? (chunk: string) => { bus.emit("agent:tool-output-chunk", { chunk, toolCallId: tc.id }); }
         : undefined;
 
       const result = await tool.execute(args, onChunk);

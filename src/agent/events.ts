@@ -88,7 +88,7 @@ declare module "../core/event-bus.js" {
       kind?: string;
       resultDisplay?: ToolResultDisplay;
     };
-    "agent:tool-output-chunk": { chunk: string };
+    "agent:tool-output-chunk": { chunk: string; toolCallId?: string };
 
     "tool:interactive-start": Record<string, never>;
     "tool:interactive-end": Record<string, never>;

@@ -214,10 +214,11 @@ function renderStream(buffer: string, env: Env): string {
   const lines = display.split("\n");
   const trimmed = lines.slice(-env.previewLines).join("\n");
   const remaining = Math.max(0, lines.length - env.previewLines);
+  // The preview is the tail, so the hidden lines come before it — note goes above.
   const overflow = remaining > 0
-    ? `\n${theme.fg("muted", `... (${remaining} more ${remaining === 1 ? "line" : "lines"})`)}`
+    ? `${theme.fg("muted", `... (${remaining} earlier ${remaining === 1 ? "line" : "lines"})`)}\n`
     : "";
-  return `${theme.fg("toolOutput", trimmed)}${overflow}`;
+  return `${overflow}${theme.fg("toolOutput", trimmed)}`;
 }
 
 function lineCountHint(buffer: string): string {
