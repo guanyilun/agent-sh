@@ -119,11 +119,29 @@ test("expanded stream output is tail-capped, not dumped in full", () => {
   const result = renderer.mountToolResult(model, args, env);
   result.appendChunk(Array.from({ length: 600 }, (_, i) => `line ${i + 1}`).join("\n"));
   result.finalize({ exitCode: 0 });
-  result.toggleExpanded();
+  result.setExpanded(true);
 
   const out = lines(result.node);
   assert.ok(out.some((l) => /600 total/.test(l)), "shows the hidden-lines note");
   assert.ok(out.some((l) => /\bline 600\b/.test(l)), "shows the tail");
   assert.ok(!out.some((l) => /\bline 1\b/.test(l)), "drops the earliest lines");
   assert.ok(out.length < 600, "does not render all 600 lines");
+});
+
+test("setExpanded is an explicit set, not a toggle", () => {
+  const model = bashModel();
+  const env = { width: 200, mode: "preview" as const, previewLines: 5 };
+  const args = { toolCallId: "set", name: "bash", title: "bash", rawInput: { command: "yes" } };
+  const result = renderer.mountToolResult(model, args, env);
+  result.appendChunk(Array.from({ length: 600 }, (_, i) => `line ${i + 1}`).join("\n"));
+  result.finalize({ exitCode: 0 });
+
+  const expanded = (): boolean => lines(result.node).some((l) => /600 total/.test(l));
+
+  result.setExpanded(true);
+  assert.ok(expanded(), "true expands");
+  result.setExpanded(true);
+  assert.ok(expanded(), "true again stays expanded");
+  result.setExpanded(false);
+  assert.ok(!expanded(), "false collapses");
 });

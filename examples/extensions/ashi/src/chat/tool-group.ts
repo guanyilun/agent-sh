@@ -44,8 +44,9 @@ export class ToolGroup {
     this.repaint();
   }
 
-  toggleExpanded(): void {
-    this.expanded = !this.expanded;
+  setExpanded(expanded: boolean): void {
+    if (this.expanded === expanded) return;
+    this.expanded = expanded;
     this.repaint();
   }
 

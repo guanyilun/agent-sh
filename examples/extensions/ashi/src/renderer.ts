@@ -133,7 +133,7 @@ export interface App {
 export interface ToolCallView {
   node: RenderNode;
   setStatus(opts: { exitCode: number | null; elapsedMs: number; summary?: string }): void;
-  toggleExpanded?(): void;
+  setExpanded?(expanded: boolean): void;
 }
 
 export interface ToolResultView {
@@ -142,7 +142,7 @@ export interface ToolResultView {
   /** Width-aware diff closure produced by the edit/write tool at finalize. */
   setDiffRenderer(fn: (width: number) => string[]): void;
   finalize(opts: { exitCode: number | null; summary?: string }): void;
-  toggleExpanded(): void;
+  setExpanded(expanded: boolean): void;
 }
 
 export interface ToolGroupChild {

@@ -136,8 +136,9 @@ class SchemaResultComponent extends Container {
     this.handle.dispatch("status", { ...opts, elapsedMs: 0 });
     HANDLES.delete(this.handle.toolCallId);
   }
-  toggleExpanded(): void {
-    this.handle.cell.env = { ...this.handle.cell.env, expanded: !this.handle.cell.env.expanded };
+  setExpanded(expanded: boolean): void {
+    if (this.handle.cell.env.expanded === expanded) return;
+    this.handle.cell.env = { ...this.handle.cell.env, expanded };
     this.repaint();
     this.handle.cell.callView?.repaint();
   }
@@ -198,6 +199,6 @@ export function mountResult<S>(model: RenderModel<S>, args: MountArgs, env: Moun
     appendChunk: (chunk) => comp.appendChunk(chunk),
     setDiffRenderer: (fn) => comp.setDiffRenderer(fn),
     finalize: (opts) => comp.finalize(opts),
-    toggleExpanded: () => comp.toggleExpanded(),
+    setExpanded: (expanded) => comp.setExpanded(expanded),
   };
 }

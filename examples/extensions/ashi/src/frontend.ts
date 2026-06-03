@@ -325,6 +325,14 @@ export function mountAshi(
   const activeTools = new Map<string, LiveToolEntry>();
   const groupMaxVisible = loadGroupMaxVisible();
 
+  let allExpanded = false;
+  const makeGroup = (kind: string): ToolGroup => {
+    const g = new ToolGroup(renderer, kind, groupMaxVisible);
+    g.setExpanded(allExpanded);
+    appendEntry(g.node, { t: "group", group: g });
+    return g;
+  };
+
   let openGroup: ToolGroup | null = null;
   const sealOpenGroup = (): void => {
     if (openGroup) { openGroup.seal(); openGroup = null; }
@@ -464,6 +472,7 @@ export function mountAshi(
       kind: args.kind,
       rawInput: args.rawInput,
     });
+    result.setExpanded(allExpanded);
     return { call, result, startedAt: Date.now() };
   };
 
@@ -579,8 +588,7 @@ export function mountAshi(
           const kind = TOOL_KIND[name];
           if (kind && GROUPABLE_KINDS.has(kind) && renderer.mountToolGroup) {
             const mergeable = findMergeableGroup(kind);
-            const group = mergeable
-              ?? (() => { const g = new ToolGroup(renderer, kind, groupMaxVisible); appendEntry(g.node, { t: "group", group: g }); return g; })();
+            const group = mergeable ?? makeGroup(kind);
             group.addCall(id, name, detailFromArgs(tc.function.arguments));
             if (id) toolMap.set(id, { kind: "group", group, name });
             continue;
@@ -724,8 +732,7 @@ export function mountAshi(
     if (GROUPABLE_KINDS.has(kind) && renderer.mountToolGroup) {
       const mergeable = findMergeableGroup(kind);
       if (!mergeable) sealOpenGroup();
-      const group = mergeable
-        ?? (() => { const g = new ToolGroup(renderer, kind, groupMaxVisible); appendEntry(g.node, { t: "group", group: g }); return g; })();
+      const group = mergeable ?? makeGroup(kind);
       group.addCall(id, lookupName, detail);
       openGroup = group;
       activeTools.set(id, { kind: "group", group });
@@ -1242,9 +1249,10 @@ export function mountAshi(
       return { consume: true };
     }
     if (key.matches("ctrl+o")) {
+      allExpanded = !allExpanded;
       for (const e of chatEntries) {
-        if (e.t === "group") e.group.toggleExpanded();
-        else if (e.t === "pair") e.result.toggleExpanded();
+        if (e.t === "group") e.group.setExpanded(allExpanded);
+        else if (e.t === "pair") e.result.setExpanded(allExpanded);
       }
       app.requestRender();
       return { consume: true };
