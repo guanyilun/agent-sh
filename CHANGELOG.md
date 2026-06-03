@@ -8,6 +8,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-06-03
+
 ### Fixed
 
 - The settings provider overlay is now rebuilt on every `agent:providers:changed`
