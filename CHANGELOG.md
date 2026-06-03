@@ -8,6 +8,18 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-06-02
+
+### Added
+
+- `agent:tools:visible` — a filter point on the assembled tool list as the model
+  sees it, applied after `getTools()`, so a frontend or extension can restrict
+  the model's tools without affecting tool lookup, execution, or tool bridges
+  (which need the full list). Inert by default.
+- `system-prompt:identity` — a handler for the system prompt's identity section
+  (defaulting to the kernel identity), so a frontend or app can replace the
+  identity without overriding the whole `system-prompt:build`. Inert by default.
+
 ## [0.15.1] - 2026-06-01
 
 ### Fixed
