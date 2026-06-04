@@ -1,6 +1,6 @@
 {
   "name": "agent-sh",
-  "version": "0.15.4",
+  "version": "0.15.5",
   "description": "A composable agent runtime — pair any frontend with any agent backend over one shared extension layer",
   "type": "module",
   "workspaces": [

@@ -8,6 +8,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.5] - 2026-06-04
+
 ### Changed
 
 - Shell environment capture is cached on disk, keyed on the shell and the
