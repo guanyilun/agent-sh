@@ -79,6 +79,34 @@ export function wrapLine(text: string, maxWidth: number): string[] {
     lastVisibleIdx = -1;
   };
 
+  // Break a token too wide for the remaining space across rows, char by char.
+  // Honors the current lineWidth so it works whether the line is empty or
+  // already holds carried tokens.
+  const hardBreak = (token: string): void => {
+    let remaining = token;
+    while (remaining.length > 0) {
+      let fitLen = 0, fitWidth = 0;
+      for (const ch of remaining) {
+        const cw = charWidth(ch.codePointAt(0) ?? 0);
+        if (fitWidth + cw > maxWidth - lineWidth) break;
+        fitWidth += cw;
+        fitLen += ch.length;
+      }
+      if (fitLen === 0) {
+        // Nothing fits in what's left of the line; flush and retry on a fresh
+        // one. On an already-empty line, force one char so we always progress.
+        if (lineWidth > 0) { commit(); continue; }
+        fitLen = remaining[0]?.length ?? 1;
+      }
+      const chunk = remaining.slice(0, fitLen);
+      remaining = remaining.slice(fitLen);
+      lineTokens.push(chunk);
+      lineWidth += visibleLen(chunk);
+      lastVisibleIdx = lineTokens.length - 1;
+      if (remaining.length > 0) commit();
+    }
+  };
+
   for (const seg of segments) {
     if (seg.startsWith("\x1b[")) {
       lineTokens.push(seg);
@@ -103,23 +131,7 @@ export function wrapLine(text: string, maxWidth: number): string[] {
 
       if (lineWidth === 0) {
         // Token longer than the entire line — hard-break by char width.
-        let remaining = token;
-        while (remaining.length > 0) {
-          let fitLen = 0, fitWidth = 0;
-          for (const ch of remaining) {
-            const cw = charWidth(ch.codePointAt(0) ?? 0);
-            if (fitWidth + cw > maxWidth) break;
-            fitWidth += cw;
-            fitLen += ch.length;
-          }
-          if (fitLen === 0) fitLen = remaining[0]?.length ?? 1;
-          const chunk = remaining.slice(0, fitLen);
-          remaining = remaining.slice(fitLen);
-          lineTokens.push(chunk);
-          lineWidth += visibleLen(chunk);
-          lastVisibleIdx = lineTokens.length - 1;
-          if (remaining.length > 0) commit();
-        }
+        hardBreak(token);
         continue;
       }
 
@@ -147,9 +159,13 @@ export function wrapLine(text: string, maxWidth: number): string[] {
         lineTokens.push(t);
         lineWidth += visibleLen(t);
       }
-      lineTokens.push(token);
-      lineWidth += tokenWidth;
-      lastVisibleIdx = lineTokens.length - 1;
+      if (lineWidth + tokenWidth <= maxWidth) {
+        lineTokens.push(token);
+        lineWidth += tokenWidth;
+        lastVisibleIdx = lineTokens.length - 1;
+      } else {
+        hardBreak(token);
+      }
     }
   }
 

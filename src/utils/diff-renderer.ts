@@ -340,12 +340,21 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
   const bgWidth = Math.max(1, textWidth - noW - 3);
   const gutter = (n: string): string => `${p.dim}${n} │${p.reset} `;
 
-  const change = (no: string, sigil: string, bg: string, fg: string, text: string): string => {
-    if (!gutterLine) {
-      return `${bg}${padToWidth(`${fg}${no} ${sigil}${p.diffText} ${preserveBg(text, bg)}`, textWidth)}${p.reset}`;
-    }
-    if (useTrueColor) return gutter(no) + padToWidth(`${bg}${fg}${sigil}${p.diffText} ${preserveBg(text, bg)}`, bgWidth) + p.reset;
-    return `${gutter(no)}${fg}${sigil} ${text}${p.reset}`;
+  const continuationNo = " ".repeat(noW);
+
+  // Long lines wrap across rows rather than truncating: the first row carries
+  // the line number and sigil; continuation rows blank both but keep the
+  // gutter, row background, and alignment.
+  const change = (no: string, sigil: string, bg: string, fg: string, text: string): string[] => {
+    return wrapLine(text, lineTextW).map((seg, r) => {
+      const n = r === 0 ? no : continuationNo;
+      const sg = r === 0 ? sigil : " ";
+      if (!gutterLine) {
+        return `${bg}${padToWidth(`${fg}${n} ${sg}${p.diffText} ${preserveBg(seg, bg)}`, textWidth)}${p.reset}`;
+      }
+      if (useTrueColor) return gutter(n) + padToWidth(`${bg}${fg}${sg}${p.diffText} ${preserveBg(seg, bg)}`, bgWidth) + p.reset;
+      return `${gutter(n)}${fg}${sg} ${seg}${p.reset}`;
+    });
   };
 
   const hlCache = new Map<ChangePair, { old: string; new: string }>();
@@ -367,31 +376,25 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
     ).padStart(noW);
 
     if (line.type === "context") {
-      const raw = truncateText(line.text, lineTextW);
-      const text = lang ? highlightLine(raw, lang) : raw;
-      out.push(!gutterLine ? `${p.dim}${no}${p.reset}   ${text}` : `${gutter(no)}  ${p.dim}${text}${p.reset}`);
+      const text = lang ? highlightLine(line.text, lang) : line.text;
+      wrapLine(text, lineTextW).forEach((seg, r) => {
+        const n = r === 0 ? no : continuationNo;
+        out.push(!gutterLine ? `${p.dim}${n}${p.reset}   ${seg}` : `${gutter(n)}  ${p.dim}${seg}${p.reset}`);
+      });
       continue;
     }
 
     const pair = pairs.get(i);
     if (line.type === "removed") {
-      let removedText: string;
-      if (pair) {
-        removedText = truncateText(highlightedPair(pair).old, lineTextW);
-      } else {
-        const raw = truncateText(line.text, lineTextW);
-        removedText = lang ? highlightLine(raw, lang) : raw;
-      }
-      out.push(change(no, "-", p.errorBg, p.error, removedText));
+      const removedText = pair
+        ? highlightedPair(pair).old
+        : (lang ? highlightLine(line.text, lang) : line.text);
+      out.push(...change(no, "-", p.errorBg, p.error, removedText));
     } else {
-      let addedText: string;
-      if (pair) {
-        addedText = truncateText(highlightedPair(pair).new, lineTextW);
-      } else {
-        const raw = truncateText(line.text, lineTextW);
-        addedText = lang ? highlightLine(raw, lang) : raw;
-      }
-      out.push(change(no, "+", p.successBg, p.success, addedText));
+      const addedText = pair
+        ? highlightedPair(pair).new
+        : (lang ? highlightLine(line.text, lang) : line.text);
+      out.push(...change(no, "+", p.successBg, p.success, addedText));
     }
   }
   return out;
