@@ -77,6 +77,12 @@ export const bashStrategy: ShellStrategy = {
     return "[ -f ~/.bashrc ] && source ~/.bashrc 2>/dev/null; env -0";
   },
 
+  envCaptureFiles(env): string[] {
+    const home = env.HOME;
+    if (!home) return [];
+    return [".bashrc", ".bash_profile", ".bash_login", ".profile"].map((f) => path.join(home, f));
+  },
+
   redrawEscape(): string {
     return "\x1b[9999~";
   },

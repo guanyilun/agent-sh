@@ -129,6 +129,16 @@ test("bash envCaptureCommand sources bashrc then runs env -0", () => {
   assert.match(bashStrategy.envCaptureCommand(), /env -0/);
 });
 
+test("bash envCaptureFiles stamps the rc files under HOME", () => {
+  assert.deepEqual(bashStrategy.envCaptureFiles!({ HOME: "/home/test" }), [
+    "/home/test/.bashrc",
+    "/home/test/.bash_profile",
+    "/home/test/.bash_login",
+    "/home/test/.profile",
+  ]);
+  assert.deepEqual(bashStrategy.envCaptureFiles!({}), []);
+});
+
 test("bash redrawEscape returns the CSI 9999~ sequence", () => {
   assert.equal(bashStrategy.redrawEscape(), "\x1b[9999~");
 });
@@ -195,6 +205,22 @@ test("zsh envCaptureCommand sources zshrc then runs env -0", () => {
   assert.match(zshStrategy.envCaptureCommand(), /env -0/);
 });
 
+test("zsh envCaptureFiles prefers ZDOTDIR, falls back to HOME, and returns [] with neither", () => {
+  assert.deepEqual(zshStrategy.envCaptureFiles!({ ZDOTDIR: "/cfg/zsh", HOME: "/home/test" }), [
+    "/cfg/zsh/.zshenv",
+    "/cfg/zsh/.zprofile",
+    "/cfg/zsh/.zshrc",
+    "/cfg/zsh/.zlogin",
+  ]);
+  assert.deepEqual(zshStrategy.envCaptureFiles!({ HOME: "/home/test" }), [
+    "/home/test/.zshenv",
+    "/home/test/.zprofile",
+    "/home/test/.zshrc",
+    "/home/test/.zlogin",
+  ]);
+  assert.deepEqual(zshStrategy.envCaptureFiles!({}), []);
+});
+
 test("zsh redrawEscape returns the CSI 9999~ sequence", () => {
   assert.equal(zshStrategy.redrawEscape(), "\x1b[9999~");
 });
@@ -239,6 +265,18 @@ test("fish strategy chains onto an existing fish_prompt rather than clobbering i
 
 test("fish envCaptureCommand just runs env -0 (fish -l sources config itself)", () => {
   assert.equal(fishStrategy.envCaptureCommand(), "env -0");
+});
+
+test("fish envCaptureFiles prefers XDG_CONFIG_HOME, falls back to HOME/.config, and returns [] with neither", () => {
+  assert.deepEqual(fishStrategy.envCaptureFiles!({ XDG_CONFIG_HOME: "/cfg" }), [
+    "/cfg/fish/config.fish",
+    "/cfg/fish/conf.d",
+  ]);
+  assert.deepEqual(fishStrategy.envCaptureFiles!({ HOME: "/home/test" }), [
+    "/home/test/.config/fish/config.fish",
+    "/home/test/.config/fish/conf.d",
+  ]);
+  assert.deepEqual(fishStrategy.envCaptureFiles!({}), []);
 });
 
 test("fish redrawEscape returns the CSI-u sequence with private-use codepoint U+E028", () => {

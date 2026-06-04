@@ -77,6 +77,12 @@ export const zshStrategy: ShellStrategy = {
     return "source ~/.zshrc 2>/dev/null; env -0";
   },
 
+  envCaptureFiles(env): string[] {
+    const zdot = env.ZDOTDIR || env.HOME;
+    if (!zdot) return [];
+    return [".zshenv", ".zprofile", ".zshrc", ".zlogin"].map((f) => path.join(zdot, f));
+  },
+
   redrawEscape(): string {
     return "\x1b[9999~";
   },

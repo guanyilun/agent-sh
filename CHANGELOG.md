@@ -8,6 +8,16 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Changed
+
+- Shell environment capture is cached on disk, keyed on the shell and the
+  mtimes of its rc files. Launch previously sourced the user's interactive
+  config twice — once to snapshot env vars, again in the interactive shell —
+  paying the full rc cost (oh-my-zsh, nvm, conda, …) on each. Repeat launches
+  now reuse the snapshot and skip the redundant sourcing (~1s+ on heavy
+  configs); editing an rc file invalidates the cache. Set
+  `AGENT_SH_SHELL_ENV_NOCACHE=1` to force a fresh capture.
+
 ## [0.15.4] - 2026-06-03
 
 ### Added

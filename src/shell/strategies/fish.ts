@@ -71,6 +71,12 @@ export const fishStrategy: ShellStrategy = {
     return "env -0";
   },
 
+  envCaptureFiles(env): string[] {
+    const config = env.XDG_CONFIG_HOME || (env.HOME ? path.join(env.HOME, ".config") : undefined);
+    if (!config) return [];
+    return [path.join(config, "fish", "config.fish"), path.join(config, "fish", "conf.d")];
+  },
+
   redrawEscape(): string {
     return "\x1b[57400u";
   },

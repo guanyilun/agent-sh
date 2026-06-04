@@ -48,6 +48,8 @@ export interface ShellStrategy {
    */
   envCaptureCommand(): string;
 
+  envCaptureFiles?(env: Record<string, string | undefined>): string[];
+
   /**
    * Escape sequence to write to the PTY to ask the shell to repaint its
    * prompt in place. The corresponding binding is set up in prepareSpawn.
