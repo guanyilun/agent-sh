@@ -22,6 +22,11 @@ Releases before this file are recorded in the git tags and GitHub releases.
   instead of interleaving removed and added lines one by one.
 - Changed tokens are no longer bold; the row tints and changed-token emphasis
   backgrounds are softened.
+- The `openai-compatible` provider now emits the `reasoning_effort` shape
+  (`"none"` when thinking is off), so `thinkingLevel: "off"` actually disables
+  reasoning on local servers that honor it instead of sending no parameter.
+  Override with `reasoningShape` or a user extension for servers wanting a
+  different disable token.
 
 ## [0.15.3] - 2026-06-03
 
