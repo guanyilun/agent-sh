@@ -8,6 +8,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.4] - 2026-06-03
+
 ### Added
 
 - `diffText` palette slot — the foreground color for diff row text, overridable
