@@ -79,9 +79,6 @@ export function wrapLine(text: string, maxWidth: number): string[] {
     lastVisibleIdx = -1;
   };
 
-  // Break a token too wide for the remaining space across rows, char by char.
-  // Honors the current lineWidth so it works whether the line is empty or
-  // already holds carried tokens.
   const hardBreak = (token: string): void => {
     let remaining = token;
     while (remaining.length > 0) {
@@ -93,8 +90,7 @@ export function wrapLine(text: string, maxWidth: number): string[] {
         fitLen += ch.length;
       }
       if (fitLen === 0) {
-        // Nothing fits in what's left of the line; flush and retry on a fresh
-        // one. On an already-empty line, force one char so we always progress.
+        // Force one char on an empty line so an over-wide char can't loop forever.
         if (lineWidth > 0) { commit(); continue; }
         fitLen = remaining[0]?.length ?? 1;
       }

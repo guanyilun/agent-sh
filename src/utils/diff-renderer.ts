@@ -141,6 +141,39 @@ function tokenLcs(
 }
 
 /**
+ * Anchors the shared prefix/suffix as unchanged and runs the O(m·n) LCS only on
+ * the differing middle. Null when that middle exceeds maxProduct.
+ */
+function inlineMatches(
+  a: Token[],
+  b: Token[],
+  maxProduct: number,
+): { oldMatch: boolean[]; newMatch: boolean[] } | null {
+  const m = a.length;
+  const n = b.length;
+  let pre = 0;
+  while (pre < m && pre < n && a[pre].text === b[pre].text) pre++;
+  let suf = 0;
+  while (suf < m - pre && suf < n - pre && a[m - 1 - suf].text === b[n - 1 - suf].text) suf++;
+
+  const midM = m - pre - suf;
+  const midN = n - pre - suf;
+  if (midM * midN > maxProduct) return null;
+
+  const oldMatch = new Array<boolean>(m).fill(false);
+  const newMatch = new Array<boolean>(n).fill(false);
+  for (let i = 0; i < pre; i++) { oldMatch[i] = true; newMatch[i] = true; }
+  for (let i = 0; i < suf; i++) { oldMatch[m - 1 - i] = true; newMatch[n - 1 - i] = true; }
+
+  if (midM > 0 && midN > 0) {
+    const mid = tokenLcs(a.slice(pre, m - suf), b.slice(pre, n - suf));
+    for (let i = 0; i < midM; i++) oldMatch[pre + i] = mid.oldMatch[i];
+    for (let j = 0; j < midN; j++) newMatch[pre + j] = mid.newMatch[j];
+  }
+  return { oldMatch, newMatch };
+}
+
+/**
  * Rewrite full ANSI resets (\x1b[0m) to foreground-only resets,
  * preserving the given background color across the line.
  */
@@ -193,15 +226,14 @@ function highlightInlineChanges(
     };
   }
 
-  // Safety guard: skip if LCS matrix would be too large
-  if (oldTokens.length * newTokens.length > 50000) {
+  const matches = inlineMatches(oldTokens, newTokens, 1_000_000);
+  if (!matches) {
     return {
       old: language ? highlightLine(oldLine, language) : oldLine,
       new: language ? highlightLine(newLine, language) : newLine,
     };
   }
-
-  const { oldMatch, newMatch } = tokenLcs(oldTokens, newTokens);
+  const { oldMatch, newMatch } = matches;
 
   const buildHighlighted = (
     tokens: Token[],
@@ -342,9 +374,7 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
 
   const continuationNo = " ".repeat(noW);
 
-  // Long lines wrap across rows rather than truncating: the first row carries
-  // the line number and sigil; continuation rows blank both but keep the
-  // gutter, row background, and alignment.
+  // Wrapped rows after the first blank the line number and sigil.
   const change = (no: string, sigil: string, bg: string, fg: string, text: string): string[] => {
     return wrapLine(text, lineTextW).map((seg, r) => {
       const n = r === 0 ? no : continuationNo;
