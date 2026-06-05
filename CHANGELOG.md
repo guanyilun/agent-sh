@@ -8,6 +8,27 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Added
+
+- `agent-sh/skills` entry point exposing `discoverGlobalSkills()` and
+  `invalidateGlobalSkillsCache()`, so downstream tools can discover and
+  invalidate installed skills without reimplementing the filesystem scan.
+- `command-suggest` example extension: stages an agent-suggested shell command
+  at the user's prompt after the response finishes, ready to edit or run with
+  Enter instead of being copy-pasted.
+
+### Changed
+
+- `ToolDisplayInfo.kind` is now optional. A tool that sets a self-describing
+  `icon` can omit it, and the TUI then renders icon + detail with no verb —
+  previously every tool was forced to show one of read/write/execute/search.
+
+### Removed
+
+- Stale `agent-sh/agent/history-file` subpath export. Its source was deleted, so
+  a clean build never produced the target and the export resolved to a missing
+  module in published tarballs.
+
 ### Fixed
 
 - Diff rendering (edit/write previews) now wraps long lines across rows instead
