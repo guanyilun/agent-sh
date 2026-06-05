@@ -8,6 +8,15 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Changed
+
+- Floating panel (overlay extensions): Up/Down arrows and the scroll wheel now
+  scroll the transcript in the input/idle phase, matching their behavior while
+  the agent is working. Previously they navigated input history, so after a
+  reply there was no way to scroll back through it (the panel owns its alt
+  screen, where terminals route the wheel through arrow keys). Input history
+  moved to Ctrl+P / Ctrl+N; PageUp/PageDown still page-scroll.
+
 ## [0.15.6] - 2026-06-04
 
 ### Added
