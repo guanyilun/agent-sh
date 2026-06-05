@@ -8,6 +8,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.6] - 2026-06-04
+
 ### Added
 
 - `agent-sh/skills` entry point exposing `discoverGlobalSkills()` and
