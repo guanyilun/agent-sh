@@ -54,7 +54,10 @@ export type ToolResultBody =
   | { kind: "lines"; lines: string[]; maxLines?: number }
 
 export interface ToolDisplayInfo {
-  kind: "read" | "write" | "execute" | "search";
+  /** Verb shown next to the detail (e.g. "execute foo.py"). Omit when a custom
+   *  `icon` already makes the action self-evident — the renderer then shows
+   *  icon + detail with no verb. */
+  kind?: "read" | "write" | "execute" | "search";
   locations?: { path: string; line?: number | null }[];
   /** Custom icon character for TUI display (e.g., "◆", "⌕"). When set, the TUI shows
    *  icon + detail only. When absent, the tool name is shown alongside the detail. */
