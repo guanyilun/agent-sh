@@ -823,6 +823,13 @@ export class FloatingPanel {
     this.autocompleteIndex = 0;
   }
 
+  private moveAutocomplete(delta: number): void {
+    const n = this.autocompleteItems.length;
+    if (n === 0) return;
+    this.autocompleteIndex = (this.autocompleteIndex + delta + n) % n;
+    this.render();
+  }
+
   // ── Input handling ──────────────────────────────────────────
 
   private handleIntercept(payload: { data: string; consumed: boolean }): { data: string; consumed: boolean } {
@@ -913,6 +920,16 @@ export class FloatingPanel {
 
     if (this.handleScroll(data, false)) return;
 
+    if (data === "\x10" || data === "\x0e") {
+      const forward = data === "\x0e";
+      if (this.autocompleteActive) {
+        this.moveAutocomplete(forward ? 1 : -1);
+      } else if (forward ? this.editor.historyForward() : this.editor.historyBack()) {
+        this.render();
+      }
+      return;
+    }
+
     const actions = this.editor.feed(data);
     for (const action of actions) {
       switch (action.action) {
@@ -924,6 +941,7 @@ export class FloatingPanel {
           this.editor.pushHistory(query);
           this.editor.clear();
           this.clearAutocomplete();
+          this.userScrolled = false;
           // Phase change is the submit handler's call — sync slash commands
           // (e.g. /model, /help) keep the user in input mode.
           this.handlers.call(`${this.prefix}:submit`, query);
@@ -945,30 +963,14 @@ export class FloatingPanel {
         case "shift+tab":
           this.render();
           break;
-        case "arrow-up": {
-          if (this.autocompleteActive) {
-            this.autocompleteIndex = this.autocompleteIndex === 0
-              ? this.autocompleteItems.length - 1
-              : this.autocompleteIndex - 1;
-            this.render();
-          } else {
-            const hist = this.editor.historyBack();
-            if (hist) this.render();
-          }
+        case "arrow-up":
+          if (this.autocompleteActive) this.moveAutocomplete(-1);
+          else this.scrollUp(1);
           break;
-        }
-        case "arrow-down": {
-          if (this.autocompleteActive) {
-            this.autocompleteIndex = this.autocompleteIndex === this.autocompleteItems.length - 1
-              ? 0
-              : this.autocompleteIndex + 1;
-            this.render();
-          } else {
-            const hist = this.editor.historyForward();
-            if (hist) this.render();
-          }
+        case "arrow-down":
+          if (this.autocompleteActive) this.moveAutocomplete(1);
+          else this.scrollDown(1);
           break;
-        }
         case "changed":
         case "delete-empty":
           this.updateAutocomplete();
