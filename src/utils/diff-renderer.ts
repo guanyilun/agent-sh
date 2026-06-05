@@ -141,6 +141,39 @@ function tokenLcs(
 }
 
 /**
+ * Anchors the shared prefix/suffix as unchanged and runs the O(m·n) LCS only on
+ * the differing middle. Null when that middle exceeds maxProduct.
+ */
+function inlineMatches(
+  a: Token[],
+  b: Token[],
+  maxProduct: number,
+): { oldMatch: boolean[]; newMatch: boolean[] } | null {
+  const m = a.length;
+  const n = b.length;
+  let pre = 0;
+  while (pre < m && pre < n && a[pre].text === b[pre].text) pre++;
+  let suf = 0;
+  while (suf < m - pre && suf < n - pre && a[m - 1 - suf].text === b[n - 1 - suf].text) suf++;
+
+  const midM = m - pre - suf;
+  const midN = n - pre - suf;
+  if (midM * midN > maxProduct) return null;
+
+  const oldMatch = new Array<boolean>(m).fill(false);
+  const newMatch = new Array<boolean>(n).fill(false);
+  for (let i = 0; i < pre; i++) { oldMatch[i] = true; newMatch[i] = true; }
+  for (let i = 0; i < suf; i++) { oldMatch[m - 1 - i] = true; newMatch[n - 1 - i] = true; }
+
+  if (midM > 0 && midN > 0) {
+    const mid = tokenLcs(a.slice(pre, m - suf), b.slice(pre, n - suf));
+    for (let i = 0; i < midM; i++) oldMatch[pre + i] = mid.oldMatch[i];
+    for (let j = 0; j < midN; j++) newMatch[pre + j] = mid.newMatch[j];
+  }
+  return { oldMatch, newMatch };
+}
+
+/**
  * Rewrite full ANSI resets (\x1b[0m) to foreground-only resets,
  * preserving the given background color across the line.
  */
@@ -193,15 +226,14 @@ function highlightInlineChanges(
     };
   }
 
-  // Safety guard: skip if LCS matrix would be too large
-  if (oldTokens.length * newTokens.length > 50000) {
+  const matches = inlineMatches(oldTokens, newTokens, 1_000_000);
+  if (!matches) {
     return {
       old: language ? highlightLine(oldLine, language) : oldLine,
       new: language ? highlightLine(newLine, language) : newLine,
     };
   }
-
-  const { oldMatch, newMatch } = tokenLcs(oldTokens, newTokens);
+  const { oldMatch, newMatch } = matches;
 
   const buildHighlighted = (
     tokens: Token[],
@@ -340,12 +372,19 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
   const bgWidth = Math.max(1, textWidth - noW - 3);
   const gutter = (n: string): string => `${p.dim}${n} │${p.reset} `;
 
-  const change = (no: string, sigil: string, bg: string, fg: string, text: string): string => {
-    if (!gutterLine) {
-      return `${bg}${padToWidth(`${fg}${no} ${sigil}${p.diffText} ${preserveBg(text, bg)}`, textWidth)}${p.reset}`;
-    }
-    if (useTrueColor) return gutter(no) + padToWidth(`${bg}${fg}${sigil}${p.diffText} ${preserveBg(text, bg)}`, bgWidth) + p.reset;
-    return `${gutter(no)}${fg}${sigil} ${text}${p.reset}`;
+  const continuationNo = " ".repeat(noW);
+
+  // Wrapped rows after the first blank the line number and sigil.
+  const change = (no: string, sigil: string, bg: string, fg: string, text: string): string[] => {
+    return wrapLine(text, lineTextW).map((seg, r) => {
+      const n = r === 0 ? no : continuationNo;
+      const sg = r === 0 ? sigil : " ";
+      if (!gutterLine) {
+        return `${bg}${padToWidth(`${fg}${n} ${sg}${p.diffText} ${preserveBg(seg, bg)}`, textWidth)}${p.reset}`;
+      }
+      if (useTrueColor) return gutter(n) + padToWidth(`${bg}${fg}${sg}${p.diffText} ${preserveBg(seg, bg)}`, bgWidth) + p.reset;
+      return `${gutter(n)}${fg}${sg} ${seg}${p.reset}`;
+    });
   };
 
   const hlCache = new Map<ChangePair, { old: string; new: string }>();
@@ -367,31 +406,25 @@ function renderUnifiedHunk(hunk: DiffHunk, layout: UnifiedLayout): string[] {
     ).padStart(noW);
 
     if (line.type === "context") {
-      const raw = truncateText(line.text, lineTextW);
-      const text = lang ? highlightLine(raw, lang) : raw;
-      out.push(!gutterLine ? `${p.dim}${no}${p.reset}   ${text}` : `${gutter(no)}  ${p.dim}${text}${p.reset}`);
+      const text = lang ? highlightLine(line.text, lang) : line.text;
+      wrapLine(text, lineTextW).forEach((seg, r) => {
+        const n = r === 0 ? no : continuationNo;
+        out.push(!gutterLine ? `${p.dim}${n}${p.reset}   ${seg}` : `${gutter(n)}  ${p.dim}${seg}${p.reset}`);
+      });
       continue;
     }
 
     const pair = pairs.get(i);
     if (line.type === "removed") {
-      let removedText: string;
-      if (pair) {
-        removedText = truncateText(highlightedPair(pair).old, lineTextW);
-      } else {
-        const raw = truncateText(line.text, lineTextW);
-        removedText = lang ? highlightLine(raw, lang) : raw;
-      }
-      out.push(change(no, "-", p.errorBg, p.error, removedText));
+      const removedText = pair
+        ? highlightedPair(pair).old
+        : (lang ? highlightLine(line.text, lang) : line.text);
+      out.push(...change(no, "-", p.errorBg, p.error, removedText));
     } else {
-      let addedText: string;
-      if (pair) {
-        addedText = truncateText(highlightedPair(pair).new, lineTextW);
-      } else {
-        const raw = truncateText(line.text, lineTextW);
-        addedText = lang ? highlightLine(raw, lang) : raw;
-      }
-      out.push(change(no, "+", p.successBg, p.success, addedText));
+      const addedText = pair
+        ? highlightedPair(pair).new
+        : (lang ? highlightLine(line.text, lang) : line.text);
+      out.push(...change(no, "+", p.successBg, p.success, addedText));
     }
   }
   return out;

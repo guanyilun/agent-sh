@@ -8,6 +8,18 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- Diff rendering (edit/write previews) now wraps long lines across rows instead
+  of truncating them with an ellipsis, so the full changed line is always
+  visible. `wrapLine` also hard-breaks an over-long token (long identifier, URL)
+  that first appears mid-line, which previously overflowed the wrap width.
+- Inline word-level emphasis in diffs now applies to long (paragraph-length)
+  lines too. The token-LCS that highlights changed words was skipped past a
+  ~220-token-per-side cost guard, leaving the whole line a flat tint; it now
+  anchors the shared prefix/suffix and diffs only the changed middle, so long
+  edits still show what actually changed.
+
 ## [0.15.5] - 2026-06-04
 
 ### Changed
