@@ -19,6 +19,12 @@ Releases before this file are recorded in the git tags and GitHub releases.
   ~220-token-per-side cost guard, leaving the whole line a flat tint; it now
   anchors the shared prefix/suffix and diffs only the changed middle, so long
   edits still show what actually changed.
+- Diff line numbers in shell-mode previews are now colored by line type (red
+  for removed, green for added, dim for context) instead of a uniform dim. A
+  single gutter mixes old-file numbers (deletions) with new-file numbers
+  (additions/context), so the uncolored column read as a confusing
+  non-monotonic sequence; the color now signals which file each number refers
+  to, matching how the ashi frontend already renders them.
 
 ## [0.15.5] - 2026-06-04
 

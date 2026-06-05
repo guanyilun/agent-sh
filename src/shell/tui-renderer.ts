@@ -731,6 +731,7 @@ export default function activate(ctx: ExtensionContext): void {
       filePath,
       maxLines,
       trueColor: true,
+      gutterLine: false,
     });
     const body = diffLines.length > 1 ? ["", ...diffLines.slice(1), ""] : diffLines;
 
