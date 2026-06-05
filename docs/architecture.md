@@ -20,7 +20,7 @@ index.ts — interactive terminal frontend:
   ├── Agent host (always activated via activateAgent(ctx) before built-ins load):
   │     ash backend       — provider resolution, LlmClient, lazy AgentLoop
   │     core tools        — bash/read/write/edit/grep/glob/ls/list_skills registered at activate time
-  │     built-in providers — openrouter, openai, openai-compatible, deepseek (unconditional)
+  │     built-in providers — openrouter, openai, deepseek, ollama, zai-coding-plan, opencode (unconditional); openai-compatible when OPENAI_BASE_URL is set
   │
   ├── Backend registry (owned by core; backends register via `agent:register-backend`):
   │     core.activateBackend() — picks the named/persisted/first backend and calls its start()
@@ -28,7 +28,7 @@ index.ts — interactive terminal frontend:
   ├── Built-in extensions (loaded via declarative manifest, individually disableable):
   │     shell-context     — PTY exchange tracking, cwd advisor, <cwd>/<shell_events> producer
   │     tui-renderer      — markdown rendering, inline diffs, thinking display, spinner
-  │     slash-commands    — /help, /model, /backend, /thinking, /compact, /context, /reload
+  │     slash-commands    — /help, /model, /thinking, /backend, /reload (the ash backend adds /compact, /context)
   │     file-autocomplete — @ file path completion
   │
   ├── Shared utilities:
@@ -36,7 +36,6 @@ index.ts — interactive terminal frontend:
   │     diff-renderer     — syntax-highlighted diffs (split/unified/summary)
   │     box-frame         — bordered TUI panels
   │     tool-display      — width-adaptive tool call rendering + pure spinner
-  │     output-writer     — OutputWriter interface (StdoutWriter, BufferWriter for tests)
   │     stream-transform  — content block transforms for response pipeline
   │
   └── User extensions (opt-in, loaded from -e flag / settings.json / extensions dir):
@@ -147,7 +146,7 @@ agent-sh/
 │   │   ├── types.ts          # AgentBackend, ToolDefinition, ToolResult
 │   │   ├── agent-loop.ts     # ash AgentLoop (constructed lazily in start())
 │   │   ├── llm-client.ts, llm-facade.ts  # ash LLM transport + ctx.agent.llm facade
-│   │   ├── providers/        # openai, openrouter, deepseek, openai-compatible
+│   │   ├── providers/        # openai, openrouter, deepseek, openai-compatible, ollama, zai-coding-plan, opencode
 │   │   ├── token-budget.ts   # Shared constants (RESPONSE_RESERVE, DEFAULT_CONTEXT_WINDOW)
 │   │   ├── tool-registry.ts, tool-protocol.ts
 │   │   ├── live-view.ts       # In-memory messages array + compaction + recall archive
@@ -185,7 +184,6 @@ agent-sh/
 │       ├── solarized-theme.ts   # Theme example
 │       ├── secret-guard.ts      # Secret redaction
 │       ├── latex-images.ts      # LaTeX equation rendering
-│       ├── ollama.ts            # Ollama provider (local + cloud)
 │       ├── claude-code-bridge/  # Claude Code SDK backend
 │       ├── pi-bridge/           # Pi agent backend
 │       ├── ash-mcp-bridge/      # MCP server bridge

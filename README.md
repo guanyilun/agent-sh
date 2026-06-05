@@ -59,7 +59,7 @@ Once installed, pick a backend below.
 
 ### Option A: Use the built-in agent (ash) — recommended
 
-`ash` is agent-sh's own lightweight agent, and the path most users should start with: it shares its tool surface with the rest of the system, so extensions you install (new tools, content transforms, slash commands, themes) compose with it directly. It works with any OpenAI-compatible API — pick one of the zero-config paths below, no settings file needed. The built-in providers (openrouter, openai, openai-compatible, deepseek) register on startup; ash activates the first one with a usable key.
+`ash` is agent-sh's own lightweight agent, and the path most users should start with: it shares its tool surface with the rest of the system, so extensions you install (new tools, content transforms, slash commands, themes) compose with it directly. It works with any OpenAI-compatible API — pick one of the zero-config paths below, no settings file needed. The built-in providers (openrouter, openai, deepseek, ollama, zai-coding-plan, opencode — plus openai-compatible when `OPENAI_BASE_URL` is set) register on startup; ash activates the first one with a usable key.
 
 **Quickest path** — store a key once via the auth subcommand:
 

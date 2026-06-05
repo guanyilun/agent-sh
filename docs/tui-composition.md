@@ -43,9 +43,11 @@ A `RenderSurface` is anything that can accept rendered output:
 
 ```typescript
 interface RenderSurface {
-  write(text: string): void;    // raw — supports \r, escape codes
+  write(text: string): void;     // raw — supports \r, escape codes
   writeLine(line: string): void; // line + newline
   readonly columns: number;      // available width
+  readonly rows: number;         // available height
+  onResize(cb: (cols: number, rows: number) => void): () => void; // subscribe; returns unsubscribe
 }
 ```
 
@@ -71,6 +73,12 @@ const panelSurface: RenderSurface = {
   },
   writeLine(line) { panel.appendLine(line); },
   get columns() { return panel.computeGeometry().contentW; },
+  get rows() { return panel.computeGeometry().contentH; },
+  onResize(cb) {
+    const handler = () => { const g = panel.computeGeometry(); cb(g.contentW, g.contentH); };
+    process.stdout.on("resize", handler);
+    return () => process.stdout.off("resize", handler);
+  },
 };
 ```
 
@@ -94,7 +102,7 @@ interface Compositor {
 | `"query"` | User query display (the bordered input box) |
 | `"status"` | Info messages, errors, suggestions |
 
-The shell frontend (`src/shell/`) sets all three to `StdoutSurface` during `activateShell`. A library or web consumer that doesn't load the shell frontend has no defaults — it must call `compositor.setDefault(...)` itself.
+The shell frontend (`src/shell/`) sets all three to a `surfaceFromTerminal(terminal)` surface (which writes through the host `Terminal`, ultimately stdout) during `activateShell`. A library or web consumer that doesn't load the shell frontend has no defaults — it must call `compositor.setDefault(...)` itself.
 
 ### Redirecting a stream
 
@@ -155,7 +163,7 @@ export default function activate(ctx: ExtensionContext): void {
     bus.emit("agent:submit", { query });
   });
 
-  panel.handlers.advise("panel:dismiss", (next) => {
+  panel.handlers.advise("panel:hide", (next) => {
     next();
     restoreAgent?.(); restoreAgent = null;
     restoreQuery?.(); restoreQuery = null;

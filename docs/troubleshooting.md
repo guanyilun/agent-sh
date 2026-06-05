@@ -18,7 +18,7 @@
 
 **Problem**: Tool calls not working (agent responds but doesn't use tools)
 
-**Solution**: Some models have limited or no tool/function calling support. Try a more capable model (e.g., gpt-4o, claude-sonnet-4-6 via OpenRouter).
+**Solution**: Some models have limited or no tool/function calling support. Try a more capable model (e.g., deepseek-v4-flash, or a larger model via OpenRouter).
 
 **Problem**: Garbled output, startup banner overwritten, or messy prompt rendering
 
@@ -54,7 +54,7 @@ Your normal p10k prompt still works — only the "flash cached prompt then redra
 Enable debug mode for detailed protocol logging:
 
 ```bash
-DEBUG=1 agent-sh --api-key "$KEY" --model gpt-4o
+DEBUG=1 DEEPSEEK_API_KEY="$KEY" agent-sh
 ```
 
 ## Getting Help

@@ -8,6 +8,11 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Added
+
+- `LICENSE` file (MIT) — matches the license declared in `package.json` and the
+  README badge, which previously linked to a missing file.
+
 ### Changed
 
 - Floating panel (overlay extensions): Up/Down arrows and the scroll wheel now
@@ -16,6 +21,18 @@ Releases before this file are recorded in the git tags and GitHub releases.
   reply there was no way to scroll back through it (the panel owns its alt
   screen, where terminals route the wheel through arrow keys). Input history
   moved to Ctrl+P / Ctrl+N; PageUp/PageDown still page-scroll.
+
+### Documentation
+
+- Audited the README and `docs/` against the source and corrected stale content:
+  the built-in provider list, the ash system-prompt structure, the tool-output
+  truncation threshold, a deleted shared utility, three nonexistent agent-loop
+  handlers, the `modeInstruction` input-mode field, the `RenderSurface`
+  interface, and the shell redraw lifecycle hook.
+- Expanded the model-configuration guide to document every per-model capability
+  (`contextWindow`, `maxTokens`, `modalities`, `reasoning`, `echoReasoning`) and
+  the provider-level fields; refreshed all example model names to current
+  open-weight models (deepseek-v4-flash, gemma4, mimo).
 
 ## [0.15.6] - 2026-06-04
 

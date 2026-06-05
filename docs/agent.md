@@ -43,14 +43,16 @@ Compaction is pluggable: the `conversation:compact` handler is advisable, so ext
 
 The system prompt is assembled once per `cwd` and cached (invalidated when the working directory changes), so the prefix is stable for provider-side prompt caching. It includes:
 
-1. **Identity** — "You are an AI coding assistant running inside agent-sh..."
-2. **Tool decision guide** — when to use which built-in tool
-3. **Tool usage guidelines** — read before editing, prefer edit over write, use grep/glob to find files, etc.
-4. **Project conventions** — `CLAUDE.md`/`AGENT.md` walked from cwd to root (cwd-stable; see next section)
-5. **Skills** — discovered project/global skills (cwd-stable)
-6. **Extension instructions** — blocks registered by extensions via `registerInstruction()` (e.g. proactive recall guidance)
-7. **Available tools** — name + description of every registered tool
-8. **Extension-appended content** — extensions can advise `system-prompt:build` to append additional context (instance IDs, memory files, etc.)
+1. **Identity** — "You are ash, an AI coding assistant running inside agent-sh..." (advisable via `system-prompt:identity`)
+2. **Frontend surface** — the active frontend's self-description, placed right after the identity (advisable via `system-prompt:frontend`; omitted when none)
+3. **Static guide** — agent-sh's own code map (paths to `docs/`, `src/`, `examples/extensions/`), generic tool guidance, and the `<query_context>`/`<dynamic_context>` envelope contract
+4. **Global memory** — `~/.agent-sh/AGENTS.md`, if present
+5. **Global skills** — discovered global skills (cwd-stable)
+6. **Project conventions + skills** — `CLAUDE.md`/`AGENT.md` walked from cwd to root, plus discovered project skills (cwd-stable; see next section)
+7. **Extension instructions** — blocks registered by extensions via `registerInstruction()` (e.g. proactive recall guidance)
+8. **Image support** — appended when the active model accepts image input
+
+Built-in tools are not inlined here — they're passed to the provider via the API `tools` parameter. Extensions can advise `system-prompt:build` directly to append further context (instance IDs, memory files, etc.).
 
 Per-turn signals live in two symmetric handlers, both empty by default:
 
@@ -218,7 +220,7 @@ When the LLM requests multiple tool calls in a single response, the agent groups
 
 2. **Parallel execution** — side-effect-free tools (`modifiesFiles` unset) run in parallel via `Promise.all`. Side-effecting tools run sequentially.
 
-3. **Output truncation** — tool results over 16KB (~4K tokens) are head+tail truncated before being added to the conversation, preventing a single tool call from blowing through the context window.
+3. **Output truncation** — tool results over the tool's `maxResultBytes` (default 100KB, ~25K tokens) are head+tail truncated (60/40 split) before being added to the conversation, preventing a single tool call from blowing through the context window.
 
 ### Structured result display
 
@@ -260,7 +262,7 @@ For OpenRouter, the flag is set automatically: model ids matching the built-in p
       "echoReasoningPatterns": ["my-custom-deepseek-fork"],
       "models": [
         { "id": "deepseek/deepseek-v3.2", "echoReasoning": false },
-        { "id": "openai/gpt-5.5",         "reasoning": true }
+        { "id": "z-ai/glm-5.1",           "reasoning": true }
       ]
     }
   }
@@ -367,7 +369,7 @@ Each entry is a `(provider, model)` target — a serializable identity plus capa
 
 ```typescript
 interface Model {
-  id: string;               // model id, e.g. "openai/gpt-5"
+  id: string;               // model id, e.g. "deepseek/deepseek-v4-flash"
   provider: string;         // identity is the (provider, id) pair
   contextWindow?: number;   // per-model override for the auto-compact threshold
   maxTokens?: number;

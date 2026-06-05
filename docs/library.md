@@ -23,8 +23,9 @@ import { activateAgent } from "agent-sh/agent";
 import { loadBuiltinExtensions } from "agent-sh/extensions";
 
 const core = createCore({
-  apiKey: process.env.OPENAI_API_KEY,
-  model: "gpt-4o",
+  // These are ash-backend config, not kernel config — see note below.
+  provider: "deepseek",                 // built-in provider → DeepSeek endpoint + deepseek-v4-flash default
+  apiKey: process.env.DEEPSEEK_API_KEY,
 });
 
 const ctx = core.extensionContext({ quit: () => process.exit(0) });
@@ -43,6 +44,8 @@ core.bus.emit("agent:submit", { query: "explain this codebase" });
 ```
 
 `createCore()` returns a headless kernel — the event bus and handler registry, with no terminal, shell, LLM, or agent attached. `activateAgent(ctx)` attaches the agent surface (tools, LLM client, providers) and registers the built-in `ash` backend; `loadBuiltinExtensions(ctx)` adds the abstract backend registry, slash commands, and file autocomplete. `core:extensions-loaded` triggers provider resolution; `activateBackend()` then starts ash (or whichever backend is configured). Send queries by emitting `agent:submit` and consume responses by listening to bus events.
+
+> **The LLM fields are backend config, not kernel config.** `createCore()` doesn't read `provider`/`apiKey`/`model`/`baseURL` — it stores the config object opaquely and re-exposes it through the `config:get-app-config` handler. The **ash** backend is the only consumer (`src/agent/index.ts`); it resolves the provider, key, and model from those fields. Under a different backend they're inert: `pi` reads `~/.pi/agent/settings.json`, `claude-code` uses its own SDK config — for those you pass `{ backend: "pi" }` (a real kernel field) and configure the model the backend's own way. The `AppConfig` type bundles kernel + agent + shell config into one object for convenience; the kernel only owns the `extensions` and `backend` keys (`CoreConfig`).
 
 Tools run without confirmation by default; to gate them, register tool advisors via `ctx.agent.adviseTool` (see examples/extensions/interactive-prompts.ts).
 
@@ -68,7 +71,7 @@ import { activateAgent } from "agent-sh/agent";
 import { loadBuiltinExtensions } from "agent-sh/extensions";
 import myTheme from "./my-theme";
 
-const core = createCore({ apiKey: "...", model: "gpt-4o" });
+const core = createCore({ provider: "deepseek", apiKey: process.env.DEEPSEEK_API_KEY });
 const ctx = core.extensionContext({ quit: () => process.exit(0) });
 
 activateAgent(ctx);

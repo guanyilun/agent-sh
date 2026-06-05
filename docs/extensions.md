@@ -468,17 +468,17 @@ Per-request producers (`mode: "per-request"`) only fire under backends that expo
 
 ## Custom Providers
 
-Providers describe the OpenAI-compatible endpoints the `ash` backend can talk to. The built-ins (openrouter, openai, openai-compatible, deepseek) register from `src/agent/providers/`; extensions can register their own — local daemons, hosted gateways, fine-tuned model catalogs — and they show up under `agent-sh auth list` and `/model`.
+Providers describe the OpenAI-compatible endpoints the `ash` backend can talk to. The built-ins (openrouter, openai, openai-compatible, deepseek, ollama, zai-coding-plan, opencode) register from `src/agent/providers/`; extensions can register their own — local daemons, hosted gateways, fine-tuned model catalogs — and they show up under `agent-sh auth list` and `/model`.
 
 ```typescript
 import type { AgentContext } from "agent-sh/types";
 
 export default function activate(ctx: AgentContext): void {
   ctx.agent.providers.register({
-    id: "ollama",
-    baseURL: "http://localhost:11434/v1",
-    defaultModel: "llama3.2",
-    models: ["llama3.2", "qwen2.5-coder"],
+    id: "llama-cpp",
+    baseURL: "http://localhost:8080/v1",
+    defaultModel: "gemma4",
+    models: ["gemma4"],
     noAuth: true,
   });
 }
@@ -549,9 +549,6 @@ These are registered by AgentLoop (constructed when the ash backend's `start()` 
 | `conversation:estimate-tokens` | `() → number` | Local chars/4 estimate of the conversation size. |
 | `conversation:estimate-prompt-tokens` | `() → number` | API-grounded estimate (last `prompt_tokens` + local delta since). Used by the auto-compact trigger. |
 | `conversation:inject-note` | `(text) → void` | Inject a `role:"user"` note mid-loop — how extensions deliver async results (subagent output, peer messages) into the next iteration. |
-| `conversation:nucleate-user` / `-agent` / `-tool` | `(msg) → NuclearEntry` | Turn a message into its one-line summary. Advise to extract extra metadata (e.g. `[why: ...]` annotations). |
-| `conversation:format-prior-history` | `(entries) → string` | Render prior-session history into a preamble. Advise for session-grouped output. |
-| `history:append` / `:search` / `:find-by-seq` / `:read-recent` | — | Shell-history-style persistent log at `~/.agent-sh/history`. Advise to add indexing, filtering, or external stores. |
 | `tool:execute` | `(ctx) → ToolResult` | Wrap the full tool lifecycle: permission → execute → emit events. |
 
 **`dynamic-context:build`** — Each advisor appends its own context. Multiple extensions compose independently:
@@ -717,7 +714,7 @@ agent-sh -e ./examples/extensions/latex-images.ts
 
 Input modes change what happens when the user types and presses Enter. Each mode binds a trigger character (typed at the start of an empty line) to a custom `onSubmit` handler. The built-in mode (`>` for agent) is registered this way — it's not special.
 
-The flow: user types trigger → prompt changes to show the mode → user types their input → presses Enter → `onSubmit` fires → your handler emits `agent:submit`. You can optionally include a `modeInstruction` that gets prepended to the user message.
+The flow: user types trigger → prompt changes to show the mode → user types their input → presses Enter → `onSubmit` fires → your handler emits `agent:submit`. To steer the agent for this mode, build your instruction into the `query` string before emitting — `agent:submit` carries only `query` (and optional `images`).
 
 ```typescript
 bus.emit("input-mode:register", {
@@ -728,8 +725,8 @@ bus.emit("input-mode:register", {
   indicator: "🌐",           // status indicator before the icon
   onSubmit(query, bus) {
     bus.emit("agent:submit", {
-      query,                 // what the user typed
-      modeInstruction: "[mode: translate] Translate the following to Spanish.",
+      // prepend the mode instruction to what the user typed
+      query: `[mode: translate] Translate the following to Spanish.\n\n${query}`,
     });
   },
   returnToSelf: true,        // re-enter this mode after agent finishes
@@ -743,7 +740,7 @@ bus.emit("input-mode:register", {
 | `label` | `string` | Shown in the prompt area |
 | `promptIcon` | `string` | Chevron/icon character in the prompt |
 | `indicator` | `string` | Status indicator before the icon |
-| `onSubmit` | `(query, bus) => void` | Called on Enter. Emits `agent:submit` with `query` + optional `modeInstruction` |
+| `onSubmit` | `(query, bus) => void` | Called on Enter. Emits `agent:submit` with `query` (build any mode instruction into the `query` string yourself) |
 | `returnToSelf` | `boolean` | Re-enter this mode after the agent finishes |
 
 Each trigger character can only be claimed by one mode. Slash commands and readline keybindings work in every mode.
@@ -826,7 +823,7 @@ If your extension wants to signal "this session is interactive — read the scre
 Internally, a remote session:
 
 1. **Redirects render streams** — `"agent"`, `"query"`, `"status"` all route to the provided surface
-2. **Keeps the shell interactive** — advises `shell:on-processing-start` and `shell:on-processing-done` to skip pause/unpause
+2. **Keeps the shell interactive** — advises `shell:on-processing-start` and `shell:on-processing-redraw` to skip pause/redraw (it deliberately leaves `shell:on-processing-done` alone so the agent-turn state cleanup always runs)
 3. **Suppresses chrome** — advises `tui:response-border`, `tui:render-user-query`, `tui:render-usage` based on options
 
 Calling `session.close()` removes all advisors and restores all compositor routing in one call.
@@ -860,11 +857,11 @@ session.close();
 
 ## Shell Lifecycle Handlers
 
-The shell's behavior during agent processing is controlled by two advisable handlers. Extensions advise these to change how the shell responds when the agent starts and stops working.
+The shell's behavior during agent processing is controlled by three handlers. Two are advisable; the third runs unconditional cleanup and should not be suppressed.
 
 ### `shell:on-processing-start`
 
-Default: pauses the shell (blocks PTY output and input) while the agent works. This is correct when agent output shares stdout with the terminal.
+Default: pauses the shell (blocks PTY output and input) and acquires the agent-turn mute scope while the agent works. This is correct when agent output shares stdout with the terminal.
 
 ```typescript
 // Skip pause — agent output goes to a separate surface
@@ -874,19 +871,23 @@ ctx.advise("shell:on-processing-start", (next) => {
 });
 ```
 
-### `shell:on-processing-done`
+### `shell:on-processing-redraw`
 
-Default: unpauses the shell, re-enters agent input mode or redraws the shell prompt.
+Default: re-enters agent input mode or redraws the shell prompt. This is the advisable half of "agent finished" — advise it to skip the redraw when your extension already owns the screen.
 
 ```typescript
 // Skip prompt redraw — already handled by the extension
-ctx.advise("shell:on-processing-done", (next) => {
+ctx.advise("shell:on-processing-redraw", (next) => {
   if (mySessionActive) return;  // skip
-  return next();                // default: unpause + redraw
+  return next();                // default: redraw / re-enter input mode
 });
 ```
 
-> **Note:** `createRemoteSession()` advises both of these automatically. You only need to advise them directly if you're building custom lifecycle behavior without using remote sessions.
+### `shell:on-processing-done`
+
+Runs when the agent turn ends: it releases the agent-turn mute scope (unconditional state cleanup) and then calls `shell:on-processing-redraw`. **Don't advise this to return early** — skipping it would strand the mute scope past the end of the turn. Suppress the redraw via `shell:on-processing-redraw` instead.
+
+> **Note:** `createRemoteSession()` advises `shell:on-processing-start` and `shell:on-processing-redraw` automatically. You only need to advise them directly if you're building custom lifecycle behavior without using remote sessions.
 
 ## Rendering Architecture
 

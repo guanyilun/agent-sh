@@ -2,17 +2,17 @@
 
 ## Running agent-sh
 
-The simplest way to run agent-sh — just provide an API key and model:
+The simplest way to run agent-sh — just provide an API key:
 
 ```bash
-# Using environment variables
-OPENAI_API_KEY="your-key" agent-sh --model gpt-4o
+# DeepSeek is a built-in provider — set the key and go (defaults to deepseek-v4-flash)
+DEEPSEEK_API_KEY="your-key" agent-sh
 
-# Using CLI flags
-agent-sh --api-key "your-key" --base-url http://localhost:11434/v1 --model llama3
+# Any OpenAI-compatible endpoint via CLI flags (e.g. a local Ollama server)
+agent-sh --api-key "your-key" --base-url http://localhost:11434/v1 --model gemma4
 
 # Using npx
-npx agent-sh --api-key "$KEY" --model gpt-4o
+DEEPSEEK_API_KEY="your-key" npx agent-sh --model deepseek-v4-flash
 ```
 
 Environment variables `OPENAI_API_KEY` and `OPENAI_BASE_URL` are supported as alternatives to CLI flags.
@@ -30,13 +30,13 @@ agent-sh --backend pi
 npm run dev
 
 # Debug mode
-DEBUG=1 agent-sh --api-key "$KEY" --model gpt-4o
+DEBUG=1 DEEPSEEK_API_KEY="$KEY" agent-sh
 ```
 
 ### Subcommands
 
 ```bash
-agent-sh init                   # scaffold ~/.agent-sh/ (settings, examples, AGENTS.md)
+agent-sh init                   # scaffold ~/.agent-sh/ (settings.json + settings.example.json, extensions/ dir)
 agent-sh install <name>         # install a bundled extension (e.g. agent-sh install pi-bridge)
 agent-sh install ./path/to/ext  # install from a local path
 agent-sh uninstall <name>       # remove an installed extension
@@ -55,8 +55,8 @@ Any provider you declare under `providers` in `settings.json` is also accepted b
   "providers": {
     "my-llama": {
       "baseURL": "http://localhost:8000/v1",
-      "defaultModel": "llama-3.1-70b",
-      "models": ["llama-3.1-70b"]
+      "defaultModel": "gemma4",
+      "models": ["gemma4"]
     }
   }
 }
@@ -84,26 +84,26 @@ For unreleased changes on `main`, use the clone-and-link flow from the [Quick St
 
 agent-sh works with any OpenAI-compatible API. Here are common configurations:
 
-### OpenAI
-
-```bash
-export OPENAI_API_KEY="sk-..."
-agent-sh --model gpt-4o
-# or: agent-sh --model gpt-4o-mini
-```
-
 ### DeepSeek
 
 ```bash
 export DEEPSEEK_API_KEY="sk-..."
-agent-sh
+agent-sh   # defaults to deepseek-v4-flash
+```
+
+### OpenAI
+
+```bash
+export OPENAI_API_KEY="sk-..."
+agent-sh --model gpt-5.4
+# or: agent-sh --model gpt-5.4-mini
 ```
 
 ### Ollama (Local)
 
 ```bash
 # No API key needed — Ollama doesn't require authentication
-agent-sh --api-key dummy --base-url http://localhost:11434/v1 --model llama3
+agent-sh --api-key dummy --base-url http://localhost:11434/v1 --model gemma4
 ```
 
 ### OpenRouter
@@ -111,7 +111,7 @@ agent-sh --api-key dummy --base-url http://localhost:11434/v1 --model llama3
 ```bash
 agent-sh --api-key "$OPENROUTER_KEY" \
   --base-url https://openrouter.ai/api/v1 \
-  --model anthropic/claude-sonnet-4-20250514
+  --model deepseek/deepseek-v4-flash
 ```
 
 ### Together AI
@@ -119,7 +119,7 @@ agent-sh --api-key "$OPENROUTER_KEY" \
 ```bash
 agent-sh --api-key "$TOGETHER_KEY" \
   --base-url https://api.together.xyz/v1 \
-  --model meta-llama/Llama-3-70b-chat-hf
+  --model deepseek-ai/DeepSeek-V3
 ```
 
 ### Groq
@@ -127,7 +127,7 @@ agent-sh --api-key "$TOGETHER_KEY" \
 ```bash
 agent-sh --api-key "$GROQ_KEY" \
   --base-url https://api.groq.com/openai/v1 \
-  --model llama-3.3-70b-versatile
+  --model deepseek-r1-distill-llama-70b
 ```
 
 ### LM Studio
@@ -135,7 +135,7 @@ agent-sh --api-key "$GROQ_KEY" \
 ```bash
 agent-sh --api-key dummy \
   --base-url http://localhost:1234/v1 \
-  --model local-model
+  --model mimo
 ```
 
 ### vLLM
@@ -143,7 +143,7 @@ agent-sh --api-key dummy \
 ```bash
 agent-sh --api-key dummy \
   --base-url http://localhost:8000/v1 \
-  --model your-model
+  --model deepseek-v4-flash
 ```
 
 ## Using agent-sh as Your Default Shell
@@ -152,7 +152,7 @@ Add to the end of your `~/.zshrc` or `~/.bashrc`:
 
 ```bash
 if [[ -z "$AGENT_SH" && $- == *i* && -t 0 ]]; then
-  exec agent-sh --api-key "$OPENAI_API_KEY" --model gpt-4o
+  exec agent-sh   # uses DEEPSEEK_API_KEY from your env (deepseek-v4-flash)
 fi
 ```
 
@@ -168,27 +168,29 @@ Instead of passing `--api-key` and `--base-url` every time, define named provide
 
 ```json
 {
-  "defaultProvider": "openai",
+  "defaultProvider": "deepseek",
   "providers": {
-    "openai": {
-      "apiKey": "$OPENAI_API_KEY",
-      "defaultModel": "gpt-4o",
-      "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
-      "contextWindow": 128000
+    "deepseek": {
+      "apiKey": "$DEEPSEEK_API_KEY",
+      "defaultModel": "deepseek-v4-flash",
+      "models": ["deepseek-v4-flash", "deepseek-v4-pro"]
     },
     "ollama": {
       "apiKey": "not-needed",
       "baseURL": "http://localhost:11434/v1",
-      "defaultModel": "llama3",
-      "models": ["llama3", "mistral", "codellama"]
+      "defaultModel": "gemma4",
+      "models": [
+        "mimo",
+        { "id": "gemma4", "contextWindow": 128000, "modalities": ["text", "image"] }
+      ]
     },
     "openrouter": {
       "apiKey": "$OPENROUTER_KEY",
       "baseURL": "https://openrouter.ai/api/v1",
-      "defaultModel": "anthropic/claude-sonnet-4.5",
+      "defaultModel": "deepseek/deepseek-v4-flash",
       "models": [
-        { "id": "anthropic/claude-sonnet-4.5", "contextWindow": 200000, "reasoning": true },
-        { "id": "google/gemini-2.5-pro",       "contextWindow": 1000000 }
+        { "id": "deepseek/deepseek-v4-flash", "contextWindow": 1000000, "reasoning": true },
+        { "id": "deepseek/deepseek-v4-pro",   "contextWindow": 1048576, "reasoning": true }
       ]
     }
   }
@@ -198,31 +200,49 @@ Instead of passing `--api-key` and `--base-url` every time, define named provide
 Then just run:
 
 ```bash
-agent-sh                          # uses defaultProvider
+agent-sh                          # uses defaultProvider (deepseek)
 agent-sh --provider ollama        # use a specific provider
-agent-sh --provider openai --model gpt-4-turbo  # override the default model
+agent-sh --provider ollama --model gemma4  # override the default model
 ```
 
 The `apiKey` field supports `$ENV_VAR` and `${ENV_VAR}` syntax — variables are expanded at runtime, so you don't store secrets in the file.
 
-### Declaring the context window
+### Declaring model capabilities
 
-agent-sh adapts its auto-compaction trigger to the model's context window. There are two places to declare it:
-
-- **Provider-level `contextWindow`** — applies to every model in that provider unless a more specific value is set.
-- **Per-model `contextWindow`** (inside an entry of `models`) — overrides the provider-level value for a specific model, and also lets you tag reasoning-capable models via `reasoning: true`.
-
-If neither is set, agent-sh falls back to a conservative 60k-token default.
-
-Entries in `models` can be plain strings (just the model id, uses the provider-level `contextWindow`) or objects:
+Entries in a provider's `models` list can be plain strings (just the id) or objects that declare what the model can do. agent-sh uses these to size its context budget, cap output, route reasoning, and enable image input. Every field except `id` is optional.
 
 ```json
 "models": [
-  "gpt-4o-mini",
-  { "id": "gpt-4o",    "contextWindow": 128000 },
-  { "id": "o1-preview", "contextWindow": 128000, "reasoning": true }
+  "deepseek-v4-flash",
+  {
+    "id": "gemma4",
+    "contextWindow": 128000,
+    "maxTokens": 8192,
+    "modalities": ["text", "image"]
+  },
+  { "id": "mimo",            "reasoning": true },
+  { "id": "deepseek-v4-pro", "contextWindow": 1000000, "reasoning": true, "echoReasoning": true }
 ]
 ```
+
+| Field | Type | Default | Effect |
+|---|---|---|---|
+| `id` | `string` | — | Model identifier sent to the API (required). |
+| `contextWindow` | `number` | provider-level `contextWindow`, else `60000` | Total token budget. Drives the `/context` display and the `autoCompactThreshold` auto-compaction trigger. |
+| `maxTokens` | `number` | 40% of this model's `contextWindow` capped at `65536`, else `65536` | Max output (completion) tokens requested per turn. |
+| `reasoning` | `boolean` | `false` | Marks the model as thinking-capable, so `/thinking` levels apply to it. |
+| `modalities` | `("text" \| "image")[]` | `["text"]` | Input modalities. Include `"image"` to let the agent read image files (PNG/JPEG/GIF/WebP) with `read_file`; without it, attached images are dropped before the request. |
+| `echoReasoning` | `boolean` | `false` | Echo `reasoning_content` back on assistant turns. Required by DeepSeek's reasoner; leave off otherwise (leaky proxies may forward it to the model as malformed input). |
+
+A plain-string entry inherits the provider-level values and the defaults above. These provider-level fields apply to every model unless a per-model entry overrides them:
+
+| Provider field | Effect |
+|---|---|
+| `contextWindow` | Fallback context window for models that don't declare their own. |
+| `reasoningShape` | Borrow another registered provider's reasoning-request shape by id (e.g. `"openrouter"`). Defaults to the OpenAI-compatible shape. |
+| `echoReasoningPatterns` | Case-insensitive regex sources matched against model ids; a match defaults that model to `echoReasoning: true` (a per-model `echoReasoning` still wins). |
+
+If neither level declares a `contextWindow`, agent-sh falls back to a conservative 60k-token budget.
 
 ### Switching models at runtime
 
@@ -274,7 +294,7 @@ Switching mid-conversation preserves your conversation state — only the LLM en
 On launch, agent-sh displays a structured startup banner showing:
 
 - **Backend** — which agent backend is active (`ash`, `claude-code`, `pi`, etc.)
-- **Model** — current model with provider in brackets (e.g. `gpt-4o [openai]`)
+- **Model** — current model with provider in brackets (e.g. `deepseek-v4-flash [deepseek]`)
 - **Extensions** — loaded extensions (from CLI `-e`, settings, or `~/.agent-sh/extensions/`)
 - **Skills** — discovered skills (global + project)
 
