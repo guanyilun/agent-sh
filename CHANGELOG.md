@@ -23,6 +23,11 @@ Releases before this file are recorded in the git tags and GitHub releases.
   `ui:error` channel (and to stderr under `DEBUG`) instead of throwing or
   silently swallowing.
 
+- Shell-mode markdown now uses a truecolor theme matching the ashi frontend
+  (gold headings, teal inline code and list bullets, blue underlined links, gray
+  blockquote bars and horizontal rules) instead of the terminal's 16-color
+  palette, so it reads consistently across terminal profiles. Adds dedicated
+  `md*` slots to the color palette.
 - Floating panel (overlay extensions): Up/Down arrows and the scroll wheel now
   scroll the transcript in the input/idle phase, matching their behavior while
   the agent is working. Previously they navigated input history, so after a

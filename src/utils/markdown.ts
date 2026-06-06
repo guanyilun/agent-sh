@@ -352,27 +352,24 @@ export class MarkdownRenderer {
   private renderLine(line: string): string {
     if (line.trim() === "") return "";
 
-    // Headings
-    const h1 = line.match(/^# (.+)/);
-    if (h1) return `${p.bold}${p.warning}${h1[1]}${p.reset}`;
+    // Headings — H3+ keep the `###` marker; H1/H2 don't
+    const heading = line.match(/^(#{1,6}) (.+)/);
+    if (heading) {
+      const level = heading[1]!.length;
+      const text = heading[2]!;
+      if (level === 1) return `${p.bold}${p.underline}${p.mdHeading}${text}${p.reset}`;
+      if (level === 2) return `${p.bold}${p.mdHeading}${text}${p.reset}`;
+      return `${p.bold}${p.mdHeading}${"#".repeat(level)} ${text}${p.reset}`;
+    }
 
-    const h2 = line.match(/^## (.+)/);
-    if (h2) return `${p.bold}${p.accent}${h2[1]}${p.reset}`;
-
-    const h3 = line.match(/^### (.+)/);
-    if (h3) return `${p.bold}${h3[1]}${p.reset}`;
-
-    const h4 = line.match(/^#{4,} (.+)/);
-    if (h4) return `${p.bold}${h4[1]}${p.reset}`;
-
-    // Horizontal rule — subtle short separator, not full-width
+    // Horizontal rule
     if (/^(-{3,}|_{3,}|\*{3,})\s*$/.test(line)) {
-      return "";
+      return `${p.mdHr}${"─".repeat(Math.min(this.contentWidth, 80))}${p.reset}`;
     }
 
     // Blockquote
     const bq = line.match(/^>\s?(.*)/);
-    if (bq) return `${p.muted}│${p.reset} ${p.dim}${p.italic}${this.renderInline(bq[1] || "")}${p.reset}`;
+    if (bq) return `${p.mdQuoteBorder}│${p.reset} ${p.mdQuote}${p.italic}${this.renderInline(bq[1] || "")}${p.reset}`;
 
     // Task list (checkbox items) — must come before generic unordered list
     const task = line.match(/^(\s*)[*\-+]\s+\[([ xX])\]\s+(.*)/);
@@ -389,14 +386,14 @@ export class MarkdownRenderer {
     const ul = line.match(/^(\s*)[*\-+]\s+(.*)/);
     if (ul) {
       const indent = ul[1] || "";
-      return `${indent}  ${p.accent}*${p.reset} ${this.renderInline(ul[2] || "")}`;
+      return `${indent}  ${p.mdListBullet}-${p.reset} ${this.renderInline(ul[2] || "")}`;
     }
 
     // Ordered list
     const ol = line.match(/^(\s*)(\d+)[.)]\s+(.*)/);
     if (ol) {
       const indent = ol[1] || "";
-      return `${indent}  ${p.accent}${ol[2]}.${p.reset} ${this.renderInline(ol[3] || "")}`;
+      return `${indent}  ${p.mdListBullet}${ol[2]}.${p.reset} ${this.renderInline(ol[3] || "")}`;
     }
 
     return this.renderInline(line);
@@ -406,10 +403,10 @@ export class MarkdownRenderer {
     // Links first — later subs inject `\x1b[…m` whose `[` would be eaten here.
     text = text.replace(
       /\[([^\]]+)\]\(([^)]+)\)/g,
-      `$1 ${p.muted}${p.underline}($2)${p.reset}`
+      `${p.mdLink}${p.underline}$1${p.reset} ${p.mdLinkUrl}($2)${p.reset}`
     );
     // Inline code
-    text = text.replace(/`([^`]+)`/g, `${p.accent}$1${p.reset}`);
+    text = text.replace(/`([^`]+)`/g, `${p.mdCode}$1${p.reset}`);
     // Bold + italic
     text = text.replace(/\*\*\*(.+?)\*\*\*/g, `${p.bold}${p.italic}$1${p.reset}`);
     // Bold
@@ -419,7 +416,7 @@ export class MarkdownRenderer {
     text = text.replace(/\*(.+?)\*/g, `${p.italic}$1${p.reset}`);
     text = text.replace(/(?<!\w)_(.+?)_(?!\w)/g, `${p.italic}$1${p.reset}`);
     // Strikethrough
-    text = text.replace(/~~(.+?)~~/g, `${p.dim}$1${p.reset}`);
+    text = text.replace(/~~(.+?)~~/g, `${p.strikethrough}$1${p.reset}`);
     return text;
   }
 
