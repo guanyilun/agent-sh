@@ -67,6 +67,11 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ### Fixed
 
+- Rolling-history prefetch now runs after the agent backend activates, fixing a
+  race where prior-session context was silently dropped on new sessions.
+- `conversation_recall` tool description now accurately describes the store as a
+  persistent cross-session memory rather than "evicted conversation turns".
+
 - Diff rendering (edit/write previews) now wraps long lines across rows instead
   of truncating them with an ellipsis, so the full changed line is always
   visible. `wrapLine` also hard-breaks an over-long token (long identifier, URL)

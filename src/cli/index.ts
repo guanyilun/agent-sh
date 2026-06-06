@@ -128,7 +128,6 @@ async function main(): Promise<void> {
   // Load before spawning the shell so PS1 lands below the banner.
   const settings = getSettings();
   await loadBuiltinExtensions(extCtx, settings.disabledBuiltins);
-  activateRollingHistory(extCtx);
   const loadExtensionsTimeoutMs = 10000;
   let loadedExtensions: string[] = [];
   await Promise.race([
@@ -197,6 +196,7 @@ async function main(): Promise<void> {
   }
 
   await core.activateBackend(config.backend);
+  activateRollingHistory(extCtx);
 
   // 100ms sidesteps macOS SIGTTOU during fg-pgrp handoff.
   await new Promise(resolve => setTimeout(resolve, 100));

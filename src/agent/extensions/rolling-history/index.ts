@@ -111,17 +111,19 @@ export default function activate(ctx: ExtensionContext): void {
     name: TOOL_NAME,
     displayName: "recall",
     description:
-      "Browse, search, or expand evicted conversation turns. " +
-      "Use when you need context from earlier in the conversation that was compacted away. " +
-      "Search is regex-based and covers both summaries and full body text. " +
-      "If search doesn't find what you expect, try broader/shorter terms or browse to scan the timeline.",
+      "Browse, search, or expand the persistent conversation memory — all captured turns across this and recent sessions. " +
+      "Use when you need context from prior turns or past sessions that may no longer be in the active window. " +
+      "Search accepts a regex pattern (e.g. 'foo|bar') and falls back to literal matching if the pattern is invalid. " +
+      "Covers both summaries and full body text. " +
+      "If search doesn't find what you expect, try broader/shorter terms or browse to scan the timeline. " +
+      "Use offset for pagination on both browse and search.",
     input_schema: {
       type: "object",
       properties: {
         action: {
           type: "string",
           enum: ["browse", "search", "expand"],
-          description: "browse: list evicted turns, search: regex search, expand: show full turn",
+          description: "browse: list recent captured turns, search: regex search across memory, expand: show full turn body",
         },
         query: { type: "string", description: "Search query (for action=search)" },
         turn_id: { type: "string", description: "Turn ID to expand (for action=expand)" },
