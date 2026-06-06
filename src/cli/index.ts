@@ -13,6 +13,7 @@ import { anyProviderConfigured } from "./auth/keys.js";
 import { clearOpost } from "../utils/tty.js";
 import { parseArgs } from "./args.js";
 import { captureShellEnvAsync, mergeShellEnv } from "./shell-env.js";
+import { getPendingUpdate, checkForUpdate } from "../utils/update-check.js";
 
 declare module "../core/event-bus.js" {
   interface BusEvents {
@@ -160,6 +161,16 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // ── Update notification (cache-driven; result from a prior run) ─
+  const pending = settings.updateCheck !== false ? getPendingUpdate() : null;
+  if (pending) {
+    process.stderr.write(
+      `\n${p.warning}⚠${p.reset}  ${p.bold}agent-sh ${pending.latest}${p.reset} is available ` +
+      `${p.muted}(you have ${pending.current})${p.reset}\n` +
+      `   ${p.muted}Run: ${p.reset}npm update -g agent-sh\n`,
+    );
+  }
+
   if (settings.startupBanner !== false) {
     const termW = process.stdout.columns || 80;
     const bannerW = Math.min(termW, 60);
@@ -213,6 +224,9 @@ async function main(): Promise<void> {
     },
   });
   bus.off("ui:error", bootUiError);
+
+  // Fire async update check — result is cached for next startup.
+  if (settings.updateCheck !== false) void checkForUpdate();
 
   bus.emit("input-mode:register", {
     id: "agent",
