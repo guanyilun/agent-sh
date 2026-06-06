@@ -125,20 +125,30 @@ export default function activate(ctx: ExtensionContext): void {
           enum: ["browse", "search", "expand"],
           description: "browse: list recent captured turns, search: regex search across memory, expand: show full turn body",
         },
-        query: { type: "string", description: "Search query (for action=search)" },
+        query: { type: "string", description: "Search pattern — a regex (e.g. 'foo|bar') or literal text (for action=search)" },
         turn_id: { type: "string", description: "Turn ID to expand (for action=expand)" },
+        offset: {
+          type: "number",
+          description: "Skip first N results; for browse, start at this entry offset; for search, skip first N hits. Default 0.",
+        },
+        limit: {
+          type: "number",
+          description: "Max entries to return for browse (default 25) or search (default 30).",
+        },
       },
       required: ["action"],
     },
     execute: async (args) => {
       const action = args.action as string;
+      const offset = (args.offset as number) ?? 0;
+      const limit = (args.limit as number) ?? (action === "search" ? 30 : 25);
       let content: string;
       if (action === "search") {
-        content = await recallSearch(summaryStore, (args.query as string) ?? "");
+        content = await recallSearch(summaryStore, (args.query as string) ?? "", offset, limit);
       } else if (action === "expand") {
         content = await recallExpand(summaryStore, args.turn_id as string);
       } else {
-        content = await recallBrowse(summaryStore);
+        content = await recallBrowse(summaryStore, offset, limit);
       }
       return { content, exitCode: 0, isError: false };
     },

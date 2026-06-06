@@ -34,6 +34,10 @@ Releases before this file are recorded in the git tags and GitHub releases.
   reply there was no way to scroll back through it (the panel owns its alt
   screen, where terminals route the wheel through arrow keys). Input history
   moved to Ctrl+P / Ctrl+N; PageUp/PageDown still page-scroll.
+- `conversation_recall` search now treats the query as a real regex (e.g.
+  `foo|bar`), falling back to literal matching only when the pattern is invalid;
+  it was previously always escaped to a literal. `browse` and `search` also
+  accept `offset`/`limit`, so results past the first page are now reachable.
 
 ### Documentation
 

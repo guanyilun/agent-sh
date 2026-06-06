@@ -76,7 +76,12 @@ async function findCacheChild(store: Store, parentId: string): Promise<RecallCac
   return null;
 }
 
-export async function recallSearch(store: Store, query: string): Promise<string> {
+export async function recallSearch(
+  store: Store,
+  query: string,
+  offset = 0,
+  maxResults = 30,
+): Promise<string> {
   if (!query.trim()) return "No query provided.";
   const regex = buildSearchRegex(query);
   const hits: string[] = [];
@@ -106,8 +111,13 @@ export async function recallSearch(store: Store, query: string): Promise<string>
 
   if (hits.length === 0) return `No results found for "${query}".`;
   const total = hits.length;
-  const summary = `Found ${total} match${total === 1 ? "" : "es"} for "${query}"`;
-  return `${summary}\n\n${hits.slice(0, 30).join("\n\n")}`;
+  const paged = hits.slice(offset, offset + maxResults);
+  const range =
+    offset > 0 || paged.length < total
+      ? ` (showing ${offset + 1}–${offset + paged.length} of ${total})`
+      : "";
+  const summary = `Found ${total} match${total === 1 ? "" : "es"} for "${query}"${range}`;
+  return `${summary}\n\n${paged.join("\n\n")}`;
 }
 
 export async function recallExpand(store: Store, id: string): Promise<string> {
@@ -124,8 +134,19 @@ export async function recallExpand(store: Store, id: string): Promise<string> {
   return `${header}\n\n(no expanded content available — recall cache may have been cleared)`;
 }
 
-export async function recallBrowse(store: Store, limit = 25): Promise<string> {
-  const lines = await readSummaryLines(store, limit);
-  if (lines.length === 0) return "No conversation history.";
-  return ["Recent summary entries:", ...lines.map((l) => `  ${l}`)].join("\n");
+export async function recallBrowse(
+  store: Store,
+  offset = 0,
+  limit = 25,
+): Promise<string> {
+  const overRead = Math.max(limit * 3, offset + limit);
+  const allLines = await readSummaryLines(store, overRead);
+  if (allLines.length === 0) return "No conversation history.";
+  const end = Math.min(offset + limit, allLines.length);
+  const paged = allLines.slice(offset, end);
+  const range =
+    offset > 0 || end < allLines.length
+      ? ` (entries ${offset + 1}–${end} of ${allLines.length} shown)`
+      : "";
+  return [`Recent summary entries${range}:`, ...paged.map((l) => `  ${l}`)].join("\n");
 }

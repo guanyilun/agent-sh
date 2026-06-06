@@ -54,7 +54,11 @@ function escapeRegex(s: string): string {
 }
 
 function compileSearchRegex(query: string): RegExp {
-  return new RegExp(escapeRegex(query), "i");
+  try {
+    return new RegExp(query, "i");
+  } catch {
+    return new RegExp(escapeRegex(query), "i");
+  }
 }
 
 function matchEntry(entry: Entry, re: RegExp): SearchHit | null {
