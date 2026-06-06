@@ -613,7 +613,7 @@ export default function activate(ctx: ExtensionContext): void {
     flushForRaw();
     contentGap("code");
     if (language) {
-      s.renderer!.writeLine(`${p.dim}${language}${p.reset}`);
+      s.renderer!.writeLine(`${p.mdCodeBlockBorder}${language}${p.reset}`);
     }
     let highlighted: string;
     try {
@@ -633,7 +633,10 @@ export default function activate(ctx: ExtensionContext): void {
         console.error = origError;
       }
     } catch {
-      highlighted = code;
+      highlighted = code
+        .split("\n")
+        .map((l) => `${p.mdCodeBlock}${l}${p.reset}`)
+        .join("\n");
     }
     const contentWidth = Math.min(90, width - 2);
     for (const line of highlighted.split("\n")) {

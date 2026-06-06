@@ -29,7 +29,20 @@ export interface ColorPalette {
   dim: string;
   italic: string;
   underline: string;
+  strikethrough: string;
   reset: string;
+
+  // ── Markdown element colors ───────────────────────────────
+  mdHeading: string;       // headings (all levels)
+  mdLink: string;          // link text
+  mdLinkUrl: string;       // link URL
+  mdCode: string;          // inline code span
+  mdCodeBlock: string;     // fenced code fallback (no highlight)
+  mdCodeBlockBorder: string; // code fence / language label
+  mdQuote: string;         // blockquote text
+  mdQuoteBorder: string;   // blockquote left bar
+  mdHr: string;            // horizontal rule
+  mdListBullet: string;    // list bullet / ordinal
 }
 
 const defaultPalette: ColorPalette = {
@@ -45,11 +58,23 @@ const defaultPalette: ColorPalette = {
   errorBgEmph:   "\x1b[48;2;124;50;64m",
   diffText:      "\x1b[97m",   // bright white — readable on the red/green tints
 
-  bold:      "\x1b[1m",
-  dim:       "\x1b[2m",
-  italic:    "\x1b[3m",
-  underline: "\x1b[4m",
-  reset:     "\x1b[0m",
+  bold:          "\x1b[1m",
+  dim:           "\x1b[2m",
+  italic:        "\x1b[3m",
+  underline:     "\x1b[4m",
+  strikethrough: "\x1b[9m",
+  reset:         "\x1b[0m",
+
+  mdHeading:         "\x1b[38;2;240;198;116m", // #f0c674 gold
+  mdLink:            "\x1b[38;2;129;162;190m", // #81a2be blue
+  mdLinkUrl:         "\x1b[38;2;102;102;102m", // #666666 dim gray
+  mdCode:            "\x1b[38;2;138;190;183m", // #8abeb7 teal
+  mdCodeBlock:       "\x1b[38;2;181;189;104m", // #b5bd68 green
+  mdCodeBlockBorder: "\x1b[38;2;128;128;128m", // #808080 gray
+  mdQuote:           "\x1b[38;2;128;128;128m", // #808080 gray
+  mdQuoteBorder:     "\x1b[38;2;128;128;128m", // #808080 gray
+  mdHr:              "\x1b[38;2;128;128;128m", // #808080 gray
+  mdListBullet:      "\x1b[38;2;138;190;183m", // #8abeb7 teal
 };
 
 /** Active palette — import and use directly in components. */
