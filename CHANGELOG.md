@@ -15,6 +15,14 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ### Changed
 
+- Event bus now isolates listener faults. A throwing subscriber or transform no
+  longer propagates out of `emit` (which could abort an in-flight turn) or stop
+  sibling listeners — each callback site (fire-and-forget listeners, the `onAny`
+  tap, and the sync/async transform pipes) is wrapped individually. Faults route
+  through a host-installable reporter; the kernel surfaces them on the universal
+  `ui:error` channel (and to stderr under `DEBUG`) instead of throwing or
+  silently swallowing.
+
 - Floating panel (overlay extensions): Up/Down arrows and the scroll wheel now
   scroll the transcript in the input/idle phase, matching their behavior while
   the agent is working. Previously they navigated input history, so after a

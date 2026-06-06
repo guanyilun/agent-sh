@@ -48,6 +48,24 @@ export function createCore(config: AppConfig): AgentShellCore {
   // should accept ≥6 hex chars.
   const instanceId = crypto.randomBytes(3).toString("hex");
   bus.setSource(instanceId);
+
+  // Surface faults on ui:error; `surfacing` stops a faulting renderer from looping.
+  let surfacing = false;
+  bus.setErrorReporter(({ phase, event, err }) => {
+    const detail = err instanceof Error ? err.message : String(err);
+    if (process.env.DEBUG) {
+      const full = err instanceof Error ? (err.stack ?? err.message) : detail;
+      process.stderr.write(`[event-bus] ${phase} fault on "${event}": ${full}\n`);
+    }
+    if (surfacing) return;
+    surfacing = true;
+    try {
+      bus.emit("ui:error", { message: `Handler error on "${event}": ${detail}` });
+    } finally {
+      surfacing = false;
+    }
+  });
+
   handlers.define("config:get-app-config", () => config);
   handlers.define("cwd", () => process.cwd());
 

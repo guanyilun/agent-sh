@@ -1,5 +1,3 @@
-import { EventEmitter } from "node:events";
-
 export interface BackendRegistration {
   name: string;
   kill: () => void;
@@ -49,6 +47,15 @@ export interface BusMeta {
 
 export type AnyListener = (name: string, payload: unknown, meta: BusMeta) => void;
 
+/** A listener fault routed to the error reporter; `phase` is the callback site. */
+export interface BusFault {
+  phase: "on" | "any" | "pipe" | "pipe-async";
+  event: string;
+  err: unknown;
+}
+
+export type ErrorReporter = (fault: BusFault) => void;
+
 /**
  * Typed event bus with two modes:
  * - emit/on/off: fire-and-forget notifications
@@ -56,16 +63,52 @@ export type AnyListener = (name: string, payload: unknown, meta: BusMeta) => voi
  *   can modify the payload before passing to the next
  */
 export class EventBus {
-  private emitter = new EventEmitter().setMaxListeners(0);
+  private listeners = new Map<string, Listener<any>[]>();
   private pipeListeners = new Map<string, PipeListener<any>[]>();
   private asyncPipeListeners = new Map<string, AsyncPipeListener<any>[]>();
   private source = "0000";
   private nextSeq = 0;
   private anyListeners: AnyListener[] = [];
 
+  /** Default fault sink, overridable via setErrorReporter: silent unless DEBUG. */
+  private reportError: ErrorReporter = ({ phase, event, err }) => {
+    if (process.env.DEBUG) {
+      const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      process.stderr.write(`[event-bus] ${phase} fault on "${event}": ${msg}\n`);
+    }
+  };
+
   /** Set the source id stamped onto every emitted event. */
   setSource(src: string): void {
     this.source = src;
+  }
+
+  /** Install a fault reporter. */
+  setErrorReporter(fn: ErrorReporter): void {
+    this.reportError = fn;
+  }
+
+  /** Report a fault; guarded so a broken reporter can't break dispatch. */
+  private fault(phase: BusFault["phase"], event: string, err: unknown): void {
+    try {
+      this.reportError({ phase, event, err });
+    } catch {
+      /* swallow */
+    }
+  }
+
+  /** Fire every listener for `name`, isolating faults. */
+  private notify(name: string, payload: unknown): void {
+    const arr = this.listeners.get(name);
+    if (!arr || arr.length === 0) return;
+    // snapshot so a listener that (un)subscribes mid-dispatch can't shift iteration
+    if (arr.length === 1) {
+      try { arr[0](payload); } catch (err) { this.fault("on", name, err); }
+      return;
+    }
+    for (const fn of arr.slice()) {
+      try { fn(payload); } catch (err) { this.fault("on", name, err); }
+    }
   }
 
   /** Subscribe to every emitted event with full envelope. Returns unsubscribe. */
@@ -87,10 +130,10 @@ export class EventBus {
         name,
       };
       for (const fn of this.anyListeners) {
-        try { fn(name, payload, meta); } catch { /* swallow */ }
+        try { fn(name, payload, meta); } catch (err) { this.fault("any", name, err); }
       }
     }
-    this.emitter.emit(name, payload);
+    this.notify(name, payload);
   }
 
   /** Subscribe to a fire-and-forget event. */
@@ -98,7 +141,12 @@ export class EventBus {
     event: K,
     fn: Listener<BusEvents[K]>,
   ): void {
-    this.emitter.on(event, fn);
+    let arr = this.listeners.get(event);
+    if (!arr) {
+      arr = [];
+      this.listeners.set(event, arr);
+    }
+    arr.push(fn);
   }
 
   /** Unsubscribe from a fire-and-forget event. */
@@ -106,7 +154,10 @@ export class EventBus {
     event: K,
     fn: Listener<BusEvents[K]>,
   ): void {
-    this.emitter.off(event, fn);
+    const arr = this.listeners.get(event);
+    if (!arr) return;
+    const idx = arr.indexOf(fn);
+    if (idx !== -1) arr.splice(idx, 1);
   }
 
   /** Emit a fire-and-forget event. */
@@ -123,10 +174,10 @@ export class EventBus {
   relay(meta: BusMeta, payload: unknown): void {
     if (this.anyListeners.length > 0) {
       for (const fn of this.anyListeners) {
-        try { fn(meta.name, payload, meta); } catch { /* swallow */ }
+        try { fn(meta.name, payload, meta); } catch (err) { this.fault("any", meta.name, err); }
       }
     }
-    this.emitter.emit(meta.name, payload);
+    this.notify(meta.name, payload);
   }
 
   /**
@@ -191,12 +242,12 @@ export class EventBus {
       try {
         const out = fn(result);
         if (out && typeof (out as any).then === "function") {
-          console.error(`[event-bus] Warning: async handler in sync pipe "${String(event)}" — use onPipeAsync instead`);
+          this.fault("pipe", String(event), new Error("async handler in sync pipe — use onPipeAsync instead"));
           continue;
         }
         result = out;
       } catch (err) {
-        console.error(`[event-bus] Pipe handler error in "${String(event)}":`, err instanceof Error ? err.message : err);
+        this.fault("pipe", String(event), err);
       }
     }
     return result;
@@ -245,7 +296,11 @@ export class EventBus {
     if (!listeners) return payload;
     let result = payload;
     for (const fn of listeners) {
-      result = await fn(result);
+      try {
+        result = await fn(result);
+      } catch (err) {
+        this.fault("pipe-async", String(event), err);
+      }
     }
     return result;
   }
