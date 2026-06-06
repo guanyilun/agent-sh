@@ -59,6 +59,17 @@ Releases before this file are recorded in the git tags and GitHub releases.
   whitespace is now stripped from the assistant buffer for display; blank lines
   between sections are preserved.
 
+- Shell-mode tool output no longer interleaves when a batch runs read-only
+  tools in parallel. Their start/complete events arrive interleaved (e.g. two
+  reads and a search all start, then complete in any order), and the renderer
+  streamed each line as its event arrived — so results landed under the wrong
+  header, a dimmed `read (cont.)` block relisted files, and a search result
+  could appear under a `read` header. Read-only tools in a multi-tool batch are
+  now buffered and rendered as one contiguous block per group, in dispatch
+  order, the moment the group's members return — each file carrying its own
+  inline `✓`/`✗` result. Single-tool turns and sequential mutating/streaming
+  tools (bash, edit) still render live.
+
 ### Documentation
 
 - Audited the README and `docs/` against the source and corrected stale content:

@@ -71,12 +71,9 @@ interface RenderState {
 
   // ── Tool output ──
   openTool: { callId: string; title: string; kind?: string; displayDetail?: string } | null;
-  /** Tools whose start line was closed before their complete fired.
-   *  Their ✓ renders as a labeled ⎿ line instead of an orphan.
-   *  `orphaned` = the group was finalized before they returned, so the
-   *  ⎿ renders under a re-emitted "(cont.)" header to avoid looking
-   *  like a child of whatever tool rendered in between. */
-  pendingToolCompletes: Map<string, { title: string; kind?: string; displayDetail?: string; orphaned?: boolean }>;
+  /** Tools whose start line was closed before their complete fired —
+   *  their ✓ renders as a labeled ⎿ line instead of inline. */
+  pendingToolCompletes: Map<string, { title: string; kind?: string; displayDetail?: string }>;
   currentToolKind: string | undefined;
   toolStartTime: number;
   toolExitCode: number | null;
@@ -84,21 +81,6 @@ interface RenderState {
   commandOutputLineCount: number;
   commandOutputOverflow: number;
   commandOverflowLines: string[];
-
-  /** Consecutive orphans of the same kind share one "(cont.)" header;
-   *  cleared when any non-orphan render happens. */
-  orphanContHeaderKind: string | undefined;
-
-  // ── Tool grouping (collapse sequential same-type read-only tools) ──
-  toolGroupKind: string | undefined;
-  toolGroupCount: number;
-  /** Completes-seen count — skip aggregate if finalize fires at 0. */
-  toolGroupCompletedCount: number;
-  toolGroupAllOk: boolean;
-  /** Number of tools rendered individually in current group. */
-  toolGroupRendered: number;
-  /** Accumulated result summaries from grouped tools. */
-  toolGroupSummaries: string[];
 
   // ── Thinking ──
   isThinking: boolean;
@@ -118,7 +100,6 @@ function createRenderState(): RenderState {
     spinnerStartTime: 0,
     openTool: null,
     pendingToolCompletes: new Map(),
-    orphanContHeaderKind: undefined,
     currentToolKind: undefined,
     toolStartTime: 0,
     toolExitCode: null,
@@ -126,12 +107,6 @@ function createRenderState(): RenderState {
     commandOutputLineCount: 0,
     commandOutputOverflow: 0,
     commandOverflowLines: [],
-    toolGroupKind: undefined,
-    toolGroupCount: 0,
-    toolGroupCompletedCount: 0,
-    toolGroupAllOk: true,
-    toolGroupRendered: 0,
-    toolGroupSummaries: [],
     isThinking: false,
     showThinkingText: false,
     thinkingPending: false,
@@ -193,16 +168,6 @@ export default function activate(ctx: ExtensionContext): void {
     if (exitCode === null) return `${p.muted}(timed out)${p.reset}`;
     if (exitCode === 0) return `${p.success}✓${p.reset}${summaryStr}${timer}`;
     return `${p.error}✗ exit ${exitCode}${p.reset}${summaryStr}${timer}`;
-  });
-
-  define("tui:render-tool-group-summary", (count: number, rendered: number, allOk: boolean, summaries: string[]): string => {
-    const mark = allOk ? `${p.success}✓${p.reset}` : `${p.error}✗${p.reset}`;
-    const summaryStr = summaries.length > 0 ? ` ${p.dim}${summaries.join(", ")}${p.reset}` : "";
-    const collapsed = count - rendered;
-    if (collapsed > 0) {
-      return `  ${p.muted}└${p.reset} ${p.dim}+${collapsed} more${p.reset} ${mark}${summaryStr}`;
-    }
-    return `  ${p.muted}└${p.reset} ${mark}${summaryStr}`;
   });
 
   define("tui:render-command-output", (line: string, _kind: string | undefined): string =>
@@ -333,34 +298,48 @@ export default function activate(ctx: ExtensionContext): void {
   const GROUP_MAX_VISIBLE = 5;
   const KIND_ICONS: Record<string, string> = { read: "◆", search: "⌕" };
 
-  // Batch groups: kind → { total, rendered, headerShown }
-  let batchGroups = new Map<string, { total: number; rendered: number; headerShown: boolean }>();
+  // Read-only batch tools run in parallel, so their events arrive interleaved
+  // and append-only output can't un-interleave them. Buffer each group instead
+  // of streaming; mutating/streaming tools are sequential and still render live.
+  interface GroupMember { detail: string; ok: boolean; summary?: string; done: boolean; }
+  interface GroupState {
+    total: number;
+    completed: number;
+    finalized: boolean;
+    order: string[];                 // callIds, in start order
+    members: Map<string, GroupMember>;
+  }
+  let batchGroups = new Map<string, GroupState>();
+  let batchSize = 0;
+
+  /** A lone tool has nothing to interleave with, so deferral applies only to
+   *  read-only kinds in a multi-tool batch. */
+  function isDeferred(kind: string): boolean {
+    return batchSize > 1 && GROUPABLE_KINDS.has(kind) && batchGroups.has(kind);
+  }
 
   bus.on("agent:tool-batch", (e) => {
     if (!shouldRender()) return;
     fencedTransform.flush();
-    finalizeToolGroup();
-    s.orphanContHeaderKind = undefined;
+    finalizeAllGroups();
+    closeToolLine();
     batchGroups = new Map();
+    batchSize = 0;
     for (const group of e.groups) {
-      batchGroups.set(group.kind, {
-        total: group.tools.length,
-        rendered: 0,
-        headerShown: false,
-      });
+      batchSize += group.tools.length;
+      batchGroups.set(group.kind, { total: group.tools.length, completed: 0, finalized: false, order: [], members: new Map() });
     }
   });
 
   bus.on("agent:tool-started", (e) => {
     if (!shouldRender()) return;
     fencedTransform.flush();
-    stopCurrentSpinner();
     s.currentToolKind = e.kind;
     s.toolStartTime = Date.now();
-    s.orphanContHeaderKind = undefined;
 
     if (e.title === "user_shell") {
-      finalizeToolGroup();
+      stopCurrentSpinner();
+      finalizeAllGroups();
       closeToolLine();
       if (!s.renderer) startAgentResponse();
       contentGap("tool");
@@ -373,87 +352,54 @@ export default function activate(ctx: ExtensionContext): void {
     }
 
     const kind = e.kind ?? "execute";
-    const group = batchGroups.get(kind);
-    const isGrouped = group && group.total > 1 && GROUPABLE_KINDS.has(kind);
-
-    if (isGrouped) {
-      // Render group header on first tool of this kind in the batch
-      if (!group.headerShown) {
-        finalizeToolGroup();
-        closeToolLine();
-        if (!s.renderer) startAgentResponse();
-        showCollapsedThinking();
-        contentGap("tool");
-        s.renderer!.flush();
-        drain();
-
-        const icon = KIND_ICONS[kind] ?? "▶";
-        s.renderer!.writeLine(`${p.warning}${icon}${p.reset} ${kind}`);
-        drain();
-
-        group.headerShown = true;
-        s.toolGroupKind = kind;
-        s.toolGroupCount = 0;
-        s.toolGroupCompletedCount = 0;
-        s.toolGroupRendered = 0;
-        s.toolGroupAllOk = true;
-        s.toolGroupSummaries = [];
-      }
-
-      s.toolGroupCount++;
-
-      if (s.toolGroupRendered < GROUP_MAX_VISIBLE) {
-        showToolCall(e.title, "", { ...e, groupContinuation: true });
-        s.toolGroupRendered++;
-      }
-      if (e.toolCallId) {
-        s.pendingToolCompletes.set(e.toolCallId, {
-          title: e.title,
-          kind,
-          displayDetail: e.displayDetail ?? extractDetail(e),
-        });
-      }
-    } else {
-      // Standalone tool — single in its batch kind, or not groupable
-      finalizeToolGroup();
-      showToolCall(e.title, "", { ...e });
+    if (isDeferred(kind)) {
+      const group = batchGroups.get(kind)!;
+      const id = e.toolCallId ?? `${kind}-${group.order.length}`;
+      group.order.push(id);
+      group.members.set(id, { detail: e.displayDetail ?? extractDetail(e), ok: true, done: false });
+      s.hadToolCalls = true;
+      if (!s.spinner) startThinkingSpinner();   // nothing's drawn yet — stand in until the block renders
+      return;
     }
+
+    // Eager: a single-tool turn, or a sequential mutating/streaming tool.
+    stopCurrentSpinner();
+    showToolCall(e.title, "", { ...e });
   });
 
   bus.on("agent:tool-completed", (e) => {
     if (!shouldRender()) return;
     s.toolExitCode = e.exitCode;
-    if (e.exitCode !== 0) s.toolGroupAllOk = false;
-
     const resultDisplay = e.resultDisplay;
+    const kind = e.kind ?? "execute";
+    const group = batchGroups.get(kind);
 
-    if (s.toolGroupKind) {
-      // Grouped tool — track success/failure and summaries, show aggregate on ⎿ line.
-      // Don't restart spinner between grouped tools — it's already running from group start.
-      if (resultDisplay?.summary) s.toolGroupSummaries.push(resultDisplay.summary);
-      if (e.toolCallId) s.pendingToolCompletes.delete(e.toolCallId);
-      s.toolGroupCompletedCount++;
-      s.currentToolKind = undefined;
-      // Finalize as soon as all members return so aggregate lands right
-      // after its children, not below out-of-band renders from the next tool.
-      const batchGroup = batchGroups.get(s.toolGroupKind);
-      if (batchGroup && s.toolGroupCompletedCount >= batchGroup.total) {
-        finalizeToolGroup();
+    if (isDeferred(kind) && group) {
+      const id = e.toolCallId ?? group.order[group.completed];
+      const member = id ? group.members.get(id) : undefined;
+      if (member) {
+        member.done = true;
+        member.ok = e.exitCode === 0;
+        member.summary = resultDisplay?.summary;
       }
+      group.completed++;
+      s.currentToolKind = undefined;
+      flushReadyGroups();
+      if (!s.spinner) startThinkingSpinner();   // keep the spinner up for in-flight siblings
     } else {
-      // Tools that lost the inline slot render as a labeled ⎿. Orphans
-      // (group finalized before they returned) reroute via showOrphanedComplete.
       const pending = e.toolCallId ? s.pendingToolCompletes.get(e.toolCallId) : undefined;
       if (pending) s.pendingToolCompletes.delete(e.toolCallId!);
-      if (pending?.orphaned) {
-        showOrphanedComplete(e.exitCode, resultDisplay, pending.title, pending.kind, pending.displayDetail);
-      } else {
-        showToolComplete(e.exitCode, resultDisplay, pending?.displayDetail ?? pending?.title);
-      }
+      showToolComplete(e.exitCode, resultDisplay, pending?.displayDetail ?? pending?.title);
       s.currentToolKind = undefined;
       s.spinnerStartTime = 0;
       startThinkingSpinner();
     }
+  });
+
+  bus.on("agent:tool-batch-complete", () => {
+    if (!shouldRender()) return;
+    // Backstop for a group whose members didn't all complete (e.g. errored).
+    finalizeAllGroups();
   });
   bus.on("agent:tool-output-chunk", (e) => { if (shouldRender()) writeCommandOutput(e.chunk); });
   bus.on("agent:tool-output", () => { if (shouldRender()) flushCommandOutput(); });
@@ -552,7 +498,7 @@ export default function activate(ctx: ExtensionContext): void {
   }
 
   function endAgentResponse(): void {
-    finalizeToolGroup();
+    finalizeAllGroups();
     closeToolLine();
     stopCurrentSpinner();
     if (s.renderer) {
@@ -589,7 +535,7 @@ export default function activate(ctx: ExtensionContext): void {
   }
 
   function writeAgentText(text: string): void {
-    finalizeToolGroup();
+    finalizeAllGroups();
     closeToolLine();
     s.hadToolCalls = false;
     if (s.isThinking) {
@@ -803,15 +749,13 @@ export default function activate(ctx: ExtensionContext): void {
       displayDetail?: string;
       batchIndex?: number;
       batchTotal?: number;
-      groupContinuation?: boolean;
     },
   ): void {
     closeToolLine();
     stopCurrentSpinner();
     if (!s.renderer) startAgentResponse();
     showCollapsedThinking();
-    // No gap between grouped tools — they're visually connected
-    if (!extra?.groupContinuation) contentGap("tool");
+    contentGap("tool");
     s.renderer!.flush();
     drain();
     const lines = renderToolCall({
@@ -824,38 +768,19 @@ export default function activate(ctx: ExtensionContext): void {
       displayDetail: extra?.displayDetail,
     }, cappedW(), shellCwd);
 
-    if (extra?.groupContinuation && lines.length > 0) {
-      // Swap the colored kind icon for a muted tree connector,
-      // and strip the tool name prefix — show detail only.
-      const detail = extra.displayDetail || extractDetail(extra);
-      const maxW = Math.max(1, cappedW() - 6);
-      const text = detail.length > maxW ? detail.slice(0, maxW - 1) + "…" : detail;
-      lines[0] = detail
-        ? `${p.muted}├${p.reset} ${p.dim}${text}${p.reset}`
-        : lines[0]!.replace(/^\x1b\[[^m]*m.\x1b\[0m/, `${p.muted}├${p.reset}`);
-    }
-
-    const batchPrefix = "";
-
     for (let i = 0; i < lines.length - 1; i++) {
       s.renderer!.writeLine(lines[i]!);
     }
     drain();
     if (lines.length > 0) {
-      if (extra?.groupContinuation) {
-        // Grouped tools: close the line immediately — checkmarks go on the ⎿ summary
-        s.renderer!.writeLine(`  ${batchPrefix}${lines[lines.length - 1]}`);
-        drain();
-      } else {
-        out().write(`  ${batchPrefix}${lines[lines.length - 1]}`);
-        if (extra?.toolCallId) {
-          s.openTool = {
-            callId: extra.toolCallId,
-            title,
-            kind: extra.kind,
-            displayDetail: extra.displayDetail ?? extractDetail(extra),
-          };
-        }
+      out().write(`  ${lines[lines.length - 1]}`);
+      if (extra?.toolCallId) {
+        s.openTool = {
+          callId: extra.toolCallId,
+          title,
+          kind: extra.kind,
+          displayDetail: extra.displayDetail ?? extractDetail(extra),
+        };
       }
     }
     s.hadToolCalls = true;
@@ -886,32 +811,6 @@ export default function activate(ctx: ExtensionContext): void {
     }
 
     if (resultDisplay?.body) renderResultBody(resultDisplay.body);
-  }
-
-  /** Late completion from a finalized group — re-emit the kind header
-   *  in muted "(cont.)" form so the ⎿ has a legitimate parent, then
-   *  render the completion as a normal labeled ⎿. Subsequent orphans
-   *  of the same kind reuse the existing (cont.) header. */
-  function showOrphanedComplete(
-    exitCode: number | null,
-    resultDisplay: ToolResultDisplay | undefined,
-    title: string,
-    kind: string | undefined,
-    displayDetail: string | undefined,
-  ): void {
-    if (s.orphanContHeaderKind !== kind) {
-      stopCurrentSpinner();
-      closeToolLine();
-      flushCommandOutput();
-      if (!s.renderer) startAgentResponse();
-      showCollapsedThinking();
-      const icon = (kind && KIND_ICONS[kind]) ?? "▶";
-      const label = kind ?? "tool";
-      s.renderer!.writeLine(`${p.muted}${icon} ${label} (cont.)${p.reset}`);
-      drain();
-      s.orphanContHeaderKind = kind;
-    }
-    showToolComplete(exitCode, resultDisplay, displayDetail || title);
   }
 
   function renderResultBody(body: ToolResultBody): void {
@@ -961,7 +860,7 @@ export default function activate(ctx: ExtensionContext): void {
   function closeToolLine(): void {
     if (s.openTool) {
       out().write("\n");
-      // Stash identity so the completion renders as ⎿ labeled, not orphan ✓.
+      // Stash identity so the completion renders as ⎿ labeled, not inline ✓.
       s.pendingToolCompletes.set(s.openTool.callId, {
         title: s.openTool.title,
         kind: s.openTool.kind,
@@ -971,41 +870,62 @@ export default function activate(ctx: ExtensionContext): void {
     }
   }
 
-  /** Render the group aggregate ⎿ line, or skip if no members have
-   *  completed yet (late completes will render individually as ⎿ labeled). */
-  function finalizeToolGroup(): void {
-    // Late completes from this group have lost their inline slot; mark
-    // them so showOrphanedComplete re-emits a (cont.) header for their ⎿.
-    if (s.toolGroupKind) {
-      for (const pending of s.pendingToolCompletes.values()) {
-        if (pending.kind === s.toolGroupKind) pending.orphaned = true;
-      }
-    }
-    const skipAggregate = s.toolGroupCount > 1 && s.toolGroupCompletedCount === 0;
-    if (s.toolGroupCount <= 1 || skipAggregate) {
-      s.toolGroupKind = undefined;
-      s.toolGroupCount = 0;
-      s.toolGroupCompletedCount = 0;
-      s.toolGroupRendered = 0;
-      s.toolGroupAllOk = true;
-      s.toolGroupSummaries = [];
-      return;
-    }
+  /** Render a deferred group as one contiguous block, skipping a group with no
+   *  completed members (e.g. all errored before their events fired). */
+  function finalizeGroup(kind: string): void {
+    const group = batchGroups.get(kind);
+    if (!group || group.finalized) return;
+    group.finalized = true;
+    const members = group.order
+      .map((id) => group.members.get(id))
+      .filter((m): m is GroupMember => !!m && m.done);
+    if (members.length === 0) return;
+
     stopCurrentSpinner();
     closeToolLine();
     if (!s.renderer) startAgentResponse();
-    const groupLine: string = ctx.call(
-      "tui:render-tool-group-summary",
-      s.toolGroupCount, s.toolGroupRendered, s.toolGroupAllOk, s.toolGroupSummaries,
-    );
-    s.renderer!.writeLine(groupLine);
+    showCollapsedThinking();
+    contentGap("tool");
+    s.renderer!.flush();
     drain();
-    s.toolGroupKind = undefined;
-    s.toolGroupCount = 0;
-    s.toolGroupCompletedCount = 0;
-    s.toolGroupAllOk = true;
-    s.toolGroupRendered = 0;
-    s.toolGroupSummaries = [];
+
+    const icon = KIND_ICONS[kind] ?? "▶";
+    const mark = (m: GroupMember): string => ctx.call("tui:render-tool-complete", m.ok ? 0 : 1, "", m.summary);
+
+    if (members.length === 1) {
+      const m = members[0]!;
+      s.renderer!.writeLine(`${p.warning}${icon}${p.reset} ${kind} ${p.dim}${m.detail}${p.reset} ${mark(m)}`);
+    } else {
+      s.renderer!.writeLine(`${p.warning}${icon}${p.reset} ${kind}`);
+      const shown = Math.min(members.length, GROUP_MAX_VISIBLE);
+      const allShown = members.length <= GROUP_MAX_VISIBLE;
+      for (let i = 0; i < shown; i++) {
+        const m = members[i]!;
+        const connector = allShown && i === shown - 1 ? "└" : "├";
+        s.renderer!.writeLine(`  ${p.muted}${connector}${p.reset} ${p.dim}${m.detail}${p.reset} ${mark(m)}`);
+      }
+      if (!allShown) {
+        s.renderer!.writeLine(`  ${p.muted}└${p.reset} ${p.dim}+${members.length - shown} more${p.reset}`);
+      }
+    }
+    drain();
+  }
+
+  function finalizeAllGroups(): void {
+    for (const kind of batchGroups.keys()) finalizeGroup(kind);
+  }
+
+  /** Finalize ready groups in batch order, stopping at the first still in
+   *  flight — so blocks render in dispatch order, not completion order. */
+  function flushReadyGroups(): void {
+    for (const [kind, group] of batchGroups) {
+      if (group.finalized) continue;
+      // Eager (non-groupable) groups never increment `completed`, so one earlier
+      // in batch order is a barrier here: a deferred group after it renders at
+      // the tool-batch-complete backstop, not incrementally. Order is preserved.
+      if (group.completed < group.total) break;
+      finalizeGroup(kind);
+    }
   }
 
   function renderCommandLine(line: string): string {
