@@ -39,6 +39,15 @@ Releases before this file are recorded in the git tags and GitHub releases.
   it was previously always escaped to a literal. `browse` and `search` also
   accept `offset`/`limit`, so results past the first page are now reachable.
 
+### Fixed
+
+- ashi: an assistant message whose text ends with a blank line no longer renders
+  a stray empty row before the following tool call. Some models emit trailing
+  newlines after their reply text, and the markdown renderer turned a trailing
+  blank line into a visible row — doubling the gap before tool calls. Trailing
+  whitespace is now stripped from the assistant buffer for display; blank lines
+  between sections are preserved.
+
 ### Documentation
 
 - Audited the README and `docs/` against the source and corrected stale content:

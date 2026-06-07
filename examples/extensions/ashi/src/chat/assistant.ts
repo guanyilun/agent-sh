@@ -7,6 +7,8 @@ export type RenderBlock =
 
 export type ContentTransform = (blocks: RenderBlock[]) => RenderBlock[];
 
+const stripTrailing = (s: string): string => s.replace(/\s+$/, "");
+
 export class AssistantMessage {
   readonly node: RenderNode;
   private container: ContainerView;
@@ -23,20 +25,20 @@ export class AssistantMessage {
 
   appendText(t: string): void {
     this.buffer += t;
-    this.md.setText(this.buffer);
+    this.md.setText(stripTrailing(this.buffer));
   }
 
   appendCodeBlock(language: string, code: string): void {
     const prefix = this.buffer && !this.buffer.endsWith("\n") ? "\n" : "";
     this.buffer += `${prefix}\`\`\`${language}\n${code}\n\`\`\`\n`;
-    this.md.setText(this.buffer);
+    this.md.setText(stripTrailing(this.buffer));
   }
 
   finalize(): void {
     if (this.buffer === "") this.buffer = " ";
     const blocks = this.transform([{ type: "text", text: this.buffer }]);
     if (blocks.every((b) => b.type === "text")) {
-      this.md.setText(this.buffer);
+      this.md.setText(stripTrailing(this.buffer));
       return;
     }
     this.rebuild(blocks);
@@ -55,7 +57,7 @@ export class AssistantMessage {
         this.container.addChild(m.node);
       } else if (block.text.trim()) {
         const m = this.nodes.markdown({ paddingX: 1 });
-        m.setText(block.text);
+        m.setText(stripTrailing(block.text));
         this.container.addChild(m.node);
       }
     }

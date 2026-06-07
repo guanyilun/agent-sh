@@ -46,6 +46,20 @@ test("AssistantMessage hasContent is false before any text", () => {
   assert.equal(am.hasContent(), false);
 });
 
+test("AssistantMessage strips a trailing blank line (no double gap before tool calls)", () => {
+  const am = new AssistantMessage(renderer);
+  am.appendText("Let me look.\n\n");
+  am.finalize();
+  assert.deepEqual(lines(am.node), ["", " Let me look."]);
+});
+
+test("AssistantMessage preserves blank lines between sections", () => {
+  const am = new AssistantMessage(renderer);
+  am.appendText("Section A.\n\nSection B.\n\n");
+  am.finalize();
+  assert.deepEqual(lines(am.node), ["", " Section A.", "", " Section B."]);
+});
+
 test("FooterSlot reserves a gap only when there is content above", () => {
   const render = (n: RenderNode) => (n as unknown as { render(w: number): string[] }).render(80);
   assert.deepEqual(render(footerContainer(() => false).node), [], "no blank line at launch (empty transcript)");
