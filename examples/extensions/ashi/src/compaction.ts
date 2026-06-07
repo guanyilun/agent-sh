@@ -39,19 +39,16 @@ export function registerCompaction(
     }
 
     const older = messages.slice(0, cutIdx);
-    const kept = messages.slice(cutIdx);
     const tokensBefore = (ctx.call("conversation:estimate-prompt-tokens") as number) ?? 0;
     const customSummary = (await ctx.call("ashi:compact:build-summary", older)) as string | null | undefined;
 
     const store = getStore().current();
     await store.appendCompaction(firstKeptId, tokensBefore, customSummary ?? undefined);
-    ctx.call("conversation:replace-messages", store.buildMessages());
 
-    const keptIds = kept.map((_, i) => capture.getEntryIdAt(cutIdx + i));
-    if (keptIds.some((id) => id === null)) {
-      ctx.bus.emit("ui:error", { message: "compaction: a kept message has no on-disk entry — capture invariant broken" });
-    }
-    capture.resetTo([null, ...keptIds]);
+    // Take messages and ids from one rebuild so capture's index→id map can't drift.
+    const { messages: rebuilt, entryIds } = store.buildBranchWithIds();
+    ctx.call("conversation:replace-messages", rebuilt);
+    capture.resetTo(entryIds);
 
     const tokensAfter = (ctx.call("conversation:estimate-prompt-tokens") as number) ?? 0;
     return { before: tokensBefore, after: tokensAfter, evictedCount: older.length };

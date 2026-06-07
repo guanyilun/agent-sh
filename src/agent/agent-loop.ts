@@ -971,12 +971,9 @@ export class AgentLoop implements AgentBackend {
         // tool-heavy workloads.
         const target = Math.floor(threshold * 0.25);
         const result = await this.compactWithHooks(target, 1);
-        if (!result) {
-          // Auto-compact fired but nothing was evictable. This can happen
-          // in short conversations with heavy tool output where the pin
-          // fraction consumes all turns. Log it so it's not silent.
+        if (result) {
           this.bus.emit("ui:info", {
-            message: `[auto-compact] above threshold (${totalEstimate.toLocaleString()} > ${threshold.toLocaleString()}) but nothing to evict — conversation may be too short`,
+            message: `(auto-compacted: ~${result.before.toLocaleString()} → ~${result.after.toLocaleString()} tokens, evicted ${result.evictedCount})`,
           });
         }
         cachedSystemPrompt = undefined;

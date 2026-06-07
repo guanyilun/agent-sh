@@ -38,8 +38,19 @@ Releases before this file are recorded in the git tags and GitHub releases.
   `foo|bar`), falling back to literal matching only when the pattern is invalid;
   it was previously always escaped to a literal. `browse` and `search` also
   accept `offset`/`limit`, so results past the first page are now reachable.
+- Auto-compaction now reports on success (`(auto-compacted: ~X → ~Y tokens,
+  evicted N)`) and stays silent on a no-op, inverting the previous behavior
+  where only the "nothing to evict" failure was surfaced — so a compaction that
+  silently shrinks context is now visible.
 
 ### Fixed
+
+- ashi: a successful compaction no longer desyncs the capture index→id map and
+  aborts the next auto-compaction with "kept-message has no on-disk entry". The
+  kept messages and their on-disk entry ids are now taken from a single
+  `buildBranchWithIds()` rebuild, instead of replacing the conversation from
+  `buildMessages()` and re-deriving the ids by index — the two could drift,
+  leaving a kept slot with a null id that failed the next compaction's lookup.
 
 - ashi: an assistant message whose text ends with a blank line no longer renders
   a stray empty row before the following tool call. Some models emit trailing
