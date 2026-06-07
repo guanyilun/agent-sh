@@ -1,4 +1,5 @@
 import { theme } from "./theme.js";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { highlight, supportsLanguage } from "cli-highlight";
 import type { ThemeColor } from "./theme.js";
 import type { ToolEntryConfig } from "./display-config.js";
@@ -188,6 +189,11 @@ export function renderBody(body: Body, env: Env, diff: DiffSlot): string {
 // The tail is capped even when expanded so a huge result can't flood scrollback; the agent still sees it all.
 const DEFAULT_EXPANDED_LINES = 200;
 
+function clampLines(lines: string[], width: number): string {
+  if (width <= 0) return lines.join("\n");
+  return lines.map((l) => truncateToWidth(l, width, "…")).join("\n");
+}
+
 function renderStream(buffer: string, env: Env): string {
   const display = buffer.replace(/\n+$/, "");
   if (env.expanded) {
@@ -205,14 +211,14 @@ function renderStream(buffer: string, env: Env): string {
   }
   if (env.mode === "summary") {
     if (!env.finalized) {
-      const tail = display.split("\n").slice(-2).join("\n");
+      const tail = clampLines(display.split("\n").slice(-2), env.width);
       return theme.fg("muted", tail);
     }
     return lineCountHint(buffer);
   }
   if (!display) return "";
   const lines = display.split("\n");
-  const trimmed = lines.slice(-env.previewLines).join("\n");
+  const trimmed = clampLines(lines.slice(-env.previewLines), env.width);
   const remaining = Math.max(0, lines.length - env.previewLines);
   // The preview is the tail, so the hidden lines come before it — note goes above.
   const overflow = remaining > 0

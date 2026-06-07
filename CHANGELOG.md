@@ -48,6 +48,20 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ### Fixed
 
+- Bash/tool output no longer corrupts multibyte UTF-8 (e.g. CJK text, emoji).
+  The executor decoded each stdout/stderr chunk independently with
+  `Buffer.toString("utf-8")`, so any character whose bytes straddled a chunk
+  boundary became replacement characters (`�`). Each stream now decodes through a
+  `StringDecoder` that holds an incomplete trailing sequence until the next
+  chunk. This corrupted the agent-visible tool result too, not just the display.
+
+- ashi: a single pathologically wide line in bash/tool output (minified HTML,
+  one-line JSON) no longer wraps across the whole viewport. The preview clamped
+  the number of lines but not their width, so one 2000-column line counted as a
+  single line yet soft-wrapped over dozens of rows. Each previewed line is now
+  truncated to the body width with an `…`; expanding still shows full lines and
+  the agent always receives the untruncated output.
+
 - ashi: the footer's compaction counter (`⊟ N`) now resets when you start a new
   session, resume, or fork a branch. The count is a frontend-local tally
   incremented on each `conversation:after-compact`; `rebuildChat()` — the reload

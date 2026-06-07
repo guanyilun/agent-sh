@@ -1,5 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { stripAnsi } from "./ansi.js";
 
 // Node reports a missing cwd as `spawn <binary> ENOENT` — disambiguate.
@@ -106,25 +107,23 @@ export function executeCommand(opts: {
 
   session.process = child;
 
-  const handleData = (data: Buffer) => {
-    const raw = data.toString("utf-8");
+  const handleText = (raw: string) => {
+    if (!raw) return;
     const clean = stripAnsi(raw);
-
-    // Accumulate cleaned output for the agent
     session.output += clean;
-
-    // Enforce output cap — truncate from beginning, keep tail
     if (session.output.length > maxOutput) {
       session.output = session.output.slice(-maxOutput);
       session.truncated = true;
     }
-
-    // Real-time streaming callback
     opts.onOutput?.(raw);
   };
 
-  child.stdout?.on("data", handleData);
-  child.stderr?.on("data", handleData);
+  const outDecoder = new StringDecoder("utf-8");
+  const errDecoder = new StringDecoder("utf-8");
+  child.stdout?.on("data", (d: Buffer) => handleText(outDecoder.write(d)));
+  child.stderr?.on("data", (d: Buffer) => handleText(errDecoder.write(d)));
+  child.stdout?.on("end", () => handleText(outDecoder.end()));
+  child.stderr?.on("end", () => handleText(errDecoder.end()));
 
   let cancelKill: (() => void) | undefined;
   const timer = setTimeout(() => {
@@ -218,8 +217,8 @@ export function executeArgv(opts: {
 
   session.process = child;
 
-  const handleData = (data: Buffer) => {
-    const raw = data.toString("utf-8");
+  const handleText = (raw: string) => {
+    if (!raw) return;
     const clean = stripAnsi(raw);
     session.output += clean;
     if (session.output.length > maxOutput) {
@@ -229,8 +228,12 @@ export function executeArgv(opts: {
     opts.onOutput?.(raw);
   };
 
-  child.stdout?.on("data", handleData);
-  child.stderr?.on("data", handleData);
+  const outDecoder = new StringDecoder("utf-8");
+  const errDecoder = new StringDecoder("utf-8");
+  child.stdout?.on("data", (d: Buffer) => handleText(outDecoder.write(d)));
+  child.stderr?.on("data", (d: Buffer) => handleText(errDecoder.write(d)));
+  child.stdout?.on("end", () => handleText(outDecoder.end()));
+  child.stderr?.on("end", () => handleText(errDecoder.end()));
 
   const timer = setTimeout(() => {
     if (!session.done && session.process) {
