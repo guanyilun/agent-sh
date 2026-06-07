@@ -650,6 +650,8 @@ export function mountAshi(
     activeThinking = null;
     activeTools.clear();
     openGroup = null;
+    compactions = 0;
+    statusFooter.update({ compactions });
     clearChat();
     const branch = getStore().current().getBranch();
     const toolMap = new Map<string, ReplayEntry>();

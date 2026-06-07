@@ -48,6 +48,13 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ### Fixed
 
+- ashi: the footer's compaction counter (`⊟ N`) now resets when you start a new
+  session, resume, or fork a branch. The count is a frontend-local tally
+  incremented on each `conversation:after-compact`; `rebuildChat()` — the reload
+  path for every session/branch switch — cleared the other per-conversation view
+  state but left this one, so a fresh session kept showing the previous session's
+  count.
+
 - ashi: a successful compaction no longer desyncs the capture index→id map and
   aborts the next auto-compaction with "kept-message has no on-disk entry". The
   kept messages and their on-disk entry ids are now taken from a single
