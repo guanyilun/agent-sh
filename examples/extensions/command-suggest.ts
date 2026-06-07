@@ -15,6 +15,10 @@ import type { ExtensionContext } from "agent-sh/types";
 
 export default function activate(ctx: ExtensionContext): void {
   const { bus } = ctx;
+
+  // No shell to deliver to (e.g. ashi) — the suggestion would go nowhere.
+  if (!ctx.shell) return;
+
   let pendingCommand: string | null = null;
 
   // ── Tool ────────────────────────────────────────────────────────
