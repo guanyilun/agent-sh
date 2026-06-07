@@ -242,7 +242,7 @@ A plain-string entry inherits the provider-level values and the defaults above. 
 | `reasoningShape` | Borrow another registered provider's reasoning-request shape by id (e.g. `"openrouter"`). Defaults to the OpenAI-compatible shape. |
 | `echoReasoningPatterns` | Case-insensitive regex sources matched against model ids; a match defaults that model to `echoReasoning: true` (a per-model `echoReasoning` still wins). |
 
-If neither level declares a `contextWindow`, agent-sh falls back to a conservative 60k-token budget.
+If neither level declares a `contextWindow`, agent-sh falls back to a conservative 60k-token budget. Override that fallback globally with the `AGENT_SH_DEFAULT_CONTEXT_WINDOW` environment variable (a positive integer; ignored otherwise).
 
 ### Switching models at runtime
 

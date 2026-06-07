@@ -12,6 +12,9 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 - `LICENSE` file (MIT) — matches the license declared in `package.json` and the
   README badge, which previously linked to a missing file.
+- `AGENT_SH_DEFAULT_CONTEXT_WINDOW` environment variable overrides the 60k
+  fallback context window used when neither the model nor settings declares one
+  (a positive integer; ignored otherwise).
 
 ### Changed
 
