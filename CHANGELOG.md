@@ -70,6 +70,12 @@ Releases before this file are recorded in the git tags and GitHub releases.
   inline `✓`/`✗` result. Single-tool turns and sequential mutating/streaming
   tools (bash, edit) still render live.
 
+- The `openai-compatible` provider now reads each model's context window from the
+  `/v1/models` catalog — llama.cpp's `meta.n_ctx` and vLLM's `max_model_len` —
+  instead of keeping only the id. Local llama.cpp/vLLM models previously fell back
+  to the 60k default, which also drove auto-compaction to trigger far earlier than
+  the server's real window. Servers that expose neither field are unaffected.
+
 ### Documentation
 
 - Audited the README and `docs/` against the source and corrected stale content:

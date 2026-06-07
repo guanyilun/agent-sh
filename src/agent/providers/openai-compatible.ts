@@ -28,17 +28,32 @@ export default function activate(ctx: AgentContext): void {
       id,
       apiKey,
       baseURL,
-      defaultModel: models[0],
+      defaultModel: models[0]!.id,
       models,
     });
   }).catch(() => { /* leave empty — user supplies via --model */ });
 }
 
-async function fetchModels(baseURL: string, apiKey: string): Promise<string[]> {
+export interface CatalogModel {
+  id: string;
+  meta?: { n_ctx?: number };
+  max_model_len?: number;
+}
+
+export function catalogContextWindow(m: CatalogModel): number | undefined {
+  if (typeof m.meta?.n_ctx === "number" && m.meta.n_ctx > 0) return m.meta.n_ctx;
+  if (typeof m.max_model_len === "number" && m.max_model_len > 0) return m.max_model_len;
+  return undefined;
+}
+
+async function fetchModels(
+  baseURL: string,
+  apiKey: string,
+): Promise<{ id: string; contextWindow?: number }[]> {
   const headers: Record<string, string> = {};
   if (apiKey && apiKey !== "no-key") headers.Authorization = `Bearer ${apiKey}`;
   const res = await fetch(`${baseURL.replace(/\/$/, "")}/models`, { headers });
   if (!res.ok) return [];
-  const data = await res.json() as { data?: { id: string }[] };
-  return (data.data ?? []).map((m) => m.id);
+  const data = await res.json() as { data?: CatalogModel[] };
+  return (data.data ?? []).map((m) => ({ id: m.id, contextWindow: catalogContextWindow(m) }));
 }
