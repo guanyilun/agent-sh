@@ -100,6 +100,14 @@ Releases before this file are recorded in the git tags and GitHub releases.
   to the 60k default, which also drove auto-compaction to trigger far earlier than
   the server's real window. Servers that expose neither field are unaffected.
 
+- Rolling-history prefetch now runs after the agent backend activates, fixing a
+  race where prior-session context was silently dropped on new sessions.
+- `conversation_recall` tool description now accurately describes the store as a
+  persistent cross-session memory rather than "evicted conversation turns".
+- The `command-suggest` tool is no longer presented to the model when no shell
+  frontend is attached, so the agent won't suggest shell commands that can't be
+  staged at the prompt.
+
 ### Documentation
 
 - Audited the README and `docs/` against the source and corrected stale content:
@@ -136,11 +144,6 @@ Releases before this file are recorded in the git tags and GitHub releases.
   module in published tarballs.
 
 ### Fixed
-
-- Rolling-history prefetch now runs after the agent backend activates, fixing a
-  race where prior-session context was silently dropped on new sessions.
-- `conversation_recall` tool description now accurately describes the store as a
-  persistent cross-session memory rather than "evicted conversation turns".
 
 - Diff rendering (edit/write previews) now wraps long lines across rows instead
   of truncating them with an ellipsis, so the full changed line is always
