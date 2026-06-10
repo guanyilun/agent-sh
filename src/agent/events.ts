@@ -22,6 +22,7 @@ declare module "../core/event-bus.js" {
       id: string;
       reasoningParams?: (level: string, model?: string) => Record<string, unknown>;
       cacheTokens?: (usage: Record<string, unknown>) => number | undefined;
+      requestHeaders?: (info: { sessionId?: string }) => Record<string, string>;
     };
 
     "agent:models-changed": Record<string, never>;

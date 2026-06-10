@@ -68,7 +68,7 @@ export class LlmClient {
   }
 
   stream(opts: StreamOpts) {
-    const { signal, messages, tools, model, max_tokens, ...rest } = opts;
+    const { signal, headers, messages, tools, model, max_tokens, ...rest } = opts;
     const body = {
       ...rest,
       model: model ?? this.model,
@@ -78,7 +78,7 @@ export class LlmClient {
       stream: true as const,
       stream_options: { include_usage: true },
     };
-    return this.client.chat.completions.create(body as ChatCompletionCreateParamsStreaming, { signal });
+    return this.client.chat.completions.create(body as ChatCompletionCreateParamsStreaming, { signal, headers });
   }
 
   async complete(opts: CompleteOpts): Promise<string> {
@@ -102,6 +102,8 @@ export type StreamOpts = {
   model?: string;
   max_tokens?: number;
   signal?: AbortSignal;
+  /** Per-request transport headers, forwarded to the SDK (not request body). */
+  headers?: Record<string, string>;
 } & Record<string, unknown>;
 
 export type CompleteOpts = {

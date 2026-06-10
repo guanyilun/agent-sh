@@ -42,7 +42,16 @@ function toModalities(input?: string[]): ("text" | "image")[] | undefined {
 
 export default function activate(ctx: AgentContext): void {
   const apiKey = resolveApiKey("openrouter").key;
-  ctx.agent.providers.configure("openrouter", { reasoningParams: buildReasoningParams });
+  ctx.agent.providers.configure("openrouter", {
+    reasoningParams: buildReasoningParams,
+    // x-session-id pins sticky provider routing across turns so prompt caches
+    // stay warm even when compaction rewrites the opening messages.
+    requestHeaders: ({ sessionId }) => {
+      const headers: Record<string, string> = {};
+      if (sessionId) headers["x-session-id"] = sessionId;
+      return headers;
+    },
+  });
   ctx.agent.providers.register({
     id: "openrouter",
     apiKey: apiKey ?? undefined,

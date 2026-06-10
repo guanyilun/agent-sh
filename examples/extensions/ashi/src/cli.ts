@@ -177,6 +177,8 @@ async function main(): Promise<void> {
 
   const ctx = core.extensionContext({ quit: cleanup });
 
+  ctx.define("session:current-id", () => store.current().id);
+
   activateAgent(ctx);
   activateShellContext(ctx);
   await loadBuiltinExtensions(ctx);
