@@ -34,6 +34,7 @@ import { registerCapture, type Capture } from "./capture.js";
 import { registerRenderDefaults } from "./hooks.js";
 import { registerDefaultSchemaRenderers } from "./default-schema-renderers.js";
 import { createPiTuiRenderer } from "./renderers/pi-tui/index.js";
+import { registerInlineImage, supportsInlineImages } from "./renderers/pi-tui/inline-image.js";
 import type { Renderer } from "./renderer.js";
 import { loadRendererPreference } from "./display-config.js";
 import { applyOutputMode } from "./terminal-mode.js";
@@ -239,6 +240,11 @@ async function main(): Promise<void> {
   applyOutputMode(renderer.capabilities.rawOutput);
   registerRenderDefaults(ctx, renderer);
   registerDefaultSchemaRenderers(ctx);
+
+  // Handler presence is how producers detect that inline images are available.
+  if (rendererName === "pi-tui" && supportsInlineImages()) {
+    ctx.define("ashi:inline-image:register", (png: Buffer) => registerInlineImage(png));
+  }
 
   ctx.advise("system-prompt:frontend", (next) => {
     const base = (next() as string) ?? "";

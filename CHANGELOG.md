@@ -17,6 +17,17 @@ Releases before this file are recorded in the git tags and GitHub releases.
   per-provider `requestHeaders` endpoint hook (scoped to OpenRouter only) and a
   `session:current-id` handler the frontend supplies; absent that handler no
   header is sent.
+- `latex-images` extension now renders inline `$…$` math as inline images under
+  the ashi frontend on kitty/Ghostty terminals, flowing within wrapped markdown
+  text (bold/italic and text selection preserved). Display `$$…$$` math is
+  unchanged. Inline detection follows pandoc's `$…$` delimiter rules so prose,
+  currency (`$5 and $10`), and inline code spans don't false-match. Inline
+  rendering is gated on the terminal's kitty Unicode-placeholder support; other
+  terminals leave inline `$…$` as text.
+- ashi pi-tui renderer: markdown can host inline images via the kitty Unicode
+  placeholder protocol. Producers register a PNG (`ashi:inline-image:register`)
+  and embed the returned id as a sentinel; the renderer transmits the image
+  out-of-band and flows it inline as width-correct placeholder cells.
 
 ### Fixed
 

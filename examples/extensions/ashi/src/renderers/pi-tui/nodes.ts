@@ -14,6 +14,13 @@ import {
 } from "@earendil-works/pi-tui";
 import { theme } from "../../theme.js";
 import { markdownTheme } from "./theme-adapters.js";
+import {
+  emitInlineImage,
+  inlineCols,
+  inlinePlaceholder,
+  PLACEHOLDER,
+  SENTINEL_RE,
+} from "./inline-image.js";
 import type {
   ContainerView,
   MarkdownOptions,
@@ -118,6 +125,69 @@ class ZonedMarkdown extends Markdown {
   }
 }
 
+// Each sentinel becomes a bare run of `cols` placeholder cells so the wrapper
+// reserves the right width; render() later paints the image into that run.
+function reserveSentinels(full: string): { display: string; ids: number[] } {
+  const ids: number[] = [];
+  const display = full.replace(SENTINEL_RE, (_m, idStr) => {
+    const cols = inlineCols(Number(idStr));
+    if (cols === null) return "";
+    ids.push(Number(idStr));
+    return PLACEHOLDER.repeat(cols);
+  });
+  return { display, ids };
+}
+
+function injectInlineImages(lines: string[], ids: number[]): string[] {
+  if (ids.length === 0) return lines;
+  const write = (s: string): boolean => process.stdout.write(s);
+  let k = 0;
+  return lines.map((line) => {
+    if (k >= ids.length || !line.includes(PLACEHOLDER)) return line;
+    let out = "";
+    let i = 0;
+    while (i < line.length) {
+      const ch = String.fromCodePoint(line.codePointAt(i)!);
+      if (ch === PLACEHOLDER && k < ids.length) {
+        let runLen = 0;
+        while (i < line.length && String.fromCodePoint(line.codePointAt(i)!) === PLACEHOLDER) {
+          runLen++;
+          i += PLACEHOLDER.length;
+        }
+        const id = ids[k++]!;
+        emitInlineImage(id, runLen, write);
+        out += inlinePlaceholder(id, runLen);
+      } else {
+        out += ch;
+        i += ch.length;
+      }
+    }
+    return out;
+  });
+}
+
+type MarkdownCtor = new (...args: ConstructorParameters<typeof Markdown>) => Markdown;
+
+// Subclass that flows inline images where the text carries sentinels; a no-op
+// superset of the base when none are present.
+function withInlineImages<T extends MarkdownCtor>(Base: T): T {
+  class InlineImageMarkdown extends (Base as MarkdownCtor) {
+    private inlineIds: number[] = [];
+    override setText(full: string): void {
+      const { display, ids } = reserveSentinels(full);
+      this.inlineIds = ids;
+      super.setText(display);
+    }
+    override render(width: number): string[] {
+      return injectInlineImages(super.render(width), this.inlineIds);
+    }
+  }
+  return InlineImageMarkdown as unknown as T;
+}
+
+const InlineMarkdown = withInlineImages(Markdown);
+const InlineZonedMarkdown = withInlineImages(ZonedMarkdown);
+
 class FooterSlot extends Container {
   constructor(private readonly hasContentAbove: () => boolean) {
     super();
@@ -157,7 +227,7 @@ export function createNodes(opts: { imageScale?: number } = {}): RenderNodes {
         opts?.color || opts?.bgColor
           ? { ...(opts.color ? { color: opts.color } : {}), ...(opts.bgColor ? { bgColor: opts.bgColor } : {}) }
           : undefined;
-      const Ctor = opts?.osc133Zones ? ZonedMarkdown : Markdown;
+      const Ctor = opts?.osc133Zones ? InlineZonedMarkdown : InlineMarkdown;
       const md = new Ctor("", opts?.paddingX ?? 0, opts?.paddingY ?? 0, markdownTheme(), colorOpts);
       const view: MarkdownView = {
         node: asNode(md),
