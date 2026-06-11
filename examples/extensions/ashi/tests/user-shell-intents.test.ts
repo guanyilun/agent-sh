@@ -7,25 +7,25 @@ test("consume with no pending intent returns null — the phantom-OSC case", () 
   assert.equal(intents.consume(), null);
 });
 
-test("push then consume returns the pushed intent", () => {
+test("push then consume returns the pushed intent, command and all", () => {
   const intents = new UserShellIntents();
-  intents.push({ private: false });
-  assert.deepEqual(intents.consume(), { private: false });
+  intents.push({ private: false, command: "ls" });
+  assert.deepEqual(intents.consume(), { private: false, command: "ls" });
 });
 
 test("FIFO order is preserved across multiple pushes", () => {
   const intents = new UserShellIntents();
-  intents.push({ private: false });
-  intents.push({ private: true });
-  intents.push({ private: false });
-  assert.deepEqual(intents.consume(), { private: false });
-  assert.deepEqual(intents.consume(), { private: true });
-  assert.deepEqual(intents.consume(), { private: false });
+  intents.push({ private: false, command: "cd /a" });
+  intents.push({ private: true, command: "secret" });
+  intents.push({ private: false, command: "ls" });
+  assert.deepEqual(intents.consume(), { private: false, command: "cd /a" });
+  assert.deepEqual(intents.consume(), { private: true, command: "secret" });
+  assert.deepEqual(intents.consume(), { private: false, command: "ls" });
 });
 
 test("a single push only matches one command-start; the next is treated as phantom", () => {
   const intents = new UserShellIntents();
-  intents.push({ private: false });
+  intents.push({ private: false, command: "ls" });
   assert.notEqual(intents.consume(), null);
   assert.equal(intents.consume(), null);
 });

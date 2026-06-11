@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Releases before this file are recorded in the git tags and GitHub releases.
 
+## [Unreleased]
+
+### Fixed
+
+- ashi user shell: the command label shown above each `!` command's output could
+  be the *previous* command (e.g. an `ls` rendered as the preceding `cd`). ashi
+  composes and sends the command itself, but the label was reconstructed from
+  the shell's echoed text instead. It now displays the exact line ashi wrote to
+  the pty (threaded through the pending-intent queue), which is also what's
+  recorded for the agent's context. Shell markers are still used to capture
+  output and detect command boundaries — only the command text no longer
+  round-trips through the shell.
+- Bash preexec hook (non-ashi shell frontend): the command text recovered for
+  the agent's context derived from `history 1`, which goes stale when the user's
+  `PROMPT_COMMAND` reloads history (`history -c`/`-r` for cross-session sharing).
+  It now falls back to `$BASH_COMMAND` whenever the history entry doesn't match
+  the command bash is about to run, keeping the full typed line (pipelines,
+  history-recalled commands) in the common case. zsh and fish were unaffected
+  (they read the exact command from preexec `$1`/`$argv`).
+
 ## [0.15.7] - 2026-06-07
 
 ### Added
