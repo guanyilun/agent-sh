@@ -193,7 +193,7 @@ function splitEquations(text: string): Block[] {
 
 // KaTeX-style `$…$` rules so prose/currency don't false-match: no space after the
 // opening `$`; no space before the closing `$` and no digit after it; one line; \$.
-function matchInline(text: string, open: number): { eq: string; end: number } | null {
+export function matchInline(text: string, open: number): { eq: string; end: number } | null {
   if (open + 1 >= text.length || /\s/.test(text[open + 1]!)) return null;
   for (let j = open + 1; j < text.length; j++) {
     const ch = text[j]!;
@@ -210,16 +210,29 @@ function matchInline(text: string, open: number): { eq: string; end: number } | 
 
 // Replace inline `$…$` with `\x01LI:<id>\x01` sentinels; leaves escapes and inline
 // code spans untouched, and falls back to literal text when register() returns null.
-function replaceInline(text: string, register: (eq: string) => number | null): string {
+export function replaceInline(text: string, register: (eq: string) => number | null): string {
   let out = "";
   let i = 0;
   while (i < text.length) {
     const c = text[i]!;
     if (c === "\\") { out += text.slice(i, i + 2); i += 2; continue; }
     if (c === "`") {
-      const end = text.indexOf("`", i + 1);
-      if (end === -1) { out += text.slice(i); break; }
-      out += text.slice(i, end + 1); i = end + 1; continue;
+      // Code span: a run of N backticks closes on the next run of exactly N.
+      // An unmatched opening run is a literal backtick — keep scanning after it.
+      let n = 1;
+      while (text[i + n] === "`") n++;
+      let j = i + n;
+      let close = -1;
+      while (j < text.length) {
+        if (text[j] === "`") {
+          let m = 1;
+          while (text[j + m] === "`") m++;
+          if (m === n) { close = j; break; }
+          j += m;
+        } else j++;
+      }
+      if (close === -1) { out += text.slice(i, i + n); i += n; continue; }
+      out += text.slice(i, close + n); i = close + n; continue;
     }
     if (c === "$" && text[i + 1] !== "$") {
       const m = matchInline(text, i);

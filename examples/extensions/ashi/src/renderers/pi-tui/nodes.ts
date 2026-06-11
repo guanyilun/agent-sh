@@ -17,9 +17,10 @@ import { markdownTheme } from "./theme-adapters.js";
 import {
   emitInlineImage,
   inlineCols,
-  inlinePlaceholder,
+  paintInlineImages,
   PLACEHOLDER,
   SENTINEL_RE,
+  type InlineItem,
 } from "./inline-image.js";
 import type {
   ContainerView,
@@ -127,43 +128,22 @@ class ZonedMarkdown extends Markdown {
 
 // Each sentinel becomes a bare run of `cols` placeholder cells so the wrapper
 // reserves the right width; render() later paints the image into that run.
-function reserveSentinels(full: string): { display: string; ids: number[] } {
-  const ids: number[] = [];
+// Exported for tests: with no sentinels (latex-images off / non-kitty terminal,
+// where the sentinel producer never runs) this is a pass-through.
+export function reserveSentinels(full: string): { display: string; items: InlineItem[] } {
+  const items: InlineItem[] = [];
   const display = full.replace(SENTINEL_RE, (_m, idStr) => {
     const cols = inlineCols(Number(idStr));
     if (cols === null) return "";
-    ids.push(Number(idStr));
+    items.push({ id: Number(idStr), cols });
     return PLACEHOLDER.repeat(cols);
   });
-  return { display, ids };
+  return { display, items };
 }
 
-function injectInlineImages(lines: string[], ids: number[]): string[] {
-  if (ids.length === 0) return lines;
+function injectInlineImages(lines: string[], items: InlineItem[]): string[] {
   const write = (s: string): boolean => process.stdout.write(s);
-  let k = 0;
-  return lines.map((line) => {
-    if (k >= ids.length || !line.includes(PLACEHOLDER)) return line;
-    let out = "";
-    let i = 0;
-    while (i < line.length) {
-      const ch = String.fromCodePoint(line.codePointAt(i)!);
-      if (ch === PLACEHOLDER && k < ids.length) {
-        let runLen = 0;
-        while (i < line.length && String.fromCodePoint(line.codePointAt(i)!) === PLACEHOLDER) {
-          runLen++;
-          i += PLACEHOLDER.length;
-        }
-        const id = ids[k++]!;
-        emitInlineImage(id, runLen, write);
-        out += inlinePlaceholder(id, runLen);
-      } else {
-        out += ch;
-        i += ch.length;
-      }
-    }
-    return out;
-  });
+  return paintInlineImages(lines, items, (id, cols) => emitInlineImage(id, cols, write));
 }
 
 type MarkdownCtor = new (...args: ConstructorParameters<typeof Markdown>) => Markdown;
@@ -172,14 +152,14 @@ type MarkdownCtor = new (...args: ConstructorParameters<typeof Markdown>) => Mar
 // superset of the base when none are present.
 function withInlineImages<T extends MarkdownCtor>(Base: T): T {
   class InlineImageMarkdown extends (Base as MarkdownCtor) {
-    private inlineIds: number[] = [];
+    private inlineItems: InlineItem[] = [];
     override setText(full: string): void {
-      const { display, ids } = reserveSentinels(full);
-      this.inlineIds = ids;
+      const { display, items } = reserveSentinels(full);
+      this.inlineItems = items;
       super.setText(display);
     }
     override render(width: number): string[] {
-      return injectInlineImages(super.render(width), this.inlineIds);
+      return injectInlineImages(super.render(width), this.inlineItems);
     }
   }
   return InlineImageMarkdown as unknown as T;

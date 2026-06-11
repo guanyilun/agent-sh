@@ -84,9 +84,62 @@ export function emitInlineImage(id: number, cols: number, write: (s: string) => 
 
 // Each cell encodes the id's low 24 bits in the fg colour and its high byte in the
 // third diacritic (row, column, id-high) — allocateImageId() ids use all 32 bits.
-export function inlinePlaceholder(id: number, cols: number): string {
+// `colStart` offsets the column index so an image split across lines (wrap) keeps
+// continuous columns instead of repeating its left edge.
+export function inlinePlaceholder(id: number, count: number, colStart = 0): string {
   const hi = diacritic((id >> 24) & 255);
   let s = `${ESC}[38;2;${(id >> 16) & 255};${(id >> 8) & 255};${id & 255}m`;
-  for (let j = 0; j < cols; j++) s += PLACEHOLDER + diacritic(0) + diacritic(j) + hi;
+  for (let j = 0; j < count; j++) s += PLACEHOLDER + diacritic(0) + diacritic(colStart + j) + hi;
   return s + `${ESC}[39m`;
+}
+
+export interface InlineItem {
+  id: number;
+  cols: number;
+}
+
+// Repaint the reserved PLACEHOLDER runs as real kitty placeholder cells. Cells are
+// partitioned by each image's reserved `cols` rather than by contiguous run, so
+// adjacent images (`$a$$b$` → one fused run) and an image the wrapper split across
+// lines both keep their ids aligned. `transmit` fires once per image, when its
+// first cell is placed. Pure apart from the injected `transmit` callback.
+export function paintInlineImages(
+  lines: string[],
+  items: InlineItem[],
+  transmit: (id: number, cols: number) => void,
+): string[] {
+  if (items.length === 0) return lines;
+  let k = 0; // index of the image currently being placed
+  let placed = 0; // cells of image k already emitted across prior lines
+  return lines.map((line) => {
+    if (k >= items.length || !line.includes(PLACEHOLDER)) return line;
+    let out = "";
+    let i = 0;
+    while (i < line.length) {
+      const ch = String.fromCodePoint(line.codePointAt(i)!);
+      if (ch === PLACEHOLDER && k < items.length) {
+        const item = items[k]!;
+        let count = 0;
+        while (
+          i < line.length &&
+          String.fromCodePoint(line.codePointAt(i)!) === PLACEHOLDER &&
+          placed + count < item.cols
+        ) {
+          count++;
+          i += PLACEHOLDER.length;
+        }
+        if (placed === 0) transmit(item.id, item.cols);
+        out += inlinePlaceholder(item.id, count, placed);
+        placed += count;
+        if (placed >= item.cols) {
+          k++;
+          placed = 0;
+        }
+      } else {
+        out += ch;
+        i += ch.length;
+      }
+    }
+    return out;
+  });
 }
