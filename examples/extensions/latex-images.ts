@@ -22,7 +22,10 @@ import * as path from "node:path";
 import type { ExtensionContext } from "agent-sh/types";
 
 // Settings loaded in activate() via ctx.getExtensionSettings
-let config = { dpi: 300, fgColor: "d4d4d4" };
+// inlineScale: inline math font vs ~1 em of text (1.0 ≈ text, <1 smaller).
+let config = { dpi: 300, fgColor: "d4d4d4", inlineScale: 1.0 };
+
+let magickBin: string | null = null;
 
 /** Encode PNG as iTerm2 or Kitty inline image escape sequence. */
 function encodeImage(data: Buffer): string {
@@ -56,6 +59,17 @@ $\\displaystyle ${equation}$
 \\end{document}
 `;
 
+// Inline equations: text-style (no \displaystyle) so sizing matches a text line.
+const LATEX_INLINE_TEMPLATE = (equation: string, fg: string) => `
+\\documentclass[border=1pt]{standalone}
+\\usepackage{amsmath,amssymb,amsfonts}
+\\usepackage{xcolor}
+\\begin{document}
+\\color[HTML]{${fg}}
+$ ${equation} $
+\\end{document}
+`;
+
 let tmpDir: string | null = null;
 let renderCounter = 0;
 
@@ -66,7 +80,10 @@ function ensureTmpDir(): string {
   return tmpDir;
 }
 
-function renderEquation(equation: string): Buffer | null {
+function renderEquation(
+  equation: string,
+  template: (eq: string, fg: string) => string,
+): Buffer | null {
   const dir = ensureTmpDir();
   const idx = renderCounter++;
   const texPath = path.join(dir, `eq${idx}.tex`);
@@ -74,7 +91,7 @@ function renderEquation(equation: string): Buffer | null {
   const pngPath = path.join(dir, `eq${idx}.png`);
 
   try {
-    fs.writeFileSync(texPath, LATEX_TEMPLATE(equation, config.fgColor));
+    fs.writeFileSync(texPath, template(equation, config.fgColor));
 
     execSync(
       `latex -interaction=nonstopmode -output-directory="${dir}" "${texPath}"`,
@@ -98,10 +115,50 @@ function renderEquation(equation: string): Buffer | null {
 
 const equationCache = new Map<string, Buffer | null>();
 function renderEquationCached(equation: string): Buffer | null {
-  if (!equationCache.has(equation)) {
-    equationCache.set(equation, renderEquation(equation));
+  const key = `d:${equation}`;
+  if (!equationCache.has(key)) {
+    equationCache.set(key, renderEquation(equation, LATEX_TEMPLATE));
   }
-  return equationCache.get(equation) ?? null;
+  return equationCache.get(key) ?? null;
+}
+
+// 1 TeX pt = 1/72.27 inch; standalone's default body font is 10pt.
+const PT_PER_INCH = 72.27;
+
+// Pad each equation's height up to a shared ~1 em reference (transparent, centered)
+// so short and tall expressions render at the same font — only their heights differ.
+// Cols are derived downstream from this padded height. No-op for already-tall content.
+function normalizeInlineHeight(buf: Buffer): Buffer {
+  if (!magickBin) return buf;
+  const w = buf.readUInt32BE(16);
+  const h = buf.readUInt32BE(20);
+  const emPx = (config.dpi * 10) / PT_PER_INCH;
+  const scale = config.inlineScale > 0 ? config.inlineScale : 1;
+  const targetH = Math.round(emPx / scale);
+  if (h >= targetH) return buf;
+  const dir = ensureTmpDir();
+  const idx = renderCounter++;
+  const inPath = path.join(dir, `pad${idx}-in.png`);
+  const outPath = path.join(dir, `pad${idx}-out.png`);
+  try {
+    fs.writeFileSync(inPath, buf);
+    execSync(
+      `${magickBin} "${inPath}" -background none -gravity center -extent ${w}x${targetH} "${outPath}"`,
+      { timeout: 10000, stdio: "pipe" },
+    );
+    return fs.readFileSync(outPath);
+  } catch {
+    return buf;
+  }
+}
+
+function renderInlineCached(equation: string): Buffer | null {
+  const key = `i:${equation}`;
+  if (!equationCache.has(key)) {
+    const png = renderEquation(equation, LATEX_INLINE_TEMPLATE);
+    equationCache.set(key, png ? normalizeInlineHeight(png) : null);
+  }
+  return equationCache.get(key) ?? null;
 }
 
 const EQ_DELIM = "$$";
@@ -132,6 +189,65 @@ function splitEquations(text: string): Block[] {
   return out;
 }
 
+// ── Inline math ($…$) ────────────────────────────────────────────
+
+// KaTeX-style `$…$` rules so prose/currency don't false-match: no space after the
+// opening `$`; no space before the closing `$` and no digit after it; one line; \$.
+export function matchInline(text: string, open: number): { eq: string; end: number } | null {
+  if (open + 1 >= text.length || /\s/.test(text[open + 1]!)) return null;
+  for (let j = open + 1; j < text.length; j++) {
+    const ch = text[j]!;
+    if (ch === "\n") return null;
+    if (ch === "\\") { j++; continue; }
+    if (ch !== "$") continue;
+    if (/\s/.test(text[j - 1]!)) continue;
+    if (/[0-9]/.test(text[j + 1] ?? "")) continue;
+    const eq = text.slice(open + 1, j);
+    return eq.trim() === "" ? null : { eq, end: j + 1 };
+  }
+  return null;
+}
+
+// Replace inline `$…$` with `\x01LI:<id>\x01` sentinels; leaves escapes and inline
+// code spans untouched, and falls back to literal text when register() returns null.
+export function replaceInline(text: string, register: (eq: string) => number | null): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i]!;
+    if (c === "\\") { out += text.slice(i, i + 2); i += 2; continue; }
+    if (c === "`") {
+      // Code span: a run of N backticks closes on the next run of exactly N.
+      // An unmatched opening run is a literal backtick — keep scanning after it.
+      let n = 1;
+      while (text[i + n] === "`") n++;
+      let j = i + n;
+      let close = -1;
+      while (j < text.length) {
+        if (text[j] === "`") {
+          let m = 1;
+          while (text[j + m] === "`") m++;
+          if (m === n) { close = j; break; }
+          j += m;
+        } else j++;
+      }
+      if (close === -1) { out += text.slice(i, i + n); i += n; continue; }
+      out += text.slice(i, close + n); i = close + n; continue;
+    }
+    if (c === "$" && text[i + 1] !== "$") {
+      const m = matchInline(text, i);
+      if (m) {
+        const id = register(m.eq);
+        out += id === null ? text.slice(i, m.end) : `\x01LI:${id}\x01`;
+        i = m.end;
+        continue;
+      }
+    }
+    out += c; i++;
+  }
+  return out;
+}
+
 // ── Extension entry point ────────────────────────────────────────
 
 export default function activate(ctx: ExtensionContext) {
@@ -149,6 +265,15 @@ export default function activate(ctx: ExtensionContext) {
       message: "latex-images: latex and dvipng required (brew install --cask mactex)",
     });
     return;
+  }
+
+  // ImageMagick is optional; only used to shrink inline glyphs (config.inlineScale).
+  for (const bin of ["magick", "convert"]) {
+    try {
+      execSync(`${bin} --version`, { stdio: "ignore", timeout: 3000 });
+      magickBin = bin;
+      break;
+    } catch { /* not installed */ }
   }
 
   ctx.define("latex:render-equation", (equation: string): Buffer | null => renderEquationCached(equation));
@@ -172,14 +297,34 @@ export default function activate(ctx: ExtensionContext) {
       ctx.call("render:image", png);
     });
   } else {
+    // Cache the id per equation so each image is registered (and transmitted) once.
+    const inlineIds = new Map<string, number>();
+    const registerInline = (eq: string): number | null => {
+      const cached = inlineIds.get(eq);
+      if (cached !== undefined) return cached;
+      const png = renderInlineCached(eq);
+      if (!png) return null;
+      const id = ctx.call("ashi:inline-image:register", png) as number | null;
+      if (typeof id === "number") inlineIds.set(eq, id);
+      return typeof id === "number" ? id : null;
+    };
+
     (bus.onPipe as unknown as (e: string, fn: (p: ContentPipe) => ContentPipe) => void)(
       "render:assistant-content",
       (payload) => {
         // Can't show images reliably → leave $$…$$ as text.
         if (!payload.images) return payload;
+        const canInline = ctx.list().includes("ashi:inline-image:register");
         return {
           ...payload,
-          blocks: payload.blocks.flatMap((b) => (b.type === "text" ? splitEquations(b.text) : [b])),
+          blocks: payload.blocks.flatMap((b) => {
+            if (b.type !== "text") return [b];
+            return splitEquations(b.text).map((blk) =>
+              blk.type === "text" && canInline
+                ? { type: "text" as const, text: replaceInline(blk.text, registerInline) }
+                : blk,
+            );
+          }),
         };
       },
     );

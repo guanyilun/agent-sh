@@ -38,7 +38,9 @@ export class AssistantMessage {
     if (this.buffer === "") this.buffer = " ";
     const blocks = this.transform([{ type: "text", text: this.buffer }]);
     if (blocks.every((b) => b.type === "text")) {
-      this.md.setText(stripTrailing(this.buffer));
+      // Render the transformed text, not the raw buffer — transforms may rewrite
+      // content in place (e.g. inline-image sentinels) while staying all-text.
+      this.md.setText(stripTrailing(blocks.map((b) => (b.type === "text" ? b.text : "")).join("")));
       return;
     }
     this.rebuild(blocks);

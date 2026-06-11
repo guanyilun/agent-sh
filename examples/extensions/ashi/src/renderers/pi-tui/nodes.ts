@@ -14,6 +14,14 @@ import {
 } from "@earendil-works/pi-tui";
 import { theme } from "../../theme.js";
 import { markdownTheme } from "./theme-adapters.js";
+import {
+  emitInlineImage,
+  inlineCols,
+  paintInlineImages,
+  PLACEHOLDER,
+  SENTINEL_RE,
+  type InlineItem,
+} from "./inline-image.js";
 import type {
   ContainerView,
   MarkdownOptions,
@@ -118,6 +126,48 @@ class ZonedMarkdown extends Markdown {
   }
 }
 
+// Each sentinel becomes a bare run of `cols` placeholder cells so the wrapper
+// reserves the right width; render() later paints the image into that run.
+// Exported for tests: with no sentinels (latex-images off / non-kitty terminal,
+// where the sentinel producer never runs) this is a pass-through.
+export function reserveSentinels(full: string): { display: string; items: InlineItem[] } {
+  const items: InlineItem[] = [];
+  const display = full.replace(SENTINEL_RE, (_m, idStr) => {
+    const cols = inlineCols(Number(idStr));
+    if (cols === null) return "";
+    items.push({ id: Number(idStr), cols });
+    return PLACEHOLDER.repeat(cols);
+  });
+  return { display, items };
+}
+
+function injectInlineImages(lines: string[], items: InlineItem[]): string[] {
+  const write = (s: string): boolean => process.stdout.write(s);
+  return paintInlineImages(lines, items, (id, cols) => emitInlineImage(id, cols, write));
+}
+
+type MarkdownCtor = new (...args: ConstructorParameters<typeof Markdown>) => Markdown;
+
+// Subclass that flows inline images where the text carries sentinels; a no-op
+// superset of the base when none are present.
+function withInlineImages<T extends MarkdownCtor>(Base: T): T {
+  class InlineImageMarkdown extends (Base as MarkdownCtor) {
+    private inlineItems: InlineItem[] = [];
+    override setText(full: string): void {
+      const { display, items } = reserveSentinels(full);
+      this.inlineItems = items;
+      super.setText(display);
+    }
+    override render(width: number): string[] {
+      return injectInlineImages(super.render(width), this.inlineItems);
+    }
+  }
+  return InlineImageMarkdown as unknown as T;
+}
+
+const InlineMarkdown = withInlineImages(Markdown);
+const InlineZonedMarkdown = withInlineImages(ZonedMarkdown);
+
 class FooterSlot extends Container {
   constructor(private readonly hasContentAbove: () => boolean) {
     super();
@@ -157,7 +207,7 @@ export function createNodes(opts: { imageScale?: number } = {}): RenderNodes {
         opts?.color || opts?.bgColor
           ? { ...(opts.color ? { color: opts.color } : {}), ...(opts.bgColor ? { bgColor: opts.bgColor } : {}) }
           : undefined;
-      const Ctor = opts?.osc133Zones ? ZonedMarkdown : Markdown;
+      const Ctor = opts?.osc133Zones ? InlineZonedMarkdown : InlineMarkdown;
       const md = new Ctor("", opts?.paddingX ?? 0, opts?.paddingY ?? 0, markdownTheme(), colorOpts);
       const view: MarkdownView = {
         node: asNode(md),
