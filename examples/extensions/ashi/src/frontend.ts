@@ -399,7 +399,7 @@ export function mountAshi(
       app.requestRender();
       return;
     }
-    pendingUserShell.push({ private: !!opts?.private });
+    pendingUserShell.push({ private: !!opts?.private, command: line });
     if (opts?.private) bus.emit("shell:user-exec-exclude-next", {});
     bus.emit("shell:pty-write", { data: line + "\n" });
   };
@@ -816,12 +816,13 @@ export function mountAshi(
   bus.on("shell:foreground-busy", ({ busy }) => { shellForegroundBusy = busy; });
 
   let activeUserShell: { pair: ToolPair; command: string; isPrivate: boolean } | null = null;
-  bus.on("shell:command-start", ({ command }) => {
+  bus.on("shell:command-start", () => {
     if (agentShellActive) return;
     const intent = pendingUserShell.consume();
     if (!intent) return;
     finalizeThinking();
     if (activeAssistant) { activeAssistant.finalize(); activeAssistant = null; }
+    const command = intent.command;
     const isPrivate = intent.private;
     const name = isPrivate ? "user_bash_private" : "user_bash";
     const pair = renderToolPair({
@@ -861,7 +862,7 @@ export function mountAshi(
     // Drain shell queue before queries so its output lands in the next turn's <shell_events>.
     while (queuedShellLines.length > 0) {
       const item = queuedShellLines.shift()!;
-      pendingUserShell.push({ private: item.private });
+      pendingUserShell.push({ private: item.private, command: item.line });
       if (item.private) bus.emit("shell:user-exec-exclude-next", {});
       bus.emit("shell:pty-write", { data: item.line + "\n" });
     }
