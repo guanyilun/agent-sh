@@ -21,10 +21,17 @@ interface CacheProbe {
   found: boolean;
 }
 
+interface HeaderProbe {
+  model: string;
+  found: boolean;
+  headers: Record<string, string> | undefined;
+}
+
 interface DriverResult {
   events: CapturedEvent[];
   models?: any[];
   cacheProbes?: CacheProbe[];
+  headerProbes?: HeaderProbe[];
   stderr: string;
   stdout: string;
   exitCode: number | null;
@@ -32,7 +39,7 @@ interface DriverResult {
 
 async function runDriver(
   settings: Record<string, unknown>,
-  scenario: { config?: Record<string, unknown>; capture: string[]; dumpModels?: boolean; probeCacheTokens?: unknown[]; steps: unknown[] },
+  scenario: { config?: Record<string, unknown>; capture: string[]; dumpModels?: boolean; probeCacheTokens?: unknown[]; probeRequestHeaders?: unknown[]; steps: unknown[] },
   envOverride: Record<string, string> = {},
 ): Promise<DriverResult> {
   const home = mkdtempSync(join(tmpdir(), "agent-sh-pmodes-"));
@@ -66,8 +73,8 @@ async function runDriver(
         clearTimeout(timer);
         try {
           const line = stdout.trim().split(/\r?\n/).pop() ?? "";
-          const parsed = JSON.parse(line) as { events: CapturedEvent[]; models?: any[]; cacheProbes?: CacheProbe[] };
-          resolve({ events: parsed.events, models: parsed.models, cacheProbes: parsed.cacheProbes, stderr, stdout, exitCode: code });
+          const parsed = JSON.parse(line) as { events: CapturedEvent[]; models?: any[]; cacheProbes?: CacheProbe[]; headerProbes?: HeaderProbe[] };
+          resolve({ events: parsed.events, models: parsed.models, cacheProbes: parsed.cacheProbes, headerProbes: parsed.headerProbes, stderr, stdout, exitCode: code });
         } catch (err) {
           reject(new Error(`driver output not JSON.\nexit=${code}\nstdout:\n${stdout}\nstderr:\n${stderr}\nparse error: ${(err as Error).message}`));
         }
@@ -261,4 +268,42 @@ test("native DeepSeek's flat hit count overrides the default cache extractor", a
   assert.ok(probes[0].found, "deepseek mode should be built when DEEPSEEK_API_KEY is set");
   assert.equal(probes[0].result, 80, "flat prompt_cache_hit_tokens used as the cached count");
   assert.equal(probes[1].result, undefined, "deepseek hook ignores the OpenAI-standard shape");
+});
+
+test("openrouter attaches x-session-id only when a session id is present", async () => {
+  // activate-provider installs the requestHeaders configure hook (keyed on the
+  // "openrouter" provider id, independent of catalog registration); the explicit
+  // register gives the model an apiKey so it surfaces in agent:get-models.
+  const result = await runDriver({}, {
+    capture: [],
+    probeRequestHeaders: [
+      { model: "or/m", sessionId: "sess-abc" },
+      { model: "or/m" },
+    ],
+    steps: [
+      { kind: "activate-provider", name: "openrouter" },
+      { kind: "providers.register", payload: { id: "openrouter", apiKey: "x", baseURL: "https://openrouter.ai/api/v1", defaultModel: "or/m", models: ["or/m"] } },
+    ],
+  });
+
+  const probes = result.headerProbes!;
+  assert.ok(probes[0].found, "registered openrouter model should exist");
+  assert.deepEqual(probes[0].headers, { "x-session-id": "sess-abc" }, "session id flows into the sticky-routing header");
+  assert.deepEqual(probes[1].headers, {}, "no session id → no header attached");
+});
+
+test("non-openrouter providers register no request-headers hook", async () => {
+  const result = await runDriver(
+    {},
+    {
+      capture: [],
+      probeRequestHeaders: [{ model: "deepseek-v4-flash", sessionId: "sess-abc" }],
+      steps: [{ kind: "activate-provider", name: "deepseek" }],
+    },
+    { DEEPSEEK_API_KEY: "sk-test" },
+  );
+
+  const probes = result.headerProbes!;
+  assert.ok(probes[0].found, "deepseek model should exist");
+  assert.equal(probes[0].headers, undefined, "deepseek configures no requestHeaders hook, so no header is built");
 });

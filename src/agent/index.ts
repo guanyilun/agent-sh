@@ -128,6 +128,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
   const providerHooks = new Map<string, {
     reasoningParams?: (level: string, model?: string) => Record<string, unknown>;
     cacheTokens?: (usage: Record<string, unknown>) => number | undefined;
+    requestHeaders?: (info: { sessionId?: string }) => Record<string, string>;
   }>();
 
   // Bakes model id so ModelEndpoint.buildReasoningParams keeps its (level) signature.
@@ -138,6 +139,9 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   const bindCacheTokens = (shapeId: string) =>
     providerHooks.get(shapeId)?.cacheTokens ?? defaultCacheTokens;
+
+  const bindRequestHeaders = (shapeId: string) =>
+    providerHooks.get(shapeId)?.requestHeaders;
 
   const agentSurface: AgentSurface = {
     llm: createLlmFacade({ list: ctx.list, call: ctx.call }),
@@ -345,6 +349,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       baseURL: p.baseURL,
       buildReasoningParams: bindReasoning(shapeId, modelId),
       extractCachedTokens: bindCacheTokens(shapeId),
+      buildRequestHeaders: bindRequestHeaders(shapeId),
     };
   };
 
@@ -388,10 +393,11 @@ export default function agentBackend(ctx: ExtensionContext): void {
     }
   });
 
-  bus.on("provider:configure", ({ id, reasoningParams, cacheTokens }) => {
+  bus.on("provider:configure", ({ id, reasoningParams, cacheTokens, requestHeaders }) => {
     const prev = providerHooks.get(id) ?? {};
     if (reasoningParams !== undefined) prev.reasoningParams = reasoningParams;
     if (cacheTokens !== undefined) prev.cacheTokens = cacheTokens;
+    if (requestHeaders !== undefined) prev.requestHeaders = requestHeaders;
     providerHooks.set(id, prev);
   });
 

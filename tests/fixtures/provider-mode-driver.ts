@@ -10,6 +10,7 @@ interface Scenario {
   capture: string[];
   dumpModels?: boolean;
   probeCacheTokens?: Array<{ model: string; usage: Record<string, unknown> }>;
+  probeRequestHeaders?: Array<{ model: string; sessionId?: string }>;
   steps: Array<
     | { kind: "providers.register"; payload: ProviderRegistration }
     | { kind: "providers.unregister"; id: string }
@@ -74,7 +75,7 @@ async function main() {
   };
 
   let models: Model[] | undefined;
-  if (scenario.dumpModels || scenario.probeCacheTokens) {
+  if (scenario.dumpModels || scenario.probeCacheTokens || scenario.probeRequestHeaders) {
     try {
       models = ctx.call("agent:get-models") as Model[];
     } catch {
@@ -91,12 +92,22 @@ async function main() {
     });
   }
 
+  let headerProbes: Array<{ model: string; found: boolean; headers: Record<string, string> | undefined }> | undefined;
+  if (scenario.probeRequestHeaders) {
+    headerProbes = scenario.probeRequestHeaders.map(({ model, sessionId }) => {
+      const m = models?.find((x) => x.id === model);
+      const ep = m ? endpointFor(m) : undefined;
+      return { model, found: !!m, headers: ep?.buildRequestHeaders?.({ sessionId }) };
+    });
+  }
+
   const dumped = models?.map((m) => ({ ...m, endpoint: endpointFor(m) }));
 
   process.stdout.write(JSON.stringify({
     events: captured,
     models: scenario.dumpModels ? stripFns(dumped) : undefined,
     cacheProbes,
+    headerProbes,
   }) + "\n");
   process.exit(0);
 }

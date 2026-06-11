@@ -93,6 +93,7 @@ export interface ModelEndpoint {
   baseURL?: string;
   buildReasoningParams?: (level: string) => Record<string, unknown>;
   extractCachedTokens?: (usage: Record<string, unknown>) => number | undefined;
+  buildRequestHeaders?: (info: { sessionId?: string }) => Record<string, string>;
 }
 
 // ── Agent-host extension surface ─────────────────────────────────
@@ -111,6 +112,7 @@ export interface AgentSurface {
     configure: (id: string, opts: {
       reasoningParams?: (level: string, model?: string) => Record<string, unknown>;
       cacheTokens?: (usage: Record<string, unknown>) => number | undefined;
+      requestHeaders?: (info: { sessionId?: string }) => Record<string, string>;
     }) => void;
   };
 

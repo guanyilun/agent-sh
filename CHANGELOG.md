@@ -8,6 +8,16 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Added
+
+- OpenRouter requests now send an `x-session-id` header keyed on the frontend's
+  resume-stable session id, pinning sticky provider routing so prompt caches stay
+  warm across turns — including after compaction rewrites the opening messages,
+  the case OpenRouter's default message-hash routing misses. Wired through a new
+  per-provider `requestHeaders` endpoint hook (scoped to OpenRouter only) and a
+  `session:current-id` handler the frontend supplies; absent that handler no
+  header is sent.
+
 ### Fixed
 
 - ashi user shell: the command label shown above each `!` command's output could

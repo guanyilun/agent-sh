@@ -462,6 +462,17 @@ export class AgentLoop implements AgentBackend {
   }
 
 
+  /** Resume-stable conversation id from the frontend (e.g. ashi); undefined
+   *  when the frontend tracks no session. */
+  private currentSessionId(): string | undefined {
+    try {
+      const id = this.handlers.call("session:current-id");
+      return typeof id === "string" && id ? id : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private resolveEndpoint(m: Model): ModelEndpoint | undefined {
     try {
       return this.handlers.call("agent:resolve-endpoint", { provider: m.provider, id: m.id }) as ModelEndpoint | undefined;
@@ -1439,7 +1450,12 @@ export class AgentLoop implements AgentBackend {
     };
     this.bus.emit("llm:request", requestParams);
 
-    const stream = await this.llmClient.stream({ ...requestParams, signal });
+    const headers = this.activeEndpoint?.buildRequestHeaders?.({ sessionId: this.currentSessionId() });
+    const stream = await this.llmClient.stream({
+      ...requestParams,
+      signal,
+      ...(headers && Object.keys(headers).length ? { headers } : {}),
+    });
 
     try {
     for await (const chunk of stream) {
