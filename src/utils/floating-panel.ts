@@ -30,7 +30,7 @@
  * Usage from extensions:
  *   import { FloatingPanel } from "agent-sh/utils/floating-panel.js";
  */
-import { stripAnsi } from "./ansi.js";
+import { stripAnsi, stripCursorControls } from "./ansi.js";
 import { wrapLine } from "./markdown.js";
 import { LineEditor } from "./line-editor.js";
 import { TerminalBuffer } from "./terminal-buffer.js";
@@ -408,10 +408,11 @@ export class FloatingPanel {
 
     // Default row builder: truncate and pad
     this.handlers.define(`${p}:build-row`, (content: string, width: number): string => {
-      const plain = stripAnsi(content);
+      const clean = stripCursorControls(content);
+      const plain = stripAnsi(clean);
       const display = plain.length > width
-        ? content.slice(0, width - 1) + "\u2026"
-        : content;
+        ? clean.slice(0, width - 1) + "\u2026"
+        : clean;
       const pad = Math.max(0, width - stripAnsi(display).length);
       return display + " ".repeat(pad);
     });

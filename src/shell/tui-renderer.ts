@@ -939,7 +939,7 @@ export default function activate(ctx: ExtensionContext): void {
       ? getSettings().readOutputMaxLines
       : getSettings().maxCommandOutputLines;
     s.commandOutputBuffer += chunk;
-    const lines = s.commandOutputBuffer.split("\n");
+    const lines = s.commandOutputBuffer.split(/\r?\n/);
     s.commandOutputBuffer = lines.pop()!;
     for (const line of lines) {
       if (s.commandOutputLineCount < maxLines) {

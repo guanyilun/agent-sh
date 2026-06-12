@@ -10,6 +10,12 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ### Fixed
 
+- Floating panel (overlay agent): tool output with CRLF line endings (e.g.
+  ssh's stderr warnings) no longer renders as staircased, left-truncated
+  lines inside the panel. The trailing `\r` survived into panel content
+  rows and repainted each composited row from column 0; panel rows now
+  strip cursor-moving control bytes (keeping colors), and the TUI's
+  command-output splitter treats `\r\n` as a line break.
 - Shell frontend: pasting multibyte text (e.g. Chinese) no longer corrupts
   characters into `�` when the paste spans multiple stdin chunks. The stdin
   reader decoded each chunk independently, tearing UTF-8 sequences at chunk

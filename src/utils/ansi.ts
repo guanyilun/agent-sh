@@ -138,3 +138,24 @@ export function padEndToWidth(str: string, targetWidth: number): string {
 export function stripAnsi(str: string): string {
   return stripAnsiPkg(str).replace(/\r/g, "");
 }
+
+/**
+ * Sanitize text for painting at a fixed screen position: SGR (color/style)
+ * passes through; anything else that would move the cursor or mutate
+ * terminal state mid-row is dropped. Tabs become a single space so painted
+ * width matches `stripAnsi`-based measurement.
+ */
+export function stripCursorControls(str: string): string {
+  // Park SGR behind NUL placeholders so the strips below can't eat their ESC bytes.
+  const sgr: string[] = [];
+  const cleaned = str
+    .replace(/\x00/g, "")
+    .replace(/\x1b\[[0-9;:]*m/g, (m) => { sgr.push(m); return "\x00"; })
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, "")
+    .replace(/\x1b\[[0-9;:?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b./g, "")
+    .replace(/\t/g, " ")
+    .replace(/[\x01-\x08\x0a-\x1f\x7f]/g, "");
+  let i = 0;
+  return cleaned.replace(/\x00/g, () => sgr[i++] ?? "");
+}
