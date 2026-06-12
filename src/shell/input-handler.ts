@@ -88,7 +88,8 @@ export class InputHandler {
   private loadHistory(): void {
     try {
       const data = fs.readFileSync(HISTORY_FILE, "utf-8");
-      this.history = data.split("\n").filter(Boolean);
+      this.history = data.split("\n").filter(Boolean)
+        .map((l) => l.replace(/\\([\\n])/g, (_, c: string) => c === "n" ? "\n" : "\\"));
     } catch {
     }
   }
@@ -97,7 +98,8 @@ export class InputHandler {
     try {
       const { historySize } = getSettings();
       fs.mkdirSync(path.dirname(HISTORY_FILE), { recursive: true });
-      const lines = this.history.slice(-historySize);
+      const lines = this.history.slice(-historySize)
+        .map((l) => l.replace(/\\/g, "\\\\").replace(/\n/g, "\\n"));
       fs.writeFileSync(HISTORY_FILE, lines.join("\n") + "\n");
     } catch {
     }
@@ -392,7 +394,7 @@ export class InputHandler {
           this.editor.clear();
           this.view.resetCursor();
           this.dismissAutocomplete();
-          if (query && query.startsWith("/")) {
+          if (query && query.startsWith("/") && !query.includes("\n")) {
             const spaceIdx = query.indexOf(" ");
             const name = spaceIdx === -1 ? query : query.slice(0, spaceIdx);
             const args = spaceIdx === -1 ? "" : query.slice(spaceIdx + 1).trim();

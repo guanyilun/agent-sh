@@ -14,6 +14,12 @@ Releases before this file are recorded in the git tags and GitHub releases.
   characters into `�` when the paste spans multiple stdin chunks. The stdin
   reader decoded each chunk independently, tearing UTF-8 sequences at chunk
   boundaries; it now decodes statefully across chunks.
+- Shell frontend: a pasted multi-line query starting with `/` (e.g. a file
+  path) is now sent to the agent instead of being misparsed as a slash
+  command. Only single-line queries dispatch as commands.
+- Shell frontend: multi-line queries no longer corrupt the input history
+  file. Entries are stored with newlines escaped, so a multi-line paste
+  recalls as one history entry instead of splitting into several bogus ones.
 
 ## [0.15.8] - 2026-06-10
 
