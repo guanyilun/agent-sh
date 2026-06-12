@@ -7,6 +7,7 @@
  * factory wires it to process.stdin/stdout for the CLI; headless hosts
  * (multi-session web hubs, tests) supply their own.
  */
+import { StringDecoder } from "node:string_decoder";
 import type { RenderSurface } from "../utils/compositor.js";
 
 export interface Terminal {
@@ -23,40 +24,50 @@ export interface Terminal {
   suspendInput?(): { resume(): void };
 }
 
-/** Default Terminal: wraps process.stdin/stdout. */
-export function processTerminal(): Terminal {
+/** Default Terminal: wraps process.stdin/stdout (injectable for tests). */
+export function processTerminal(
+  stdin: NodeJS.ReadStream = process.stdin,
+  stdout: NodeJS.WriteStream = process.stdout,
+): Terminal {
   return {
     write(data) {
-      if (process.stdout.writable) {
-        try { process.stdout.write(data); } catch { /* ignore */ }
+      if (stdout.writable) {
+        try { stdout.write(data); } catch { /* ignore */ }
       }
     },
     onInput(cb) {
-      const handler = (b: Buffer) => cb(b.toString("utf-8"));
-      process.stdin.on("data", handler);
-      return () => { process.stdin.off("data", handler); };
+      // Stateful decode: tty chunk boundaries can land mid-way through a
+      // multibyte UTF-8 sequence (large pastes), so per-chunk toString()
+      // would emit U+FFFD for the torn halves.
+      const decoder = new StringDecoder("utf-8");
+      const handler = (b: Buffer) => {
+        const text = decoder.write(b);
+        if (text) cb(text);
+      };
+      stdin.on("data", handler);
+      return () => { stdin.off("data", handler); };
     },
     onResize(cb) {
-      const handler = () => cb(process.stdout.columns || 80, process.stdout.rows || 24);
-      process.stdout.on("resize", handler);
-      return () => { process.stdout.off("resize", handler); };
+      const handler = () => cb(stdout.columns || 80, stdout.rows || 24);
+      stdout.on("resize", handler);
+      return () => { stdout.off("resize", handler); };
     },
-    cols() { return process.stdout.columns || 80; },
-    rows() { return process.stdout.rows || 24; },
+    cols() { return stdout.columns || 80; },
+    rows() { return stdout.rows || 24; },
     suspendInput() {
-      const wasRaw = process.stdin.isTTY && (process.stdin as { isRaw?: boolean }).isRaw;
-      if (process.stdin.isTTY) {
+      const wasRaw = stdin.isTTY && (stdin as { isRaw?: boolean }).isRaw;
+      if (stdin.isTTY) {
         try {
-          process.stdin.setRawMode(false);
-          process.stdin.pause();
+          stdin.setRawMode(false);
+          stdin.pause();
         } catch { /* ignore */ }
       }
       return {
         resume() {
-          if (process.stdin.isTTY) {
+          if (stdin.isTTY) {
             try {
-              process.stdin.resume();
-              if (wasRaw) process.stdin.setRawMode(true);
+              stdin.resume();
+              if (wasRaw) stdin.setRawMode(true);
             } catch { /* ignore */ }
           }
         },

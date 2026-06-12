@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Releases before this file are recorded in the git tags and GitHub releases.
 
+## [Unreleased]
+
+### Fixed
+
+- Shell frontend: pasting multibyte text (e.g. Chinese) no longer corrupts
+  characters into `�` when the paste spans multiple stdin chunks. The stdin
+  reader decoded each chunk independently, tearing UTF-8 sequences at chunk
+  boundaries; it now decodes statefully across chunks.
+
 ## [0.15.8] - 2026-06-10
 
 ### Added

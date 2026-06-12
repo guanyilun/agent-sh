@@ -6,7 +6,8 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { surfaceFromTerminal, type Terminal } from "../../src/shell/terminal.js";
+import { EventEmitter } from "node:events";
+import { processTerminal, surfaceFromTerminal, type Terminal } from "../../src/shell/terminal.js";
 
 interface Recording {
   writes: string[];
@@ -76,6 +77,60 @@ test("surfaceFromTerminal: columns/rows reflect terminal state at access time", 
   t._rows = 50;
   assert.equal(surface.columns, 132);
   assert.equal(surface.rows, 50);
+});
+
+// processTerminal.onInput is a plain "data" listener, so a bare
+// EventEmitter posing as stdin lets us drive byte chunks directly.
+function makeFakeStdin(): NodeJS.ReadStream {
+  return new EventEmitter() as unknown as NodeJS.ReadStream;
+}
+
+function collectInput(run: (emit: (b: Buffer) => void) => void): string[] {
+  const stdin = makeFakeStdin();
+  const seen: string[] = [];
+  processTerminal(stdin).onInput((s) => seen.push(s));
+  run((b) => stdin.emit("data", b));
+  return seen;
+}
+
+test("processTerminal: onInput decodes a whole-chunk multibyte paste", () => {
+  const seen = collectInput((emit) => emit(Buffer.from("测试显著性", "utf-8")));
+  assert.deepEqual(seen, ["测试显著性"]);
+});
+
+test("processTerminal: onInput survives a chunk boundary mid UTF-8 sequence", () => {
+  const buf = Buffer.from("测试显著性", "utf-8");
+  // Split inside the second character's 3-byte sequence — per-chunk
+  // toString() would yield U+FFFD replacement characters here.
+  const seen = collectInput((emit) => {
+    emit(buf.subarray(0, 4));
+    emit(buf.subarray(4));
+  });
+  assert.equal(seen.join(""), "测试显著性");
+  assert.ok(!seen.join("").includes("�"));
+});
+
+test("processTerminal: onInput holds back a fully-partial chunk instead of emitting garbage", () => {
+  const buf = Buffer.from("中", "utf-8"); // 3 bytes
+  const all = collectInput((emit) => {
+    emit(buf.subarray(0, 1));
+    emit(buf.subarray(1, 2));
+    emit(buf.subarray(2));
+  });
+  assert.deepEqual(all, ["中"]);
+});
+
+test("processTerminal: onInput decoder state is per-subscriber", () => {
+  const stdin = makeFakeStdin();
+  const buf = Buffer.from("好", "utf-8");
+  const a: string[] = [];
+  const b: string[] = [];
+  processTerminal(stdin).onInput((s) => a.push(s));
+  processTerminal(stdin).onInput((s) => b.push(s));
+  stdin.emit("data", buf.subarray(0, 1));
+  stdin.emit("data", buf.subarray(1));
+  assert.deepEqual(a, ["好"]);
+  assert.deepEqual(b, ["好"]);
 });
 
 test("surfaceFromTerminal: onResize wires through to the underlying terminal", () => {
