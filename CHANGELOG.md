@@ -20,6 +20,11 @@ Releases before this file are recorded in the git tags and GitHub releases.
 - Shell frontend: multi-line queries no longer corrupt the input history
   file. Entries are stored with newlines escaped, so a multi-line paste
   recalls as one history entry instead of splitting into several bogus ones.
+- Shell frontend: multi-line bracketed pastes keep their line breaks on
+  terminals that send pasted newlines as `\r` (xterm convention — iTerm2,
+  Terminal.app). The paste accumulator deleted `\r` instead of normalizing
+  it to `\n`, silently joining the paste into one line. Ghostty/kitty
+  (verbatim `\n`) were unaffected.
 
 ## [0.15.8] - 2026-06-10
 

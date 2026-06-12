@@ -76,6 +76,31 @@ test("multi-line bracketed paste submits resolved content", () => {
   assert.deepEqual(h.submitted, ["line one\nline two"]);
 });
 
+test("bracketed paste with \\r separators (xterm convention) keeps line breaks", () => {
+  const h = makeHarness();
+  h.handler.handleInput(">");
+  h.handler.handleInput("\x1b[200~line one\rline two\rline three\x1b[201~");
+  h.handler.handleInput("\r");
+  assert.deepEqual(h.submitted, ["line one\nline two\nline three"]);
+});
+
+test("bracketed paste with \\r\\n separators keeps line breaks", () => {
+  const h = makeHarness();
+  h.handler.handleInput(">");
+  h.handler.handleInput("\x1b[200~line one\r\nline two\x1b[201~");
+  h.handler.handleInput("\r");
+  assert.deepEqual(h.submitted, ["line one\nline two"]);
+});
+
+test("\\r\\n pair split across stdin chunks collapses to one newline", () => {
+  const h = makeHarness();
+  h.handler.handleInput(">");
+  h.handler.handleInput("\x1b[200~line one\r");
+  h.handler.handleInput("\nline two\x1b[201~");
+  h.handler.handleInput("\r");
+  assert.deepEqual(h.submitted, ["line one\nline two"]);
+});
+
 test("multi-line paste starting with / goes to the agent, not command dispatch", () => {
   const h = makeHarness();
   h.handler.handleInput(">");

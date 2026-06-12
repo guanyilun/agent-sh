@@ -152,7 +152,7 @@ export class LineEditor {
     // paste, since typed input arrives one keystroke per chunk in raw mode.
     if (!this.inPaste && data.length > 1 && /[\r\n]/.test(data)
         && data.indexOf("\x1b[200~") === -1) {
-      this.pasteAccum = data.replace(/\r\n?/g, "\n");
+      this.pasteAccum = data;
       actions.push(...this.commitPaste());
       return actions;
     }
@@ -263,7 +263,7 @@ export class LineEditor {
   private consumePasteChunk(data: string): number {
     const endIdx = data.indexOf(PASTE_END);
     if (endIdx !== -1) {
-      this.pasteAccum += data.slice(0, endIdx).replace(/\r/g, "");
+      this.pasteAccum += data.slice(0, endIdx);
       return endIdx;
     }
     let suffixLen = 0;
@@ -271,14 +271,17 @@ export class LineEditor {
       if (data.endsWith(PASTE_END.slice(0, p))) { suffixLen = p; break; }
     }
     const safeEnd = data.length - suffixLen;
-    this.pasteAccum += data.slice(0, safeEnd).replace(/\r/g, "");
+    this.pasteAccum += data.slice(0, safeEnd);
     if (suffixLen > 0) this.pendingSeq = data.slice(safeEnd);
     return -1;
   }
 
   private commitPaste(): LineEditAction[] {
     this.inPaste = false;
-    const accum = this.pasteAccum;
+    // Pasted line separators arrive as \n, \r (xterm convention), or \r\n
+    // depending on terminal; normalize on the full accumulation so a \r\n
+    // pair split across chunks still collapses to one newline.
+    const accum = this.pasteAccum.replace(/\r\n?/g, "\n");
     this.pasteAccum = "";
     if (!accum) return [];
     if (accum.indexOf("\n") === -1) {
