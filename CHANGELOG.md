@@ -8,6 +8,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.9] - 2026-06-14
+
 ### Fixed
 
 - Floating panel (overlay agent): tool output with CRLF line endings (e.g.
