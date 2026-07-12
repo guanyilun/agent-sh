@@ -96,7 +96,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
   const conversation = new LiveView();
   conversation.addUserMessage(task);
 
-  let fullResponseText = "";
+  let lastResponseText = "";
   let iterations = 0;
   let tokensConsumed = 0;
   let budgetExhausted = false;
@@ -117,7 +117,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       onUsage?.(usage);
     }
 
-    fullResponseText += text;
+    if (text) lastResponseText = text;
 
     conversation.addAssistantMessage(assistantContent, assistantToolCalls, extras);
 
@@ -183,10 +183,10 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
 
   if (budgetExhausted) {
     const note = `\n\n[Subagent terminated: completion-token budget (${budgetTokens}) exhausted after ${tokensConsumed} completion tokens. Returning partial progress.]`;
-    return fullResponseText + note;
+    return lastResponseText + note;
   }
 
-  return fullResponseText;
+  return lastResponseText;
 }
 
 /** Stream a single LLM response. */
