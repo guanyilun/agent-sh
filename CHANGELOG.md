@@ -8,6 +8,18 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.10] - 2026-07-12
+
+### Fixed
+
+- Subagents no longer destabilize the parent agent's prompt cache. The
+  subagent runner returned its entire multi-iteration transcript, which the
+  parent appended as a single tool_result; on long runs this bloated the
+  parent's context enough to trip auto-compaction, rewriting the cached
+  prompt prefix and cold-starting the provider's prompt cache. Subagents now
+  return only their final assistant message. Live tool events are unchanged,
+  so intermediate steps still render.
+
 ## [0.15.9] - 2026-06-14
 
 ### Fixed
