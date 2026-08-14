@@ -8,10 +8,9 @@ const BASE_URL = "https://api.z.ai/api/coding/paas/v4";
 const ID = "zai-coding-plan";
 
 const DEFAULT_MODELS = [
-  { id: "glm-5.1",     reasoning: true, contextWindow: 200_000 },
-  { id: "glm-5-turbo", reasoning: true, contextWindow: 200_000 },
+  { id: "glm-5.3",     reasoning: true, contextWindow: 1_048_576 },
+  { id: "glm-5-turbo", reasoning: true, contextWindow: 204_800 },
   { id: "glm-4.7",     reasoning: true, contextWindow: 204_800 },
-  { id: "glm-4.5-air", reasoning: true, contextWindow: 131_072 },
 ];
 
 function buildReasoningParams(level: string, _model?: string): Record<string, unknown> {
