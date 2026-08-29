@@ -9,7 +9,7 @@ const ID = "zai-coding-plan";
 
 const DEFAULT_MODELS = [
   { id: "glm-5.3",       reasoning: true, contextWindow: 1_048_576 },
-  { id: "glm-5.3-flash", reasoning: true, contextWindow: 1_048_576, modalities: ["text", "image"] },
+  { id: "glm-5.3-flash", reasoning: true, contextWindow: 1_048_576, modalities: ["text", "image"] as ("text" | "image")[] },
   { id: "glm-5-turbo",   reasoning: true, contextWindow: 204_800 },
   { id: "glm-4.7",       reasoning: true, contextWindow: 204_800 },
 ];
