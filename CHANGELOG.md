@@ -8,6 +8,40 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.11] - 2026-08-30
+
+### Added
+
+- DeepSeek: `deepseek-v4-flash-vision-exp`, a multimodal V4 variant that accepts
+  images alongside text (1M context, reasoning with echoed thinking). The two
+  existing V4 models are untouched and stay text-only.
+- Z.AI Coding Plan: `glm-5.3` and `glm-5.3-flash`, both with a 1,048,576-token
+  context window. `glm-5.3-flash` is natively multimodal and accepts images.
+
+### Changed
+
+- Z.AI Coding Plan's model list now matches the GLM Coding Plan documentation.
+  `glm-5.1` and `glm-4.5-air` are gone, and `glm-5-turbo`'s context window is
+  corrected from 200,000 to 204,800. The default model moves from `glm-5.1` to
+  `glm-5.3`. A persisted `/model` selection pointing at a removed id will need
+  reselecting.
+
+### Fixed
+
+- The OSC 7 cwd sequence no longer shells out to `hostname`, which isn't
+  installed everywhere — on Arch it ships in the optional inetutils package, and
+  without it every prompt printed
+  `__agent_sh_precmd:1: command not found: hostname`. Each shell's own host
+  variable is used instead: `$HOST` (zsh), `$HOSTNAME` (bash), `$hostname`
+  (fish). That also drops one subprocess per prompt. The host portion of OSC 7
+  is advisory — the output parser matches `file://[^/]*` and consumes only the
+  path — so a shell that leaves the variable empty is still handled correctly.
+- Z.AI Coding Plan: reasoning level `off` on `glm-5.3-flash` no longer sends
+  `{ thinking: { type: "disabled" } }`, a shape that model rejects because its
+  `thinking.type` accepts only `"enabled"`. On that model `off` now maps to an
+  enabled block at low effort; every other GLM model still disables thinking
+  outright.
+
 ## [0.15.10] - 2026-07-12
 
 ### Fixed
