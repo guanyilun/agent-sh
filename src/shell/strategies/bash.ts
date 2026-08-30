@@ -2,7 +2,9 @@ import * as fs from "fs";
 import * as path from "path";
 import type { ShellStrategy, PrepareSpawnOpts, ShellSpawnConfig } from "./types.js";
 
-const OSC7_CMD = 'printf "\\e]7;file://%s%s\\a" "$(hostname)" "$PWD"';
+// $HOSTNAME is a bash builtin — avoids shelling out to hostname(1), which
+// isn't installed everywhere (e.g. Arch without inetutils).
+const OSC7_CMD = 'printf "\\e]7;file://%s%s\\a" "$HOSTNAME" "$PWD"';
 const TITLE_CMD = 'printf "\\e]0;⚡ agent-sh: %s\\a" "${PWD/#$HOME/~}"';
 
 export const bashStrategy: ShellStrategy = {
