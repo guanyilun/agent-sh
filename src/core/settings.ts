@@ -132,6 +132,8 @@ export interface Settings {
   startupBanner?: boolean;
   /** Show a subtle agent-sh indicator in the shell prompt. */
   promptIndicator?: boolean;
+  /** Check npm for a newer release and notify at startup. */
+  updateCheck?: boolean;
 
   // ── Built-in extensions ──────────────────────────────────
   /** Names of built-in extensions to disable (e.g. ["command-suggest"]). */
@@ -172,6 +174,7 @@ const DEFAULTS: Required<Settings> = {
   diagnose: false,
   startupBanner: true,
   promptIndicator: true,
+  updateCheck: true,
   disabledBuiltins: [],
   disabledExtensions: [],
 };

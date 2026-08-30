@@ -91,6 +91,9 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ### Added
 
+- Startup update notice. agent-sh checks npm once a day in the background and,
+  on the next launch, prints a notice to stderr when a newer release is
+  available. Disable with `"updateCheck": false` in settings.
 - `LICENSE` file (MIT) — matches the license declared in `package.json` and the
   README badge, which previously linked to a missing file.
 - `AGENT_SH_DEFAULT_CONTEXT_WINDOW` environment variable overrides the 60k
