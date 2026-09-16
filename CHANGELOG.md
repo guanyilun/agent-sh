@@ -8,6 +8,13 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Added
+
+- `codex-provider` example extension: use a ChatGPT (Codex) subscription as an
+  `ash` provider. A loopback proxy translates Chat Completions to the Codex
+  Responses API and signs requests with ChatGPT OAuth (`/codex-login`,
+  `/codex-status`, `/codex-logout`). Not yet tested against the live backend.
+
 ### Fixed
 
 - Custom providers declared under `providers` in `settings.json` now pick up keys

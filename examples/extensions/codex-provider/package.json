@@ -1,0 +1,7 @@
+{
+  "name": "codex-provider",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Use a ChatGPT (Codex) subscription as an ash provider via a loopback Chat Completions → Responses proxy"
+}
