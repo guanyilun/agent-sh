@@ -160,6 +160,8 @@ ashi makes the runtime's **decoupled rendering** concrete: the frontend is itsel
 |---|---|
 | ![ashi rendering tool calls pi-style](assets/ashi-pi-style.png) | ![ashi rendering tool calls claude-code-style](assets/ashi-claude-code-style.png) |
 
+For example, the `ashi-ink` extension registers `ashi:renderer:ink`, selected with `ASHI_RENDERER=ink`.
+
 ### asHub — a GUI coding agent
 
 [**firslov/asHub**](https://github.com/firslov/asHub) is a third-party cross-platform desktop app (Electron) built on the agent-sh runtime: a multi-session sidebar, persistence across restarts, and a live-streaming interface with Markdown, syntax-highlighted code, diffs, and tool-call rendering. macOS / Windows / Linux.
