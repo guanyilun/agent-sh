@@ -62,17 +62,13 @@ export interface SubagentOptions {
    * tracking stays accurate.
    */
   onUsage?: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) => void;
-  /** Extra request params for every stream call, as the main loop's reasoningParams(). */
   reasoningParams?: Record<string, unknown>;
-  /** Out-object the runner fills in; the return value stays a plain string. */
   outMeta?: SubagentRunMeta;
 }
 
 export interface SubagentRunMeta {
-  /** Why the run ended early; null = clean finish. */
   degraded?: "budget" | "iterations" | null;
   tokensUsed?: number;
-  /** True once a modifiesFiles tool ran — retry-safety signal. */
   mutatingToolExecuted?: boolean;
 }
 
@@ -180,7 +176,6 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
         ? (chunk: string) => { bus.emit("agent:tool-output-chunk", { chunk, toolCallId: tc.id }); }
         : undefined;
 
-      // Set before executing: a tool that throws mid-write has still mutated.
       if (outMeta && tool.modifiesFiles === true) outMeta.mutatingToolExecuted = true;
       const result = await tool.execute(args, onChunk);
 
@@ -208,7 +203,6 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     const note = `\n\n[Subagent terminated: completion-token budget (${budgetTokens}) exhausted after ${tokensConsumed} completion tokens. Returning partial progress.]`;
     return lastResponseText + note;
   }
-  // Out of iterations without a natural finish — report it like the budget path.
   if (iterations > maxIterations && !signal?.aborted) {
     if (outMeta) outMeta.degraded = "iterations";
     const note = `\n\n[Subagent terminated: max iterations (${maxIterations}) reached. Returning partial progress.]`;

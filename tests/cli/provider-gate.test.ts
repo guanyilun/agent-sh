@@ -43,7 +43,6 @@ test("ash backend with no provider configured fires the gate", async () => {
   const { code, stderr } = await runCli([]);
   assert.equal(code, 1, `expected exit 1, got ${code}\nstderr: ${stderr}`);
   assert.match(stderr, /no LLM provider configured/);
-  // The hint is derived from KNOWN_PROVIDERS; a hardcoded copy went stale before.
   assert.match(stderr, /ZAI_API_KEY/, stderr);
 });
 

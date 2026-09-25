@@ -8,7 +8,6 @@ import type { ToolDefinition } from "../../src/agent/types.js";
 type StreamOpts = Record<string, unknown>;
 const USAGE = { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12 };
 
-/** One assistant chunk per iteration, recording each call's opts. */
 function fakeClient(calls: StreamOpts[], reply: () => Record<string, unknown>) {
   return {
     model: "stub",
@@ -24,7 +23,6 @@ function fakeClient(calls: StreamOpts[], reply: () => Record<string, unknown>) {
 }
 
 const textReply = () => ({ content: "done." });
-// Always asks for a tool, so the loop keeps iterating.
 const toolReply = () => ({
   tool_calls: [{ index: 0, id: "c1", function: { name: "noop", arguments: "{}" } }],
 });
@@ -84,8 +82,6 @@ test("flags a mutating tool call that ran", async () => {
   assert.equal(meta.mutatingToolExecuted, true);
 });
 
-// A mutating tool that throws has still run: a retry-safety signal must not
-// under-report, and the tokens already spent must survive the exception.
 test("keeps outMeta usable when a mutating tool throws", async () => {
   const meta: SubagentRunMeta = {};
   const boom: ToolDefinition = { ...noopTool, execute: async () => { throw new Error("boom"); } };
@@ -157,11 +153,9 @@ test("marks an iteration-capped run as degraded: iterations", async () => {
     outMeta: meta,
   });
   assert.equal(meta.degraded, "iterations");
-  // The note, not the flag, is what the calling model actually reads.
   assert.match(text, /\[Subagent terminated: max iterations \(1\) reached/);
 });
 
-// Cancelling at the cap is a clean stop, not a truncated run.
 test("an aborted run is not reported as iteration-capped", async () => {
   const meta: SubagentRunMeta = {};
   const ac = new AbortController();

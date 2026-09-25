@@ -131,7 +131,6 @@ declare module "../core/event-bus.js" {
       messages: unknown[];
       contextWindow: number;
       activeTokens: number;
-      /** Skip the token estimate; activeTokens comes back 0. */
       skipTokens?: boolean;
     };
     "context:compact": {
