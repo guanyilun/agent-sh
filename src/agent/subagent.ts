@@ -62,6 +62,28 @@ export interface SubagentOptions {
    * tracking stays accurate.
    */
   onUsage?: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) => void;
+  /**
+   * Extra request params merged into every LLM stream call (e.g.
+   * reasoning/thinking controls built by the provider's
+   * buildReasoningParams hook). Forwarded verbatim, same as the main
+   * loop's reasoningParams(). Omitted = provider default.
+   */
+  reasoningParams?: Record<string, unknown>;
+  /**
+   * Optional out-object the runner fills in as it goes. Lets the caller
+   * tell a budget/iteration-truncated result apart from a clean finish
+   * (the return value stays a plain string for compatibility).
+   */
+  outMeta?: SubagentRunMeta;
+}
+
+export interface SubagentRunMeta {
+  /** Why the run ended early: token budget or iteration cap; null/undefined = clean finish. */
+  degraded?: "budget" | "iterations" | null;
+  /** Total completion tokens consumed across all iterations. */
+  tokensUsed?: number;
+  /** True once any tool with modifiesFiles=true has been executed (retry-safety signal). */
+  mutatingToolExecuted?: boolean;
 }
 
 /**
@@ -81,7 +103,14 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     dynamicContext,
     budgetTokens,
     onUsage,
+    reasoningParams,
+    outMeta,
   } = opts;
+  if (outMeta) {
+    outMeta.degraded = null;
+    outMeta.tokensUsed = 0;
+    outMeta.mutatingToolExecuted = false;
+  }
 
   const toolMap = new Map(tools.map(t => [t.name, t]));
   const apiTools = tools.map(t => ({
@@ -110,7 +139,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
 
     // Stream LLM response
     const { text, toolCalls, assistantContent, assistantToolCalls, extras, usage } =
-      await streamOnce(llmClient, systemPrompt, conversation, apiTools, model, signal, dynamicContext);
+      await streamOnce(llmClient, systemPrompt, conversation, apiTools, model, signal, dynamicContext, reasoningParams);
 
     if (usage) {
       tokensConsumed += usage.completion_tokens || 0;
@@ -161,6 +190,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
         : undefined;
 
       const result = await tool.execute(args, onChunk);
+      if (outMeta && tool.modifiesFiles === true) outMeta.mutatingToolExecuted = true;
 
       if (bus) {
         const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" };
@@ -181,8 +211,18 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     }
   }
 
+  if (outMeta) outMeta.tokensUsed = tokensConsumed;
   if (budgetExhausted) {
+    if (outMeta) outMeta.degraded = "budget";
     const note = `\n\n[Subagent terminated: completion-token budget (${budgetTokens}) exhausted after ${tokensConsumed} completion tokens. Returning partial progress.]`;
+    return lastResponseText + note;
+  }
+  // The loop ran out of iterations without a natural finish — surface it the
+  // same first-class way as the budget path so callers can report degraded
+  // instead of done.
+  if (iterations > maxIterations && !signal?.aborted) {
+    if (outMeta) outMeta.degraded = "iterations";
+    const note = `\n\n[Subagent terminated: max iterations (${maxIterations}) reached. Returning partial progress.]`;
     return lastResponseText + note;
   }
 
@@ -198,6 +238,7 @@ async function streamOnce(
   model: string | undefined,
   signal: AbortSignal | undefined,
   dynamicContext?: string,
+  reasoningParams?: Record<string, unknown>,
 ): Promise<{
   text: string;
   toolCalls: PendingToolCall[];
@@ -221,6 +262,7 @@ async function streamOnce(
     tools: apiTools.length > 0 ? apiTools : undefined,
     model,
     signal,
+    ...(reasoningParams ?? {}),
   });
 
   for await (const chunk of stream) {

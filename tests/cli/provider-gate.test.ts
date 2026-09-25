@@ -55,6 +55,11 @@ test("ash backend with OPENAI_API_KEY in env skips the gate", async () => {
   assert.doesNotMatch(stderr, /no LLM provider configured/, stderr);
 });
 
+test("ash backend with ZAI_API_KEY in env skips the gate", async () => {
+  const { stderr } = await runCli([], { ZAI_API_KEY: "test-not-real" });
+  assert.doesNotMatch(stderr, /no LLM provider configured/, stderr);
+});
+
 test("ash backend with --api-key skips the gate", async () => {
   const { stderr } = await runCli(["--api-key", "sk-test-not-real"]);
   assert.doesNotMatch(stderr, /no LLM provider configured/, stderr);

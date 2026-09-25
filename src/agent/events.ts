@@ -131,6 +131,9 @@ declare module "../core/event-bus.js" {
       messages: unknown[];
       contextWindow: number;
       activeTokens: number;
+      /** Callers that only need the message list set this to skip the
+       *  full-conversation token estimate; activeTokens then comes back 0. */
+      skipTokens?: boolean;
     };
     "context:compact": {
       strategy?:

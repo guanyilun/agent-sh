@@ -9,7 +9,7 @@ import { loadExtensions } from "../core/extension-loader.js";
 import { getSettings } from "../core/settings.js";
 import { dispatchSubcommand } from "./subcommands.js";
 import { suggestBridgeFor } from "./install.js";
-import { anyProviderConfigured } from "./auth/keys.js";
+import { anyProviderConfigured, KNOWN_PROVIDERS } from "./auth/keys.js";
 import { clearOpost } from "../utils/tty.js";
 import { parseArgs } from "./args.js";
 import { captureShellEnvAsync, mergeShellEnv } from "./shell-env.js";
@@ -70,10 +70,16 @@ async function main(): Promise<void> {
 
   const selectedBackend = config.backend ?? getSettings().defaultBackend ?? "ash";
   if (selectedBackend === "ash" && !config.apiKey && !config.provider && !anyProviderConfigured()) {
+    // Derive the env var list from KNOWN_PROVIDERS: a hand-maintained copy had
+    // already gone stale (it never mentioned ZAI_API_KEY).
+    const envVars = KNOWN_PROVIDERS
+      .map((p) => p.envVar)
+      .filter((v): v is string => Boolean(v))
+      .join(" / ");
     console.error(
       "\nagent-sh: no LLM provider configured.\n\n" +
       "  Run `agent-sh auth login` to store an API key, or\n" +
-      "  export OPENAI_API_KEY / OPENROUTER_API_KEY / DEEPSEEK_API_KEY, or\n" +
+      `  export ${envVars}, or\n` +
       "  run `agent-sh init` for a settings.json template.\n",
     );
     process.exit(1);

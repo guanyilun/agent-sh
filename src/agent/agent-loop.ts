@@ -306,7 +306,7 @@ export class AgentLoop implements AgentBackend {
     onPipe("context:snapshot", (payload) => {
       payload.messages = this.conversation.get();
       payload.contextWindow = this.activeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-      payload.activeTokens = this.conversation.estimateTokens();
+      payload.activeTokens = payload.skipTokens ? 0 : this.conversation.estimateTokens();
       return payload;
     });
 

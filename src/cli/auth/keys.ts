@@ -20,9 +20,10 @@ export interface ProviderAuthInfo {
 }
 
 export const KNOWN_PROVIDERS: ProviderAuthInfo[] = [
-  { id: "openai",     label: "OpenAI",     envVar: "OPENAI_API_KEY" },
-  { id: "openrouter", label: "OpenRouter", envVar: "OPENROUTER_API_KEY" },
-  { id: "deepseek",   label: "DeepSeek",   envVar: "DEEPSEEK_API_KEY" },
+  { id: "openai",          label: "OpenAI",          envVar: "OPENAI_API_KEY" },
+  { id: "openrouter",      label: "OpenRouter",      envVar: "OPENROUTER_API_KEY" },
+  { id: "deepseek",        label: "DeepSeek",        envVar: "DEEPSEEK_API_KEY" },
+  { id: "zai-coding-plan", label: "Z.AI Coding Plan", envVar: "ZAI_API_KEY" },
 ];
 
 /** Built-ins + settings + keys.json. Sync, no extension load. */
