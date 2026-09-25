@@ -115,6 +115,26 @@ test("reasoningParams cannot override the core request fields", async () => {
   assert.equal(calls[0].reasoning_effort, "high", "genuine reasoning params still pass through");
 });
 
+test("leaves mutatingToolExecuted false for a non-mutating tool", async () => {
+  const meta: SubagentRunMeta = {};
+  const plain: ToolDefinition = { ...noopTool, modifiesFiles: undefined };
+  await runSubagent({ ...base, llmClient: fakeClient([], toolReply), tools: [plain], maxIterations: 1, outMeta: meta });
+  assert.equal(meta.mutatingToolExecuted, false);
+});
+
+test("resets a reused outMeta object on the next run", async () => {
+  const meta: SubagentRunMeta = {};
+  await runSubagent({ ...base, llmClient: fakeClient([], toolReply), tools: [noopTool], maxIterations: 1, outMeta: meta });
+  assert.deepEqual(
+    { d: meta.degraded, m: meta.mutatingToolExecuted },
+    { d: "iterations", m: true },
+    "first run should leave both set",
+  );
+  await runSubagent({ ...base, llmClient: fakeClient([], textReply), tools: [], outMeta: meta });
+  assert.equal(meta.degraded, null, "a clean run must clear the previous run's verdict");
+  assert.equal(meta.mutatingToolExecuted, false);
+});
+
 test("marks a budget-truncated run as degraded: budget", async () => {
   const meta: SubagentRunMeta = {};
   await runSubagent({
@@ -129,7 +149,7 @@ test("marks a budget-truncated run as degraded: budget", async () => {
 
 test("marks an iteration-capped run as degraded: iterations", async () => {
   const meta: SubagentRunMeta = {};
-  await runSubagent({
+  const text = await runSubagent({
     ...base,
     llmClient: fakeClient([], toolReply),
     tools: [noopTool],
@@ -137,4 +157,24 @@ test("marks an iteration-capped run as degraded: iterations", async () => {
     outMeta: meta,
   });
   assert.equal(meta.degraded, "iterations");
+  // The note, not the flag, is what the calling model actually reads.
+  assert.match(text, /\[Subagent terminated: max iterations \(1\) reached/);
+});
+
+// Cancelling at the cap is a clean stop, not a truncated run.
+test("an aborted run is not reported as iteration-capped", async () => {
+  const meta: SubagentRunMeta = {};
+  const ac = new AbortController();
+  const run = runSubagent({
+    ...base,
+    llmClient: fakeClient([], toolReply),
+    tools: [noopTool],
+    maxIterations: 1,
+    signal: ac.signal,
+    outMeta: meta,
+  });
+  ac.abort();
+  const text = await run;
+  assert.equal(meta.degraded, null);
+  assert.doesNotMatch(text, /max iterations/);
 });
