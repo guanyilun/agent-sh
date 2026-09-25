@@ -44,8 +44,6 @@ function runDriver(): Promise<DriverResult> {
   });
 }
 
-// Callers that only want the message list (asHub's capture path) should not pay
-// for a full-conversation token estimate on every turn.
 test("context:snapshot honours skipTokens while keeping the default estimate", async () => {
   const result = await runDriver();
   assert.ok(result.messages > 0, `driver should have produced a non-empty conversation, got ${result.messages}`);

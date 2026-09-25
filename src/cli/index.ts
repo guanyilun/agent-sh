@@ -70,8 +70,6 @@ async function main(): Promise<void> {
 
   const selectedBackend = config.backend ?? getSettings().defaultBackend ?? "ash";
   if (selectedBackend === "ash" && !config.apiKey && !config.provider && !anyProviderConfigured()) {
-    // Derive the env var list from KNOWN_PROVIDERS: a hand-maintained copy had
-    // already gone stale (it never mentioned ZAI_API_KEY).
     const envVars = KNOWN_PROVIDERS
       .map((p) => p.envVar)
       .filter((v): v is string => Boolean(v))

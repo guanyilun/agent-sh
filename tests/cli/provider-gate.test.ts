@@ -43,6 +43,7 @@ test("ash backend with no provider configured fires the gate", async () => {
   const { code, stderr } = await runCli([]);
   assert.equal(code, 1, `expected exit 1, got ${code}\nstderr: ${stderr}`);
   assert.match(stderr, /no LLM provider configured/);
+  assert.match(stderr, /ZAI_API_KEY/, stderr);
 });
 
 test("--backend pi with no provider configured skips the gate (regression for #178)", async () => {

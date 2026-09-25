@@ -1,7 +1,4 @@
-/** Subprocess driver for the context:snapshot skipTokens pipeline test.
- *  Runs one turn first so the conversation is non-empty — with an empty
- *  conversation both snapshots would legitimately report 0 tokens and the
- *  test could not tell the flag apart from the default path. */
+/** Subprocess driver for the context:snapshot skipTokens test. */
 import * as http from "node:http";
 import { createCore } from "../../src/core/index.js";
 import agentBackend from "../../src/agent/index.js";
@@ -55,8 +52,6 @@ async function main() {
     core.bus.on("agent:processing-done", () => resolve());
   });
   core.bus.emit("agent:submit", { query: "hello" });
-  // Bounded wait: print something either way so a stall fails the assertion
-  // instead of hanging the driver until the test harness kills it.
   await Promise.race([done, new Promise((r) => setTimeout(r, 8000))]);
 
   const base = { messages: [] as unknown[], contextWindow: 0, activeTokens: 0 };

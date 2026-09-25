@@ -8,7 +8,6 @@ import type { ToolDefinition } from "../../src/agent/types.js";
 type StreamOpts = Record<string, unknown>;
 const USAGE = { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12 };
 
-/** Fake client: one assistant chunk per iteration, recording each call's opts. */
 function fakeClient(calls: StreamOpts[], reply: () => Record<string, unknown>) {
   return {
     model: "stub",
@@ -24,7 +23,6 @@ function fakeClient(calls: StreamOpts[], reply: () => Record<string, unknown>) {
 }
 
 const textReply = () => ({ content: "done." });
-// Always asks for a tool, so the loop keeps iterating instead of finishing.
 const toolReply = () => ({
   tool_calls: [{ index: 0, id: "c1", function: { name: "noop", arguments: "{}" } }],
 });
@@ -84,6 +82,55 @@ test("flags a mutating tool call that ran", async () => {
   assert.equal(meta.mutatingToolExecuted, true);
 });
 
+test("keeps outMeta usable when a mutating tool throws", async () => {
+  const meta: SubagentRunMeta = {};
+  const boom: ToolDefinition = { ...noopTool, execute: async () => { throw new Error("boom"); } };
+  await assert.rejects(runSubagent({
+    ...base,
+    llmClient: fakeClient([], toolReply),
+    tools: [boom],
+    maxIterations: 1,
+    outMeta: meta,
+  }), /boom/);
+  assert.equal(meta.mutatingToolExecuted, true, "a tool that threw mid-write still mutated");
+  assert.equal(meta.tokensUsed, 7, "tokens spent before the throw should be reported");
+});
+
+test("reasoningParams cannot override the core request fields", async () => {
+  const calls: StreamOpts[] = [];
+  await runSubagent({
+    ...base,
+    llmClient: fakeClient(calls, textReply),
+    tools: [],
+    model: "real-model",
+    reasoningParams: { model: "OVERRIDDEN", messages: [], signal: "nope", reasoning_effort: "high" },
+  });
+  assert.equal(calls[0].model, "real-model");
+  assert.ok((calls[0].messages as unknown[]).length > 0, "messages must not be clobbered");
+  assert.equal(calls[0].signal, undefined);
+  assert.equal(calls[0].reasoning_effort, "high", "genuine reasoning params still pass through");
+});
+
+test("leaves mutatingToolExecuted false for a non-mutating tool", async () => {
+  const meta: SubagentRunMeta = {};
+  const plain: ToolDefinition = { ...noopTool, modifiesFiles: undefined };
+  await runSubagent({ ...base, llmClient: fakeClient([], toolReply), tools: [plain], maxIterations: 1, outMeta: meta });
+  assert.equal(meta.mutatingToolExecuted, false);
+});
+
+test("resets a reused outMeta object on the next run", async () => {
+  const meta: SubagentRunMeta = {};
+  await runSubagent({ ...base, llmClient: fakeClient([], toolReply), tools: [noopTool], maxIterations: 1, outMeta: meta });
+  assert.deepEqual(
+    { d: meta.degraded, m: meta.mutatingToolExecuted },
+    { d: "iterations", m: true },
+    "first run should leave both set",
+  );
+  await runSubagent({ ...base, llmClient: fakeClient([], textReply), tools: [], outMeta: meta });
+  assert.equal(meta.degraded, null, "a clean run must clear the previous run's verdict");
+  assert.equal(meta.mutatingToolExecuted, false);
+});
+
 test("marks a budget-truncated run as degraded: budget", async () => {
   const meta: SubagentRunMeta = {};
   await runSubagent({
@@ -98,7 +145,7 @@ test("marks a budget-truncated run as degraded: budget", async () => {
 
 test("marks an iteration-capped run as degraded: iterations", async () => {
   const meta: SubagentRunMeta = {};
-  await runSubagent({
+  const text = await runSubagent({
     ...base,
     llmClient: fakeClient([], toolReply),
     tools: [noopTool],
@@ -106,4 +153,22 @@ test("marks an iteration-capped run as degraded: iterations", async () => {
     outMeta: meta,
   });
   assert.equal(meta.degraded, "iterations");
+  assert.match(text, /\[Subagent terminated: max iterations \(1\) reached/);
+});
+
+test("an aborted run is not reported as iteration-capped", async () => {
+  const meta: SubagentRunMeta = {};
+  const ac = new AbortController();
+  const run = runSubagent({
+    ...base,
+    llmClient: fakeClient([], toolReply),
+    tools: [noopTool],
+    maxIterations: 1,
+    signal: ac.signal,
+    outMeta: meta,
+  });
+  ac.abort();
+  const text = await run;
+  assert.equal(meta.degraded, null);
+  assert.doesNotMatch(text, /max iterations/);
 });
