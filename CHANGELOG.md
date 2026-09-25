@@ -8,6 +8,30 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Added
+
+- `context:snapshot` takes `skipTokens`, for callers that only want the message
+  list and would otherwise pay for a full-conversation token estimate and throw
+  the number away. `activeTokens` comes back 0. Callers that omit it are
+  unaffected.
+- `runSubagent` accepts `reasoningParams`, forwarded verbatim into every stream
+  call the same way the main loop threads them, so delegated work can run at the
+  reasoning effort resolved for the session instead of the provider default.
+- `runSubagent` accepts an `outMeta` out-object reporting `tokensUsed`,
+  `mutatingToolExecuted` and `degraded`. The return value stays a plain string.
+
+### Fixed
+
+- `zai-coding-plan` is registered in `KNOWN_PROVIDERS`, so `ZAI_API_KEY` in the
+  environment satisfies the provider gate. The provider was implemented and
+  activated but absent from the only list `resolveApiKey()` consults, so the CLI
+  refused to start with "no LLM provider configured". The startup hint now
+  derives its env-var list from that same source instead of a hardcoded copy
+  that had gone stale.
+- A subagent that runs out of iterations says so, appending the same kind of
+  note the budget path already did. It previously ended the loop silently and
+  returned partial progress that read like a clean finish.
+
 ## [0.15.14] - 2026-09-22
 
 ### Added

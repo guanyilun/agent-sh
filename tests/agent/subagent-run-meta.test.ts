@@ -8,7 +8,7 @@ import type { ToolDefinition } from "../../src/agent/types.js";
 type StreamOpts = Record<string, unknown>;
 const USAGE = { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12 };
 
-/** Fake client: one assistant chunk per iteration, recording each call's opts. */
+/** One assistant chunk per iteration, recording each call's opts. */
 function fakeClient(calls: StreamOpts[], reply: () => Record<string, unknown>) {
   return {
     model: "stub",
@@ -24,7 +24,7 @@ function fakeClient(calls: StreamOpts[], reply: () => Record<string, unknown>) {
 }
 
 const textReply = () => ({ content: "done." });
-// Always asks for a tool, so the loop keeps iterating instead of finishing.
+// Always asks for a tool, so the loop keeps iterating.
 const toolReply = () => ({
   tool_calls: [{ index: 0, id: "c1", function: { name: "noop", arguments: "{}" } }],
 });

@@ -62,27 +62,17 @@ export interface SubagentOptions {
    * tracking stays accurate.
    */
   onUsage?: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) => void;
-  /**
-   * Extra request params merged into every LLM stream call (e.g.
-   * reasoning/thinking controls built by the provider's
-   * buildReasoningParams hook). Forwarded verbatim, same as the main
-   * loop's reasoningParams(). Omitted = provider default.
-   */
+  /** Extra request params for every stream call, as the main loop's reasoningParams(). */
   reasoningParams?: Record<string, unknown>;
-  /**
-   * Optional out-object the runner fills in as it goes. Lets the caller
-   * tell a budget/iteration-truncated result apart from a clean finish
-   * (the return value stays a plain string for compatibility).
-   */
+  /** Out-object the runner fills in; the return value stays a plain string. */
   outMeta?: SubagentRunMeta;
 }
 
 export interface SubagentRunMeta {
-  /** Why the run ended early: token budget or iteration cap; null/undefined = clean finish. */
+  /** Why the run ended early; null = clean finish. */
   degraded?: "budget" | "iterations" | null;
-  /** Total completion tokens consumed across all iterations. */
   tokensUsed?: number;
-  /** True once any tool with modifiesFiles=true has been executed (retry-safety signal). */
+  /** True once a modifiesFiles tool ran — retry-safety signal. */
   mutatingToolExecuted?: boolean;
 }
 
@@ -217,9 +207,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     const note = `\n\n[Subagent terminated: completion-token budget (${budgetTokens}) exhausted after ${tokensConsumed} completion tokens. Returning partial progress.]`;
     return lastResponseText + note;
   }
-  // The loop ran out of iterations without a natural finish — surface it the
-  // same first-class way as the budget path so callers can report degraded
-  // instead of done.
+  // Out of iterations without a natural finish — report it like the budget path.
   if (iterations > maxIterations && !signal?.aborted) {
     if (outMeta) outMeta.degraded = "iterations";
     const note = `\n\n[Subagent terminated: max iterations (${maxIterations}) reached. Returning partial progress.]`;
