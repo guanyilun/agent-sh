@@ -19,6 +19,11 @@ Releases before this file are recorded in the git tags and GitHub releases.
   reasoning effort resolved for the session instead of the provider default.
 - `runSubagent` accepts an `outMeta` out-object reporting `tokensUsed`,
   `mutatingToolExecuted` and `degraded`. The return value stays a plain string.
+  `mutatingToolExecuted` is set before the tool runs, so a tool that throws
+  mid-write is still reported, and `tokensUsed` is kept current as the run goes
+  rather than only on a clean return — both matter to a caller deciding whether
+  a failed run is safe to retry. `reasoningParams` is merged under the core
+  request fields, so it cannot displace `messages`, `model` or `signal`.
 
 ### Fixed
 

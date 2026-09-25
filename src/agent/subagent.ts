@@ -133,6 +133,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
 
     if (usage) {
       tokensConsumed += usage.completion_tokens || 0;
+      if (outMeta) outMeta.tokensUsed = tokensConsumed;
       onUsage?.(usage);
     }
 
@@ -179,8 +180,9 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
         ? (chunk: string) => { bus.emit("agent:tool-output-chunk", { chunk, toolCallId: tc.id }); }
         : undefined;
 
-      const result = await tool.execute(args, onChunk);
+      // Set before executing: a tool that throws mid-write has still mutated.
       if (outMeta && tool.modifiesFiles === true) outMeta.mutatingToolExecuted = true;
+      const result = await tool.execute(args, onChunk);
 
       if (bus) {
         const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" };
@@ -201,7 +203,6 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     }
   }
 
-  if (outMeta) outMeta.tokensUsed = tokensConsumed;
   if (budgetExhausted) {
     if (outMeta) outMeta.degraded = "budget";
     const note = `\n\n[Subagent terminated: completion-token budget (${budgetTokens}) exhausted after ${tokensConsumed} completion tokens. Returning partial progress.]`;
@@ -243,6 +244,7 @@ async function streamOnce(
   let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null = null;
 
   const stream = await llmClient.stream({
+    ...(reasoningParams ?? {}),
     messages: [
       { role: "system", content: systemPrompt },
       ...wrapTrailingWithDynamicContext(conversation.forLLM(), dynamicContext ?? ""),
@@ -250,7 +252,6 @@ async function streamOnce(
     tools: apiTools.length > 0 ? apiTools : undefined,
     model,
     signal,
-    ...(reasoningParams ?? {}),
   });
 
   for await (const chunk of stream) {

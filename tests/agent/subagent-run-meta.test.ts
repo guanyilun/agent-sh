@@ -84,6 +84,37 @@ test("flags a mutating tool call that ran", async () => {
   assert.equal(meta.mutatingToolExecuted, true);
 });
 
+// A mutating tool that throws has still run: a retry-safety signal must not
+// under-report, and the tokens already spent must survive the exception.
+test("keeps outMeta usable when a mutating tool throws", async () => {
+  const meta: SubagentRunMeta = {};
+  const boom: ToolDefinition = { ...noopTool, execute: async () => { throw new Error("boom"); } };
+  await assert.rejects(runSubagent({
+    ...base,
+    llmClient: fakeClient([], toolReply),
+    tools: [boom],
+    maxIterations: 1,
+    outMeta: meta,
+  }), /boom/);
+  assert.equal(meta.mutatingToolExecuted, true, "a tool that threw mid-write still mutated");
+  assert.equal(meta.tokensUsed, 7, "tokens spent before the throw should be reported");
+});
+
+test("reasoningParams cannot override the core request fields", async () => {
+  const calls: StreamOpts[] = [];
+  await runSubagent({
+    ...base,
+    llmClient: fakeClient(calls, textReply),
+    tools: [],
+    model: "real-model",
+    reasoningParams: { model: "OVERRIDDEN", messages: [], signal: "nope", reasoning_effort: "high" },
+  });
+  assert.equal(calls[0].model, "real-model");
+  assert.ok((calls[0].messages as unknown[]).length > 0, "messages must not be clobbered");
+  assert.equal(calls[0].signal, undefined);
+  assert.equal(calls[0].reasoning_effort, "high", "genuine reasoning params still pass through");
+});
+
 test("marks a budget-truncated run as degraded: budget", async () => {
   const meta: SubagentRunMeta = {};
   await runSubagent({
