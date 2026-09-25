@@ -8,6 +8,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.15] - 2026-09-25
+
 ### Added
 
 - `context:snapshot` takes `skipTokens`, for callers that only want the message
