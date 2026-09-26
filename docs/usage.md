@@ -33,6 +33,18 @@ npm run dev
 DEBUG=1 DEEPSEEK_API_KEY="$KEY" agent-sh
 ```
 
+### Headless mode
+
+`-p` runs one prompt without the shell or TUI, prints the reply to stdout, and exits (1 on an agent error). Piped stdin is appended to the prompt. Tool calls are listed on stderr, so stdout stays clean for piping. Tools run without confirmation.
+
+```bash
+agent-sh -p "summarize the README"
+git diff | agent-sh -p "review this diff"
+agent-sh -p "list the tests" --output json   # one JSON event per line
+```
+
+`--output json` emits `text`, `thinking`, `tool_start` (`name`, `args`), `tool_end` (`exitCode`, `output`), `usage`, `notice`, `error`, and a final `done` event (`exitCode`, `response`). Extensions load as usual (`-e` works); ones that need the shell are skipped.
+
 ### Subcommands
 
 ```bash
@@ -262,6 +274,8 @@ Switching mid-conversation preserves your conversation state — only the LLM en
 | `--shell <path>` | `SHELL` | Shell to use (default: `/bin/bash`) |
 | `--backend <name>` | — | Agent backend to launch (e.g. `ash`, `pi`); per-session override of `settings.defaultBackend`, does not persist. Errors out if the named backend isn't registered. |
 | `-e, --extensions` | — | Extensions to load (comma-separated, repeatable) |
+| `-p, --print [prompt]` | — | Run one prompt headless and exit; see [Headless mode](#headless-mode) |
+| `--output <format>` | — | With `-p`: `text` (default) or `json` |
 
 **Precedence** (highest to lowest): CLI flags → environment variables → provider profile in settings.json → defaults.
 
