@@ -259,6 +259,11 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     "How to write an agent-sh workflow script (run/all/schema/loops) and where to save it",
     path.join(extDir, "WORKFLOWS.md"),
   );
+  ctx.agent.registerSkill(
+    "using-subagents",
+    "Choosing between spawn_agent, parallel tasks, background runs and workflows; running, monitoring, resuming and debugging workflow runs",
+    path.join(extDir, "USING.md"),
+  );
 
   ctx.registerCommand("workflow", "Workflows: /workflow [<name> [args] | trust <name> | runs | resume <run id>]", (input) => {
     const [first = "", ...rest] = input.trim().split(/\s+/).filter(Boolean);

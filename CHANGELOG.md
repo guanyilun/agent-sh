@@ -17,6 +17,9 @@ Releases before this file are recorded in the git tags and GitHub releases.
   unchanged. `/workflow runs` lists recent runs.
 - Workflow `budget` (`budgetTokens` / `subagents.workflowTokenBudget`): a hard
   cap on subagent tokens, readable from the script.
+- The `subagents` extension registers a `using-subagents` skill alongside
+  `writing-workflows`: when to use each delegation tool, and how to run,
+  resume and debug workflow runs.
 - `runSubagent` takes `onMessage` (each message as it joins the conversation)
   and `shouldStop` (end after the current round of tool calls).
 - `agent-sh -p [prompt]` runs one prompt without the shell or TUI, prints the

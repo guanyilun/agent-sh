@@ -1,7 +1,7 @@
 /** subagents extension: agent overrides, parallel fan-out, progress, adviseTool routing. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAgent } from "../../examples/extensions/subagents/agents.js";
 import { lastUser, setup } from "./subagents-harness.js";
@@ -103,5 +103,14 @@ test("progress lines show paths relative to the working directory", async () => 
     let out = "";
     await s.run({ task: "look", tools: ["bash"] }, (c) => { out += c; });
     assert.match(out, /\[ad-hoc\] bash: cd \. && cat src\/a\.ts\n/);
+  } finally { s.cleanup(); }
+});
+
+test("registers the authoring and usage skills, each backed by a real guide", () => {
+  const s = setup({ reply: () => ({ content: "ok" }) });
+  try {
+    assert.deepEqual([...s.skills.keys()].sort(), ["using-subagents", "writing-workflows"]);
+    assert.match(readFileSync(s.skills.get("using-subagents")!, "utf8"), /^# Using subagents and workflows/);
+    assert.match(readFileSync(s.skills.get("writing-workflows")!, "utf8"), /^# Writing workflows/);
   } finally { s.cleanup(); }
 });

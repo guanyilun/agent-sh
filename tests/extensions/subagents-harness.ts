@@ -61,6 +61,7 @@ export function setup(opts: HarnessOpts) {
   const commands = new Map<string, (args: string) => unknown>();
   const producers = new Map<string, () => string | null>();
   const disposers: (() => void)[] = [];
+  const skills = new Map<string, string>();
   const register = (t: ToolDefinition) => { tools.push(t); h.define(`tool:${t.name}`, t.execute.bind(t)); };
   for (const name of ["read_file", "grep", "bash"]) {
     register({
@@ -82,7 +83,7 @@ export function setup(opts: HarnessOpts) {
     onDispose: (fn: () => void) => { disposers.push(fn); },
     agent: {
       registerInstruction: () => {},
-      registerSkill: () => {},
+      registerSkill: (name: string, _d: string, file: string) => { skills.set(name, file); },
       registerContextProducer: (name: string, fn: () => string | null) => { producers.set(name, fn); return () => producers.delete(name); },
       registerTool: register,
       getTools: () => tools,
@@ -105,6 +106,7 @@ export function setup(opts: HarnessOpts) {
     exec,
     command: (name: string, args: string) => commands.get(name)!(args),
     context: (name: string) => producers.get(name)!(),
+    skills,
     dispose: () => { for (const fn of disposers) fn(); },
     description: (name = "spawn_agent") => {
       const t = tool(name);

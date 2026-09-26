@@ -128,7 +128,7 @@ export default async ({ run, all, args }) => {
 
 Project workflows are code from the repo, so each one runs only after you review it and run `/workflow trust <name>`; editing the file requires trusting it again. Workflows in `~/.agent-sh/workflows/` are trusted.
 
-Full guide: [WORKFLOWS.md](WORKFLOWS.md). Bundled example: [`workflows/review-loop.ts`](workflows/review-loop.ts).
+Full guide: [WORKFLOWS.md](WORKFLOWS.md). The extension gives the agent two skills: `writing-workflows` (that guide) and `using-subagents` ([USING.md](USING.md): choosing between `spawn_agent`, parallel tasks, background runs and workflows, and running, resuming and debugging workflow runs). Bundled example: [`workflows/review-loop.ts`](workflows/review-loop.ts).
 
 ## Settings
 
