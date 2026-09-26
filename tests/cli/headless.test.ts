@@ -197,6 +197,9 @@ test("subagents extension fans out parallel scouts under -p", async () => {
     assert.equal(r.code, 0, r.stderr);
     const ev = events(r.stdout);
     assert.equal(ev.find((e) => e.type === "tool_start")?.name, "spawn_agent");
+    const progress = ev.filter((e) => e.type === "tool_output").map((e) => e.chunk).join("");
+    assert.match(progress, /\[1 scout\] done/);
+    assert.match(progress, /\[2 scout\] done/);
     const out = String(ev.find((e) => e.type === "tool_end")?.output);
     assert.match(out, /## \[1\] scout\n\nscouted: area A[\s\S]*## \[2\] scout\n\nscouted: area B/);
     assert.equal(ev.at(-1)?.response, "summary");

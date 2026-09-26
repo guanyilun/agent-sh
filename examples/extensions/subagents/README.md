@@ -28,6 +28,15 @@ Leave out `agent` for an ad-hoc subagent; `tools` then picks its tools (default:
 
 Subagent tool calls go through the same `adviseTool` wrappers as the parent's, so extensions like secret-guard still apply.
 
+While subagents run, `spawn_agent` streams one progress line per step as its tool output, which shows under the tool call in the TUI and as `tool_output` events with `agent-sh -p --output json`:
+
+```
+[1 reviewer] bash: git show HEAD
+[2 reviewer] grep: parseArgs
+[2 reviewer] done
+[1 reviewer] stopped: step limit reached
+```
+
 ## Bundled agents
 
 | Agent | Use it for | Edits files |

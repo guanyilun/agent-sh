@@ -17,7 +17,7 @@
  */
 import type { AgentContext, ExtensionContext } from "agent-sh/types";
 import type { ToolDefinition } from "agent-sh/agent/types";
-import { runSubagent, type SubagentOptions } from "agent-sh/agent/subagent";
+import { runSubagent, type SubagentOptions, type SubagentRunMeta } from "agent-sh/agent/subagent";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgents, type AgentDef } from "./agents.js";
@@ -77,7 +77,6 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       },
     },
 
-    showOutput: false,
     getDisplayInfo: () => ({ kind: "execute", icon: "⤵" }),
 
     formatCall: (args) => {
@@ -88,7 +87,8 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       return label.length > 80 ? label.slice(0, 79) + "…" : label;
     },
 
-    async execute(args, _onChunk, execCtx) {
+    // Streams one progress line per subagent step as this tool's output.
+    async execute(args, onChunk, execCtx) {
       const specs: TaskSpec[] = (args.tasks as TaskSpec[] | undefined)?.length
         ? (args.tasks as TaskSpec[])
         : args.task ? [{ agent: args.agent as string | undefined, task: String(args.task), tools: args.tools as string[] | undefined }]
@@ -102,11 +102,16 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       }
 
       const signal = execCtx?.signal;
-      const results = await mapLimit(specs, Math.max(1, settings.maxConcurrency), async (spec) => {
+      const results = await mapLimit(specs, Math.max(1, settings.maxConcurrency), async (spec, i) => {
+        const name = spec.agent ?? "ad-hoc";
+        const label = specs.length > 1 ? `[${i + 1} ${name}]` : `[${name}]`;
+        const progress = onChunk ? (line: string) => onChunk(`${label} ${line}\n`) : undefined;
         try {
-          return { ok: true, text: await runOne(spec, spec.agent ? agents.get(spec.agent) : undefined, signal) };
+          return { ok: true, text: await runOne(spec, spec.agent ? agents.get(spec.agent) : undefined, signal, progress) };
         } catch (err) {
-          return { ok: false, text: `Subagent error: ${err instanceof Error ? err.message : String(err)}` };
+          const message = err instanceof Error ? err.message : String(err);
+          progress?.(`failed: ${message}`);
+          return { ok: false, text: `Subagent error: ${message}` };
         }
       });
 
@@ -138,7 +143,12 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     bus.emit("ui:info", { message });
   });
 
-  async function runOne(spec: TaskSpec, def: AgentDef | undefined, signal?: AbortSignal): Promise<string> {
+  async function runOne(
+    spec: TaskSpec,
+    def: AgentDef | undefined,
+    signal?: AbortSignal,
+    progress?: (line: string) => void,
+  ): Promise<string> {
     const llmClient = ctx.call("llm:get-client") as SubagentOptions["llmClient"] | undefined;
     if (!llmClient) throw new Error("no LLM client available");
 
@@ -146,7 +156,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     const wanted = def ? def.tools : spec.tools;
     const tools = ctx.agent.getTools()
       .filter(t => t.name !== TOOL_NAME && (!wanted || wanted.includes(t.name)))
-      .map(t => throughHandlers(t, signal));
+      .map(t => throughHandlers(t, signal, progress));
 
     const parentContext = def?.inheritContext ? parentTranscript() : "";
     const systemPrompt = [
@@ -155,7 +165,8 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       parentContext && `[Parent conversation, most recent last]\n${parentContext}`,
     ].filter(Boolean).join("\n\n");
 
-    return runSubagent({
+    const meta: SubagentRunMeta = {};
+    const text = await runSubagent({
       llmClient,
       tools,
       systemPrompt,
@@ -164,14 +175,24 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       signal,
       maxIterations: def?.maxIterations ?? settings.maxIterations,
       reasoningParams: reasoningParams(def?.thinking, def?.model ?? llmClient.model),
+      outMeta: meta,
     });
+    progress?.(signal?.aborted ? "cancelled"
+      : meta.degraded === "iterations" ? "stopped: step limit reached"
+      : meta.degraded === "budget" ? "stopped: token budget reached"
+      : "done");
+    return text;
   }
 
   // getTools() returns raw execute fns; route through tool:<name> so adviseTool wrappers apply.
-  function throughHandlers(tool: ToolDefinition, signal?: AbortSignal): ToolDefinition {
+  function throughHandlers(tool: ToolDefinition, signal?: AbortSignal, progress?: (line: string) => void): ToolDefinition {
     return {
       ...tool,
-      execute: (args, onChunk) => ctx.call(`tool:${tool.name}`, args, onChunk, { signal }),
+      execute: (args, onChunk) => {
+        const detail = describeCall(tool, args);
+        progress?.(detail ? `${tool.name}: ${detail}` : tool.name);
+        return ctx.call(`tool:${tool.name}`, args, onChunk, { signal });
+      },
     };
   }
 
@@ -197,6 +218,17 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   }
 }
 
+function describeCall(tool: ToolDefinition, args: Record<string, unknown>): string {
+  let detail = "";
+  try { detail = tool.formatCall?.(args) ?? ""; } catch {}
+  if (!detail) {
+    const v = args.command ?? args.path ?? args.pattern ?? args.query;
+    if (typeof v === "string") detail = v;
+  }
+  detail = detail.replace(/\s+/g, " ").trim();
+  return detail.length > 100 ? detail.slice(0, 99) + "…" : detail;
+}
+
 function messageText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -207,13 +239,13 @@ function error(content: string) {
   return { content, exitCode: 1, isError: true };
 }
 
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
   const worker = async () => {
     while (next < items.length) {
       const i = next++;
-      out[i] = await fn(items[i]!);
+      out[i] = await fn(items[i]!, i);
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));

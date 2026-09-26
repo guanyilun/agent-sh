@@ -13,6 +13,8 @@ import { parseAgent } from "../../examples/extensions/subagents/agents.js";
 
 type StreamOpts = { messages: { role: string; content: string }[]; tools?: { function: { name: string } }[] };
 
+const lastUser = (o: StreamOpts) => String([...o.messages].reverse().find((m) => m.role === "user")?.content ?? "");
+
 function setup(reply: (opts: StreamOpts) => Record<string, unknown>) {
   const root = mkdtempSync(join(tmpdir(), "subagents-"));
   const project = join(root, "project");
@@ -66,7 +68,7 @@ function setup(reply: (opts: StreamOpts) => Record<string, unknown>) {
     calls,
     h,
     project,
-    run: (args: Record<string, unknown>) => spawn.execute(args, undefined, {}),
+    run: (args: Record<string, unknown>, onChunk?: (chunk: string) => void) => spawn.execute(args, onChunk, {}),
     description: () => schemaAdvisor!(() => ({ description: spawn.description, parameters: spawn.input_schema })).description,
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
@@ -130,5 +132,32 @@ test("subagent tool calls go through adviseTool wrappers", async () => {
     const r = await s.run({ task: "search", tools: ["grep"] });
     assert.equal(r.content, "done");
     assert.deepEqual(seen, ["advised"]);
+  } finally { s.cleanup(); }
+});
+
+test("streams one progress line per subagent step and a closing status", async () => {
+  const s = setup((o) => o.messages.some((m) => m.role === "tool")
+    ? { content: "found" }
+    : { tool_calls: [{ index: 0, id: "c1", function: { name: "grep", arguments: JSON.stringify({ pattern: lastUser(o) }) } }] });
+  try {
+    let out = "";
+    await s.run({ tasks: [{ task: "alpha", tools: ["grep"] }, { agent: "scout", task: "beta" }] }, (c) => { out += c; });
+    const lines = out.trim().split("\n").sort();
+    assert.deepEqual(lines, [
+      "[1 ad-hoc] done",
+      "[1 ad-hoc] grep: alpha",
+      "[2 scout] done",
+      "[2 scout] grep: beta",
+    ]);
+  } finally { s.cleanup(); }
+});
+
+test("reports a subagent that hits its step limit", async () => {
+  const s = setup(() => ({ tool_calls: [{ index: 0, id: "c1", function: { name: "grep", arguments: "{}" } }] }));
+  try {
+    writeFileSync(join(s.project, ".agent-sh", "agents", "looper.md"), "---\ntools: grep\nmaxIterations: 2\n---\nloop");
+    let out = "";
+    await s.run({ agent: "looper", task: "go" }, (c) => { out += c; });
+    assert.match(out, /\[looper\] stopped: step limit reached\n$/);
   } finally { s.cleanup(); }
 });
