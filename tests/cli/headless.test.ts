@@ -243,7 +243,7 @@ test("a reader that closes stdout early ends the run without a crash", async () 
   } finally { llm.server.close(); }
 });
 
-test("a user workflow with a typed step runs under -p", async () => {
+test("a user .ts workflow with a typed step runs under -p", async () => {
   const llm = await fakeLlm((req) => {
     const system = String(req.messages[0]?.content ?? "");
     if (req.stream === undefined || req.stream === false) return { content: '{"ok": true}' };
@@ -255,8 +255,14 @@ test("a user workflow with a typed step runs under -p", async () => {
     const r = await runCli(["-p", "run typed", "--output", "json", "-e", SUBAGENTS], llm.url, {
       prepare: (home) => {
         mkdirSync(join(home, ".agent-sh", "workflows"), { recursive: true });
-        writeFileSync(join(home, ".agent-sh", "workflows", "typed.js"),
-          'export default async ({ run }) => (await run({ task: "check", tools: [], schema: { ok: { type: "boolean" } } })).ok ? "typed ok" : "typed no";\n');
+        // Real TypeScript syntax in a dir with no package.json: the case that broke on Node 20.
+        writeFileSync(join(home, ".agent-sh", "workflows", "typed.ts"), [
+          'import type { WorkflowApi } from "agent-sh-subagents";',
+          "export default async ({ run }: WorkflowApi): Promise<string> => {",
+          '  const r: { ok: boolean } = await run({ task: "check", tools: [], schema: { ok: { type: "boolean" } } });',
+          '  return r.ok ? "typed ok" : "typed no";',
+          "};",
+        ].join("\n"));
       },
     });
     assert.equal(r.code, 0, r.stderr);
@@ -286,5 +292,26 @@ test("-p stays alive for a background run and exits after the wake turn reads it
     assert.deepEqual(ev.filter((e) => e.type === "tool_start").map((e) => e.name), ["spawn_agent", "subagent_jobs"]);
     assert.equal(ev.at(-1)?.type, "done");
     assert.equal(ev.at(-1)?.response, "final: scouted the area");
+  } finally { llm.server.close(); }
+});
+
+test("a single-file .ts extension with ESM syntax loads from an untyped extensions dir", async () => {
+  const llm = await fakeLlm(() => ({ content: "ok" }));
+  try {
+    const r = await runCli(["-p", "hi", "--output", "json"], llm.url, {
+      prepare: (home) => {
+        mkdirSync(join(home, ".agent-sh", "extensions"), { recursive: true });
+        writeFileSync(join(home, ".agent-sh", "extensions", "probe.ts"), [
+          'import type { AgentContext } from "agent-sh/types";',
+          "export default function activate(ctx: AgentContext): void {",
+          '  ctx.agent.registerTool({ name: "probe_tool", description: "probe", input_schema: { type: "object", properties: {} },',
+          '    execute: async () => ({ content: "x", exitCode: 0, isError: false }) });',
+          "}",
+        ].join("\n"));
+      },
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(events(r.stdout).filter((e) => e.type === "notice" && e.level === "error"), []);
+    assert.ok(llm.requests[0]!.tools!.some((t) => t.function.name === "probe_tool"));
   } finally { llm.server.close(); }
 });

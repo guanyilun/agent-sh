@@ -8,6 +8,16 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- On Node 20.19+, single-file `.ts` extensions (e.g. `web-access`, and `ads`,
+  which has no `package.json`) failed to load with "Cannot require() ES Module
+  ... in a cycle", and `.ts` workflows using TypeScript syntax (including the
+  bundled `review-loop` and `verified-review`) failed with "Unexpected token".
+  Outside a `"type": "module"` package, tsx loads these files as CommonJS. The
+  extensions dir now gets a `{ "type": "module" }` `package.json` if it has none,
+  and workflows load from an `.mts`/`.mjs` copy.
+
 ## [0.15.16] - 2026-09-26
 
 ### Added
