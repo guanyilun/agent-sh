@@ -64,6 +64,18 @@ export interface SubagentOptions {
   onUsage?: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) => void;
   reasoningParams?: Record<string, unknown>;
   outMeta?: SubagentRunMeta;
+  /** Each message as it joins the subagent's conversation, e.g. for a transcript. */
+  onMessage?: (message: SubagentMessage) => void;
+  /** Checked after each round of tool calls; returning true ends the run. */
+  shouldStop?: () => boolean;
+}
+
+export interface SubagentMessage {
+  role: "user" | "assistant" | "tool";
+  content: string;
+  toolCalls?: { name: string; arguments: string }[];
+  toolName?: string;
+  isError?: boolean;
 }
 
 export interface SubagentRunMeta {
@@ -91,6 +103,8 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     onUsage,
     reasoningParams,
     outMeta,
+    onMessage,
+    shouldStop,
   } = opts;
   if (outMeta) {
     outMeta.degraded = null;
@@ -110,6 +124,11 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
 
   const conversation = new LiveView();
   conversation.addUserMessage(task);
+  onMessage?.({ role: "user", content: task });
+  const addToolResult = (tc: PendingToolCall, content: Parameters<LiveView["addToolResult"]>[1], isError: boolean) => {
+    conversation.addToolResult(tc.id, content, isError);
+    onMessage?.({ role: "tool", toolName: tc.name, content: contentText(content), isError });
+  };
 
   let lastResponseText = "";
   let iterations = 0;
@@ -136,6 +155,11 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     if (text) lastResponseText = text;
 
     conversation.addAssistantMessage(assistantContent, assistantToolCalls, extras);
+    onMessage?.({
+      role: "assistant",
+      content: text,
+      toolCalls: toolCalls.length ? toolCalls.map(tc => ({ name: tc.name, arguments: tc.argumentsJson })) : undefined,
+    });
 
     // No tool calls → done
     if (toolCalls.length === 0) break;
@@ -146,7 +170,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
 
       const tool = toolMap.get(tc.name);
       if (!tool) {
-        conversation.addToolResult(tc.id, `Error: Unknown tool "${tc.name}"`, true);
+        addToolResult(tc, `Error: Unknown tool "${tc.name}"`, true);
         continue;
       }
 
@@ -154,7 +178,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       try {
         args = JSON.parse(tc.argumentsJson);
       } catch {
-        conversation.addToolResult(tc.id, `Error: Invalid JSON arguments for ${tc.name}`, true);
+        addToolResult(tc, `Error: Invalid JSON arguments for ${tc.name}`, true);
         continue;
       }
       args = normalizeToolArgs(args, tool.input_schema);
@@ -194,8 +218,9 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       const content = result.isError
         ? `Error: ${contentText(result.content)}`
         : result.content;
-      conversation.addToolResult(tc.id, content, !!result.isError);
+      addToolResult(tc, content, !!result.isError);
     }
+    if (shouldStop?.()) break;
   }
 
   if (budgetExhausted) {

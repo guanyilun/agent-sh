@@ -10,6 +10,9 @@ import activate from "../../examples/extensions/subagents/index.js";
 export type Message = { role: string; content: string };
 export type StreamOpts = { messages: Message[]; tools?: { function: { name: string } }[] };
 
+/** A workflow result without its "(workflow run <id>; log: ...)" footer. */
+export const body = (r: { content: unknown }) => String(r.content).split("\n\n(workflow run ")[0];
+
 export const lastUser = (o: { messages: Message[] }) =>
   String([...o.messages].reverse().find((m) => m.role === "user")?.content ?? "");
 
@@ -19,6 +22,8 @@ export interface HarnessOpts {
   /** One-shot completions (schema extraction). */
   invoke?: (messages: Message[]) => string;
   settings?: Record<string, unknown>;
+  /** Total tokens reported for each streamed call. */
+  usage?: number;
 }
 
 export function setup(opts: HarnessOpts) {
@@ -38,7 +43,11 @@ export function setup(opts: HarnessOpts) {
     stream: async (o: StreamOpts) => {
       calls.push(o);
       const delta = await opts.reply(o);
-      return (async function* () { yield { choices: [{ delta }] }; })();
+      const usage = opts.usage ? { prompt_tokens: opts.usage, completion_tokens: 0, total_tokens: opts.usage } : undefined;
+      return (async function* () {
+        yield { choices: [{ delta }] };
+        if (usage) yield { choices: [], usage };
+      })();
     },
   }));
   h.define("llm:invoke", async (messages: Message[]) => {
