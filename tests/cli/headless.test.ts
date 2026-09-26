@@ -1,5 +1,4 @@
-/** `agent-sh -p` end to end: the built CLI against a local fake
- *  OpenAI-compatible server, no TUI and no API keys. */
+/** `agent-sh -p` end to end against a local fake OpenAI-compatible server. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";

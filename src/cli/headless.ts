@@ -1,8 +1,4 @@
-/**
- * Headless mode (`agent-sh -p`): run one prompt without the shell or TUI,
- * stream the reply to stdout, and exit. `--output json` prints one event
- * object per line instead, for scripts and tests.
- */
+/** `agent-sh -p`: one prompt, no shell or TUI; see docs/usage.md#headless-mode. */
 import * as fs from "node:fs";
 import { activateAgent } from "../agent/index.js";
 import { contentText } from "../agent/types.js";
@@ -29,7 +25,7 @@ export async function runHeadless(
   const emit = (event: Record<string, unknown>) => process.stdout.write(JSON.stringify(event) + "\n");
   let exitCode = 0;
 
-  // Exit waits for piped stdout and stderr to drain; callers must not fall through meanwhile.
+  // Never resolves, so callers can't fall through into the interactive path while output drains.
   const finish = (code: number): Promise<never> => {
     core.kill();
     const drained = (s: NodeJS.WriteStream) => new Promise<void>((r) => s.write("", () => r()));
@@ -104,9 +100,7 @@ export async function runHeadless(
   return finish(exitCode);
 }
 
-/** Only read stdin when something is piped or redirected in (a shell pipe
- *  is a FIFO, a spawned child's pipe is a socket), so a terminal or
- *  /dev/null never blocks. */
+// Only piped or redirected stdin (FIFO, file, or a spawned child's socket), so a TTY or /dev/null never blocks.
 function readPipedStdin(): string {
   try {
     const stat = fs.fstatSync(0);

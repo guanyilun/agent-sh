@@ -1,4 +1,3 @@
-/** Startup steps shared by the interactive CLI and headless `-p` mode. */
 import type { AgentShellCore, ExtensionContext } from "../core/index.js";
 import { loadBuiltinExtensions } from "../extensions/index.js";
 import { loadExtensions } from "../core/extension-loader.js";
@@ -21,7 +20,6 @@ export async function loadAllExtensions(extCtx: ExtensionContext, extensions: st
   extCtx.bus.emit("core:extensions-loaded", { names: loaded });
 }
 
-/** Exits with a hint when no backend (or not the requested one) registered. */
 export function requireBackends(core: AgentShellCore, backend: string | undefined): string[] {
   const { names } = core.bus.emitPipe("config:get-backends", { names: [] as string[], active: null as string | null });
   if (names.length === 0) {
