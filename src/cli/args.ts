@@ -26,6 +26,11 @@ Direct LLM API:
 General Options:
   --backend <name>    Agent backend to launch (e.g. ash, pi); overrides settings.defaultBackend for this session
   --shell <path>      Shell to use (default: $SHELL or /bin/bash)
+  -p, --print [text]  Run one prompt without the shell/TUI, print the reply, and exit.
+                      Piped stdin is appended to the prompt. Use --print=<text>
+                      for a prompt that starts with "-".
+  --no-stdin          With -p: don't read stdin, even when it's piped
+  --output <format>   With -p: text (default) or json (one event object per line)
   -e, --extensions    Extensions to load (comma-separated, repeatable)
   -h, --help          Show this help
   -V, --version       Print version and exit
@@ -44,6 +49,9 @@ Examples:
   # Local model via Ollama
   agent-sh --base-url http://localhost:11434/v1 --model llama3
 
+  # One-off, no TUI
+  git diff | agent-sh -p "review this diff"
+
 Inside the shell:
   Type normally        Commands run in your real shell
   > <query>           Ask the AI agent (it decides how to help)
@@ -51,7 +59,14 @@ Inside the shell:
   Ctrl-C              Cancel agent response (or signal shell as usual)
 `;
 
-export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): AppConfig {
+export interface CliConfig extends AppConfig {
+  /** Set by -p/--print; "" when the prompt comes only from stdin. */
+  print?: string;
+  output?: "text" | "json";
+  noStdin?: boolean;
+}
+
+export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliConfig {
   let model: string | undefined;
   let extensions: string[] | undefined;
   let provider: string | undefined;
@@ -60,6 +75,9 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
 
   let apiKey: string | undefined;
   let baseURL: string | undefined;
+  let print: string | undefined;
+  let output: CliConfig["output"];
+  let noStdin: boolean | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -78,6 +96,20 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     } else if ((arg === "--extensions" || arg === "-e") && argv[i + 1]) {
       const exts = argv[++i]!.split(",").map((s) => s.trim());
       extensions = extensions ? [...extensions, ...exts] : exts;
+    } else if (arg === "-p" || arg === "--print") {
+      const next = argv[i + 1];
+      print = next !== undefined && !next.startsWith("-") ? argv[++i]! : "";
+    } else if (arg.startsWith("--print=")) {
+      print = arg.slice("--print=".length);
+    } else if (arg === "--no-stdin") {
+      noStdin = true;
+    } else if (arg === "--output" && argv[i + 1]) {
+      const fmt = argv[++i]!;
+      if (fmt !== "text" && fmt !== "json") {
+        console.error(`agent-sh: --output must be "text" or "json", got "${fmt}"`);
+        process.exit(1);
+      }
+      output = fmt;
     } else if (arg === "--version" || arg === "-V") {
       console.log(PACKAGE_VERSION);
       process.exit(0);
@@ -87,5 +119,5 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     }
   }
 
-  return { shell, model, extensions, apiKey, baseURL, provider, backend };
+  return { shell, model, extensions, apiKey, baseURL, provider, backend, print, output, noStdin };
 }

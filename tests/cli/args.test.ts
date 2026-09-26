@@ -86,3 +86,21 @@ test("unknown flag is ignored, surrounding flags still parse", () => {
   const cfg = parseArgs(["--unknown-flag", "--backend", "pi"], EMPTY_ENV);
   assert.equal(cfg.backend, "pi");
 });
+
+test("parseArgs reads -p with a prompt and --output", () => {
+  const cfg = parseArgs(["-p", "hello", "--output", "json"], EMPTY_ENV);
+  assert.equal(cfg.print, "hello");
+  assert.equal(cfg.output, "json");
+});
+
+test("parseArgs treats a bare -p as a stdin-only prompt", () => {
+  const cfg = parseArgs(["-p", "-e", "./ext.ts"], EMPTY_ENV);
+  assert.equal(cfg.print, "");
+  assert.deepEqual(cfg.extensions, ["./ext.ts"]);
+});
+
+test("parseArgs takes a dash-leading prompt from --print= and reads --no-stdin", () => {
+  const cfg = parseArgs(["--print=-ls this directory", "--no-stdin"], EMPTY_ENV);
+  assert.equal(cfg.print, "-ls this directory");
+  assert.equal(cfg.noStdin, true);
+});
