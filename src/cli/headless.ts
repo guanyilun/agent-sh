@@ -29,10 +29,11 @@ export async function runHeadless(
   const emit = (event: Record<string, unknown>) => process.stdout.write(JSON.stringify(event) + "\n");
   let exitCode = 0;
 
-  // Exit waits for piped stdout to drain; callers must not fall through meanwhile.
+  // Exit waits for piped stdout and stderr to drain; callers must not fall through meanwhile.
   const finish = (code: number): Promise<never> => {
     core.kill();
-    process.stdout.write("", () => process.exit(code));
+    const drained = (s: NodeJS.WriteStream) => new Promise<void>((r) => s.write("", () => r()));
+    void Promise.all([drained(process.stdout), drained(process.stderr)]).then(() => process.exit(code));
     return new Promise<never>(() => {});
   };
 
