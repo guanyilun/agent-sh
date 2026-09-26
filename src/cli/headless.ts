@@ -82,21 +82,29 @@ export async function runHeadless(config: CliConfig): Promise<never> {
   requireBackends(core, config.backend);
   await core.activateBackend(config.backend);
 
+  let busy = false;
   let interrupts = 0;
   process.on("SIGINT", () => {
-    if (++interrupts > 1) process.exit(130);
+    if (++interrupts > 1 || !busy) process.exit(130);
     exitCode = 130;
     bus.emit("agent:cancel-request", { silent: false });
   });
   process.on("SIGTERM", () => { void finish(143); });
 
-  const finished = new Promise<string>((resolve) => {
-    let response = "";
+  // Done when no turn is running and extensions report no pending work; a
+  // background result may start another turn first.
+  let response = "";
+  const settled = new Promise<void>((resolve) => {
+    const check = () => {
+      if (!busy && bus.emitPipe("agent:pending-work", { count: 0 }).count === 0) resolve();
+    };
+    bus.on("agent:processing-start", () => { busy = true; });
     bus.on("agent:response-done", (e) => { response = e.response; });
-    bus.on("agent:processing-done", () => resolve(response));
+    bus.on("agent:processing-done", () => { busy = false; check(); });
+    bus.on("agent:pending-work-changed", check);
   });
   bus.emit("agent:submit", { query });
-  const response = await finished;
+  await settled;
   if (json) emit({ type: "done", exitCode, response });
   return finish(exitCode);
 }

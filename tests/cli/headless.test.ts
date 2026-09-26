@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 const CLI = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
 const SUBAGENTS = fileURLToPath(new URL("../../examples/extensions/subagents", import.meta.url));
 
-interface ChatRequest { messages: { role: string; content: unknown }[]; tools?: { function: { name: string } }[] }
+interface ChatRequest { messages: { role: string; content: unknown }[]; tools?: { function: { name: string } }[]; stream?: boolean }
 type Reply = Record<string, unknown> | { status: number } | { hang: true };
 
 async function fakeLlm(reply: (req: ChatRequest) => Reply): Promise<{ url: string; requests: ChatRequest[]; requested: Promise<void>; server: Server }> {
@@ -23,6 +23,14 @@ async function fakeLlm(reply: (req: ChatRequest) => Reply): Promise<{ url: strin
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", () => {
+      if (req.url?.endsWith("/chat/completions") && !JSON.parse(body).stream) {
+        const parsed = JSON.parse(body) as ChatRequest;
+        requests.push(parsed);
+        const r = reply(parsed) as { content?: string };
+        res.writeHead(200, { "content-type": "application/json" })
+          .end(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: r.content ?? "" }, finish_reason: "stop" }] }));
+        return;
+      }
       if (!req.url?.endsWith("/chat/completions")) {
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: [] }));
         return;
@@ -53,10 +61,11 @@ async function fakeLlm(reply: (req: ChatRequest) => Reply): Promise<{ url: strin
   return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, requests, requested, server };
 }
 
-interface RunOpts { stdin?: string; env?: Record<string, string>; onSpawn?: (child: ChildProcess) => void }
+interface RunOpts { stdin?: string; env?: Record<string, string>; onSpawn?: (child: ChildProcess) => void; prepare?: (home: string) => void }
 
 function runCli(args: string[], url: string, opts: RunOpts = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const home = mkdtempSync(join(tmpdir(), "agent-sh-headless-"));
+  opts.prepare?.(home);
   return new Promise((resolve) => {
     const child = spawn("node", [CLI, "--api-key", "test", "--base-url", url, "--model", "fake", ...args], {
       cwd: home,
@@ -231,5 +240,50 @@ test("a reader that closes stdout early ends the run without a crash", async () 
     const r = await runCli(["-p", "hi"], llm.url, { onSpawn: (child) => child.stdout!.destroy() });
     assert.equal(r.code, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /EPIPE|Error/);
+  } finally { llm.server.close(); }
+});
+
+test("a user workflow with a typed step runs under -p", async () => {
+  const llm = await fakeLlm((req) => {
+    const system = String(req.messages[0]?.content ?? "");
+    if (req.stream === undefined || req.stream === false) return { content: '{"ok": true}' };
+    if (system.includes("focused subagent")) return { content: "all good" };
+    if (req.messages.some((m) => m.role === "tool")) return { content: "done" };
+    return toolCall("run_workflow", { name: "typed" });
+  });
+  try {
+    const r = await runCli(["-p", "run typed", "--output", "json", "-e", SUBAGENTS], llm.url, {
+      prepare: (home) => {
+        mkdirSync(join(home, ".agent-sh", "workflows"), { recursive: true });
+        writeFileSync(join(home, ".agent-sh", "workflows", "typed.js"),
+          'export default async ({ run }) => (await run({ task: "check", tools: [], schema: { ok: { type: "boolean" } } })).ok ? "typed ok" : "typed no";\n');
+      },
+    });
+    assert.equal(r.code, 0, r.stderr);
+    const ev = events(r.stdout);
+    assert.equal(ev.find((e) => e.type === "tool_start")?.name, "run_workflow");
+    assert.equal(ev.find((e) => e.type === "tool_end")?.output, "typed ok");
+    assert.match(ev.filter((e) => e.type === "tool_output").map((e) => e.chunk).join(""), /\[1 ad-hoc\] done/);
+  } finally { llm.server.close(); }
+});
+
+test("-p stays alive for a background run and exits after the wake turn reads it", async () => {
+  const llm = await fakeLlm((req) => {
+    const system = String(req.messages[0]?.content ?? "");
+    if (system.includes("scouting subagent")) return { content: "scouted the area" };
+    const last = req.messages.at(-1)!;
+    const lastText = String(last.content);
+    if (last.role === "tool" && lastText.includes("Started background run #1")) return { content: "started it" };
+    if (last.role === "tool" && lastText.includes("Run #1 (scout) done")) return { content: "final: scouted the area" };
+    if (lastText.includes("[background] Finished: #1 scout (done)")) return toolCall("subagent_jobs", { action: "result", id: 1 });
+    return toolCall("spawn_agent", { agent: "scout", task: "map it", background: true });
+  });
+  try {
+    const r = await runCli(["-p", "scout in the background", "--output", "json", "-e", SUBAGENTS], llm.url);
+    assert.equal(r.code, 0, r.stderr);
+    const ev = events(r.stdout);
+    assert.deepEqual(ev.filter((e) => e.type === "tool_start").map((e) => e.name), ["spawn_agent", "subagent_jobs"]);
+    assert.equal(ev.at(-1)?.type, "done");
+    assert.equal(ev.at(-1)?.response, "final: scouted the area");
   } finally { llm.server.close(); }
 });

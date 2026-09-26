@@ -1,77 +1,10 @@
 /** subagents extension: agent overrides, parallel fan-out, progress, adviseTool routing. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { EventBus } from "../../src/core/event-bus.js";
-import { HandlerRegistry } from "../../src/utils/handler-registry.js";
-import type { ToolDefinition, ToolSchemaView } from "../../src/agent/types.js";
-import activate from "../../examples/extensions/subagents/index.js";
 import { parseAgent } from "../../examples/extensions/subagents/agents.js";
-
-type StreamOpts = { messages: { role: string; content: string }[]; tools?: { function: { name: string } }[] };
-
-const lastUser = (o: StreamOpts) => String([...o.messages].reverse().find((m) => m.role === "user")?.content ?? "");
-
-function setup(reply: (opts: StreamOpts) => Record<string, unknown>) {
-  const root = mkdtempSync(join(tmpdir(), "subagents-"));
-  const project = join(root, "project");
-  mkdirSync(join(project, ".agent-sh", "agents"), { recursive: true });
-
-  const bus = new EventBus();
-  const h = new HandlerRegistry();
-  const calls: StreamOpts[] = [];
-  h.define("cwd", () => project);
-  h.define("agent:get-models", () => []);
-  h.define("llm:get-client", () => ({
-    model: "stub",
-    stream: async (opts: StreamOpts) => {
-      calls.push(opts);
-      const delta = reply(opts);
-      return (async function* () { yield { choices: [{ delta }] }; })();
-    },
-  }));
-
-  const tools: ToolDefinition[] = [];
-  let schemaAdvisor: ((next: () => ToolSchemaView) => ToolSchemaView) | undefined;
-  const register = (t: ToolDefinition) => { tools.push(t); h.define(`tool:${t.name}`, t.execute.bind(t)); };
-  for (const name of ["read_file", "grep", "bash"]) {
-    register({
-      name,
-      description: name,
-      input_schema: { type: "object", properties: {} },
-      execute: async () => ({ content: `${name} ran`, exitCode: 0, isError: false }),
-    });
-  }
-
-  const ctx = {
-    bus,
-    define: h.define.bind(h),
-    advise: h.advise.bind(h),
-    call: h.call.bind(h),
-    getExtensionSettings: (_ns: string, d: object) => d,
-    getStoragePath: (ns: string) => { const p = join(root, ns); mkdirSync(p, { recursive: true }); return p; },
-    registerCommand: () => {},
-    agent: {
-      registerInstruction: () => {},
-      registerTool: register,
-      getTools: () => tools,
-      adviseToolSchema: (_n: string, a: typeof schemaAdvisor) => { schemaAdvisor = a; return () => {}; },
-    },
-  };
-  activate(ctx as never);
-
-  const spawn = tools.find(t => t.name === "spawn_agent")!;
-  return {
-    calls,
-    h,
-    project,
-    run: (args: Record<string, unknown>, onChunk?: (chunk: string) => void) => spawn.execute(args, onChunk, {}),
-    description: () => schemaAdvisor!(() => ({ description: spawn.description, parameters: spawn.input_schema })).description,
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
-  };
-}
+import { lastUser, setup } from "./subagents-harness.js";
 
 test("parseAgent reads frontmatter and maps pi tool names", () => {
   const def = parseAgent("---\nname: x\ndescription: d\ntools: read, find, bash\nmaxIterations: 7\ninheritContext: true\n---\nPrompt body\n", "/a/x.md");
@@ -84,7 +17,7 @@ test("parseAgent reads frontmatter and maps pi tool names", () => {
 });
 
 test("project agents override bundled ones and are advertised", async () => {
-  const s = setup(() => ({ content: "ok" }));
+  const s = setup({ reply: () => ({ content: "ok" }) });
   try {
     writeFileSync(join(s.project, ".agent-sh", "agents", "scout.md"),
       "---\ndescription: project scout\ntools: grep\n---\nPROJECT SCOUT PROMPT");
@@ -98,7 +31,7 @@ test("project agents override bundled ones and are advertised", async () => {
 });
 
 test("unknown agents are rejected before anything runs", async () => {
-  const s = setup(() => ({ content: "ok" }));
+  const s = setup({ reply: () => ({ content: "ok" }) });
   try {
     const r = await s.run({ agent: "nope", task: "t" });
     assert.equal(r.isError, true);
@@ -108,7 +41,7 @@ test("unknown agents are rejected before anything runs", async () => {
 });
 
 test("parallel tasks return one section per task in order", async () => {
-  const s = setup((o) => ({ content: `answer to ${o.messages.at(-1)!.content}` }));
+  const s = setup({ reply: (o) => ({ content: `answer to ${o.messages.at(-1)!.content}` }) });
   try {
     const r = await s.run({ tasks: [{ agent: "reviewer", task: "A" }, { task: "B", tools: ["grep"] }] });
     assert.equal(r.isError, false);
@@ -119,9 +52,9 @@ test("parallel tasks return one section per task in order", async () => {
 
 test("subagent tool calls go through adviseTool wrappers", async () => {
   let turn = 0;
-  const s = setup(() => turn++ === 0
+  const s = setup({ reply: () => turn++ === 0
     ? { tool_calls: [{ index: 0, id: "c1", function: { name: "grep", arguments: "{}" } }] }
-    : { content: "done" });
+    : { content: "done" } });
   try {
     const seen: string[] = [];
     s.h.advise("tool:grep", async (next: (...a: unknown[]) => Promise<unknown>, ...a: unknown[]) => {
@@ -135,9 +68,9 @@ test("subagent tool calls go through adviseTool wrappers", async () => {
 });
 
 test("streams one progress line per subagent step and a closing status", async () => {
-  const s = setup((o) => o.messages.some((m) => m.role === "tool")
+  const s = setup({ reply: (o) => o.messages.some((m) => m.role === "tool")
     ? { content: "found" }
-    : { tool_calls: [{ index: 0, id: "c1", function: { name: "grep", arguments: JSON.stringify({ pattern: lastUser(o) }) } }] });
+    : { tool_calls: [{ index: 0, id: "c1", function: { name: "grep", arguments: JSON.stringify({ pattern: lastUser(o) }) } }] } });
   try {
     let out = "";
     await s.run({ tasks: [{ task: "alpha", tools: ["grep"] }, { agent: "scout", task: "beta" }] }, (c) => { out += c; });
@@ -152,11 +85,23 @@ test("streams one progress line per subagent step and a closing status", async (
 });
 
 test("reports a subagent that hits its step limit", async () => {
-  const s = setup(() => ({ tool_calls: [{ index: 0, id: "c1", function: { name: "grep", arguments: "{}" } }] }));
+  const s = setup({ reply: () => ({ tool_calls: [{ index: 0, id: "c1", function: { name: "grep", arguments: "{}" } }] }) });
   try {
     writeFileSync(join(s.project, ".agent-sh", "agents", "looper.md"), "---\ntools: grep\nmaxIterations: 2\n---\nloop");
     let out = "";
     await s.run({ agent: "looper", task: "go" }, (c) => { out += c; });
     assert.match(out, /\[looper\] stopped: step limit reached\n$/);
+  } finally { s.cleanup(); }
+});
+
+test("progress lines show paths relative to the working directory", async () => {
+  let turn = 0;
+  const s = setup({ reply: (o) => turn++ === 0
+    ? { tool_calls: [{ index: 0, id: "c1", function: { name: "bash", arguments: JSON.stringify({ command: `cd ${s.project} && cat ${s.project}/src/a.ts` }) } }] }
+    : { content: "done" } });
+  try {
+    let out = "";
+    await s.run({ task: "look", tools: ["bash"] }, (c) => { out += c; });
+    assert.match(out, /\[ad-hoc\] bash: cd \. && cat src\/a\.ts\n/);
   } finally { s.cleanup(); }
 });

@@ -37,6 +37,17 @@ While subagents run, `spawn_agent` streams one progress line per step as its too
 [1 reviewer] stopped: step limit reached
 ```
 
+## Background runs
+
+Add `background: true` to `spawn_agent` or `run_workflow` and the call returns at once (`Started background run #3 (reviewer)`), so the main agent can keep working or talking with you.
+
+- **Status** is added to the main agent's context on every request (`#3 reviewer: running 1m20s (last: grep: parseArgs)`, then `done, unread`). It's never saved to the history.
+- **Results** come back only as tool results, when the agent asks with `subagent_jobs` (`result`, `wait`, `list`, `cancel`). Subagent output never enters the history as if you had typed it.
+- **Waking:** if a turn ends with a finished run the agent hasn't read, a short note (`[background] Finished: #3 reviewer (done). Read the result with subagent_jobs.`) starts a new turn. A busy agent is never interrupted. Set `backgroundWake: false` to get a notice instead; the agent then sees the status on your next message.
+- Ctrl-C on the main turn doesn't stop background runs; `/jobs` lists them and `/jobs cancel <id>` stops one. Resetting the session or `/reload` cancels them all, and they don't survive quitting.
+- Foreground and background subagents share the `maxConcurrency` limit.
+- `agent-sh -p` stays alive until background runs finish and their wake turn is done.
+
 ## Bundled agents
 
 | Agent | Use it for | Edits files |
@@ -85,10 +96,42 @@ Agents load from these directories; a later one overrides an earlier one with th
 
 Files are re-read on every call, so edits take effect immediately.
 
+## Workflows
+
+A workflow is a script that coordinates subagents with ordinary code: sequences, parallel steps, loops, and branches on typed results. Drop one file in `~/.agent-sh/workflows/` (or `<project>/.agent-sh/workflows/` to share it through the repo) and run it:
+
+```
+/workflow                              # list
+/workflow review-loop HEAD~3..HEAD     # the main agent runs it and acts on the result
+```
+
+```ts
+export const description = "Review until clean, max 3 rounds";
+
+export default async ({ run, all, args }) => {
+  for (let round = 1; round <= 3; round++) {
+    const reviews = await all(["correctness", "tests"].map(focus => ({
+      agent: "reviewer",
+      task: `Review ${args} for ${focus}.`,
+      schema: { verdict: { enum: ["clean", "issues"] }, findings: { type: "array", items: { type: "string" } } },
+    })));
+    if (reviews.every(r => r.verdict === "clean")) return `Clean after ${round} round(s).`;
+    await run("worker", `Fix only these findings:\n${reviews.flatMap(r => r.findings).join("\n")}`);
+  }
+  return "Issues remain after 3 rounds.";
+};
+```
+
+`run` with a `schema` resolves to validated data rather than text, so loops exit on real values instead of pattern-matching prose. The main agent can also run workflows itself (`run_workflow`) and has the authoring guide as a skill, so you can ask it to turn a process into a workflow.
+
+Project workflows are code from the repo, so each one runs only after you review it and run `/workflow trust <name>`; editing the file requires trusting it again. Workflows in `~/.agent-sh/workflows/` are trusted.
+
+Full guide: [WORKFLOWS.md](WORKFLOWS.md). Bundled example: [`workflows/review-loop.ts`](workflows/review-loop.ts).
+
 ## Settings
 
 ```json
 {
-  "subagents": { "maxConcurrency": 4, "maxIterations": 25 }
+  "subagents": { "maxConcurrency": 4, "maxIterations": 25, "maxRunsPerWorkflow": 50, "backgroundWake": true }
 }
 ```

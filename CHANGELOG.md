@@ -21,6 +21,21 @@ Releases before this file are recorded in the git tags and GitHub releases.
   `reviewer`, `oracle`, `worker`, `delegate`, overridable from
   `~/.agent-sh/agents/` and `<project>/.agent-sh/agents/`), fans out parallel
   `tasks`, and streams per-step progress. `/agents` lists them.
+- Subagent workflows: a single `.ts`/`.js` file in `~/.agent-sh/workflows/` or
+  `<project>/.agent-sh/workflows/` coordinates subagents with ordinary code
+  (`run`, `all`, loops, branches). `run({ ..., schema })` resolves to validated
+  data instead of text, so loops can exit on real values. Run with `/workflow
+  <name> <args>` (handed to the main agent), the `run_workflow` tool, or `-p`.
+  Project workflows run only after `/workflow trust <name>`, and editing one
+  revokes trust. Bundled example: `review-loop`.
+- Background subagents: `background: true` on `spawn_agent` or `run_workflow`
+  returns at once. Status is shown in dynamic context each request, results
+  come back through the `subagent_jobs` tool, and an idle agent is woken with a
+  short note when a run finishes unread (`backgroundWake`). `/jobs` lists and
+  cancels runs.
+- `agent:pending-work` / `agent:pending-work-changed` let extensions report
+  work still in flight between turns; `agent-sh -p` now exits only when no turn
+  is running and none is pending.
 
 ### Fixed
 
