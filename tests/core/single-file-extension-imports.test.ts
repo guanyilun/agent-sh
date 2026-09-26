@@ -16,7 +16,6 @@ const KNOWN_OFFENDERS: ReadonlySet<string> = new Set([
   `interactive-prompts.ts: from "agent-sh/utils/palette.js"`,
   `interactive-prompts.ts: from "agent-sh/utils/diff.js"`,
   `questionnaire.ts: from "agent-sh/utils/palette.js"`,
-  `subagents.ts: from "agent-sh/agent/subagent"`,
 ]);
 
 test("bundled single-file extensions have no new runtime imports of agent-sh/*", () => {

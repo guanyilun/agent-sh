@@ -180,7 +180,7 @@ agent-sh/
 │       ├── web-access.ts        # Web search and content extraction
 │       ├── user-shell.ts        # Run commands in the live PTY
 │       ├── questionnaire.ts     # Interactive question prompts
-│       ├── subagents.ts         # Subagent orchestration
+│       ├── subagents/           # Named + parallel subagents
 │       ├── solarized-theme.ts   # Theme example
 │       ├── secret-guard.ts      # Secret redaction
 │       ├── latex-images.ts      # LaTeX equation rendering
