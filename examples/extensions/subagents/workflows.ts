@@ -1,8 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { normalizeSchema, parseJsonReply, validate } from "./schema.js";
+import type { JournalEntry, RunDir } from "./runs.js";
 import type { JsonSchema, RunSpec, WorkflowApi } from "./workflow-types.js";
 
 const EXTS = [".ts", ".mts", ".js", ".mjs"];
@@ -23,7 +24,7 @@ export function discoverWorkflows(dirs: { dir: string; scope: WorkflowScope }[])
     try { entries = fs.readdirSync(dir); } catch { continue; }
     for (const entry of entries.sort()) {
       const ext = path.extname(entry);
-      if (!EXTS.includes(ext) || entry.endsWith(".d.ts")) continue;
+      if (!EXTS.includes(ext) || entry.endsWith(".d.ts") || entry.startsWith(".")) continue;
       const file = path.join(dir, entry);
       let source = "";
       try { source = fs.readFileSync(file, "utf8"); } catch { continue; }
@@ -63,12 +64,33 @@ export class TrustStore {
   }
 }
 
+export interface TaskControl {
+  signal: AbortSignal;
+  progress(line: string): void;
+  onUsage(totalTokens: number): void;
+  onMessage(message: Record<string, unknown>): void;
+}
+
+export interface TaskResult {
+  text: string;
+  value?: unknown;
+}
+
 export interface WorkflowDeps {
-  runTask(spec: RunSpec, signal: AbortSignal, progress: (line: string) => void): Promise<string>;
-  /** One-shot completion used to turn a subagent's answer into schema-shaped JSON. */
+  runTask(spec: RunSpec, ctl: TaskControl): Promise<TaskResult>;
+  /** Extraction to the schema when the agent answers in text instead of submitting. */
   complete(messages: { role: string; content: string }[]): Promise<string>;
   maxRuns: number;
 }
+
+export interface WorkflowRunOpts {
+  run: RunDir;
+  replay?: JournalEntry[];
+  budgetTokens?: number;
+}
+
+/** Ends the whole workflow; all() rethrows it instead of returning null. */
+export class WorkflowStop extends Error {}
 
 export async function runWorkflow(
   def: WorkflowDef,
@@ -76,33 +98,112 @@ export async function runWorkflow(
   deps: WorkflowDeps,
   signal: AbortSignal,
   progress: (line: string) => void,
+  opts: WorkflowRunOpts,
 ): Promise<unknown> {
-  // Import by content hash so edits load fresh and a trusted hash maps to what runs.
-  const mod = await import(`${pathToFileURL(def.file).href}?v=${hashFile(def.file)}`);
-  const fn = mod.default ?? mod.run;
-  if (typeof fn !== "function") throw new Error(`${def.file} must export a default function`);
+  const { run: record } = opts;
+  try {
+    const mod = await importFresh(def);
+    const fn = mod.default ?? mod.run;
+    if (typeof fn !== "function") throw new Error(`${def.file} must export a default function`);
 
-  let runs = 0;
+    const replay = new Map((opts.replay ?? []).map(e => [e.seq, e]));
+    let diverged = false;
+    let reused = 0;
+    let runs = 0;
+    const total = opts.budgetTokens && opts.budgetTokens > 0 ? opts.budgetTokens : null;
+    const spent = () => record.record.tokens;
+    const budget = { total, spent, remaining: () => (total === null ? Infinity : Math.max(0, total - spent())) };
 
-  const run = async (a: RunSpec | string, task?: string): Promise<any> => {
-    const spec: RunSpec = typeof a === "string" ? { agent: a, task: task ?? "" } : a;
-    if (!spec?.task) throw new Error("run() needs a task");
-    if (++runs > deps.maxRuns) throw new Error(`workflow exceeded ${deps.maxRuns} subagent runs (subagents.maxRunsPerWorkflow)`);
-    const label = `[${runs} ${spec.agent ?? "ad-hoc"}]`;
-    if (signal.aborted) throw new Error("cancelled");
-    const text = await deps.runTask(spec, signal, (line) => progress(`${label} ${line}`));
-    if (!spec.schema) return text;
-    return await extract(text, normalizeSchema(spec.schema), deps.complete);
-  };
+    // seq is taken synchronously on call, so the same script calls run() in the same order on replay.
+    const run = async (a: RunSpec | string, task?: string): Promise<any> => {
+      const seq = ++runs;
+      const spec: RunSpec = typeof a === "string" ? { agent: a, task: task ?? "" } : a;
+      if (!spec?.task) throw new Error("run() needs a task");
+      if (seq > deps.maxRuns) throw new WorkflowStop(`workflow exceeded ${deps.maxRuns} subagent runs (subagents.maxRunsPerWorkflow)`);
+      const label = `[${seq} ${spec.agent ?? "ad-hoc"}]`;
+      const key = specKey(spec);
 
-  const api: WorkflowApi = {
-    run: run as WorkflowApi["run"],
-    all: (specs) => Promise.all(specs.map(s => run(s))),
-    args,
-    log: (message) => progress(`· ${message}`),
-    signal,
-  };
-  return await fn(api);
+      const cached = diverged ? undefined : replay.get(seq);
+      if (cached && cached.key === key) {
+        reused++;
+        record.append(cached);
+        progress(`${label} reused from ${record.record.resumedFrom}`);
+        return cached.output;
+      }
+      if (cached) {
+        diverged = true;
+        progress(`· replay stopped at run ${seq}: its inputs changed; ${reused} run(s) reused`);
+      }
+
+      if (signal.aborted) throw new WorkflowStop("cancelled");
+      if (budget.remaining() <= 0) throw new WorkflowStop(`token budget of ${total} exhausted`);
+
+      const write = record.transcript(seq);
+      write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema });
+      let tokens = 0;
+      try {
+        const result = await deps.runTask(spec, {
+          signal,
+          progress: (line) => progress(`${label} ${line}`),
+          onUsage: (t) => { tokens += t; record.record.tokens += t; },
+          onMessage: (m) => write({ type: "message", ...m }),
+        });
+        const output = !spec.schema ? result.text
+          : result.value !== undefined ? result.value
+          : await extract(result.text, normalizeSchema(spec.schema), deps.complete);
+        record.append({ seq, key, agent: spec.agent, output, tokens });
+        write({ type: "end", ok: true, tokens });
+        return output;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        write({ type: "end", ok: false, error: message, tokens });
+        progress(`${label} failed: ${message}`);
+        throw signal.aborted ? new WorkflowStop("cancelled") : err;
+      }
+    };
+
+    const api: WorkflowApi = {
+      run: run as WorkflowApi["run"],
+      all: (specs) => Promise.all(specs.map(s => run(s).catch((err) => {
+        if (err instanceof WorkflowStop) throw err;
+        return null;
+      }))),
+      args,
+      log: (message) => progress(`· ${message}`),
+      signal,
+      budget,
+    };
+    const result = await fn(api);
+    record.finish("done");
+    return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    record.finish(signal.aborted ? "cancelled" : "failed", message);
+    throw err;
+  }
+}
+
+// Fresh hidden copy per load: tsx on Node 20 caches by path despite ?v=, yet needs ?v= to load ESM.
+async function importFresh(def: WorkflowDef): Promise<Record<string, unknown>> {
+  const source = fs.readFileSync(def.file);
+  const hash = createHash("sha256").update(source).digest("hex");
+  const ext = path.extname(def.file);
+  const copy = path.join(path.dirname(def.file), `.${def.name}.${hash.slice(0, 12)}.${randomBytes(3).toString("hex")}${ext}`);
+  try {
+    fs.writeFileSync(copy, source);
+  } catch {
+    return import(`${pathToFileURL(def.file).href}?v=${hash}`);
+  }
+  try {
+    return await import(`${pathToFileURL(copy).href}?v=${hash}`);
+  } finally {
+    fs.rmSync(copy, { force: true });
+  }
+}
+
+function specKey(spec: RunSpec): string {
+  const inputs = [spec.agent ?? null, spec.task, spec.tools ?? null, spec.schema ?? null];
+  return createHash("sha256").update(JSON.stringify(inputs)).digest("hex").slice(0, 16);
 }
 
 async function extract(

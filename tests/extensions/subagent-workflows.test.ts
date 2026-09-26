@@ -1,10 +1,10 @@
 /** subagents workflows: schema results, loops, trust, run cap, /workflow hand-off. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeSchema, parseJsonReply, validate } from "../../examples/extensions/subagents/schema.js";
-import { lastUser, setup } from "./subagents-harness.js";
+import { body, lastUser, setup } from "./subagents-harness.js";
 
 const text = (content: string) => () => ({ content });
 const projectWf = (s: ReturnType<typeof setup>, name: string, body: string) =>
@@ -44,7 +44,7 @@ test("a project workflow runs only after /workflow trust, and editing it revokes
 
     await s.command("workflow", "trust hello");
     r = await s.exec("run_workflow", { name: "hello" });
-    assert.equal(r.content, "v1");
+    assert.equal(body(r), "v1");
 
     projectWf(s, "hello.ts", 'export default async () => "v2";\n');
     r = await s.exec("run_workflow", { name: "hello" });
@@ -64,7 +64,7 @@ test("review-loop fixes and re-reviews until the typed verdict is clean", async 
   try {
     let progress = "";
     const r = await s.exec("run_workflow", { name: "review-loop", args: "HEAD~1" }, (c) => { progress += c; });
-    assert.equal(r.content, "Clean after 2 round(s).");
+    assert.equal(body(r), "Clean after 2 round(s).");
     const workerTask = s.calls.find(c => c.messages[0]!.content.includes("implementation subagent"));
     assert.match(lastUser(workerTask!), /finding 1[\s\S]*finding 2/);
     assert.match(progress, /· round 1: 2 finding\(s\), fixing/);
@@ -79,7 +79,7 @@ test("schema extraction retries once, then fails the workflow", async () => {
   try {
     userWf(s, "typed.ts", 'export default async ({ run }) => (await run({ task: "t", tools: [], schema: { ok: { type: "boolean" } } })).ok;\n');
     let r = await s.exec("run_workflow", { name: "typed" });
-    assert.equal(r.content, "true");
+    assert.equal(body(r), "true");
     assert.match(s.invokes[1]!.at(-1)!.content, /Invalid: reply contained no JSON/);
 
     r = await s.exec("run_workflow", { name: "typed" });
@@ -122,8 +122,8 @@ test("plain .js/.mjs workflows load, and edits take effect on the next run", asy
   try {
     userWf(s, "plain.js", "export default async ({ args }) => `js:${args}`;\n");
     userWf(s, "mod.mjs", "export default async () => ({ n: 1 });\n");
-    assert.equal((await s.exec("run_workflow", { name: "plain", args: "x" })).content, "js:x");
-    assert.equal((await s.exec("run_workflow", { name: "mod" })).content, '{\n  "n": 1\n}');
+    assert.equal(body(await s.exec("run_workflow", { name: "plain", args: "x" })), "js:x");
+    assert.equal(body(await s.exec("run_workflow", { name: "mod" })), '{\n  "n": 1\n}');
     userWf(s, "mod.mjs", "export default async () => ({ n: 2 });\n");
     assert.match(String((await s.exec("run_workflow", { name: "mod" })).content), /"n": 2/);
   } finally { s.cleanup(); }
@@ -148,6 +148,58 @@ test("run from $HOME, the user's workflows stay trusted", async () => {
     symlinkSync(s.root, join(home, ".agent-sh"));
     s.h.define("cwd", () => home);
     userWf(s, "mine.ts", 'export default async () => "mine";\n');
-    assert.equal((await s.exec("run_workflow", { name: "mine" })).content, "mine");
+    assert.equal(body(await s.exec("run_workflow", { name: "mine" })), "mine");
+  } finally { s.cleanup(); }
+});
+
+test("verified-review merges repeats across lines but keeps distinct findings, then keeps what skeptics can't refute", async () => {
+  const submit = (args: unknown) => ({ tool_calls: [{ index: 0, id: "s", function: { name: "submit_result", arguments: JSON.stringify(args) } }] });
+  const s = setup({ reply: (o) => {
+    const task = lastUser(o);
+    if (task.includes("Report only correctness")) return submit({ findings: [
+      { file: "a.js", line: 3, claim: "real bug", scenario: "s" },
+      { file: "a.js", line: 3, claim: "second bug", scenario: "s2" },
+      { file: "b.js", line: 9, claim: "bogus", scenario: "s" },
+    ] });
+    // The same bug, cited on a different line.
+    if (task.includes("Report only tests")) return submit({ findings: [{ file: "a.js", line: 4, claim: "real bug, reworded", scenario: "s" }] });
+    if (task.includes("Report only edge cases")) throw new Error("finder crashed");
+    if (task.includes("may repeat each other")) {
+      assert.match(task, /line 3: real bug[\s\S]*line 3: second bug[\s\S]*line 4: real bug, reworded/);
+      return submit({ issues: [{ line: 3, claim: "real bug", scenario: "s" }, { line: 3, claim: "second bug", scenario: "s2" }] });
+    }
+    // Skeptics: "real bug" holds up except against the intent angle; the others are refuted.
+    const refuted = !task.includes("real bug") || task.includes("Intent:");
+    return submit({ refuted, reason: "checked" });
+  } });
+  try {
+    let progress = "";
+    const r = await s.exec("run_workflow", { name: "verified-review", args: "HEAD" }, (c) => { progress += c; });
+    assert.equal(body(r), [
+      "Confirmed:",
+      "- a.js:3: real bug\n  scenario: s\n  upheld by 2/3",
+      "",
+      "Refuted (2):",
+      "- a.js: second bug",
+      "- b.js: bogus",
+    ].join("\n"));
+    assert.equal(s.calls.length, 3 + 1 + 3 * 3);
+    assert.match(progress, /· merged 4 findings into 3 distinct ones/);
+    assert.match(progress, /· 1 of 3 findings survived/);
+  } finally { s.cleanup(); }
+});
+
+test("an edited .ts workflow runs its new code in the same session; its temporary copy is removed and never listed", async () => {
+  const s = setup({ reply: text("ok") });
+  try {
+    const dir = join(s.root, "workflows");
+    userWf(s, "ver.ts", 'export default async () => "v1";\n');
+    assert.equal(body(await s.exec("run_workflow", { name: "ver" })), "v1");
+    userWf(s, "ver.ts", 'export default async () => "v2";\n');
+    assert.equal(body(await s.exec("run_workflow", { name: "ver" })), "v2");
+    assert.deepEqual(readdirSync(dir), ["ver.ts"]);
+
+    writeFileSync(join(dir, ".ver.0123456789ab.abcdef.ts"), 'export const description = "leftover";\n');
+    assert.doesNotMatch(s.description("run_workflow"), /leftover/);
   } finally { s.cleanup(); }
 });

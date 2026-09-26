@@ -8,7 +8,12 @@ import { fileURLToPath } from "node:url";
 import { discoverAgents, type AgentDef } from "./agents.js";
 import { describe, JobTable, type JobOutcome } from "./jobs.js";
 import { Semaphore } from "./semaphore.js";
-import { discoverWorkflows, formatResult, runWorkflow, TrustStore, type WorkflowDef } from "./workflows.js";
+import { RunStore } from "./runs.js";
+import { normalizeSchema, validate } from "./schema.js";
+import {
+  discoverWorkflows, formatResult, runWorkflow, TrustStore,
+  type TaskControl, type TaskResult, type WorkflowDef,
+} from "./workflows.js";
 import type { RunSpec } from "./workflow-types.js";
 
 export type { Workflow, WorkflowApi, RunSpec, JsonSchema } from "./workflow-types.js";
@@ -16,6 +21,7 @@ export type { Workflow, WorkflowApi, RunSpec, JsonSchema } from "./workflow-type
 const TOOL_NAME = "spawn_agent";
 const WORKFLOW_TOOL = "run_workflow";
 const JOBS_TOOL = "subagent_jobs";
+const SUBMIT_TOOL = "submit_result";
 const CHILD_EXCLUDED = new Set([TOOL_NAME, WORKFLOW_TOOL, JOBS_TOOL]);
 const BACKGROUND_PARAM = {
   type: "boolean",
@@ -25,16 +31,25 @@ const PARENT_CONTEXT_CHARS = 12_000;
 
 interface TaskSpec { agent?: string; task: string; tools?: string[] }
 
+interface RunExtras {
+  extraTools?: ToolDefinition[];
+  systemNote?: string;
+  shouldStop?: () => boolean;
+  onUsage?: (totalTokens: number) => void;
+  onMessage?: (message: Record<string, unknown>) => void;
+}
+
 export default function activate(ctx: ExtensionContext & AgentContext): void {
   const { bus } = ctx;
   const settings = ctx.getExtensionSettings("subagents", {
-    maxConcurrency: 4, maxIterations: 25, maxRunsPerWorkflow: 50, backgroundWake: true,
+    maxConcurrency: 4, maxIterations: 25, maxRunsPerWorkflow: 50, backgroundWake: true, workflowTokenBudget: 0,
   });
   const extDir = path.dirname(fileURLToPath(import.meta.url));
   const bundledDir = path.join(extDir, "agents");
   const userDir = ctx.getStoragePath("agents");
   const userWorkflowDir = ctx.getStoragePath("workflows");
   const trust = new TrustStore(path.join(ctx.getStoragePath("subagents"), "trusted-workflows.json"));
+  const runs = new RunStore(ctx.getStoragePath("workflow-runs"));
   // Shared by foreground and background runs so background work can't flood the provider.
   const slots = new Semaphore(Math.max(1, settings.maxConcurrency));
 
@@ -181,37 +196,49 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     name: WORKFLOW_TOOL,
     description:
       "Run a saved workflow: a script that coordinates subagents (sequences, parallel steps, loops) and returns its result. " +
-      "Pass `args` as the workflow expects them (free text).",
+      "Pass `args` as the workflow expects them (free text). Every run is logged with an id; `resume` an interrupted " +
+      "or failed run by id to reuse the subagent results it already has.",
     input_schema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Workflow name (see list below)" },
-        args: { type: "string", description: "Arguments for the workflow" },
+        name: { type: "string", description: "Workflow name (see list below); optional with `resume`" },
+        args: { type: "string", description: "Arguments for the workflow; with `resume`, defaults to the earlier run's" },
+        resume: { type: "string", description: "Id of an earlier run of this workflow to resume" },
+        budgetTokens: { type: "number", description: "Cap on subagent tokens for this run (default: subagents.workflowTokenBudget)" },
         background: BACKGROUND_PARAM,
       },
-      required: ["name"],
     },
     getDisplayInfo: () => ({ kind: "execute", icon: "⤵" }),
-    formatCall: (args) => [args.name, args.args].filter(Boolean).join(" "),
+    formatCall: (args) => args.resume ? `resume ${args.resume}` : [args.name, args.args].filter(Boolean).join(" "),
 
     async execute(args, onChunk, execCtx) {
+      const resumeId = args.resume === undefined ? undefined : String(args.resume);
+      const previous = resumeId ? runs.get(resumeId) : undefined;
+      if (resumeId && !previous) return error(`No workflow run ${resumeId}. Recent runs: /workflow runs`);
+      const name = String(args.name ?? previous?.workflow ?? "");
+      if (previous && previous.workflow !== name) return error(`Run ${resumeId} is of workflow "${previous.workflow}", not "${name}".`);
+
       const workflows = loadWorkflows();
-      const wf = workflows.get(String(args.name ?? ""));
-      if (!wf) return error(`Unknown workflow: ${args.name}. Available: ${[...workflows.keys()].join(", ") || "(none)"}`);
+      const wf = workflows.get(name);
+      if (!wf) return error(`Unknown workflow: ${name || "(none given)"}. Available: ${[...workflows.keys()].join(", ") || "(none)"}`);
       if (!trust.isTrusted(wf)) return error(untrustedHint(wf));
 
+      const wfArgs = args.args !== undefined ? String(args.args) : previous?.args ?? "";
+      const budgetTokens = Number(args.budgetTokens ?? settings.workflowTokenBudget) || undefined;
       const work = async (signal: AbortSignal, progress: (line: string) => void): Promise<JobOutcome> => {
+        const run = runs.create(wf.name, wf.file, wfArgs, resumeId);
+        const footer = `(workflow run ${run.id}; log: ${run.dir})`;
         try {
-          const result = await runWorkflow(wf, String(args.args ?? ""), {
+          const result = await runWorkflow(wf, wfArgs, {
             runTask,
             complete: (messages) => ctx.call("llm:invoke", messages, { maxTokens: 4096 }) as Promise<string>,
             maxRuns: settings.maxRunsPerWorkflow,
-          }, signal, progress);
-          return { content: formatResult(result), isError: false };
+          }, signal, progress, { run, replay: resumeId ? runs.journal(resumeId) : undefined, budgetTokens });
+          return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           progress(`failed: ${message}`);
-          return { content: `Workflow "${wf.name}" failed: ${message}`, isError: true };
+          return { content: `Workflow "${wf.name}" failed: ${message}\n\n${footer}. Fix the cause, then resume it with ${WORKFLOW_TOOL} { resume: "${run.id}" }.`, isError: true };
         }
       };
       if (args.background) return startBackground(`workflow ${wf.name}`, work);
@@ -232,8 +259,13 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     "How to write an agent-sh workflow script (run/all/schema/loops) and where to save it",
     path.join(extDir, "WORKFLOWS.md"),
   );
+  ctx.agent.registerSkill(
+    "using-subagents",
+    "Choosing between spawn_agent, parallel tasks, background runs and workflows; running, monitoring, resuming and debugging workflow runs",
+    path.join(extDir, "USING.md"),
+  );
 
-  ctx.registerCommand("workflow", "List, trust, or run workflows: /workflow [trust] <name> [args]", (input) => {
+  ctx.registerCommand("workflow", "Workflows: /workflow [<name> [args] | trust <name> | runs | resume <run id>]", (input) => {
     const [first = "", ...rest] = input.trim().split(/\s+/).filter(Boolean);
     const workflows = loadWorkflows();
 
@@ -243,6 +275,25 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
             `${w.name} — ${w.description || "(no description)"}${trust.isTrusted(w) ? "" : "  [untrusted]"}\n    ${w.file}`).join("\n")
         : `No workflows found. Add one to ${userWorkflowDir} or <project>/.agent-sh/workflows/`;
       bus.emit("ui:info", { message });
+      return;
+    }
+
+    if (first === "runs") {
+      const recent = runs.list();
+      const message = recent.length
+        ? recent.map(r => `${r.id}  ${r.workflow}  ${r.interrupted ? "interrupted" : r.status}  ${r.tokens} tokens` +
+            `${r.resumedFrom ? `  (resumed from ${r.resumedFrom})` : ""}${r.error ? `\n    ${r.error}` : ""}`).join("\n")
+        : "No workflow runs yet.";
+      bus.emit("ui:info", { message });
+      return;
+    }
+
+    if (first === "resume") {
+      const record = runs.get(rest[0] ?? "");
+      if (!record) { bus.emit("ui:error", { message: `No workflow run ${rest[0] ?? "(none given)"}. See /workflow runs.` }); return; }
+      bus.emit("agent:submit", {
+        query: `Resume workflow run ${record.id} (${record.workflow}) with ${WORKFLOW_TOOL} { resume: "${record.id}" }, then report its result.`,
+      });
       return;
     }
 
@@ -376,10 +427,35 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     return { content, isError: results.every(r => !r.ok) };
   }
 
-  function runTask(spec: RunSpec, signal: AbortSignal, progress: (line: string) => void): Promise<string> {
+  async function runTask(spec: RunSpec, ctl: TaskControl): Promise<TaskResult> {
     const def = spec.agent ? loadAgents().get(spec.agent) : undefined;
     if (spec.agent && !def) throw new Error(`unknown agent: ${spec.agent}`);
-    return runOne(spec, def, signal, progress);
+    if (!spec.schema) return { text: await runOne(spec, def, ctl.signal, ctl.progress, ctl) };
+
+    // The schema becomes submit_result's parameters, so the agent fixes its own output.
+    const schema = normalizeSchema(spec.schema);
+    const wrapped = schema.type !== "object";
+    const params = wrapped ? { type: "object", properties: { result: schema }, required: ["result"] } : schema;
+    let submitted: { value: unknown } | undefined;
+    const submit: ToolDefinition = {
+      name: SUBMIT_TOOL,
+      description: "Submit your final result; its arguments are the result. Call it once, when you are done.",
+      input_schema: params,
+      async execute(args) {
+        const problem = validate(args, params);
+        if (problem) return { content: `Invalid: ${problem}. Fix it and call ${SUBMIT_TOOL} again.`, exitCode: 1, isError: true };
+        submitted = { value: wrapped ? (args as { result: unknown }).result : args };
+        ctl.progress(SUBMIT_TOOL);
+        return { content: "Recorded.", exitCode: 0, isError: false };
+      },
+    };
+    const text = await runOne(spec, def, ctl.signal, ctl.progress, {
+      ...ctl,
+      extraTools: [submit],
+      systemNote: `When you are done, call ${SUBMIT_TOOL} with your result.`,
+      shouldStop: () => submitted !== undefined,
+    });
+    return { text, value: submitted?.value };
   }
 
   async function runOne(
@@ -387,6 +463,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     def: AgentDef | undefined,
     signal?: AbortSignal,
     progress?: (line: string) => void,
+    extra: RunExtras = {},
   ): Promise<string> {
     const llmClient = ctx.call("llm:get-client") as SubagentOptions["llmClient"] | undefined;
     if (!llmClient) throw new Error("no LLM client available");
@@ -395,12 +472,14 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     const wanted = def ? def.tools : spec.tools;
     const tools = ctx.agent.getTools()
       .filter(t => !CHILD_EXCLUDED.has(t.name) && (!wanted || wanted.includes(t.name)))
-      .map(t => throughHandlers(t, cwd, signal, progress));
+      .map(t => throughHandlers(t, cwd, signal, progress))
+      .concat(extra.extraTools ?? []);
 
     const parentContext = def?.inheritContext ? parentTranscript() : "";
     const systemPrompt = [
       def?.systemPrompt || "You are a focused subagent. Complete the task and return a clear, concise result.",
       `Working directory: ${cwd}`,
+      extra.systemNote,
       parentContext && `[Parent conversation, most recent last]\n${parentContext}`,
     ].filter(Boolean).join("\n\n");
 
@@ -410,15 +489,18 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     try {
       if (signal?.aborted) throw new Error("cancelled");
       text = await runSubagent({
-      llmClient,
-      tools,
-      systemPrompt,
-      task: spec.task,
-      model: def?.model,
-      signal,
-      maxIterations: def?.maxIterations ?? settings.maxIterations,
-      reasoningParams: reasoningParams(def?.thinking, def?.model ?? llmClient.model),
-      outMeta: meta,
+        llmClient,
+        tools,
+        systemPrompt,
+        task: spec.task,
+        model: def?.model,
+        signal,
+        maxIterations: def?.maxIterations ?? settings.maxIterations,
+        reasoningParams: reasoningParams(def?.thinking, def?.model ?? llmClient.model),
+        outMeta: meta,
+        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens) : undefined,
+        onMessage: extra.onMessage as SubagentOptions["onMessage"],
+        shouldStop: extra.shouldStop,
       });
     } finally {
       slots.release();

@@ -587,7 +587,7 @@ export type { AgentBackend } from "./types.js";
 export type { ToolDefinition, ToolResult, ToolDisplayInfo } from "./types.js";
 export { AgentLoop } from "./agent-loop.js";
 export { ToolRegistry } from "./tool-registry.js";
-export { runSubagent, type SubagentOptions } from "./subagent.js";
+export { runSubagent, type SubagentOptions, type SubagentMessage } from "./subagent.js";
 
 /** Built-in providers register unconditionally so `auth list` can
  *  enumerate them; buildModels() skips entries without an apiKey. */

@@ -103,6 +103,8 @@ A workflow is a script that coordinates subagents with ordinary code: sequences,
 ```
 /workflow                              # list
 /workflow review-loop HEAD~3..HEAD     # the main agent runs it and acts on the result
+/workflow runs                         # recent runs, with ids and status
+/workflow resume <id>                  # continue a failed or interrupted run
 ```
 
 ```ts
@@ -122,16 +124,19 @@ export default async ({ run, all, args }) => {
 };
 ```
 
-`run` with a `schema` resolves to validated data rather than text, so loops exit on real values instead of pattern-matching prose. The main agent can also run workflows itself (`run_workflow`) and has the authoring guide as a skill, so you can ask it to turn a process into a workflow.
+`run` with a `schema` resolves to validated data rather than text (the agent submits it through a `submit_result` tool), so loops exit on real values instead of pattern-matching prose. `all` returns `null` for runs that failed, a `budget` caps subagent tokens, and every run is logged with a journal and per-agent transcripts under `~/.agent-sh/workflow-runs/`, so a failed or interrupted run can be resumed (`/workflow runs`, `/workflow resume <id>`) without redoing finished steps. The main agent can also run workflows itself (`run_workflow`) and has the authoring guide as a skill, so you can ask it to turn a process into a workflow.
 
 Project workflows are code from the repo, so each one runs only after you review it and run `/workflow trust <name>`; editing the file requires trusting it again. Workflows in `~/.agent-sh/workflows/` are trusted.
 
-Full guide: [WORKFLOWS.md](WORKFLOWS.md). Bundled example: [`workflows/review-loop.ts`](workflows/review-loop.ts).
+Full guide, including design patterns for workflows you can trust (adversarial verification, dedupe, loop until nothing new): [WORKFLOWS.md](WORKFLOWS.md). Bundled examples: [`review-loop`](workflows/review-loop.ts) and [`verified-review`](workflows/verified-review.ts). The extension gives the agent two skills: `writing-workflows` (that guide) and `using-subagents` ([USING.md](USING.md): choosing between `spawn_agent`, parallel tasks, background runs and workflows, and running, resuming and debugging workflow runs).
 
 ## Settings
 
 ```json
 {
-  "subagents": { "maxConcurrency": 4, "maxIterations": 25, "maxRunsPerWorkflow": 50, "backgroundWake": true }
+  "subagents": {
+    "maxConcurrency": 4, "maxIterations": 25, "maxRunsPerWorkflow": 50,
+    "backgroundWake": true, "workflowTokenBudget": 0
+  }
 }
 ```

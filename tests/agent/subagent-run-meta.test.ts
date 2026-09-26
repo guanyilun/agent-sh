@@ -1,7 +1,7 @@
-/** Subagent run metadata (outMeta) + reasoning-param forwarding. */
+/** runSubagent: outMeta, reasoning params, onMessage, shouldStop. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runSubagent, type SubagentRunMeta } from "../../src/agent/subagent.js";
+import { runSubagent, type SubagentMessage, type SubagentRunMeta } from "../../src/agent/subagent.js";
 import type { LlmClient } from "../../src/agent/llm-client.js";
 import type { ToolDefinition } from "../../src/agent/types.js";
 
@@ -171,4 +171,34 @@ test("an aborted run is not reported as iteration-capped", async () => {
   const text = await run;
   assert.equal(meta.degraded, null);
   assert.doesNotMatch(text, /max iterations/);
+});
+
+test("onMessage sees the task, each assistant turn and each tool result in order", async () => {
+  const seen: SubagentMessage[] = [];
+  let turn = 0;
+  await runSubagent({
+    ...base,
+    llmClient: fakeClient([], () => (turn++ === 0 ? toolReply() : textReply())),
+    tools: [noopTool],
+    onMessage: (m) => seen.push(m),
+  });
+  assert.deepEqual(seen, [
+    { role: "user", content: "t" },
+    { role: "assistant", content: "", toolCalls: [{ name: "noop", arguments: "{}" }] },
+    { role: "tool", toolName: "noop", content: "ok", isError: false },
+    { role: "assistant", content: "done.", toolCalls: undefined },
+  ]);
+});
+
+test("shouldStop ends the run after the current round of tool calls", async () => {
+  const calls: StreamOpts[] = [];
+  let stop = false;
+  const stopper: ToolDefinition = { ...noopTool, modifiesFiles: false, execute: async () => { stop = true; return { content: "ok", exitCode: 0, isError: false }; } };
+  await runSubagent({
+    ...base,
+    llmClient: fakeClient(calls, toolReply),
+    tools: [stopper],
+    shouldStop: () => stop,
+  });
+  assert.equal(calls.length, 1);
 });

@@ -247,7 +247,7 @@ test("a user workflow with a typed step runs under -p", async () => {
   const llm = await fakeLlm((req) => {
     const system = String(req.messages[0]?.content ?? "");
     if (req.stream === undefined || req.stream === false) return { content: '{"ok": true}' };
-    if (system.includes("focused subagent")) return { content: "all good" };
+    if (system.includes("focused subagent")) return toolCall("submit_result", { ok: true });
     if (req.messages.some((m) => m.role === "tool")) return { content: "done" };
     return toolCall("run_workflow", { name: "typed" });
   });
@@ -262,8 +262,9 @@ test("a user workflow with a typed step runs under -p", async () => {
     assert.equal(r.code, 0, r.stderr);
     const ev = events(r.stdout);
     assert.equal(ev.find((e) => e.type === "tool_start")?.name, "run_workflow");
-    assert.equal(ev.find((e) => e.type === "tool_end")?.output, "typed ok");
-    assert.match(ev.filter((e) => e.type === "tool_output").map((e) => e.chunk).join(""), /\[1 ad-hoc\] done/);
+    assert.match(String(ev.find((e) => e.type === "tool_end")?.output), /^typed ok\n\n\(workflow run \S+; log: .*workflow-runs/);
+    assert.match(ev.filter((e) => e.type === "tool_output").map((e) => e.chunk).join(""), /\[1 ad-hoc\] submit_result\n\[1 ad-hoc\] done/);
+    assert.equal(llm.requests.filter((q) => !q.stream).length, 0);
   } finally { llm.server.close(); }
 });
 

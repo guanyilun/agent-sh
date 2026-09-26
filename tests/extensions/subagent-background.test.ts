@@ -149,6 +149,6 @@ test("workflows run in the background too", async () => {
     const started = await s.exec("run_workflow", { name: "quick", args: "x", background: true });
     assert.match(String(started.content), /^Started background run #1 \(workflow quick\)/);
     const r = await s.exec("subagent_jobs", { action: "wait", id: 1 });
-    assert.match(String(r.content), /done after \d+s:\n\nquick x$/);
+    assert.match(String(r.content), /done after \d+s:\n\nquick x\n\n\(workflow run /);
   } finally { s.cleanup(); }
 });

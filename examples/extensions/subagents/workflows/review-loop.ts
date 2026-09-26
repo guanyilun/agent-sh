@@ -18,8 +18,11 @@ export default (async ({ run, all, args, log }) => {
         findings: { type: "array", items: { type: "string" } },
       },
     })));
-    findings = reviews.flatMap(r => r.findings as string[]);
-    if (reviews.every(r => r.verdict === "clean")) {
+    // A failed reviewer comes back null; it never counts as clean.
+    const done = reviews.filter(Boolean);
+    if (!done.length) throw new Error("every reviewer failed");
+    findings = done.flatMap(r => r.findings as string[]);
+    if (done.length === reviews.length && done.every(r => r.verdict === "clean")) {
       return `Clean after ${round} round(s).`;
     }
     if (round === MAX_ROUNDS) break;

@@ -25,7 +25,7 @@ export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, Exten
 export { palette, setPalette, resetPalette } from "../utils/palette.js";
 export type { ColorPalette } from "../utils/palette.js";
 export type { AgentBackend, ToolDefinition, ImageContent } from "../agent/types.js";
-export { runSubagent, type SubagentOptions } from "../agent/subagent.js";
+export { runSubagent, type SubagentOptions, type SubagentMessage } from "../agent/subagent.js";
 export { LlmClient } from "../agent/llm-client.js";
 export type { NuclearEntry } from "../agent/nuclear-form.js";
 export { compileSearchRegex, matchEntry, formatNuclearLine } from "../agent/nuclear-form.js";

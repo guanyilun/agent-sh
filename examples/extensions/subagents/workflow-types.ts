@@ -16,7 +16,7 @@ export interface WorkflowApi {
   run(spec: RunSpec & { schema: JsonSchema }): Promise<any>;
   run(spec: RunSpec): Promise<string>;
   run(agent: string, task: string): Promise<string>;
-  /** Runs specs concurrently (up to maxConcurrency); resolves in order, rejects on the first failure. */
+  /** Runs specs concurrently (up to maxConcurrency), in order; a run that fails becomes null. */
   all(specs: RunSpec[]): Promise<any[]>;
   /** Everything after the workflow name, as typed. */
   args: string;
@@ -24,6 +24,8 @@ export interface WorkflowApi {
   log(message: string): void;
   /** Aborted on Ctrl-C; runs already check it. */
   signal: AbortSignal;
+  /** Subagent tokens (prompt + completion) this run; run() throws once `total` is spent. */
+  budget: { total: number | null; spent(): number; remaining(): number };
 }
 
 export type Workflow = (api: WorkflowApi) => unknown;

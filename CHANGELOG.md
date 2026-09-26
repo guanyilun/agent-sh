@@ -10,6 +10,23 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ### Added
 
+- Durable workflow runs: every run gets a folder under
+  `~/.agent-sh/workflow-runs/` with a journal of completed subagent runs and a
+  transcript per agent. `/workflow resume <id>` (or `run_workflow { resume }`)
+  reruns the script and reuses journaled results while their inputs are
+  unchanged. `/workflow runs` lists recent runs.
+- Workflow `budget` (`budgetTokens` / `subagents.workflowTokenBudget`): a hard
+  cap on subagent tokens, readable from the script.
+- The `subagents` extension registers a `using-subagents` skill alongside
+  `writing-workflows`: when to use each delegation tool, and how to run,
+  resume and debug workflow runs.
+- `writing-workflows` gains a Patterns section (adversarial and multi-angle
+  verification, several-way search, dedupe in code, per-item pipelining,
+  loop until nothing new, judge panel, completeness check, no silent caps), and
+  a second bundled example, `verified-review`: three finders, dedupe, then three
+  skeptics per finding.
+- `runSubagent` takes `onMessage` (each message as it joins the conversation)
+  and `shouldStop` (end after the current round of tool calls).
 - `agent-sh -p [prompt]` runs one prompt without the shell or TUI, prints the
   reply and exits (1 on an agent error, 130/143 on SIGINT/SIGTERM). Piped stdin
   is appended to the prompt (`--no-stdin` skips it) and tool calls are listed
@@ -24,7 +41,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
 - Subagent workflows: a single `.ts`/`.js` file in `~/.agent-sh/workflows/` or
   `<project>/.agent-sh/workflows/` coordinates subagents with ordinary code
   (`run`, `all`, loops, branches). `run({ ..., schema })` resolves to validated
-  data instead of text, so loops can exit on real values. Run with `/workflow
+  data, which the agent submits through a `submit_result` tool, so loops can
+  exit on real values. `all()` resolves a failed run to `null`. Run with `/workflow
   <name> <args>` (handed to the main agent), the `run_workflow` tool, or `-p`.
   Project workflows run only after `/workflow trust <name>`, and editing one
   revokes trust. Bundled example: `review-loop`.
