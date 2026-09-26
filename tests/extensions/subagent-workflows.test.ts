@@ -152,18 +152,24 @@ test("run from $HOME, the user's workflows stay trusted", async () => {
   } finally { s.cleanup(); }
 });
 
-test("verified-review dedupes across finders and keeps only findings most skeptics fail to refute", async () => {
+test("verified-review merges repeats across lines but keeps distinct findings, then keeps what skeptics can't refute", async () => {
   const submit = (args: unknown) => ({ tool_calls: [{ index: 0, id: "s", function: { name: "submit_result", arguments: JSON.stringify(args) } }] });
   const s = setup({ reply: (o) => {
     const task = lastUser(o);
     if (task.includes("Report only correctness")) return submit({ findings: [
       { file: "a.js", line: 3, claim: "real bug", scenario: "s" },
+      { file: "a.js", line: 3, claim: "second bug", scenario: "s2" },
       { file: "b.js", line: 9, claim: "bogus", scenario: "s" },
     ] });
-    if (task.includes("Report only tests")) return submit({ findings: [{ file: "a.js", line: 3, claim: "real bug, again", scenario: "s" }] });
+    // The same bug, cited on a different line.
+    if (task.includes("Report only tests")) return submit({ findings: [{ file: "a.js", line: 4, claim: "real bug, reworded", scenario: "s" }] });
     if (task.includes("Report only edge cases")) throw new Error("finder crashed");
-    // Skeptics: "real bug" holds up except against the intent angle; "bogus" is refuted by everyone.
-    const refuted = task.includes("bogus") || task.includes("Intent:");
+    if (task.includes("may repeat each other")) {
+      assert.match(task, /line 3: real bug[\s\S]*line 3: second bug[\s\S]*line 4: real bug, reworded/);
+      return submit({ issues: [{ line: 3, claim: "real bug", scenario: "s" }, { line: 3, claim: "second bug", scenario: "s2" }] });
+    }
+    // Skeptics: "real bug" holds up except against the intent angle; the others are refuted.
+    const refuted = !task.includes("real bug") || task.includes("Intent:");
     return submit({ refuted, reason: "checked" });
   } });
   try {
@@ -173,10 +179,12 @@ test("verified-review dedupes across finders and keeps only findings most skepti
       "Confirmed:",
       "- a.js:3: real bug\n  scenario: s\n  upheld by 2/3",
       "",
-      "Refuted (1):",
+      "Refuted (2):",
+      "- a.js: second bug",
       "- b.js: bogus",
     ].join("\n"));
-    assert.equal(s.calls.length, 3 + 2 * 3);
-    assert.match(progress, /· 1 of 2 findings survived/);
+    assert.equal(s.calls.length, 3 + 1 + 3 * 3);
+    assert.match(progress, /· merged 4 findings into 3 distinct ones/);
+    assert.match(progress, /· 1 of 3 findings survived/);
   } finally { s.cleanup(); }
 });

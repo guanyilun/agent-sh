@@ -88,7 +88,7 @@ const survives = votes.filter(v => !v.refuted).length >= 2;
 
 **Search several ways.** Run finders that each look differently (by concern, by file, by entry point, by recent change). Each is blind to what the others surface.
 
-**Dedupe in code.** Merging results is a job for plain code (a key such as `file:line`), not another agent. It needs everything at once, so it's the one place to wait for all finders.
+**Dedupe cheaply, but don't lose distinct findings.** Group in code by a coarse key such as the file; it needs everything at once, so it's the one place to wait for all finders. Don't dedupe on the key itself: finders describe the same bug in different words and cite different lines, and one line can hold several bugs. When a group has several claims, one small merge run ("merge repeats, keep distinct problems separate") is far cheaper than verifying duplicates, and far safer than dropping all but one. Log how many merged into how many.
 
 **Don't wait when you don't have to.** Otherwise let each item move through its stages on its own, so one slow item doesn't hold up the rest:
 
@@ -131,4 +131,4 @@ for (let dry = 0, round = 1; dry < 2 && round <= 5; round++) {
 Next to this file, in `workflows/`:
 
 - `review-loop.ts`: parallel reviewers with a typed verdict, a worker fixing the findings, repeated until clean or three rounds.
-- `verified-review.ts`: three finders looking different ways, deduped in code, then three skeptics per finding attacking it from different angles; only findings most skeptics fail to refute are reported, and caps are logged.
+- `verified-review.ts`: three finders looking different ways, grouped by file with a merge run for files with several claims, then three skeptics per finding attacking it from different angles; only findings most skeptics fail to refute are reported, and merges and caps are logged.

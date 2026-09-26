@@ -14,8 +14,8 @@ const ANGLES = [
   "Reachability: can real callers or inputs hit this path at all?",
   "Intent: is it handled elsewhere, documented, or deliberate?",
 ];
-// 3 finders + 12 findings x 3 skeptics = 39 runs, under the default cap of 50.
-const MAX_CHECKED = 12;
+// 3 finders + a few merges + 10 findings x 3 skeptics stays under the default cap of 50.
+const MAX_CHECKED = 10;
 
 const FINDINGS = {
   findings: {
@@ -33,10 +33,20 @@ const FINDINGS = {
   },
 };
 const VERDICT = { refuted: { type: "boolean" }, reason: { type: "string" } };
+const DISTINCT = {
+  issues: {
+    type: "array",
+    items: {
+      type: "object",
+      properties: { line: { type: "integer" }, claim: { type: "string" }, scenario: { type: "string" } },
+      required: ["claim", "scenario"],
+    },
+  },
+};
 
 interface Finding { file: string; line?: number; claim: string; scenario: string }
 
-export default (async ({ all, args, log }) => {
+export default (async ({ run, all, args, log }) => {
   const target = args || "the uncommitted changes (`git diff HEAD`)";
 
   const found: Finding[] = (await all(LENSES.map(lens => ({
@@ -45,12 +55,24 @@ export default (async ({ all, args, log }) => {
     schema: FINDINGS,
   })))).filter(Boolean).flatMap(r => r.findings);
 
-  // Dedupe in code, not with an agent.
-  const seen = new Set<string>();
-  const unique = found.filter(f => {
-    const key = `${f.file}:${f.line ?? f.claim.toLowerCase().slice(0, 40)}`;
-    return !seen.has(key) && seen.add(key);
-  });
+  // Group by file in code. Finders word the same bug differently and cite different lines,
+  // and one line can hold several bugs, so a file with several claims gets one merge run.
+  const groups = new Map<string, Finding[]>();
+  for (const f of found) groups.set(f.file, [...(groups.get(f.file) ?? []), f]);
+  const unique: Finding[] = (await Promise.all([...groups.values()].map(async (group) => {
+    if (group.length === 1) return group;
+    const merged = await run({
+      agent: "reviewer",
+      task: [
+        `These findings about ${group[0]!.file} may repeat each other.`,
+        "Merge the ones describing the same problem, even if they cite different lines, and keep distinct problems separate. Don't add new ones.",
+        ...group.map((f, i) => `${i + 1}. line ${f.line ?? "?"}: ${f.claim}\n   scenario: ${f.scenario}`),
+      ].join("\n"),
+      schema: DISTINCT,
+    }).catch(() => ({ issues: group }));
+    return merged.issues.map((i: Finding) => ({ ...i, file: group[0]!.file }));
+  }))).flat();
+  if (unique.length < found.length) log(`merged ${found.length} findings into ${unique.length} distinct ones`);
   if (!unique.length) return "No findings.";
   const checked = unique.slice(0, MAX_CHECKED);
   if (unique.length > checked.length) {
