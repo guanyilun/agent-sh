@@ -3,17 +3,12 @@ import * as fs from "node:fs";
 import { activateAgent } from "../agent/index.js";
 import { contentText } from "../agent/types.js";
 import { createCore } from "../core/index.js";
-import type { AppConfig } from "../core/index.js";
+import type { CliConfig } from "./args.js";
 import { loadAllExtensions, requireBackends } from "./boot.js";
 
-export type OutputFormat = "text" | "json";
-
-export async function runHeadless(
-  config: AppConfig,
-  prompt: string,
-  output: OutputFormat,
-): Promise<never> {
-  const query = [prompt, readPipedStdin()].filter(Boolean).join("\n\n").trim();
+export async function runHeadless(config: CliConfig): Promise<never> {
+  const stdin = config.noStdin ? "" : readPipedStdin();
+  const query = [config.print, stdin].filter(Boolean).join("\n\n").trim();
   if (!query) {
     console.error("agent-sh: -p needs a prompt (as an argument or on stdin).");
     process.exit(1);
@@ -21,9 +16,15 @@ export async function runHeadless(
 
   const core = createCore(config);
   const { bus } = core;
-  const json = output === "json";
+  const json = config.output === "json";
   const emit = (event: Record<string, unknown>) => process.stdout.write(JSON.stringify(event) + "\n");
   let exitCode = 0;
+
+  // A reader that stops early (`| head`) closes the pipe; that ends the run, it isn't a crash.
+  process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE") process.exit(exitCode);
+    throw err;
+  });
 
   // Never resolves, so callers can't fall through into the interactive path while output drains.
   const finish = (code: number): Promise<never> => {

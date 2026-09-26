@@ -98,3 +98,9 @@ test("parseArgs treats a bare -p as a stdin-only prompt", () => {
   assert.equal(cfg.print, "");
   assert.deepEqual(cfg.extensions, ["./ext.ts"]);
 });
+
+test("parseArgs takes a dash-leading prompt from --print= and reads --no-stdin", () => {
+  const cfg = parseArgs(["--print=-ls this directory", "--no-stdin"], EMPTY_ENV);
+  assert.equal(cfg.print, "-ls this directory");
+  assert.equal(cfg.noStdin, true);
+});

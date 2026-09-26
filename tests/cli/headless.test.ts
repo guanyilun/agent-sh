@@ -183,3 +183,31 @@ for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
     } finally { llm.server.close(); }
   });
 }
+
+test("--no-stdin ignores piped stdin", async () => {
+  const llm = await fakeLlm(() => ({ content: "ok" }));
+  try {
+    const r = await runCli(["-p", "just this", "--no-stdin"], llm.url, { stdin: "SHOULD NOT APPEAR" });
+    assert.equal(r.code, 0, r.stderr);
+    assert.doesNotMatch(lastUser(llm.requests[0]!), /SHOULD NOT APPEAR/);
+    assert.match(lastUser(llm.requests[0]!), /just this/);
+  } finally { llm.server.close(); }
+});
+
+test("--print= passes a prompt that starts with a dash", async () => {
+  const llm = await fakeLlm(() => ({ content: "ok" }));
+  try {
+    const r = await runCli(["--print=-ls this directory"], llm.url);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(lastUser(llm.requests[0]!), /-ls this directory/);
+  } finally { llm.server.close(); }
+});
+
+test("a reader that closes stdout early ends the run without a crash", async () => {
+  const llm = await fakeLlm(() => ({ content: "x".repeat(200_000) }));
+  try {
+    const r = await runCli(["-p", "hi"], llm.url, { onSpawn: (child) => child.stdout!.destroy() });
+    assert.equal(r.code, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /EPIPE|Error/);
+  } finally { llm.server.close(); }
+});
