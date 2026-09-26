@@ -8,6 +8,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.16] - 2026-09-26
+
 ### Added
 
 - Durable workflow runs: every run gets a folder under

@@ -5,6 +5,6 @@
   "type": "module",
   "main": "index.ts",
   "dependencies": {
-    "agent-sh": "^0.15.15"
+    "agent-sh": "^0.15.16"
   }
 }
