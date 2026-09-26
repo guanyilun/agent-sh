@@ -8,6 +8,14 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Added
+
+- `agent-sh -p [prompt]` runs one prompt without the shell or TUI, prints the
+  reply and exits (1 on an agent error, 130/143 on SIGINT/SIGTERM). Piped stdin
+  is appended to the prompt and tool calls are listed on stderr. `--output json`
+  prints one event per line (`text`, `tool_start`, `tool_output`, `tool_end`,
+  `usage`, `error`, a final `done`) for scripts and tests.
+
 ## [0.15.15] - 2026-09-25
 
 ### Added
