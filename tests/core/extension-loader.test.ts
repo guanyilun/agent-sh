@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -147,5 +147,24 @@ test("disabled extensions are skipped without emitting ui:error", async () => {
 
   assert.ok(loaded.includes(kept));
   assert.ok(!loaded.includes(skipped));
+  assert.deepEqual(uiErrors, []);
+});
+
+test("the extensions dir becomes ESM scope so single-file .ts extensions load on Node 20", async () => {
+  resetExtDir();
+  clearSettings();
+  const { ctx } = makeStubCtx();
+  await loadExtensions(ctx);
+  assert.deepEqual(JSON.parse(readFileSync(join(EXT_DIR, "package.json"), "utf8")), { type: "module" });
+});
+
+test("a package.json the user keeps in the extensions dir is left alone", async () => {
+  resetExtDir();
+  clearSettings();
+  const own = '{ "dependencies": { "left-pad": "1.0.0" } }\n';
+  writeFileSync(join(EXT_DIR, "package.json"), own);
+  const { ctx, uiErrors } = makeStubCtx();
+  await loadExtensions(ctx);
+  assert.equal(readFileSync(join(EXT_DIR, "package.json"), "utf8"), own);
   assert.deepEqual(uiErrors, []);
 });

@@ -204,6 +204,11 @@ async function discoverUserExtensions(ctx: ExtensionContext): Promise<string[]> 
     return specifiers;
   }
 
+  // tsx loads .ts outside a "type": "module" package as CommonJS, breaking ESM extensions on Node 20.19+.
+  if (!entries.some((e) => e.name === "package.json")) {
+    try { await fs.writeFile(path.join(EXT_DIR, "package.json"), '{ "type": "module" }\n'); } catch {}
+  }
+
   for (const entry of entries) {
     // Disable check: directory name for dir-extensions, or basename sans
     // extension for file-extensions. Lets settings.json turn one off
