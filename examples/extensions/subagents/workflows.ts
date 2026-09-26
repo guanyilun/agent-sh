@@ -67,7 +67,6 @@ export interface WorkflowDeps {
   runTask(spec: RunSpec, signal: AbortSignal, progress: (line: string) => void): Promise<string>;
   /** One-shot completion used to turn a subagent's answer into schema-shaped JSON. */
   complete(messages: { role: string; content: string }[]): Promise<string>;
-  maxConcurrency: number;
   maxRuns: number;
 }
 
@@ -83,7 +82,6 @@ export async function runWorkflow(
   const fn = mod.default ?? mod.run;
   if (typeof fn !== "function") throw new Error(`${def.file} must export a default function`);
 
-  const slots = new Semaphore(Math.max(1, deps.maxConcurrency));
   let runs = 0;
 
   const run = async (a: RunSpec | string, task?: string): Promise<any> => {
@@ -91,15 +89,10 @@ export async function runWorkflow(
     if (!spec?.task) throw new Error("run() needs a task");
     if (++runs > deps.maxRuns) throw new Error(`workflow exceeded ${deps.maxRuns} subagent runs (subagents.maxRunsPerWorkflow)`);
     const label = `[${runs} ${spec.agent ?? "ad-hoc"}]`;
-    await slots.acquire();
-    try {
-      if (signal.aborted) throw new Error("cancelled");
-      const text = await deps.runTask(spec, signal, (line) => progress(`${label} ${line}`));
-      if (!spec.schema) return text;
-      return await extract(text, normalizeSchema(spec.schema), deps.complete);
-    } finally {
-      slots.release();
-    }
+    if (signal.aborted) throw new Error("cancelled");
+    const text = await deps.runTask(spec, signal, (line) => progress(`${label} ${line}`));
+    if (!spec.schema) return text;
+    return await extract(text, normalizeSchema(spec.schema), deps.complete);
   };
 
   const api: WorkflowApi = {
@@ -137,21 +130,6 @@ async function extract(
     messages.push({ role: "assistant", content: reply }, { role: "user", content: `Invalid: ${problem}. Reply with corrected JSON only.` });
   }
   throw new Error(`could not get output matching the schema: ${problem}`);
-}
-
-class Semaphore {
-  private waiting: (() => void)[] = [];
-  constructor(private free: number) {}
-
-  acquire(): Promise<void> {
-    if (this.free > 0) { this.free--; return Promise.resolve(); }
-    return new Promise(resolve => this.waiting.push(resolve));
-  }
-
-  release(): void {
-    const next = this.waiting.shift();
-    if (next) next(); else this.free++;
-  }
 }
 
 export function formatResult(value: unknown): string {

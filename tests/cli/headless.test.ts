@@ -266,3 +266,24 @@ test("a user workflow with a typed step runs under -p", async () => {
     assert.match(ev.filter((e) => e.type === "tool_output").map((e) => e.chunk).join(""), /\[1 ad-hoc\] done/);
   } finally { llm.server.close(); }
 });
+
+test("-p stays alive for a background run and exits after the wake turn reads it", async () => {
+  const llm = await fakeLlm((req) => {
+    const system = String(req.messages[0]?.content ?? "");
+    if (system.includes("scouting subagent")) return { content: "scouted the area" };
+    const last = req.messages.at(-1)!;
+    const lastText = String(last.content);
+    if (last.role === "tool" && lastText.includes("Started background run #1")) return { content: "started it" };
+    if (last.role === "tool" && lastText.includes("Run #1 (scout) done")) return { content: "final: scouted the area" };
+    if (lastText.includes("[background] Finished: #1 scout (done)")) return toolCall("subagent_jobs", { action: "result", id: 1 });
+    return toolCall("spawn_agent", { agent: "scout", task: "map it", background: true });
+  });
+  try {
+    const r = await runCli(["-p", "scout in the background", "--output", "json", "-e", SUBAGENTS], llm.url);
+    assert.equal(r.code, 0, r.stderr);
+    const ev = events(r.stdout);
+    assert.deepEqual(ev.filter((e) => e.type === "tool_start").map((e) => e.name), ["spawn_agent", "subagent_jobs"]);
+    assert.equal(ev.at(-1)?.type, "done");
+    assert.equal(ev.at(-1)?.response, "final: scouted the area");
+  } finally { llm.server.close(); }
+});

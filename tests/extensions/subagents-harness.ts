@@ -15,7 +15,7 @@ export const lastUser = (o: { messages: Message[] }) =>
 
 export interface HarnessOpts {
   /** Streaming subagent turns. */
-  reply: (opts: StreamOpts) => Record<string, unknown>;
+  reply: (opts: StreamOpts) => Record<string, unknown> | Promise<Record<string, unknown>>;
   /** One-shot completions (schema extraction). */
   invoke?: (messages: Message[]) => string;
   settings?: Record<string, unknown>;
@@ -37,7 +37,7 @@ export function setup(opts: HarnessOpts) {
     model: "stub",
     stream: async (o: StreamOpts) => {
       calls.push(o);
-      const delta = opts.reply(o);
+      const delta = await opts.reply(o);
       return (async function* () { yield { choices: [{ delta }] }; })();
     },
   }));
@@ -50,6 +50,8 @@ export function setup(opts: HarnessOpts) {
   const tools: ToolDefinition[] = [];
   const schemaAdvisors = new Map<string, (next: () => ToolSchemaView) => ToolSchemaView>();
   const commands = new Map<string, (args: string) => unknown>();
+  const producers = new Map<string, () => string | null>();
+  const disposers: (() => void)[] = [];
   const register = (t: ToolDefinition) => { tools.push(t); h.define(`tool:${t.name}`, t.execute.bind(t)); };
   for (const name of ["read_file", "grep", "bash"]) {
     register({
@@ -68,9 +70,11 @@ export function setup(opts: HarnessOpts) {
     getExtensionSettings: (_ns: string, d: object) => ({ ...d, ...opts.settings }),
     getStoragePath: (ns: string) => { const p = join(root, ns); mkdirSync(p, { recursive: true }); return p; },
     registerCommand: (name: string, _d: string, handler: (args: string) => unknown) => { commands.set(name, handler); },
+    onDispose: (fn: () => void) => { disposers.push(fn); },
     agent: {
       registerInstruction: () => {},
       registerSkill: () => {},
+      registerContextProducer: (name: string, fn: () => string | null) => { producers.set(name, fn); return () => producers.delete(name); },
       registerTool: register,
       getTools: () => tools,
       adviseToolSchema: (n: string, a: (next: () => ToolSchemaView) => ToolSchemaView) => { schemaAdvisors.set(n, a); return () => {}; },
@@ -91,6 +95,8 @@ export function setup(opts: HarnessOpts) {
     run: (args: Record<string, unknown>, onChunk?: (c: string) => void) => exec("spawn_agent", args, onChunk),
     exec,
     command: (name: string, args: string) => commands.get(name)!(args),
+    context: (name: string) => producers.get(name)!(),
+    dispose: () => { for (const fn of disposers) fn(); },
     description: (name = "spawn_agent") => {
       const t = tool(name);
       return schemaAdvisors.get(name)!(() => ({ description: t.description, parameters: t.input_schema })).description;

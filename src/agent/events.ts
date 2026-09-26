@@ -54,6 +54,10 @@ declare module "../core/event-bus.js" {
 
     "agent:processing-start": Record<string, never>;
     "agent:processing-done": Record<string, never>;
+    /** Pipe: extensions add work still in flight between turns (e.g. background subagents); `-p` waits for 0. */
+    "agent:pending-work": { count: number };
+    /** Emit when that count may have changed. */
+    "agent:pending-work-changed": Record<string, never>;
     "agent:cancelled": Record<string, never>;
     "agent:error": { message: string };
 

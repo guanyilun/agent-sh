@@ -37,6 +37,17 @@ While subagents run, `spawn_agent` streams one progress line per step as its too
 [1 reviewer] stopped: step limit reached
 ```
 
+## Background runs
+
+Add `background: true` to `spawn_agent` or `run_workflow` and the call returns at once (`Started background run #3 (reviewer)`), so the main agent can keep working or talking with you.
+
+- **Status** is added to the main agent's context on every request (`#3 reviewer: running 1m20s (last: grep: parseArgs)`, then `done, unread`). It's never saved to the history.
+- **Results** come back only as tool results, when the agent asks with `subagent_jobs` (`result`, `wait`, `list`, `cancel`). Subagent output never enters the history as if you had typed it.
+- **Waking:** if a turn ends with a finished run the agent hasn't read, a short note (`[background] Finished: #3 reviewer (done). Read the result with subagent_jobs.`) starts a new turn. A busy agent is never interrupted. Set `backgroundWake: false` to get a notice instead; the agent then sees the status on your next message.
+- Ctrl-C on the main turn doesn't stop background runs; `/jobs` lists them and `/jobs cancel <id>` stops one. Resetting the session or `/reload` cancels them all, and they don't survive quitting.
+- Foreground and background subagents share the `maxConcurrency` limit.
+- `agent-sh -p` stays alive until background runs finish and their wake turn is done.
+
 ## Bundled agents
 
 | Agent | Use it for | Edits files |
@@ -121,6 +132,6 @@ Full guide: [WORKFLOWS.md](WORKFLOWS.md). Bundled example: [`workflows/review-lo
 
 ```json
 {
-  "subagents": { "maxConcurrency": 4, "maxIterations": 25, "maxRunsPerWorkflow": 50 }
+  "subagents": { "maxConcurrency": 4, "maxIterations": 25, "maxRunsPerWorkflow": 50, "backgroundWake": true }
 }
 ```

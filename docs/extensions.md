@@ -327,6 +327,8 @@ unqueues one or the turn is cancelled.
 | `agent:error` | `{ message }` | Error during processing |
 | `agent:usage` | `{ prompt_tokens, completion_tokens, total_tokens }` | Token usage stats |
 
+**Background work.** An extension that keeps work running between turns (e.g. background subagents) reports it through the `agent:pending-work` pipe (`{ count }`; add your in-flight count) and emits `agent:pending-work-changed` when that count may have changed. `agent-sh -p` exits only once no turn is running and the count is 0, so a result that starts another turn is still handled.
+
 The `agent:tool-batch` event lets the TUI prepare group headers before tools execute. `agent:tool-started` now carries display metadata (`icon`, `displayDetail` from `formatCall()`, batch position). `agent:tool-completed` includes a `resultDisplay` (from `formatResult()`) with an optional `summary` string and structured `body`.
 
 ### Switching backends at runtime
