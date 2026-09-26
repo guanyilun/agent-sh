@@ -12,7 +12,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 - `agent-sh -p [prompt]` runs one prompt without the shell or TUI, prints the
   reply and exits (1 on an agent error, 130/143 on SIGINT/SIGTERM). Piped stdin
-  is appended to the prompt and tool calls are listed on stderr. `--output json`
+  is appended to the prompt (`--no-stdin` skips it) and tool calls are listed
+  on stderr. `--print=<text>` takes a prompt that starts with `-`. `--output json`
   prints one event per line (`text`, `tool_start`, `tool_output`, `tool_end`,
   `usage`, `error`, a final `done`) for scripts and tests.
 - The bundled `subagents` extension (now a directory, `agent-sh install

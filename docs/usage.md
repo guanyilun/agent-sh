@@ -35,7 +35,7 @@ DEBUG=1 DEEPSEEK_API_KEY="$KEY" agent-sh
 
 ### Headless mode
 
-`-p` runs one prompt without the shell or TUI, prints the reply to stdout, and exits (1 on an agent error). Piped stdin is appended to the prompt. Tool calls are listed on stderr, so stdout stays clean for piping. Tools run without confirmation.
+`-p` runs one prompt without the shell or TUI, prints the reply to stdout, and exits (1 on an agent error). Piped stdin is appended to the prompt; pass `--no-stdin` when stdin is piped but not meant for the agent (e.g. under a supervisor that keeps it open). Use `--print=<text>` for a prompt that starts with `-`. A reader that closes the pipe early (`| head`) ends the run cleanly. Tool calls are listed on stderr, so stdout stays clean for piping. Tools run without confirmation.
 
 ```bash
 agent-sh -p "summarize the README"
@@ -276,6 +276,7 @@ Switching mid-conversation preserves your conversation state — only the LLM en
 | `-e, --extensions` | — | Extensions to load (comma-separated, repeatable) |
 | `-p, --print [prompt]` | — | Run one prompt headless and exit; see [Headless mode](#headless-mode) |
 | `--output <format>` | — | With `-p`: `text` (default) or `json` |
+| `--no-stdin` | — | With `-p`: don't read stdin |
 
 **Precedence** (highest to lowest): CLI flags → environment variables → provider profile in settings.json → defaults.
 

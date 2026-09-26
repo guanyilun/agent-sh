@@ -84,7 +84,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  if (headless) await runHeadless(config, config.print!, config.output ?? "text");
+  if (headless) await runHeadless(config);
 
   // ── Core (frontend-agnostic) ──────────────────────────────────
   const core = createCore(config);
