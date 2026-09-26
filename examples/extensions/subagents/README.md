@@ -85,10 +85,42 @@ Agents load from these directories; a later one overrides an earlier one with th
 
 Files are re-read on every call, so edits take effect immediately.
 
+## Workflows
+
+A workflow is a script that coordinates subagents with ordinary code: sequences, parallel steps, loops, and branches on typed results. Drop one file in `~/.agent-sh/workflows/` (or `<project>/.agent-sh/workflows/` to share it through the repo) and run it:
+
+```
+/workflow                              # list
+/workflow review-loop HEAD~3..HEAD     # the main agent runs it and acts on the result
+```
+
+```ts
+export const description = "Review until clean, max 3 rounds";
+
+export default async ({ run, all, args }) => {
+  for (let round = 1; round <= 3; round++) {
+    const reviews = await all(["correctness", "tests"].map(focus => ({
+      agent: "reviewer",
+      task: `Review ${args} for ${focus}.`,
+      schema: { verdict: { enum: ["clean", "issues"] }, findings: { type: "array", items: { type: "string" } } },
+    })));
+    if (reviews.every(r => r.verdict === "clean")) return `Clean after ${round} round(s).`;
+    await run("worker", `Fix only these findings:\n${reviews.flatMap(r => r.findings).join("\n")}`);
+  }
+  return "Issues remain after 3 rounds.";
+};
+```
+
+`run` with a `schema` resolves to validated data rather than text, so loops exit on real values instead of pattern-matching prose. The main agent can also run workflows itself (`run_workflow`) and has the authoring guide as a skill, so you can ask it to turn a process into a workflow.
+
+Project workflows are code from the repo, so each one runs only after you review it and run `/workflow trust <name>`; editing the file requires trusting it again. Workflows in `~/.agent-sh/workflows/` are trusted.
+
+Full guide: [WORKFLOWS.md](WORKFLOWS.md). Bundled example: [`workflows/review-loop.ts`](workflows/review-loop.ts).
+
 ## Settings
 
 ```json
 {
-  "subagents": { "maxConcurrency": 4, "maxIterations": 25 }
+  "subagents": { "maxConcurrency": 4, "maxIterations": 25, "maxRunsPerWorkflow": 50 }
 }
 ```

@@ -1,27 +1,50 @@
-/** Named and parallel subagents via spawn_agent; see README.md. */
+/** Named and parallel subagents via spawn_agent, and scripted workflows via run_workflow; see README.md. */
 import type { AgentContext, ExtensionContext } from "agent-sh/types";
 import type { ToolDefinition } from "agent-sh/agent/types";
 import { runSubagent, type SubagentOptions, type SubagentRunMeta } from "agent-sh/agent/subagent";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgents, type AgentDef } from "./agents.js";
+import { discoverWorkflows, formatResult, runWorkflow, TrustStore, type WorkflowDef } from "./workflows.js";
+import type { RunSpec } from "./workflow-types.js";
+
+export type { Workflow, WorkflowApi, RunSpec, JsonSchema } from "./workflow-types.js";
 
 const TOOL_NAME = "spawn_agent";
+const WORKFLOW_TOOL = "run_workflow";
+const CHILD_EXCLUDED = new Set([TOOL_NAME, WORKFLOW_TOOL]);
 const PARENT_CONTEXT_CHARS = 12_000;
 
 interface TaskSpec { agent?: string; task: string; tools?: string[] }
 
 export default function activate(ctx: ExtensionContext & AgentContext): void {
   const { bus } = ctx;
-  const settings = ctx.getExtensionSettings("subagents", { maxConcurrency: 4, maxIterations: 25 });
-  const bundledDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "agents");
+  const settings = ctx.getExtensionSettings("subagents", { maxConcurrency: 4, maxIterations: 25, maxRunsPerWorkflow: 50 });
+  const extDir = path.dirname(fileURLToPath(import.meta.url));
+  const bundledDir = path.join(extDir, "agents");
   const userDir = ctx.getStoragePath("agents");
+  const userWorkflowDir = ctx.getStoragePath("workflows");
+  const trust = new TrustStore(path.join(ctx.getStoragePath("subagents"), "trusted-workflows.json"));
 
   const loadAgents = () => discoverAgents([
     bundledDir,
     userDir,
     path.join(ctx.call("cwd") as string, ".agent-sh", "agents"),
   ]);
+
+  const loadWorkflows = () => {
+    const projectDir = path.join(ctx.call("cwd") as string, ".agent-sh", "workflows");
+    return discoverWorkflows([
+      { dir: path.join(extDir, "workflows"), scope: "bundled" },
+      { dir: userWorkflowDir, scope: "user" },
+      // From $HOME the project dir is the user dir; don't demote the user's own workflows to untrusted.
+      ...(samePath(projectDir, userWorkflowDir) ? [] : [{ dir: projectDir, scope: "project" as const }]),
+    ]);
+  };
+  const untrustedHint = (wf: WorkflowDef) =>
+    `Workflow "${wf.name}" is a project file (${wf.file}) that hasn't been trusted in its current form. ` +
+    `Ask the user to review it and run /workflow trust ${wf.name}.`;
 
   ctx.agent.registerInstruction("subagent-guide", [
     `You have a ${TOOL_NAME} tool for delegating work to subagents with their own fresh context.`,
@@ -118,6 +141,93 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     return list ? { ...view, description: `${view.description}\n\nNamed agents:\n${list}` } : view;
   });
 
+  ctx.agent.registerTool({
+    name: WORKFLOW_TOOL,
+    description:
+      "Run a saved workflow: a script that coordinates subagents (sequences, parallel steps, loops) and returns its result. " +
+      "Pass `args` as the workflow expects them (free text).",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Workflow name (see list below)" },
+        args: { type: "string", description: "Arguments for the workflow" },
+      },
+      required: ["name"],
+    },
+    getDisplayInfo: () => ({ kind: "execute", icon: "⤵" }),
+    formatCall: (args) => [args.name, args.args].filter(Boolean).join(" "),
+
+    async execute(args, onChunk, execCtx) {
+      const workflows = loadWorkflows();
+      const wf = workflows.get(String(args.name ?? ""));
+      if (!wf) return error(`Unknown workflow: ${args.name}. Available: ${[...workflows.keys()].join(", ") || "(none)"}`);
+      if (!trust.isTrusted(wf)) return error(untrustedHint(wf));
+
+      const signal = execCtx?.signal ?? new AbortController().signal;
+      const progress = (line: string) => onChunk?.(`${line}\n`);
+      try {
+        const result = await runWorkflow(wf, String(args.args ?? ""), {
+          runTask,
+          complete: (messages) => ctx.call("llm:invoke", messages, { maxTokens: 4096 }) as Promise<string>,
+          maxConcurrency: settings.maxConcurrency,
+          maxRuns: settings.maxRunsPerWorkflow,
+        }, signal, progress);
+        return { content: formatResult(result), exitCode: 0, isError: false };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        progress(`failed: ${message}`);
+        return error(`Workflow "${wf.name}" failed: ${message}`);
+      }
+    },
+  });
+
+  ctx.agent.adviseToolSchema(WORKFLOW_TOOL, (next) => {
+    const view = next();
+    const list = [...loadWorkflows().values()]
+      .map(w => `- ${w.name}: ${w.description || "(no description)"}${trust.isTrusted(w) ? "" : " [untrusted: the user must run /workflow trust " + w.name + "]"}`)
+      .join("\n");
+    return { ...view, description: `${view.description}\n\nWorkflows:\n${list || "(none yet)"}` };
+  });
+
+  ctx.agent.registerSkill(
+    "writing-workflows",
+    "How to write an agent-sh workflow script (run/all/schema/loops) and where to save it",
+    path.join(extDir, "WORKFLOWS.md"),
+  );
+
+  ctx.registerCommand("workflow", "List, trust, or run workflows: /workflow [trust] <name> [args]", (input) => {
+    const [first = "", ...rest] = input.trim().split(/\s+/).filter(Boolean);
+    const workflows = loadWorkflows();
+
+    if (!first) {
+      const message = workflows.size
+        ? [...workflows.values()].map(w =>
+            `${w.name} — ${w.description || "(no description)"}${trust.isTrusted(w) ? "" : "  [untrusted]"}\n    ${w.file}`).join("\n")
+        : `No workflows found. Add one to ${userWorkflowDir} or <project>/.agent-sh/workflows/`;
+      bus.emit("ui:info", { message });
+      return;
+    }
+
+    if (first === "trust") {
+      const wf = workflows.get(rest[0] ?? "");
+      if (!wf) { bus.emit("ui:error", { message: `Unknown workflow: ${rest[0] ?? "(none given)"}` }); return; }
+      trust.trust(wf);
+      bus.emit("ui:info", { message: `Trusted ${wf.file} as it is now. Editing it will require trusting it again.` });
+      return;
+    }
+
+    const wf = workflows.get(first);
+    if (!wf) { bus.emit("ui:error", { message: `Unknown workflow: ${first}. Run /workflow to list them.` }); return; }
+    if (!trust.isTrusted(wf)) {
+      bus.emit("ui:error", { message: `${wf.file} is an untrusted project workflow. Review it, then run /workflow trust ${wf.name}.` });
+      return;
+    }
+    const wfArgs = input.trim().slice(first.length).trim();
+    bus.emit("agent:submit", {
+      query: `Run the "${wf.name}" workflow with ${WORKFLOW_TOOL}${wfArgs ? ` and args ${JSON.stringify(wfArgs)}` : ""}, then report its result.`,
+    });
+  });
+
   ctx.registerCommand("agents", "List named subagents", () => {
     const agents = [...loadAgents().values()];
     const message = agents.length
@@ -125,6 +235,12 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       : `No agents found. Add markdown agent files to ${userDir}`;
     bus.emit("ui:info", { message });
   });
+
+  function runTask(spec: RunSpec, signal: AbortSignal, progress: (line: string) => void): Promise<string> {
+    const def = spec.agent ? loadAgents().get(spec.agent) : undefined;
+    if (spec.agent && !def) throw new Error(`unknown agent: ${spec.agent}`);
+    return runOne(spec, def, signal, progress);
+  }
 
   async function runOne(
     spec: TaskSpec,
@@ -138,8 +254,8 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     const cwd = ctx.call("cwd") as string;
     const wanted = def ? def.tools : spec.tools;
     const tools = ctx.agent.getTools()
-      .filter(t => t.name !== TOOL_NAME && (!wanted || wanted.includes(t.name)))
-      .map(t => throughHandlers(t, signal, progress));
+      .filter(t => !CHILD_EXCLUDED.has(t.name) && (!wanted || wanted.includes(t.name)))
+      .map(t => throughHandlers(t, cwd, signal, progress));
 
     const parentContext = def?.inheritContext ? parentTranscript() : "";
     const systemPrompt = [
@@ -168,11 +284,11 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   }
 
   // getTools() returns raw execute fns; go through tool:<name> so adviseTool wrappers apply.
-  function throughHandlers(tool: ToolDefinition, signal?: AbortSignal, progress?: (line: string) => void): ToolDefinition {
+  function throughHandlers(tool: ToolDefinition, cwd: string, signal?: AbortSignal, progress?: (line: string) => void): ToolDefinition {
     return {
       ...tool,
       execute: (args, onChunk) => {
-        const detail = describeCall(tool, args);
+        const detail = describeCall(tool, args, cwd);
         progress?.(detail ? `${tool.name}: ${detail}` : tool.name);
         return ctx.call(`tool:${tool.name}`, args, onChunk, { signal });
       },
@@ -201,14 +317,19 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   }
 }
 
-function describeCall(tool: ToolDefinition, args: Record<string, unknown>): string {
+function samePath(a: string, b: string): boolean {
+  const real = (p: string) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return real(a) === real(b);
+}
+
+function describeCall(tool: ToolDefinition, args: Record<string, unknown>, cwd: string): string {
   let detail = "";
   try { detail = tool.formatCall?.(args) ?? ""; } catch {}
   if (!detail) {
     const v = args.command ?? args.path ?? args.pattern ?? args.query;
     if (typeof v === "string") detail = v;
   }
-  detail = detail.replace(/\s+/g, " ").trim();
+  detail = detail.split(cwd + path.sep).join("").split(cwd).join(".").replace(/\s+/g, " ").trim();
   return detail.length > 100 ? detail.slice(0, 99) + "…" : detail;
 }
 
