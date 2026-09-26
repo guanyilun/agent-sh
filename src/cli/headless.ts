@@ -72,6 +72,9 @@ export async function runHeadless(
       process.stderr.write(`  ✗ exit ${e.exitCode}\n`);
     }
   });
+  bus.on("agent:tool-output-chunk", ({ chunk, toolCallId }) => {
+    if (json) emit({ type: "tool_output", id: toolCallId, chunk });
+  });
   bus.on("agent:usage", (u) => {
     if (json) emit({ type: "usage", ...u });
   });

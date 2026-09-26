@@ -43,7 +43,7 @@ git diff | agent-sh -p "review this diff"
 agent-sh -p "list the tests" --output json   # one JSON event per line
 ```
 
-`--output json` emits `text`, `thinking`, `tool_start` (`name`, `args`), `tool_end` (`exitCode`, `output`), `usage`, `notice`, `error`, and a final `done` event (`exitCode`, `response`). Extensions load as usual (`-e` works); ones that need the shell are skipped.
+`--output json` emits `text`, `thinking`, `tool_start` (`name`, `args`), `tool_output` (streamed `chunk`), `tool_end` (`exitCode`, `output`), `usage`, `notice`, `error`, and a final `done` event (`exitCode`, `response`). Extensions load as usual (`-e` works); ones that need the shell are skipped.
 
 ### Subcommands
 

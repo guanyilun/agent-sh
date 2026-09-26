@@ -104,13 +104,14 @@ test("piped stdin is appended to the prompt", async () => {
 });
 
 test("--output json reports tool calls and a final done event", async () => {
-  const llm = await fakeLlm((req) => req.messages.some((m) => m.role === "tool") ? { content: "listed" } : toolCall("ls", { path: "." }));
+  const llm = await fakeLlm((req) => req.messages.some((m) => m.role === "tool") ? { content: "listed" } : toolCall("bash", { command: "echo streamed" }));
   try {
     const r = await runCli(["-p", "list files", "--output", "json"], llm.url);
     assert.equal(r.code, 0, r.stderr);
     const ev = events(r.stdout);
     const start = ev.find((e) => e.type === "tool_start");
-    assert.equal(start?.name, "ls");
+    assert.equal(start?.name, "bash");
+    assert.match(ev.filter((e) => e.type === "tool_output" && e.id === start?.id).map((e) => e.chunk).join(""), /streamed/);
     assert.equal(ev.find((e) => e.type === "tool_end")?.exitCode, 0);
     assert.deepEqual(ev.at(-1), { type: "done", exitCode: 0, response: "listed" });
   } finally { llm.server.close(); }
