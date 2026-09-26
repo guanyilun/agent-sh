@@ -151,3 +151,32 @@ test("run from $HOME, the user's workflows stay trusted", async () => {
     assert.equal(body(await s.exec("run_workflow", { name: "mine" })), "mine");
   } finally { s.cleanup(); }
 });
+
+test("verified-review dedupes across finders and keeps only findings most skeptics fail to refute", async () => {
+  const submit = (args: unknown) => ({ tool_calls: [{ index: 0, id: "s", function: { name: "submit_result", arguments: JSON.stringify(args) } }] });
+  const s = setup({ reply: (o) => {
+    const task = lastUser(o);
+    if (task.includes("Report only correctness")) return submit({ findings: [
+      { file: "a.js", line: 3, claim: "real bug", scenario: "s" },
+      { file: "b.js", line: 9, claim: "bogus", scenario: "s" },
+    ] });
+    if (task.includes("Report only tests")) return submit({ findings: [{ file: "a.js", line: 3, claim: "real bug, again", scenario: "s" }] });
+    if (task.includes("Report only edge cases")) throw new Error("finder crashed");
+    // Skeptics: "real bug" holds up except against the intent angle; "bogus" is refuted by everyone.
+    const refuted = task.includes("bogus") || task.includes("Intent:");
+    return submit({ refuted, reason: "checked" });
+  } });
+  try {
+    let progress = "";
+    const r = await s.exec("run_workflow", { name: "verified-review", args: "HEAD" }, (c) => { progress += c; });
+    assert.equal(body(r), [
+      "Confirmed:",
+      "- a.js:3: real bug\n  scenario: s\n  upheld by 2/3",
+      "",
+      "Refuted (1):",
+      "- b.js: bogus",
+    ].join("\n"));
+    assert.equal(s.calls.length, 3 + 2 * 3);
+    assert.match(progress, /· 1 of 2 findings survived/);
+  } finally { s.cleanup(); }
+});

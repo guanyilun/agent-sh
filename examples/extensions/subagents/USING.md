@@ -8,6 +8,7 @@
 | Several independent jobs | `spawn_agent { tasks: [...] }` (runs in parallel, results in numbered sections) |
 | A slow job while you keep working or talking with the user | add `background: true` |
 | A repeatable process with fixed steps, loops or branches | a workflow: `run_workflow { name, args }` |
+| Findings the user will act on (a review, an audit) that must not be plausible-but-wrong | the `verified-review` workflow, or the adversarial patterns in `writing-workflows` |
 | The same multi-step process you'd otherwise orchestrate by hand again and again | propose writing a workflow (see the `writing-workflows` skill) |
 
 Named agents (list them with `/agents`): `scout` maps code (read-only), `reviewer` reviews (read-only), `oracle` gives a skeptical second opinion and sees this conversation, `worker` implements and validates, `delegate` acts like you and sees this conversation. Prefer a named agent over an ad-hoc one.

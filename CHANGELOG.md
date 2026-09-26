@@ -20,6 +20,11 @@ Releases before this file are recorded in the git tags and GitHub releases.
 - The `subagents` extension registers a `using-subagents` skill alongside
   `writing-workflows`: when to use each delegation tool, and how to run,
   resume and debug workflow runs.
+- `writing-workflows` gains a Patterns section (adversarial and multi-angle
+  verification, several-way search, dedupe in code, per-item pipelining,
+  loop until nothing new, judge panel, completeness check, no silent caps), and
+  a second bundled example, `verified-review`: three finders, dedupe, then three
+  skeptics per finding.
 - `runSubagent` takes `onMessage` (each message as it joins the conversation)
   and `shouldStop` (end after the current round of tool calls).
 - `agent-sh -p [prompt]` runs one prompt without the shell or TUI, prints the

@@ -69,12 +69,66 @@ Agents are the named ones from `/agents` (`scout`, `reviewer`, `oracle`, `worker
 - Pass results forward explicitly, e.g. include a scout's output in the next task.
 - Only one writing agent (`worker`) at a time on the same files.
 
+## Patterns
+
+A workflow is worth writing when its structure buys something a single agent can't: coverage (several angles in parallel), confidence (independent checks before trusting a claim), or scale. These patterns are the usual building blocks; combine them freely.
+
+**Verify adversarially.** Don't trust a finding because one agent said it. Give it to several skeptics told to *refute* it, defaulting to "refuted" when they can't confirm it, and keep it only if most fail. A skeptic that failed (`null`) should count against the finding.
+
+```ts
+const votes = (await all([1, 2, 3].map(() => ({
+  agent: "reviewer",
+  task: `Try to refute: ${claim}. Answer refuted=true if you can't confirm it from the code.`,
+  schema: { refuted: { type: "boolean" }, reason: { type: "string" } },
+})))).filter(Boolean);
+const survives = votes.filter(v => !v.refuted).length >= 2;
+```
+
+**Verify from different angles.** When a claim can be wrong in more than one way, give each verifier a different angle (does it really happen? is it reachable? is it intended?) instead of the same prompt three times. Diversity catches failures that repetition can't.
+
+**Search several ways.** Run finders that each look differently (by concern, by file, by entry point, by recent change). Each is blind to what the others surface.
+
+**Dedupe in code.** Merging results is a job for plain code (a key such as `file:line`), not another agent. It needs everything at once, so it's the one place to wait for all finders.
+
+**Don't wait when you don't have to.** Otherwise let each item move through its stages on its own, so one slow item doesn't hold up the rest:
+
+```ts
+const results = await Promise.all(items.map(async (item) => {
+  const draft = await run({ agent: "worker", task: fixTask(item) });
+  return run({ agent: "reviewer", task: checkTask(item, draft), schema: VERDICT });
+}));
+```
+
+**Loop until nothing new.** For discovery of unknown size, keep sending finders until two rounds in a row add nothing new. Dedupe against everything *seen*, not just what was confirmed, or rejected findings come back every round and the loop never ends:
+
+```ts
+const seen = new Set<string>();
+for (let dry = 0, round = 1; dry < 2 && round <= 5; round++) {
+  const fresh = (await all(FINDERS)).filter(Boolean).flatMap(r => r.findings).filter(f => !seen.has(key(f)));
+  if (!fresh.length) { dry++; continue; }
+  dry = 0;
+  fresh.forEach(f => seen.add(key(f)));
+  // verify `fresh` ...
+}
+```
+
+**Judge panel.** When there are many possible solutions (a design, an approach), generate several independent attempts from different angles, have judges score them against the same criteria, then build from the winner and borrow the best ideas from the runners-up.
+
+**Ask what's missing.** Finish with an agent that asks what was not covered: an angle not searched, a claim not verified, a file not read. What it names becomes the next round, or goes in the report.
+
+**No silent caps.** If you limit coverage (top N, sampling, no retry), `log()` what was left out and say so in the result. A truncated review that reads as complete is worse than a slower one.
+
+**Scale to the request.** "Any obvious bugs?" is a few finders with one check each. "Audit this thoroughly" is more finders, three to five skeptics per finding, and a final synthesis. Watch `budget.remaining()` for open-ended loops.
+
 ## Running
 
 - `/workflow` lists workflows; `/workflow <name> <args>` asks the main agent to run it and act on the result.
 - The main agent can call the `run_workflow` tool itself.
 - Headless (CI): `agent-sh -p "run the <name> workflow on <args>"` with the extension installed.
 
-## Example
+## Examples
 
-See `workflows/review-loop.ts` next to this file: parallel reviewers with a typed verdict, a worker fixing findings, repeated until clean or three rounds.
+Next to this file, in `workflows/`:
+
+- `review-loop.ts`: parallel reviewers with a typed verdict, a worker fixing the findings, repeated until clean or three rounds.
+- `verified-review.ts`: three finders looking different ways, deduped in code, then three skeptics per finding attacking it from different angles; only findings most skeptics fail to refute are reported, and caps are logged.
