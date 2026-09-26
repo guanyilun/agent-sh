@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CLI = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
+const SUBAGENTS = fileURLToPath(new URL("../../examples/extensions/subagents", import.meta.url));
 
 interface ChatRequest { messages: { role: string; content: unknown }[]; tools?: { function: { name: string } }[] }
 type Reply = Record<string, unknown> | { status: number } | { hang: true };
@@ -183,6 +184,27 @@ for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
     } finally { llm.server.close(); }
   });
 }
+
+test("subagents extension fans out parallel scouts under -p", async () => {
+  const llm = await fakeLlm((req) => {
+    const system = String(req.messages[0]?.content ?? "");
+    if (system.includes("scouting subagent")) return { content: `scouted: ${lastUser(req)}` };
+    if (req.messages.some((m) => m.role === "tool")) return { content: "summary" };
+    return toolCall("spawn_agent", { tasks: [{ agent: "scout", task: "area A" }, { agent: "scout", task: "area B" }] });
+  });
+  try {
+    const r = await runCli(["-p", "scout two areas", "--output", "json", "-e", SUBAGENTS], llm.url);
+    assert.equal(r.code, 0, r.stderr);
+    const ev = events(r.stdout);
+    assert.equal(ev.find((e) => e.type === "tool_start")?.name, "spawn_agent");
+    const progress = ev.filter((e) => e.type === "tool_output").map((e) => e.chunk).join("");
+    assert.match(progress, /\[1 scout\] done/);
+    assert.match(progress, /\[2 scout\] done/);
+    const out = String(ev.find((e) => e.type === "tool_end")?.output);
+    assert.match(out, /## \[1\] scout\n\nscouted: area A[\s\S]*## \[2\] scout\n\nscouted: area B/);
+    assert.equal(ev.at(-1)?.response, "summary");
+  } finally { llm.server.close(); }
+});
 
 test("--no-stdin ignores piped stdin", async () => {
   const llm = await fakeLlm(() => ({ content: "ok" }));

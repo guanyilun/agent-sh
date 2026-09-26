@@ -1,0 +1,10 @@
+{
+  "name": "agent-sh-subagents",
+  "version": "0.1.0",
+  "description": "Named and parallel subagents for agent-sh",
+  "type": "module",
+  "main": "index.ts",
+  "dependencies": {
+    "agent-sh": "^0.15.15"
+  }
+}
