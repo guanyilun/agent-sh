@@ -2,13 +2,11 @@ import type { Workflow } from "../workflow-types.js";
 
 export const description = "Find issues from three angles, dedupe, and keep only findings that survive skeptics trying to refute them";
 
-// Each finder looks a different way; each misses what the others catch.
 const LENSES = [
   "correctness: wrong logic, unhandled cases, broken invariants",
   "tests: changed behavior with no test that would catch a regression",
   "edge cases: empty, huge or unusual inputs, error paths, concurrency",
 ];
-// Each skeptic attacks a finding from a different angle.
 const ANGLES = [
   "Trace the code: does the claimed behavior actually happen?",
   "Reachability: can real callers or inputs hit this path at all?",
@@ -55,8 +53,7 @@ export default (async ({ run, all, args, log }) => {
     schema: FINDINGS,
   })))).filter(Boolean).flatMap(r => r.findings);
 
-  // Group by file in code. Finders word the same bug differently and cite different lines,
-  // and one line can hold several bugs, so a file with several claims gets one merge run.
+  // Group per file; a merge run then splits distinct bugs from repeats worded or cited differently.
   const groups = new Map<string, Finding[]>();
   for (const f of found) groups.set(f.file, [...(groups.get(f.file) ?? []), f]);
   const unique: Finding[] = (await Promise.all([...groups.values()].map(async (group) => {
@@ -79,7 +76,6 @@ export default (async ({ run, all, args, log }) => {
     log(`checking ${checked.length} of ${unique.length} findings; not checked: ${unique.slice(MAX_CHECKED).map(f => f.claim).join("; ")}`);
   }
 
-  // Each finding goes through its skeptics on its own; no waiting on the others.
   const judged = await Promise.all(checked.map(async f => {
     const votes = (await all(ANGLES.map(angle => ({
       agent: "reviewer",

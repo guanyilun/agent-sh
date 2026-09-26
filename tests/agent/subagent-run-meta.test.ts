@@ -1,4 +1,4 @@
-/** Subagent run metadata (outMeta), reasoning-param forwarding, onMessage and shouldStop hooks. */
+/** runSubagent: outMeta, reasoning params, onMessage, shouldStop. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runSubagent, type SubagentMessage, type SubagentRunMeta } from "../../src/agent/subagent.js";

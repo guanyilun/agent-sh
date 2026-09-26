@@ -183,10 +183,7 @@ export async function runWorkflow(
   }
 }
 
-// Loaders can cache a module by path and ignore ?query (tsx's CommonJS route, Node 20), so an
-// edited workflow could run stale. Import an exact copy under a new hidden name beside the
-// original: same module mode and relative imports, and exactly the bytes hashed. The query
-// stays too; without it tsx on Node 20 takes a require() route that rejects ESM files.
+// Fresh hidden copy per load: tsx on Node 20 caches by path despite ?v=, yet needs ?v= to load ESM.
 async function importFresh(def: WorkflowDef): Promise<Record<string, unknown>> {
   const source = fs.readFileSync(def.file);
   const hash = createHash("sha256").update(source).digest("hex");
