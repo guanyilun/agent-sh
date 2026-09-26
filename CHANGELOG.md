@@ -15,6 +15,18 @@ Releases before this file are recorded in the git tags and GitHub releases.
   is appended to the prompt and tool calls are listed on stderr. `--output json`
   prints one event per line (`text`, `tool_start`, `tool_output`, `tool_end`,
   `usage`, `error`, a final `done`) for scripts and tests.
+- The bundled `subagents` extension (now a directory, `agent-sh install
+  subagents`) runs named agents defined in markdown (bundled `scout`,
+  `reviewer`, `oracle`, `worker`, `delegate`, overridable from
+  `~/.agent-sh/agents/` and `<project>/.agent-sh/agents/`), fans out parallel
+  `tasks`, and streams per-step progress. `/agents` lists them.
+
+### Fixed
+
+- The `subagents` example never registered its tool (it read a nonexistent
+  `ctx.llmClient`), and its parent-history handoff used a pipe nothing handles.
+  Subagent tool calls now also go through `adviseTool` wrappers such as
+  secret-guard, which `runSubagent` previously bypassed.
 
 ## [0.15.15] - 2026-09-25
 
