@@ -140,12 +140,17 @@ test("each run writes a transcript; /workflow runs lists runs and flags interrup
 
 test("run.json keeps the token count current before the run finishes", async () => {
   let release!: () => void;
+  let secondStarted!: () => void;
   const held = new Promise<void>((r) => { release = r; });
-  const s = setup({ reply: async (o) => { if (lastUser(o) === "second") await held; return { content: "x" }; }, usage: 7 });
+  const started = new Promise<void>((r) => { secondStarted = r; });
+  const s = setup({ reply: async (o) => {
+    if (lastUser(o) === "second") { secondStarted(); await held; }
+    return { content: "x" };
+  }, usage: 7 });
   try {
     wf(s, "two.ts", 'export default async ({ run }) => { await run({ task: "first", tools: [] }); return run({ task: "second", tools: [] }); };\n');
     const running = s.exec("run_workflow", { name: "two" });
-    await new Promise((r) => setTimeout(r, 30));
+    await started;
     const [live] = store(s).list();
     assert.deepEqual([live!.status, live!.tokens], ["running", 7]);
     release();

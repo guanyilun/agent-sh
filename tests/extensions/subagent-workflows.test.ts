@@ -1,7 +1,7 @@
 /** subagents workflows: schema results, loops, trust, run cap, /workflow hand-off. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeSchema, parseJsonReply, validate } from "../../examples/extensions/subagents/schema.js";
 import { body, lastUser, setup } from "./subagents-harness.js";
@@ -186,5 +186,20 @@ test("verified-review merges repeats across lines but keeps distinct findings, t
     assert.equal(s.calls.length, 3 + 1 + 3 * 3);
     assert.match(progress, /· merged 4 findings into 3 distinct ones/);
     assert.match(progress, /· 1 of 3 findings survived/);
+  } finally { s.cleanup(); }
+});
+
+test("an edited .ts workflow runs its new code in the same session; its temporary copy is removed and never listed", async () => {
+  const s = setup({ reply: text("ok") });
+  try {
+    const dir = join(s.root, "workflows");
+    userWf(s, "ver.ts", 'export default async () => "v1";\n');
+    assert.equal(body(await s.exec("run_workflow", { name: "ver" })), "v1");
+    userWf(s, "ver.ts", 'export default async () => "v2";\n');
+    assert.equal(body(await s.exec("run_workflow", { name: "ver" })), "v2");
+    assert.deepEqual(readdirSync(dir), ["ver.ts"]);
+
+    writeFileSync(join(dir, ".ver.0123456789ab.abcdef.ts"), 'export const description = "leftover";\n');
+    assert.doesNotMatch(s.description("run_workflow"), /leftover/);
   } finally { s.cleanup(); }
 });

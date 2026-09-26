@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -24,7 +24,7 @@ export function discoverWorkflows(dirs: { dir: string; scope: WorkflowScope }[])
     try { entries = fs.readdirSync(dir); } catch { continue; }
     for (const entry of entries.sort()) {
       const ext = path.extname(entry);
-      if (!EXTS.includes(ext) || entry.endsWith(".d.ts")) continue;
+      if (!EXTS.includes(ext) || entry.endsWith(".d.ts") || entry.startsWith(".")) continue;
       const file = path.join(dir, entry);
       let source = "";
       try { source = fs.readFileSync(file, "utf8"); } catch { continue; }
@@ -102,8 +102,7 @@ export async function runWorkflow(
 ): Promise<unknown> {
   const { run: record } = opts;
   try {
-    // Import by content hash so edits load fresh and a trusted hash maps to what runs.
-    const mod = await import(`${pathToFileURL(def.file).href}?v=${hashFile(def.file)}`);
+    const mod = await importFresh(def);
     const fn = mod.default ?? mod.run;
     if (typeof fn !== "function") throw new Error(`${def.file} must export a default function`);
 
@@ -181,6 +180,27 @@ export async function runWorkflow(
     const message = err instanceof Error ? err.message : String(err);
     record.finish(signal.aborted ? "cancelled" : "failed", message);
     throw err;
+  }
+}
+
+// Loaders can cache a module by path and ignore ?query (tsx's CommonJS route, Node 20), so an
+// edited workflow could run stale. Import an exact copy under a new hidden name beside the
+// original: same module mode and relative imports, and exactly the bytes hashed. The query
+// stays too; without it tsx on Node 20 takes a require() route that rejects ESM files.
+async function importFresh(def: WorkflowDef): Promise<Record<string, unknown>> {
+  const source = fs.readFileSync(def.file);
+  const hash = createHash("sha256").update(source).digest("hex");
+  const ext = path.extname(def.file);
+  const copy = path.join(path.dirname(def.file), `.${def.name}.${hash.slice(0, 12)}.${randomBytes(3).toString("hex")}${ext}`);
+  try {
+    fs.writeFileSync(copy, source);
+  } catch {
+    return import(`${pathToFileURL(def.file).href}?v=${hash}`);
+  }
+  try {
+    return await import(`${pathToFileURL(copy).href}?v=${hash}`);
+  } finally {
+    fs.rmSync(copy, { force: true });
   }
 }
 
