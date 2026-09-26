@@ -1,20 +1,4 @@
-/**
- * Subagent extension — lets the main agent delegate to focused sub-agents.
- *
- * `spawn_agent` runs one task, or several in parallel via `tasks`. A task
- * can name an agent defined in markdown (see agents/*.md); otherwise the
- * subagent is ad hoc and the caller picks its tools.
- *
- * Agent directories, later overriding earlier by name:
- *   <this extension>/agents, ~/.agent-sh/agents, <cwd>/.agent-sh/agents
- *
- * Settings (~/.agent-sh/settings.json):
- *   { "subagents": { "maxConcurrency": 4, "maxIterations": 25 } }
- *
- * Usage:
- *   agent-sh install subagents
- *   agent-sh -e ./examples/extensions/subagents
- */
+/** Named and parallel subagents via spawn_agent; see README.md. */
 import type { AgentContext, ExtensionContext } from "agent-sh/types";
 import type { ToolDefinition } from "agent-sh/agent/types";
 import { runSubagent, type SubagentOptions, type SubagentRunMeta } from "agent-sh/agent/subagent";
@@ -87,7 +71,6 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       return label.length > 80 ? label.slice(0, 79) + "…" : label;
     },
 
-    // Streams one progress line per subagent step as this tool's output.
     async execute(args, onChunk, execCtx) {
       const specs: TaskSpec[] = (args.tasks as TaskSpec[] | undefined)?.length
         ? (args.tasks as TaskSpec[])
@@ -128,7 +111,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     },
   });
 
-  // Keep the advertised agent list current as the cwd (and project agents) change.
+  // Re-read per request so project agents follow the cwd.
   ctx.agent.adviseToolSchema(TOOL_NAME, (next) => {
     const view = next();
     const list = [...loadAgents().values()].map(a => `- ${a.name}: ${a.description}`).join("\n");
@@ -184,7 +167,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     return text;
   }
 
-  // getTools() returns raw execute fns; route through tool:<name> so adviseTool wrappers apply.
+  // getTools() returns raw execute fns; go through tool:<name> so adviseTool wrappers apply.
   function throughHandlers(tool: ToolDefinition, signal?: AbortSignal, progress?: (line: string) => void): ToolDefinition {
     return {
       ...tool,

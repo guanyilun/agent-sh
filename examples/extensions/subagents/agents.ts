@@ -1,8 +1,3 @@
-/**
- * Named agent definitions: markdown files with a frontmatter header,
- * the body being the agent's system prompt. Later directories override
- * earlier ones by name (bundled < user < project).
- */
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -19,7 +14,7 @@ export interface AgentDef {
   source: string;
 }
 
-// Accept pi-style tool names so pi-subagents agent files drop in unchanged.
+// pi tool names, so pi-subagents agent files work unchanged.
 const TOOL_ALIASES: Record<string, string> = {
   read: "read_file",
   write: "write_file",

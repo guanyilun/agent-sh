@@ -1,5 +1,4 @@
-/** subagents extension: agent discovery/overrides, parallel fan-out, and
- *  tool calls routed through adviseTool wrappers. */
+/** subagents extension: agent overrides, parallel fan-out, progress, adviseTool routing. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
