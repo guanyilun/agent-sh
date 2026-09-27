@@ -183,11 +183,11 @@ export async function runWorkflow(
   }
 }
 
-// Fresh hidden copy per load: tsx on Node 20 caches by path despite ?v=, yet needs ?v= to load ESM.
+// Fresh hidden .mts/.mjs copy per load: loaders cache by path, and tsx loads untyped .ts/.js as CommonJS.
 async function importFresh(def: WorkflowDef): Promise<Record<string, unknown>> {
   const source = fs.readFileSync(def.file);
   const hash = createHash("sha256").update(source).digest("hex");
-  const ext = path.extname(def.file);
+  const ext = /\.m?ts$/.test(def.file) ? ".mts" : ".mjs";
   const copy = path.join(path.dirname(def.file), `.${def.name}.${hash.slice(0, 12)}.${randomBytes(3).toString("hex")}${ext}`);
   try {
     fs.writeFileSync(copy, source);
@@ -195,7 +195,7 @@ async function importFresh(def: WorkflowDef): Promise<Record<string, unknown>> {
     return import(`${pathToFileURL(def.file).href}?v=${hash}`);
   }
   try {
-    return await import(`${pathToFileURL(copy).href}?v=${hash}`);
+    return await import(pathToFileURL(copy).href);
   } finally {
     fs.rmSync(copy, { force: true });
   }
