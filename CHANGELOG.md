@@ -8,6 +8,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.15.17] - 2026-09-26
+
 ### Fixed
 
 - On Node 20.19+, single-file `.ts` extensions (e.g. `web-access`, and `ads`,
