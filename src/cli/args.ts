@@ -14,6 +14,9 @@ Usage: agent-sh [options]
        agent-sh auth login [provider]     Store an API key for a built-in provider
        agent-sh auth logout <provider>    Remove a stored key
        agent-sh auth list                 Show configured providers
+       agent-sh run <file> [--dry-run] [--resume <id>] [args...]
+                                          Run a workflow file headless, with the setup it declares in \`config\`
+                                          (agent-sh run <file> --help lists the file's own arguments)
 
 Provider Profiles:
   --provider <name>   Use a provider from ~/.agent-sh/settings.json

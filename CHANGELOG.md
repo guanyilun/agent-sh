@@ -8,10 +8,40 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Added
+
+- `agent-sh run <file> [args]` runs a workflow file directly: no shell, no TUI,
+  no main-agent turn. The file can `export const config` to declare its setup
+  (extra agent dirs, concurrency, run caps, a token budget, `hours` for a
+  deadline, and a `sandbox` section), so a whole campaign lives in one file.
+  `--resume <id>` continues a failed run. Extensions read their section through
+  a `run:config` handler and enforce it via the `run:checks` and `run:wrap`
+  pipes; the run fails closed when a section isn't enforced or can't be met.
+- Sandboxing in the `subagents` extension: a run file's `config.sandbox` limits
+  what every agent may write and read, adds rules from your own policy files, and
+  restarts the whole run inside an OS sandbox where one actually works (probed,
+  not just found): bubblewrap on Linux, falling back to Landlock where user
+  namespaces are blocked, and Seatbelt (`sandbox-exec`) on macOS.
+  Without one it runs with the guard only, unless `os: "required"`. The `SBX_*`
+  variables still arm it for other callers.
+- Easier workflow scripts: `run(agent, task, { returns })` with shape shorthand
+  (`{ verdict: "clean | issues", findings: "string[]", line: "integer?" }`,
+  `[{ ... }]` for lists of objects), `run(null, task)` for ad-hoc subagents,
+  `map(items, fn)` for fan-out (in order, `null` for failures), dedented task
+  text, and declared arguments (`export const args`) parsed from `--flags`.
+  `agent-sh run <file> --help` lists them; `--dry-run` walks the script with
+  placeholder answers and no model calls. Older scripts keep working.
+- `examples/campaigns/campaign.ts`: a run-file template.
+
 ### Changed
 
 - Node.js 22 is now the minimum (`engines: >=22`, for agent-sh and ashi).
   Node 18 and 20 have reached end of life. CI tests 22 and 24; publishing uses 22.
+
+### Fixed
+
+- A workflow subagent stopped by Ctrl-C or a deadline no longer counts as a
+  finished run with its partial text.
 
 ## [0.15.17] - 2026-09-26
 

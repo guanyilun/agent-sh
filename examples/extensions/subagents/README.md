@@ -108,27 +108,32 @@ A workflow is a script that coordinates subagents with ordinary code: sequences,
 ```
 
 ```ts
-export const description = "Review until clean, max 3 rounds";
+export const description = "Review until clean";
+export const args = { target: { default: "the uncommitted changes", help: "what to review" }, rounds: 3 };
 
-export default async ({ run, all, args }) => {
-  for (let round = 1; round <= 3; round++) {
-    const reviews = await all(["correctness", "tests"].map(focus => ({
-      agent: "reviewer",
-      task: `Review ${args} for ${focus}.`,
-      schema: { verdict: { enum: ["clean", "issues"] }, findings: { type: "array", items: { type: "string" } } },
-    })));
-    if (reviews.every(r => r.verdict === "clean")) return `Clean after ${round} round(s).`;
-    await run("worker", `Fix only these findings:\n${reviews.flatMap(r => r.findings).join("\n")}`);
+export default async ({ run, map, args }) => {
+  for (let round = 1; round <= args.rounds; round++) {
+    const reviews = await map(["correctness", "tests"], (focus) =>
+      run("reviewer", `Review ${args.target} for ${focus}.`, { returns: { verdict: "clean | issues", findings: "string[]" } }));
+    if (reviews.every((r) => r?.verdict === "clean")) return `Clean after ${round} round(s).`;
+    await run("worker", `Fix only these findings:\n${reviews.flatMap((r) => r?.findings ?? []).join("\n")}`);
   }
-  return "Issues remain after 3 rounds.";
+  return `Issues remain after ${args.rounds} rounds.`;
 };
 ```
 
-`run` with a `schema` resolves to validated data rather than text (the agent submits it through a `submit_result` tool), so loops exit on real values instead of pattern-matching prose. `all` returns `null` for runs that failed, a `budget` caps subagent tokens, and every run is logged with a journal and per-agent transcripts under `~/.agent-sh/workflow-runs/`, so a failed or interrupted run can be resumed (`/workflow runs`, `/workflow resume <id>`) without redoing finished steps. The main agent can also run workflows itself (`run_workflow`) and has the authoring guide as a skill, so you can ask it to turn a process into a workflow.
+`run(agent, task, { returns })` resolves to validated data rather than text (shapes are shorthand like `"clean | issues"` or `"string[]"`; the agent submits through a `submit_result` tool), so loops exit on real values instead of pattern-matching prose. `map` fans out, `export const args` declares `--flags` (with `--help`), and `agent-sh run file.ts --dry-run` walks a script without calling any model. `all` returns `null` for runs that failed, a `budget` caps subagent tokens, and every run is logged with a journal and per-agent transcripts under `~/.agent-sh/workflow-runs/`, so a failed or interrupted run can be resumed (`/workflow runs`, `/workflow resume <id>`) without redoing finished steps. The main agent can also run workflows itself (`run_workflow`) and has the authoring guide as a skill, so you can ask it to turn a process into a workflow.
 
 Project workflows are code from the repo, so each one runs only after you review it and run `/workflow trust <name>`; editing the file requires trusting it again. Workflows in `~/.agent-sh/workflows/` are trusted.
 
 Full guide, including design patterns for workflows you can trust (adversarial verification, dedupe, loop until nothing new): [WORKFLOWS.md](WORKFLOWS.md). Bundled examples: [`review-loop`](workflows/review-loop.ts) and [`verified-review`](workflows/verified-review.ts). The extension gives the agent two skills: `writing-workflows` (that guide) and `using-subagents` ([USING.md](USING.md): choosing between `spawn_agent`, parallel tasks, background runs and workflows, and running, resuming and debugging workflow runs).
+
+## Sandbox
+
+For unattended runs, a run file's `config.sandbox` limits what every agent may write and read, adds your own rules
+(a policy file), and restarts the whole run inside an OS sandbox where one works (bubblewrap or Landlock on Linux,
+Seatbelt on macOS). Interactive sessions are unaffected. See
+[SANDBOX.md](SANDBOX.md).
 
 ## Settings
 

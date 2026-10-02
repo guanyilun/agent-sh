@@ -7,11 +7,13 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgents, type AgentDef } from "./agents.js";
 import { describe, JobTable, type JobOutcome } from "./jobs.js";
+import activateSandbox from "./sandbox/index.mjs";
 import { Semaphore } from "./semaphore.js";
 import { RunStore } from "./runs.js";
-import { normalizeSchema, validate } from "./schema.js";
+import { example, normalizeSchema, validate } from "./schema.js";
+import * as os from "node:os";
 import {
-  discoverWorkflows, formatResult, runWorkflow, TrustStore,
+  ArgsError, discoverWorkflows, formatResult, helpText, runWorkflow, TrustStore, workflowArgs,
   type TaskControl, type TaskResult, type WorkflowDef,
 } from "./workflows.js";
 import type { RunSpec } from "./workflow-types.js";
@@ -31,6 +33,27 @@ const PARENT_CONTEXT_CHARS = 12_000;
 
 interface TaskSpec { agent?: string; task: string; tools?: string[] }
 
+interface RunFileConfig {
+  base: string;
+  agents?: string | string[];
+  concurrency?: number;
+  maxIterations?: number;
+  maxRuns?: number;
+  budgetTokens?: number;
+}
+
+interface RunFileRequest {
+  file: string;
+  module: Record<string, unknown>;
+  args: string;
+  /** The arguments as given on the command line, for declared `export const args`. */
+  tokens?: string[];
+  dryRun?: boolean;
+  resume?: string;
+  signal: AbortSignal;
+  progress: (line: string) => void;
+}
+
 interface RunExtras {
   extraTools?: ToolDefinition[];
   systemNote?: string;
@@ -41,15 +64,29 @@ interface RunExtras {
 
 export default function activate(ctx: ExtensionContext & AgentContext): void {
   const { bus } = ctx;
-  const settings = ctx.getExtensionSettings("subagents", {
-    maxConcurrency: 4, maxIterations: 25, maxRunsPerWorkflow: 50, backgroundWake: true, workflowTokenBudget: 0,
-  });
+  activateSandbox(ctx);
+  // Under `agent-sh run <file>`, the file's config overrides settings; there's no main agent to wake.
+  const runConfig = ctx.list?.().includes("run:config") ? ctx.call("run:config") as RunFileConfig : undefined;
+  const settings = {
+    ...ctx.getExtensionSettings("subagents", {
+      maxConcurrency: 4, maxIterations: 25, maxRunsPerWorkflow: 50, backgroundWake: true, workflowTokenBudget: 0,
+    }),
+    ...definedOnly({
+      maxConcurrency: runConfig?.concurrency,
+      maxIterations: runConfig?.maxIterations,
+      maxRunsPerWorkflow: runConfig?.maxRuns,
+      workflowTokenBudget: runConfig?.budgetTokens,
+      backgroundWake: runConfig ? false : undefined,
+    }),
+  };
+  const runAgentDirs = [runConfig?.agents ?? []].flat().map(d => path.resolve(runConfig!.base, d));
   const extDir = path.dirname(fileURLToPath(import.meta.url));
   const bundledDir = path.join(extDir, "agents");
   const userDir = ctx.getStoragePath("agents");
   const userWorkflowDir = ctx.getStoragePath("workflows");
   const trust = new TrustStore(path.join(ctx.getStoragePath("subagents"), "trusted-workflows.json"));
   const runs = new RunStore(ctx.getStoragePath("workflow-runs"));
+  const dryRuns = new RunStore(path.join(os.tmpdir(), `agent-sh-dry-runs-${process.pid}`));
   // Shared by foreground and background runs so background work can't flood the provider.
   const slots = new Semaphore(Math.max(1, settings.maxConcurrency));
 
@@ -97,6 +134,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     bundledDir,
     userDir,
     path.join(ctx.call("cwd") as string, ".agent-sh", "agents"),
+    ...runAgentDirs,
   ]);
 
   const loadWorkflows = () => {
@@ -225,22 +263,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
 
       const wfArgs = args.args !== undefined ? String(args.args) : previous?.args ?? "";
       const budgetTokens = Number(args.budgetTokens ?? settings.workflowTokenBudget) || undefined;
-      const work = async (signal: AbortSignal, progress: (line: string) => void): Promise<JobOutcome> => {
-        const run = runs.create(wf.name, wf.file, wfArgs, resumeId);
-        const footer = `(workflow run ${run.id}; log: ${run.dir})`;
-        try {
-          const result = await runWorkflow(wf, wfArgs, {
-            runTask,
-            complete: (messages) => ctx.call("llm:invoke", messages, { maxTokens: 4096 }) as Promise<string>,
-            maxRuns: settings.maxRunsPerWorkflow,
-          }, signal, progress, { run, replay: resumeId ? runs.journal(resumeId) : undefined, budgetTokens });
-          return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          progress(`failed: ${message}`);
-          return { content: `Workflow "${wf.name}" failed: ${message}\n\n${footer}. Fix the cause, then resume it with ${WORKFLOW_TOOL} { resume: "${run.id}" }.`, isError: true };
-        }
-      };
+      const work = (signal: AbortSignal, progress: (line: string) => void) =>
+        executeWorkflow(wf, wfArgs, { resumeId, budgetTokens, signal, progress,
+          resumeHint: (id) => `${WORKFLOW_TOOL} { resume: "${id}" }` });
       if (args.background) return startBackground(`workflow ${wf.name}`, work);
       return toolResult(await work(execCtx?.signal ?? new AbortController().signal, (line) => onChunk?.(`${line}\n`)));
     },
@@ -387,6 +412,55 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     bus.emit("ui:info", { message });
   });
 
+  ctx.define("workflow:help", (req: { file: string; module: Record<string, unknown> }) =>
+    helpText(path.basename(req.file), req.module.args as Record<string, unknown> | undefined, req.module.description as string | undefined));
+
+  ctx.define("workflow:run-file", async (req: RunFileRequest): Promise<JobOutcome & { refused?: boolean }> => {
+    const resumeId = req.resume;
+    const store = req.dryRun ? dryRuns : runs;
+    if (resumeId && !store.get(resumeId)) return { content: `No workflow run ${resumeId}.`, isError: true, refused: true };
+    const name = path.basename(req.file).replace(/\.[^.]+$/, "");
+    const wf: WorkflowDef = { name, description: "", file: req.file, scope: "user" };
+    const args = req.tokens ?? req.args;
+    try {
+      workflowArgs(wf, req.module, args);
+    } catch (err) {
+      if (err instanceof ArgsError) return { content: err.message, isError: true, refused: true };
+      throw err;
+    }
+    return executeWorkflow(wf, args, {
+      resumeId, budgetTokens: settings.workflowTokenBudget || undefined, signal: req.signal, progress: req.progress,
+      module: req.module, dryRun: req.dryRun, resumeHint: (id) => `agent-sh run ${req.file} --resume ${id}`,
+    });
+  });
+
+  async function executeWorkflow(wf: WorkflowDef, wfArgs: string | string[], opts: {
+    resumeId?: string;
+    budgetTokens?: number;
+    signal: AbortSignal;
+    progress: (line: string) => void;
+    module?: Record<string, unknown>;
+    dryRun?: boolean;
+    resumeHint: (runId: string) => string;
+  }): Promise<JobOutcome> {
+    const run = (opts.dryRun ? dryRuns : runs).create(wf.name, wf.file, [wfArgs].flat().join(" "), opts.resumeId);
+    const footer = `(workflow run ${run.id}; log: ${run.dir})`;
+    try {
+      const result = await runWorkflow(wf, wfArgs, {
+        runTask: opts.dryRun ? dryRunTask : runTask,
+        complete: (messages) => ctx.call("llm:invoke", messages, { maxTokens: 4096 }) as Promise<string>,
+        maxRuns: settings.maxRunsPerWorkflow,
+      }, opts.signal, opts.progress, {
+        run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, module: opts.module,
+      });
+      return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      opts.progress(`failed: ${message}`);
+      return { content: `Workflow "${wf.name}" failed: ${message}\n\n${footer}. Fix the cause, then resume it with ${opts.resumeHint(run.id)}.`, isError: true };
+    }
+  }
+
   function startBackground(label: string, work: (signal: AbortSignal, progress: (line: string) => void) => Promise<JobOutcome>) {
     const job = jobs.start(label, work);
     bus.emit("agent:pending-work-changed", {});
@@ -425,6 +499,17 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       return `## [${i + 1}] ${s.agent ?? "ad-hoc"}${r.ok ? "" : " (failed)"}\n\n${r.text || "(no response)"}`;
     }).join("\n\n");
     return { content, isError: results.every(r => !r.ok) };
+  }
+
+  // Dry runs check agent names and shapes, then answer with placeholders; no model is called.
+  async function dryRunTask(spec: RunSpec, ctl: TaskControl): Promise<TaskResult> {
+    if (spec.agent && !loadAgents().has(spec.agent)) throw new Error(`unknown agent: ${spec.agent}`);
+    const firstLine = spec.task.split("\n")[0]!.slice(0, 120);
+    const value = spec.schema ? example(normalizeSchema(spec.schema)) : undefined;
+    ctl.progress(`(dry run) ${firstLine}${value === undefined ? "" : ` → ${JSON.stringify(value)}`}`);
+    return value === undefined
+      ? { text: `[dry run: ${spec.agent ?? "ad-hoc"} would answer "${firstLine}"]` }
+      : { text: JSON.stringify(value), value };
   }
 
   async function runTask(spec: RunSpec, ctl: TaskControl): Promise<TaskResult> {
@@ -570,6 +655,10 @@ function messageText(content: unknown): string {
 
 function error(content: string) {
   return { content, exitCode: 1, isError: true };
+}
+
+function definedOnly<T extends Record<string, unknown>>(o: T): Partial<T> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
 function toolResult(o: JobOutcome) {
