@@ -63,7 +63,7 @@
     "url": "https://github.com/guanyilun/agent-sh/issues"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "publishConfig": {
     "access": "public"

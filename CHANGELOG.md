@@ -8,6 +8,11 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Changed
+
+- Node.js 22 is now the minimum (`engines: >=22`, for agent-sh and ashi).
+  Node 18 and 20 have reached end of life. CI tests 22 and 24; publishing uses 22.
+
 ## [0.15.17] - 2026-09-26
 
 ### Fixed
