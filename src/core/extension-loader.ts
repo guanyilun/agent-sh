@@ -25,7 +25,7 @@ let tsxUnregister: (() => Promise<void>) | null = null;
  * Reload: unregisters old handle, registers new one.
  * Non-reload calls within the same load: no-op (tsRegistered guard).
  */
-async function ensureTsSupport(force = false): Promise<void> {
+export async function ensureTsSupport(force = false): Promise<void> {
   if (tsRegistered && !force) return;
   try {
     if (tsxUnregister) {

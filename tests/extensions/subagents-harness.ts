@@ -77,6 +77,7 @@ export function setup(opts: HarnessOpts) {
     define: h.define.bind(h),
     advise: h.advise.bind(h),
     call: h.call.bind(h),
+    list: h.list.bind(h),
     getExtensionSettings: (_ns: string, d: object) => ({ ...d, ...opts.settings }),
     getStoragePath: (ns: string) => { const p = join(root, ns); mkdirSync(p, { recursive: true }); return p; },
     registerCommand: (name: string, _d: string, handler: (args: string) => unknown) => { commands.set(name, handler); },

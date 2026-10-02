@@ -4,7 +4,8 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { normalizeSchema, parseJsonReply, validate } from "./schema.js";
 import type { JournalEntry, RunDir } from "./runs.js";
-import type { JsonSchema, RunSpec, WorkflowApi } from "./workflow-types.js";
+import type { JsonSchema, RunOptions, RunSpec, WorkflowApi } from "./workflow-types.js";
+import { ArgsError, helpText, parseArgs, tokenize, type ArgsSpec } from "./args.js";
 
 const EXTS = [".ts", ".mts", ".js", ".mjs"];
 
@@ -87,14 +88,17 @@ export interface WorkflowRunOpts {
   run: RunDir;
   replay?: JournalEntry[];
   budgetTokens?: number;
+  /** Already imported (e.g. by `agent-sh run`); skips loading the file again. */
+  module?: Record<string, unknown>;
 }
 
 /** Ends the whole workflow; all() rethrows it instead of returning null. */
 export class WorkflowStop extends Error {}
+export { ArgsError, helpText } from "./args.js";
 
 export async function runWorkflow(
   def: WorkflowDef,
-  args: string,
+  args: string | string[],
   deps: WorkflowDeps,
   signal: AbortSignal,
   progress: (line: string) => void,
@@ -102,9 +106,10 @@ export async function runWorkflow(
 ): Promise<unknown> {
   const { run: record } = opts;
   try {
-    const mod = await importFresh(def);
+    const mod = opts.module ?? await importFresh(def);
     const fn = mod.default ?? mod.run;
     if (typeof fn !== "function") throw new Error(`${def.file} must export a default function`);
+    const apiArgs = workflowArgs(def, mod, args);
 
     const replay = new Map((opts.replay ?? []).map(e => [e.seq, e]));
     let diverged = false;
@@ -115,10 +120,10 @@ export async function runWorkflow(
     const budget = { total, spent, remaining: () => (total === null ? Infinity : Math.max(0, total - spent())) };
 
     // seq is taken synchronously on call, so the same script calls run() in the same order on replay.
-    const run = async (a: RunSpec | string, task?: string): Promise<any> => {
+    const run = async (a: RunSpec | string | null, task?: string, options?: RunOptions): Promise<any> => {
       const seq = ++runs;
-      const spec: RunSpec = typeof a === "string" ? { agent: a, task: task ?? "" } : a;
-      if (!spec?.task) throw new Error("run() needs a task");
+      const spec = toSpec(a, task, options);
+      if (!spec.task) throw new Error("run() needs a task");
       if (seq > deps.maxRuns) throw new WorkflowStop(`workflow exceeded ${deps.maxRuns} subagent runs (subagents.maxRunsPerWorkflow)`);
       const label = `[${seq} ${spec.agent ?? "ad-hoc"}]`;
       const key = specKey(spec);
@@ -148,6 +153,8 @@ export async function runWorkflow(
           onUsage: (t) => { tokens += t; record.record.tokens += t; },
           onMessage: (m) => write({ type: "message", ...m }),
         });
+        // An aborted subagent returns its partial text; that's a stop, not a result.
+        if (signal.aborted) throw new WorkflowStop("cancelled");
         const output = !spec.schema ? result.text
           : result.value !== undefined ? result.value
           : await extract(result.text, normalizeSchema(spec.schema), deps.complete);
@@ -168,7 +175,17 @@ export async function runWorkflow(
         if (err instanceof WorkflowStop) throw err;
         return null;
       }))),
-      args,
+      // fn is called synchronously for each item in order, so run() numbering stays stable for resume.
+      map: (items, fn) => Promise.all(items.map(async (item, i) => {
+        try {
+          return await fn(item, i);
+        } catch (err) {
+          if (err instanceof WorkflowStop) throw err;
+          progress(`· map item ${i + 1} failed: ${err instanceof Error ? err.message : String(err)}`);
+          return null;
+        }
+      })),
+      args: apiArgs,
       log: (message) => progress(`· ${message}`),
       signal,
       budget,
@@ -199,6 +216,35 @@ async function importFresh(def: WorkflowDef): Promise<Record<string, unknown>> {
   } finally {
     fs.rmSync(copy, { force: true });
   }
+}
+
+export function workflowArgs(def: WorkflowDef, mod: Record<string, unknown>, args: string | string[]): any {
+  const spec = mod.args as ArgsSpec | undefined;
+  if (!spec || typeof spec !== "object") return Array.isArray(args) ? args.join(" ") : args;
+  try {
+    return parseArgs(spec, Array.isArray(args) ? args : tokenize(args));
+  } catch (err) {
+    if (!(err instanceof ArgsError)) throw err;
+    throw new ArgsError(`${err.message}\n\n${helpText(path.basename(def.file), spec, mod.description as string | undefined)}`);
+  }
+}
+
+function toSpec(a: RunSpec | string | null, task?: string, options?: RunOptions): RunSpec {
+  const spec: RunSpec = typeof a === "string" || a === null || a === undefined
+    ? { ...options, agent: a ?? undefined, task: task ?? "" }
+    : { ...a };
+  if (spec.returns !== undefined && spec.schema === undefined) spec.schema = spec.returns;
+  delete spec.returns;
+  spec.task = dedent(String(spec.task ?? ""));
+  return spec;
+}
+
+/** Strips the first line's indentation from every line that has it, so tasks can be indented with the code
+ *  while interpolated multi-line values (which aren't indented) stay intact. */
+export function dedent(text: string): string {
+  const lines = text.replace(/^[ \t]*\n/, "").replace(/\n[ \t]*$/, "").split("\n");
+  const indent = lines.find((l) => l.trim())?.match(/^[ \t]*/)![0] ?? "";
+  return indent ? lines.map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join("\n") : lines.join("\n");
 }
 
 function specKey(spec: RunSpec): string {

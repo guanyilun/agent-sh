@@ -2,27 +2,34 @@
 
 export type JsonSchema = Record<string, unknown>;
 
-export interface RunSpec {
+export interface RunOptions {
+  /** Resolve to data of this shape instead of text: shorthand like { verdict: "clean | issues", findings: "string[]" }, or JSON Schema. */
+  returns?: JsonSchema | string;
+  /** Same as `returns` (older name). */
+  schema?: JsonSchema | string;
+  /** Ad-hoc subagents only: tool names to allow. */
+  tools?: string[];
+}
+
+export interface RunSpec extends RunOptions {
   /** Named agent; omit for an ad-hoc subagent. */
   agent?: string;
   task: string;
-  /** Ad-hoc subagents only: tool names to allow. */
-  tools?: string[];
-  /** Resolve to data matching this JSON Schema (or a property -> schema map) instead of text. */
-  schema?: JsonSchema;
 }
 
 export interface WorkflowApi {
-  run(spec: RunSpec & { schema: JsonSchema }): Promise<any>;
-  run(spec: RunSpec): Promise<string>;
-  run(agent: string, task: string): Promise<string>;
+  /** run("reviewer", task) → text; run("reviewer", task, { returns }) → data; run(null, task) → ad-hoc subagent. */
+  run(agent: string | null, task: string, options?: RunOptions): Promise<any>;
+  run(spec: RunSpec): Promise<any>;
+  /** Calls fn for each item concurrently (up to maxConcurrency); results in order, a failed item becomes null. */
+  map<T, R>(items: T[], fn: (item: T, index: number) => Promise<R>): Promise<(R | null)[]>;
   /** Runs specs concurrently (up to maxConcurrency), in order; a run that fails becomes null. */
   all(specs: RunSpec[]): Promise<any[]>;
-  /** Everything after the workflow name, as typed. */
-  args: string;
-  /** A progress line shown under the tool call. */
+  /** With `export const args = {...}`: the parsed arguments. Otherwise everything after the file name, as text. */
+  args: any;
+  /** A progress line shown under the tool call (stderr under `agent-sh run`). */
   log(message: string): void;
-  /** Aborted on Ctrl-C; runs already check it. */
+  /** Aborted on Ctrl-C or at the deadline; runs already check it. */
   signal: AbortSignal;
   /** Subagent tokens (prompt + completion) this run; run() throws once `total` is spent. */
   budget: { total: number | null; spent(): number; remaining(): number };

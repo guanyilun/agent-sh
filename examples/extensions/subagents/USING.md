@@ -30,6 +30,7 @@ Named agents (list them with `/agents`): `scout` maps code (read-only), `reviewe
 ## Running workflows
 
 - `run_workflow { name, args }` runs a saved workflow; your tool description lists the available ones. A project workflow marked untrusted can't run until the **user** reviews it and runs `/workflow trust <name>`. Ask them; you can't trust it yourself.
+- If the workflow declares arguments, pass them as flags in `args` (e.g. `"lib/cli --rounds 2"`); a wrong flag fails with its usage text, so read it and retry. The user can check a script for free with `agent-sh run <file> --dry-run`.
 - `budgetTokens` caps subagent tokens for the run. Suggest one for anything large; the user may also set `subagents.workflowTokenBudget`.
 - Every result ends with `(workflow run <id>; log: <dir>)`. Keep the id: you need it to resume or debug.
 
