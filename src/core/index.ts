@@ -18,7 +18,7 @@ import * as path from "node:path";
 import { CONFIG_DIR } from "./settings.js";
 
 export { EventBus } from "./event-bus.js";
-export type { BusEvents, ContentBlock, BackendRegistration } from "./event-bus.js";
+export type { BusEvents, ContentBlock, BackendRegistration, RunConfig } from "./event-bus.js";
 export type { CoreContext, CoreConfig } from "./types.js";
 export type { AgentContext, AgentConfig, AgentSurface, AgentConfigSurface, Model, LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
 export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, ExtensionContext, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, AppConfig } from "../shell/host-types.js";

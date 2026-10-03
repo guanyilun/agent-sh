@@ -52,10 +52,12 @@ Add `background: true` to `spawn_agent` or `run_workflow` and the call returns a
 
 | Agent | Use it for | Edits files |
 |---|---|---|
-| `scout` | Mapping the relevant code before planning | no |
-| `reviewer` | Reviewing a change for bugs, tests, complexity | no |
+| `explore` | Finding where things are in files, folders, documents or data (`scout` still works) | no |
+| `plan` | Turning a goal into concrete steps, risks and open questions | no |
+| `research` | Answering a question from the web and local files, with sources | no |
+| `reviewer` | Reviewing a result (code, a document, an analysis) for errors and gaps | no |
 | `oracle` | A skeptical second opinion on a plan (sees the parent conversation) | no |
-| `worker` | Implementing a well-specified change and validating it | yes |
+| `worker` | Carrying out a well-specified task and checking the result | yes |
 | `delegate` | General delegation that sees the parent conversation | yes |
 
 `/agents` lists every agent found and where it came from.
@@ -82,7 +84,7 @@ You are a security reviewer. ...
 |---|---|
 | `name` | Defaults to the file name |
 | `description` | Shown to the parent agent so it can choose |
-| `tools` | Comma-separated tool names; omit for all tools. pi names (`read`, `write`, `edit`, `find`) are accepted |
+| `tools` | Comma-separated tool names; omit for all tools, `none` for none. pi names (`read`, `write`, `edit`, `find`) are accepted |
 | `model` | Model id; must be served by the active provider |
 | `thinking` | `off`/`low`/`medium`/`high`; ignored if the model doesn't support reasoning effort |
 | `maxIterations` | Tool-loop cap (default from settings) |
@@ -91,10 +93,29 @@ You are a security reviewer. ...
 Agents load from these directories; a later one overrides an earlier one with the same name:
 
 1. this extension's `agents/`
-2. `~/.agent-sh/agents/`
-3. `<cwd>/.agent-sh/agents/` (project agents)
+2. agents other extensions register (below)
+3. `~/.agent-sh/agents/`
+4. `<cwd>/.agent-sh/agents/` (project agents)
 
 Files are re-read on every call, so edits take effect immediately.
+
+### From another extension
+
+An extension adds agents and workflows by advising two handlers; it works whichever extension loads first, and
+the additions go away when that extension unloads:
+
+```ts
+import type { AgentRegistration, WorkflowRegistration } from "agent-sh-subagents";
+
+ctx.advise("subagents:agents", (next) => [...next(),
+  { name: "translator", description: "Translates a document, keeping its formatting", prompt: "You are ...", tools: ["read_file", "write_file"] },
+  path.join(dir, "agents", "glossary.md"),  // or an agent file
+]);
+ctx.advise("subagents:workflows", (next) => [...next(), { name: "translate-all", file: path.join(dir, "translate-all.ts") }]);
+```
+
+A workflow's description defaults to its file's `export const description`. Your and the project's files still
+override registered ones of the same name.
 
 ## Workflows
 
@@ -104,31 +125,37 @@ A workflow is a script that coordinates subagents with ordinary code: sequences,
 /workflow                              # list
 /workflow review-loop HEAD~3..HEAD     # the main agent runs it and acts on the result
 /workflow runs                         # recent runs, with ids and status
+/workflow status [id]                  # each subagent of a run: queued, working, done (agent-sh run --status [id] outside the shell)
 /workflow resume <id>                  # continue a failed or interrupted run
 ```
 
 ```ts
-export const description = "Review until clean, max 3 rounds";
+export const description = "Review until clean";
+export const args = { target: { default: "the uncommitted changes", help: "what to review" }, rounds: 3 };
 
-export default async ({ run, all, args }) => {
-  for (let round = 1; round <= 3; round++) {
-    const reviews = await all(["correctness", "tests"].map(focus => ({
-      agent: "reviewer",
-      task: `Review ${args} for ${focus}.`,
-      schema: { verdict: { enum: ["clean", "issues"] }, findings: { type: "array", items: { type: "string" } } },
-    })));
-    if (reviews.every(r => r.verdict === "clean")) return `Clean after ${round} round(s).`;
-    await run("worker", `Fix only these findings:\n${reviews.flatMap(r => r.findings).join("\n")}`);
+export default async ({ run, map, args }) => {
+  for (let round = 1; round <= args.rounds; round++) {
+    const reviews = await map(["correctness", "tests"], (focus) =>
+      run("reviewer", `Review ${args.target} for ${focus}.`, { returns: { verdict: "clean | issues", findings: "string[]" } }));
+    if (reviews.every((r) => r?.verdict === "clean")) return `Clean after ${round} round(s).`;
+    await run("worker", `Fix only these findings:\n${reviews.flatMap((r) => r?.findings ?? []).join("\n")}`);
   }
-  return "Issues remain after 3 rounds.";
+  return `Issues remain after ${args.rounds} rounds.`;
 };
 ```
 
-`run` with a `schema` resolves to validated data rather than text (the agent submits it through a `submit_result` tool), so loops exit on real values instead of pattern-matching prose. `all` returns `null` for runs that failed, a `budget` caps subagent tokens, and every run is logged with a journal and per-agent transcripts under `~/.agent-sh/workflow-runs/`, so a failed or interrupted run can be resumed (`/workflow runs`, `/workflow resume <id>`) without redoing finished steps. The main agent can also run workflows itself (`run_workflow`) and has the authoring guide as a skill, so you can ask it to turn a process into a workflow.
+`run(agent, task, { returns })` resolves to validated data rather than text (shapes are shorthand like `"clean | issues"` or `"string[]"`; the agent submits through a `submit_result` tool), so loops exit on real values instead of pattern-matching prose. `map` fans out, `export const args` declares `--flags` (with `--help`), and `agent-sh run file.ts --dry-run` walks a script without calling any model. `all` returns `null` for runs that failed, a `budget` caps subagent tokens, and every run is logged with a journal and per-agent transcripts under `~/.agent-sh/workflow-runs/`, so a failed or interrupted run can be resumed (`/workflow runs`, `/workflow resume <id>`) without redoing finished steps. The main agent can also run workflows itself (`run_workflow`) and has the authoring guide as a skill, so you can ask it to turn a process into a workflow.
 
 Project workflows are code from the repo, so each one runs only after you review it and run `/workflow trust <name>`; editing the file requires trusting it again. Workflows in `~/.agent-sh/workflows/` are trusted.
 
-Full guide, including design patterns for workflows you can trust (adversarial verification, dedupe, loop until nothing new): [WORKFLOWS.md](WORKFLOWS.md). Bundled examples: [`review-loop`](workflows/review-loop.ts) and [`verified-review`](workflows/verified-review.ts). The extension gives the agent two skills: `writing-workflows` (that guide) and `using-subagents` ([USING.md](USING.md): choosing between `spawn_agent`, parallel tasks, background runs and workflows, and running, resuming and debugging workflow runs).
+Full guide, including design patterns for workflows you can trust (adversarial verification, dedupe, loop until nothing new): [WORKFLOWS.md](WORKFLOWS.md). Bundled: [`review-loop`](workflows/review-loop.ts) (review from several angles, fix, repeat) and [`research`](workflows/research.ts) (split a question, research the parts in parallel, check the claims, combine with sources). More examples to copy into `~/.agent-sh/workflows/` are in [`examples/workflows/`](../../workflows/). The extension gives the agent two skills: `writing-workflows` (that guide) and `using-subagents` ([USING.md](USING.md): choosing between `spawn_agent`, parallel tasks, background runs and workflows, and running, resuming and debugging workflow runs).
+
+## Sandbox
+
+For unattended runs, a run file's `config.sandbox` limits what every agent may write and read, adds your own rules
+(a policy file), and restarts the whole run inside an OS sandbox where one works (bubblewrap or Landlock on Linux,
+Seatbelt on macOS). Interactive sessions are unaffected. See
+[SANDBOX.md](SANDBOX.md).
 
 ## Settings
 

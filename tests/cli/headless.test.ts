@@ -1,97 +1,9 @@
 /** `agent-sh -p` end to end against a local fake OpenAI-compatible server. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const CLI = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
-const SUBAGENTS = fileURLToPath(new URL("../../examples/extensions/subagents", import.meta.url));
-
-interface ChatRequest { messages: { role: string; content: unknown }[]; tools?: { function: { name: string } }[]; stream?: boolean }
-type Reply = Record<string, unknown> | { status: number } | { hang: true };
-
-async function fakeLlm(reply: (req: ChatRequest) => Reply): Promise<{ url: string; requests: ChatRequest[]; requested: Promise<void>; server: Server }> {
-  const requests: ChatRequest[] = [];
-  let onRequest!: () => void;
-  const requested = new Promise<void>((r) => { onRequest = r; });
-  const server = createServer((req, res) => {
-    let body = "";
-    req.on("data", (c) => { body += c; });
-    req.on("end", () => {
-      if (req.url?.endsWith("/chat/completions") && !JSON.parse(body).stream) {
-        const parsed = JSON.parse(body) as ChatRequest;
-        requests.push(parsed);
-        const r = reply(parsed) as { content?: string };
-        res.writeHead(200, { "content-type": "application/json" })
-          .end(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: r.content ?? "" }, finish_reason: "stop" }] }));
-        return;
-      }
-      if (!req.url?.endsWith("/chat/completions")) {
-        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: [] }));
-        return;
-      }
-      const parsed = JSON.parse(body) as ChatRequest;
-      requests.push(parsed);
-      onRequest();
-      const r = reply(parsed);
-      if ("hang" in r) {
-        res.writeHead(200, { "content-type": "text/event-stream" });
-        res.flushHeaders();
-        return;
-      }
-      if ("status" in r) {
-        res.writeHead(r.status as number, { "content-type": "application/json" })
-          .end(JSON.stringify({ error: { message: "fake failure" } }));
-        return;
-      }
-      res.writeHead(200, { "content-type": "text/event-stream" });
-      res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: r }] })}\n\n`);
-      res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } })}\n\n`);
-      res.end("data: [DONE]\n\n");
-    });
-  });
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const close = server.close.bind(server);
-  server.close = ((cb?: (err?: Error) => void) => { server.closeAllConnections(); return close(cb); }) as Server["close"];
-  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, requests, requested, server };
-}
-
-interface RunOpts { stdin?: string; env?: Record<string, string>; onSpawn?: (child: ChildProcess) => void; prepare?: (home: string) => void }
-
-function runCli(args: string[], url: string, opts: RunOpts = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const home = mkdtempSync(join(tmpdir(), "agent-sh-headless-"));
-  opts.prepare?.(home);
-  return new Promise((resolve) => {
-    const child = spawn("node", [CLI, "--api-key", "test", "--base-url", url, "--model", "fake", ...args], {
-      cwd: home,
-      env: { PATH: process.env.PATH, HOME: home, AGENT_SH_HOME: join(home, ".agent-sh"), AGENT_SH_SKIP_SHELL_ENV: "1", ...opts.env },
-      stdio: [opts.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-    });
-    if (opts.stdin !== undefined) child.stdin!.end(opts.stdin);
-    opts.onSpawn?.(child);
-    let stdout = "";
-    let stderr = "";
-    child.stdout!.on("data", (c) => { stdout += c; });
-    child.stderr!.on("data", (c) => { stderr += c; });
-    const timer = setTimeout(() => child.kill("SIGKILL"), 20000);
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      rmSync(home, { recursive: true, force: true });
-      resolve({ code, stdout, stderr });
-    });
-  });
-}
-
-const events = (stdout: string) => stdout.trim().split("\n").map((l) => JSON.parse(l) as Record<string, any>);
-const lastUser = (req: ChatRequest) => String([...req.messages].reverse().find((m) => m.role === "user")?.content ?? "");
-const toolCall = (name: string, args: unknown) => ({
-  tool_calls: [{ index: 0, id: `call_${name}`, type: "function", function: { name, arguments: JSON.stringify(args) } }],
-});
+import { events, fakeLlm, lastUser, runCli, SUBAGENTS, toolCall } from "./fake-llm.js";
 
 test("-p prints the reply to stdout and exits 0", async () => {
   const llm = await fakeLlm(() => ({ content: "hello from fake" }));
@@ -197,7 +109,7 @@ for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
 test("subagents extension fans out parallel scouts under -p", async () => {
   const llm = await fakeLlm((req) => {
     const system = String(req.messages[0]?.content ?? "");
-    if (system.includes("scouting subagent")) return { content: `scouted: ${lastUser(req)}` };
+    if (system.includes("exploring subagent")) return { content: `scouted: ${lastUser(req)}` };
     if (req.messages.some((m) => m.role === "tool")) return { content: "summary" };
     return toolCall("spawn_agent", { tasks: [{ agent: "scout", task: "area A" }, { agent: "scout", task: "area B" }] });
   });
@@ -277,7 +189,7 @@ test("a user .ts workflow with a typed step runs under -p", async () => {
 test("-p stays alive for a background run and exits after the wake turn reads it", async () => {
   const llm = await fakeLlm((req) => {
     const system = String(req.messages[0]?.content ?? "");
-    if (system.includes("scouting subagent")) return { content: "scouted the area" };
+    if (system.includes("exploring subagent")) return { content: "scouted the area" };
     const last = req.messages.at(-1)!;
     const lastText = String(last.content);
     if (last.role === "tool" && lastText.includes("Started background run #1")) return { content: "started it" };

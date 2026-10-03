@@ -1,14 +1,22 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { normalizeSchema, parseJsonReply, validate } from "./schema.js";
 import type { JournalEntry, RunDir } from "./runs.js";
-import type { JsonSchema, RunSpec, WorkflowApi } from "./workflow-types.js";
+import type { JsonSchema, RunOptions, RunSpec, WorkflowApi } from "./workflow-types.js";
+import { ArgsError, helpText, parseArgs, tokenize, type ArgsSpec } from "./args.js";
 
 const EXTS = [".ts", ".mts", ".js", ".mjs"];
 
-export type WorkflowScope = "bundled" | "user" | "project";
+export type WorkflowScope = "bundled" | "extension" | "user" | "project";
+
+export interface WorkflowRegistration {
+  name: string;
+  file: string;
+  description?: string;
+}
 
 export interface WorkflowDef {
   name: string;
@@ -32,6 +40,10 @@ export function discoverWorkflows(dirs: { dir: string; scope: WorkflowScope }[])
     }
   }
   return found;
+}
+
+export function describeFile(file: string): string {
+  try { return staticDescription(fs.readFileSync(file, "utf8")); } catch { return ""; }
 }
 
 // Read without importing: listing must never run an untrusted file.
@@ -69,6 +81,8 @@ export interface TaskControl {
   progress(line: string): void;
   onUsage(totalTokens: number): void;
   onMessage(message: Record<string, unknown>): void;
+  /** Once it has a concurrency slot. */
+  onStart?(): void;
 }
 
 export interface TaskResult {
@@ -87,27 +101,48 @@ export interface WorkflowRunOpts {
   run: RunDir;
   replay?: JournalEntry[];
   budgetTokens?: number;
+  module?: Record<string, unknown>;
+  quietMs?: number;
 }
 
 /** Ends the whole workflow; all() rethrows it instead of returning null. */
 export class WorkflowStop extends Error {}
+export { ArgsError, helpText } from "./args.js";
 
 export async function runWorkflow(
   def: WorkflowDef,
-  args: string,
+  args: string | string[],
   deps: WorkflowDeps,
   signal: AbortSignal,
   progress: (line: string) => void,
   opts: WorkflowRunOpts,
 ): Promise<unknown> {
   const { run: record } = opts;
+  const counts = { queued: 0, working: 0, done: 0 };
+  const started = Date.now();
+  let lastLine = started;
+  const say = progress;
+  progress = (line) => { lastLine = Date.now(); say(line); };
+  const quiet = opts.quietMs && setInterval(() => {
+    if (Date.now() - lastLine < opts.quietMs! || !counts.queued && !counts.working) return;
+    progress(`· ${counts.working} working, ${counts.queued} queued, ${counts.done} finished; ${Math.round((Date.now() - started) / 60_000)} min, ${record.record.tokens} tokens`);
+  }, Math.min(opts.quietMs, 10_000));
+  if (quiet) quiet.unref();
   try {
-    const mod = await importFresh(def);
+    const mod = opts.module ?? await importFresh(def);
     const fn = mod.default ?? mod.run;
     if (typeof fn !== "function") throw new Error(`${def.file} must export a default function`);
+    const apiArgs = workflowArgs(def, mod, args);
 
-    const replay = new Map((opts.replay ?? []).map(e => [e.seq, e]));
-    let diverged = false;
+    // Calls are identified by position (each map/pipeline item numbers its own); old journals replay by call order.
+    const entries = opts.replay ?? [];
+    const legacy = entries.length > 0 && entries.every(e => e.id === undefined);
+    const replay = new Map(entries.map(e => [legacy ? String(e.seq) : e.id, e]));
+    const scopes = new AsyncLocalStorage<Scope>();
+    const root: Scope = { path: "", next: 0, diverged: false };
+    const scope = () => scopes.getStore() ?? root;
+    const inItem = <R>(k: number, i: number, fn: () => R): R =>
+      scopes.run({ path: `${scope().path}${k}.${i}/`, next: 0, diverged: false, parent: scope() }, fn);
     let reused = 0;
     let runs = 0;
     const total = opts.budgetTokens && opts.budgetTokens > 0 ? opts.budgetTokens : null;
@@ -115,23 +150,27 @@ export async function runWorkflow(
     const budget = { total, spent, remaining: () => (total === null ? Infinity : Math.max(0, total - spent())) };
 
     // seq is taken synchronously on call, so the same script calls run() in the same order on replay.
-    const run = async (a: RunSpec | string, task?: string): Promise<any> => {
+    const run = async (a: RunSpec | string | null, task?: string, options?: RunOptions): Promise<any> => {
       const seq = ++runs;
-      const spec: RunSpec = typeof a === "string" ? { agent: a, task: task ?? "" } : a;
-      if (!spec?.task) throw new Error("run() needs a task");
+      const at = scope();
+      const id = `${at.path}${++at.next}`;
+      const spec = toSpec(a, task, options);
+      if (!spec.task) throw new Error("run() needs a task");
       if (seq > deps.maxRuns) throw new WorkflowStop(`workflow exceeded ${deps.maxRuns} subagent runs (subagents.maxRunsPerWorkflow)`);
-      const label = `[${seq} ${spec.agent ?? "ad-hoc"}]`;
+      if (spec.system && spec.agent) throw new Error(`run(): "system" is for ad-hoc runs; ${spec.agent} has its own prompt`);
+      const label = `[${seq} ${spec.label ?? spec.agent ?? "ad-hoc"}]`;
       const key = specKey(spec);
 
-      const cached = diverged ? undefined : replay.get(seq);
+      const cached = isDiverged(at) ? undefined : replay.get(legacy ? String(seq) : id);
       if (cached && cached.key === key) {
         reused++;
-        record.append(cached);
+        record.append({ ...cached, seq, id });
         progress(`${label} reused from ${record.record.resumedFrom}`);
         return cached.output;
       }
       if (cached) {
-        diverged = true;
+        // Later calls in this branch may depend on this one, so they run live too.
+        (legacy ? root : at).diverged = true;
         progress(`· replay stopped at run ${seq}: its inputs changed; ${reused} run(s) reused`);
       }
 
@@ -141,17 +180,27 @@ export async function runWorkflow(
       const write = record.transcript(seq);
       write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema });
       let tokens = 0;
+      let state: "queued" | "working" = "queued";
+      counts.queued++;
       try {
         const result = await deps.runTask(spec, {
           signal,
+          onStart: () => {
+            if (state === "working") return;
+            state = "working"; counts.queued--; counts.working++;
+            write({ type: "running" });
+            progress(`${label} started`);
+          },
           progress: (line) => progress(`${label} ${line}`),
           onUsage: (t) => { tokens += t; record.record.tokens += t; },
           onMessage: (m) => write({ type: "message", ...m }),
         });
+        // An aborted subagent returns its partial text; that's a stop, not a result.
+        if (signal.aborted) throw new WorkflowStop("cancelled");
         const output = !spec.schema ? result.text
           : result.value !== undefined ? result.value
           : await extract(result.text, normalizeSchema(spec.schema), deps.complete);
-        record.append({ seq, key, agent: spec.agent, output, tokens });
+        record.append({ seq, id, key, agent: spec.agent, output, tokens });
         write({ type: "end", ok: true, tokens });
         return output;
       } catch (err) {
@@ -159,6 +208,9 @@ export async function runWorkflow(
         write({ type: "end", ok: false, error: message, tokens });
         progress(`${label} failed: ${message}`);
         throw signal.aborted ? new WorkflowStop("cancelled") : err;
+      } finally {
+        counts[state]--;
+        counts.done++;
       }
     };
 
@@ -168,7 +220,35 @@ export async function runWorkflow(
         if (err instanceof WorkflowStop) throw err;
         return null;
       }))),
-      args,
+      map: (items, fn) => {
+        const k = ++scope().next;
+        return Promise.all(items.map((item, i) => inItem(k, i, async () => {
+          try {
+            return await fn(item, i);
+          } catch (err) {
+            if (err instanceof WorkflowStop) throw err;
+            progress(`· map item ${i + 1} failed: ${err instanceof Error ? err.message : String(err)}`);
+            return null;
+          }
+        })));
+      },
+      pipeline: (items: unknown[], ...stages: ((prev: any, item: any, index: number) => unknown)[]) => {
+        const k = ++scope().next;
+        return Promise.all(items.map((item, i) => inItem(k, i, async () => {
+          let value: unknown = item;
+          for (const [n, stage] of stages.entries()) {
+            try {
+              value = await stage(value, item, i);
+            } catch (err) {
+              if (err instanceof WorkflowStop) throw err;
+              progress(`· pipeline item ${i + 1} failed at stage ${n + 1}: ${err instanceof Error ? err.message : String(err)}`);
+              return null;
+            }
+          }
+          return value;
+        })));
+      },
+      args: apiArgs,
       log: (message) => progress(`· ${message}`),
       signal,
       budget,
@@ -180,6 +260,8 @@ export async function runWorkflow(
     const message = err instanceof Error ? err.message : String(err);
     record.finish(signal.aborted ? "cancelled" : "failed", message);
     throw err;
+  } finally {
+    if (quiet) clearInterval(quiet);
   }
 }
 
@@ -201,8 +283,40 @@ async function importFresh(def: WorkflowDef): Promise<Record<string, unknown>> {
   }
 }
 
+export function workflowArgs(def: WorkflowDef, mod: Record<string, unknown>, args: string | string[]): any {
+  const spec = mod.args as ArgsSpec | undefined;
+  if (!spec || typeof spec !== "object") return Array.isArray(args) ? args.join(" ") : args;
+  try {
+    return parseArgs(spec, Array.isArray(args) ? args : tokenize(args));
+  } catch (err) {
+    if (!(err instanceof ArgsError)) throw err;
+    throw new ArgsError(`${err.message}\n\n${helpText(path.basename(def.file), spec, mod.description as string | undefined)}`);
+  }
+}
+
+function toSpec(a: RunSpec | string | null, task?: string, options?: RunOptions): RunSpec {
+  const spec: RunSpec = typeof a === "string" || a === null || a === undefined
+    ? { ...options, agent: a ?? undefined, task: task ?? "" }
+    : { ...a };
+  if (spec.returns !== undefined && spec.schema === undefined) spec.schema = spec.returns;
+  delete spec.returns;
+  spec.task = dedent(String(spec.task ?? ""));
+  return spec;
+}
+
+export function dedent(text: string): string {
+  const lines = text.replace(/^[ \t]*\n/, "").replace(/\n[ \t]*$/, "").split("\n");
+  const indent = lines.find((l) => l.trim())?.match(/^[ \t]*/)![0] ?? "";
+  return indent ? lines.map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join("\n") : lines.join("\n");
+}
+
+interface Scope { path: string; next: number; diverged: boolean; parent?: Scope }
+const isDiverged = (s: Scope | undefined): boolean => !!s && (s.diverged || isDiverged(s.parent));
+
 function specKey(spec: RunSpec): string {
   const inputs = [spec.agent ?? null, spec.task, spec.tools ?? null, spec.schema ?? null];
+  // Added later; only included when set, so older journals still match.
+  for (const k of ["system", "model", "thinking"] as const) if (spec[k] !== undefined) inputs.push(`${k}:${spec[k]}`);
   return createHash("sha256").update(JSON.stringify(inputs)).digest("hex").slice(0, 16);
 }
 

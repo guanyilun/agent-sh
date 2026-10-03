@@ -1,11 +1,53 @@
 import type { JsonSchema } from "./workflow-types.js";
 
-const SCHEMA_KEYS = new Set(["type", "enum", "properties", "items", "required", "const", "anyOf"]);
+const TYPES = new Set(["string", "number", "integer", "boolean"]);
 
-// Shorthand: a plain map of property -> schema means an object with all of them required.
-export function normalizeSchema(schema: JsonSchema): JsonSchema {
-  if (Object.keys(schema).some(k => SCHEMA_KEYS.has(k))) return schema;
-  return { type: "object", properties: schema, required: Object.keys(schema) };
+export function normalizeSchema(schema: JsonSchema | string | unknown[]): JsonSchema {
+  if (typeof schema === "string") return field(schema).schema;
+  if (Array.isArray(schema)) return { type: "array", items: normalizeSchema(schema[0] as JsonSchema) };
+  if (isJsonSchema(schema)) return schema;
+  const properties: Record<string, JsonSchema> = {};
+  const required: string[] = [];
+  for (const [key, value] of Object.entries(schema)) {
+    const { schema: sub, optional } = typeof value === "string" ? field(value)
+      : { schema: normalizeSchema(value as JsonSchema), optional: false };
+    properties[key] = sub;
+    if (!optional) required.push(key);
+  }
+  return { type: "object", properties, required };
+}
+
+// Only a map that really looks like JSON Schema counts as one, so shorthand fields may be named items, required, ...
+function isJsonSchema(o: JsonSchema): boolean {
+  const t = o.type;
+  return typeof t === "string" || (Array.isArray(t) && t.every(x => typeof x === "string"))
+    || Array.isArray(o.enum) || Array.isArray(o.anyOf) || "const" in o;
+}
+
+function field(spec: string): { schema: JsonSchema; optional: boolean } {
+  let s = spec.trim();
+  const optional = s.endsWith("?");
+  if (optional) s = s.slice(0, -1).trim();
+  if (s.endsWith("[]")) return { schema: { type: "array", items: field(s.slice(0, -2)).schema }, optional };
+  if (TYPES.has(s)) return { schema: { type: s }, optional };
+  const choices = s.split("|").map(c => c.trim()).filter(Boolean);
+  if (choices.length > 1 && choices.every(c => TYPES.has(c))) return { schema: { type: choices }, optional };
+  if (choices.length > 1 || /^[\w-]+$/.test(s)) return { schema: { enum: choices }, optional };
+  throw new Error(`can't read schema shorthand "${spec}"; use string, number, integer, boolean, "a | b", a [] suffix, or JSON Schema`);
+}
+
+export function example(schema: JsonSchema, name = "text"): unknown {
+  if (Array.isArray(schema.enum)) return schema.enum[0];
+  if ("const" in schema) return schema.const;
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length) return example(schema.anyOf[0] as JsonSchema, name);
+  const type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
+  if (type === "object" || schema.properties) {
+    return Object.fromEntries(Object.entries((schema.properties as Record<string, JsonSchema>) ?? {}).map(([k, v]) => [k, example(v, k)]));
+  }
+  if (type === "array") return [example((schema.items as JsonSchema) ?? {}, name)];
+  if (type === "number" || type === "integer") return 0;
+  if (type === "boolean") return false;
+  return `<${name}>`;
 }
 
 /** Returns a description of the first mismatch, or null when the value fits. */

@@ -5,18 +5,23 @@ import { runSubagent, type SubagentOptions, type SubagentRunMeta } from "agent-s
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverAgents, type AgentDef } from "./agents.js";
+import { discoverAgents, findAgent, fromRegistration, type AgentDef, type AgentRegistration } from "./agents.js";
 import { describe, JobTable, type JobOutcome } from "./jobs.js";
+import activateSandbox from "./sandbox/index.mjs";
 import { Semaphore } from "./semaphore.js";
 import { RunStore } from "./runs.js";
-import { normalizeSchema, validate } from "./schema.js";
+import { example, normalizeSchema, validate } from "./schema.js";
+import * as os from "node:os";
 import {
-  discoverWorkflows, formatResult, runWorkflow, TrustStore,
+  ArgsError, describeFile, discoverWorkflows, formatResult, helpText, runWorkflow, TrustStore, workflowArgs,
+  type WorkflowRegistration,
   type TaskControl, type TaskResult, type WorkflowDef,
 } from "./workflows.js";
 import type { RunSpec } from "./workflow-types.js";
 
 export type { Workflow, WorkflowApi, RunSpec, JsonSchema } from "./workflow-types.js";
+export type { AgentRegistration } from "./agents.js";
+export type { WorkflowRegistration } from "./workflows.js";
 
 const TOOL_NAME = "spawn_agent";
 const WORKFLOW_TOOL = "run_workflow";
@@ -29,7 +34,27 @@ const BACKGROUND_PARAM = {
 };
 const PARENT_CONTEXT_CHARS = 12_000;
 
-interface TaskSpec { agent?: string; task: string; tools?: string[] }
+interface TaskSpec { agent?: string; task: string; tools?: string[]; system?: string; model?: string; thinking?: string }
+
+interface RunFileConfig {
+  base: string;
+  agents?: string | string[];
+  concurrency?: number;
+  maxIterations?: number;
+  maxRuns?: number;
+  budgetTokens?: number;
+}
+
+interface RunFileRequest {
+  file: string;
+  module: Record<string, unknown>;
+  args: string;
+  tokens?: string[];
+  dryRun?: boolean;
+  resume?: string;
+  signal: AbortSignal;
+  progress: (line: string) => void;
+}
 
 interface RunExtras {
   extraTools?: ToolDefinition[];
@@ -37,19 +62,34 @@ interface RunExtras {
   shouldStop?: () => boolean;
   onUsage?: (totalTokens: number) => void;
   onMessage?: (message: Record<string, unknown>) => void;
+  onStart?: () => void;
 }
 
 export default function activate(ctx: ExtensionContext & AgentContext): void {
   const { bus } = ctx;
-  const settings = ctx.getExtensionSettings("subagents", {
-    maxConcurrency: 4, maxIterations: 25, maxRunsPerWorkflow: 50, backgroundWake: true, workflowTokenBudget: 0,
-  });
+  activateSandbox(ctx);
+  // Under `agent-sh run <file>`, the file's config overrides settings; there's no main agent to wake.
+  const runConfig = ctx.list?.().includes("run:config") ? ctx.call("run:config") as RunFileConfig : undefined;
+  const settings = {
+    ...ctx.getExtensionSettings("subagents", {
+      maxConcurrency: 4, maxIterations: 25, maxRunsPerWorkflow: 50, backgroundWake: true, workflowTokenBudget: 0,
+    }),
+    ...definedOnly({
+      maxConcurrency: runConfig?.concurrency,
+      maxIterations: runConfig?.maxIterations,
+      maxRunsPerWorkflow: runConfig?.maxRuns,
+      workflowTokenBudget: runConfig?.budgetTokens,
+      backgroundWake: runConfig ? false : undefined,
+    }),
+  };
+  const runAgentDirs = [runConfig?.agents ?? []].flat().map(d => path.resolve(runConfig!.base, d));
   const extDir = path.dirname(fileURLToPath(import.meta.url));
   const bundledDir = path.join(extDir, "agents");
   const userDir = ctx.getStoragePath("agents");
   const userWorkflowDir = ctx.getStoragePath("workflows");
   const trust = new TrustStore(path.join(ctx.getStoragePath("subagents"), "trusted-workflows.json"));
   const runs = new RunStore(ctx.getStoragePath("workflow-runs"));
+  const dryRuns = new RunStore(path.join(os.tmpdir(), `agent-sh-dry-runs-${process.pid}`));
   // Shared by foreground and background runs so background work can't flood the provider.
   const slots = new Semaphore(Math.max(1, settings.maxConcurrency));
 
@@ -93,20 +133,36 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     ].join("\n");
   });
 
-  const loadAgents = () => discoverAgents([
-    bundledDir,
-    userDir,
-    path.join(ctx.call("cwd") as string, ".agent-sh", "agents"),
-  ]);
+  // Other extensions add agents and workflows by advising these handlers (see README).
+  ctx.define("subagents:agents", () => [] as (AgentRegistration | string)[]);
+  ctx.define("subagents:workflows", () => [] as WorkflowRegistration[]);
+  const registered = <T>(name: string): T[] => [ctx.call(name) ?? []].flat() as T[];
+
+  // Precedence, lowest first: bundled, registered by extensions, yours, the project's, the run file's.
+  const loadAgents = () => {
+    const agents = discoverAgents([bundledDir]);
+    for (const r of registered<AgentRegistration | string>("subagents:agents")) {
+      const def = fromRegistration(r);
+      if (def) agents.set(def.name, def);
+    }
+    const local = discoverAgents([userDir, path.join(ctx.call("cwd") as string, ".agent-sh", "agents"), ...runAgentDirs]);
+    for (const [name, def] of local) agents.set(name, def);
+    return agents;
+  };
 
   const loadWorkflows = () => {
     const projectDir = path.join(ctx.call("cwd") as string, ".agent-sh", "workflows");
-    return discoverWorkflows([
-      { dir: path.join(extDir, "workflows"), scope: "bundled" },
+    const found = discoverWorkflows([{ dir: path.join(extDir, "workflows"), scope: "bundled" }]);
+    for (const w of registered<WorkflowRegistration>("subagents:workflows")) {
+      if (w?.name && w.file) found.set(w.name, { name: w.name, file: w.file, scope: "extension", description: w.description ?? describeFile(w.file) });
+    }
+    const local = discoverWorkflows([
       { dir: userWorkflowDir, scope: "user" },
       // From $HOME the project dir is the user dir; don't demote the user's own workflows to untrusted.
       ...(samePath(projectDir, userWorkflowDir) ? [] : [{ dir: projectDir, scope: "project" as const }]),
     ]);
+    for (const [name, def] of local) found.set(name, def);
+    return found;
   };
   const untrustedHint = (wf: WorkflowDef) =>
     `Workflow "${wf.name}" is a project file (${wf.file}) that hasn't been trusted in its current form. ` +
@@ -171,7 +227,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       if (specs.length === 0) return error("Provide `task` or `tasks`.");
 
       const agents = loadAgents();
-      const unknown = specs.filter(s => s.agent && !agents.has(s.agent)).map(s => s.agent);
+      const unknown = specs.filter(s => s.agent && !findAgent(agents, s.agent)).map(s => s.agent);
       if (unknown.length) {
         return error(`Unknown agent: ${unknown.join(", ")}. Available: ${[...agents.keys()].join(", ") || "(none)"}`);
       }
@@ -225,22 +281,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
 
       const wfArgs = args.args !== undefined ? String(args.args) : previous?.args ?? "";
       const budgetTokens = Number(args.budgetTokens ?? settings.workflowTokenBudget) || undefined;
-      const work = async (signal: AbortSignal, progress: (line: string) => void): Promise<JobOutcome> => {
-        const run = runs.create(wf.name, wf.file, wfArgs, resumeId);
-        const footer = `(workflow run ${run.id}; log: ${run.dir})`;
-        try {
-          const result = await runWorkflow(wf, wfArgs, {
-            runTask,
-            complete: (messages) => ctx.call("llm:invoke", messages, { maxTokens: 4096 }) as Promise<string>,
-            maxRuns: settings.maxRunsPerWorkflow,
-          }, signal, progress, { run, replay: resumeId ? runs.journal(resumeId) : undefined, budgetTokens });
-          return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          progress(`failed: ${message}`);
-          return { content: `Workflow "${wf.name}" failed: ${message}\n\n${footer}. Fix the cause, then resume it with ${WORKFLOW_TOOL} { resume: "${run.id}" }.`, isError: true };
-        }
-      };
+      const work = (signal: AbortSignal, progress: (line: string) => void) =>
+        executeWorkflow(wf, wfArgs, { resumeId, budgetTokens, signal, progress,
+          resumeHint: (id) => `${WORKFLOW_TOOL} { resume: "${id}" }` });
       if (args.background) return startBackground(`workflow ${wf.name}`, work);
       return toolResult(await work(execCtx?.signal ?? new AbortController().signal, (line) => onChunk?.(`${line}\n`)));
     },
@@ -265,7 +308,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     path.join(extDir, "USING.md"),
   );
 
-  ctx.registerCommand("workflow", "Workflows: /workflow [<name> [args] | trust <name> | runs | resume <run id>]", (input) => {
+  ctx.registerCommand("workflow", "Workflows: /workflow [<name> [args] | trust <name> | runs | status [run id] | resume <run id>]", (input) => {
     const [first = "", ...rest] = input.trim().split(/\s+/).filter(Boolean);
     const workflows = loadWorkflows();
 
@@ -285,6 +328,11 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
             `${r.resumedFrom ? `  (resumed from ${r.resumedFrom})` : ""}${r.error ? `\n    ${r.error}` : ""}`).join("\n")
         : "No workflow runs yet.";
       bus.emit("ui:info", { message });
+      return;
+    }
+
+    if (first === "status") {
+      bus.emit("ui:info", { message: runs.status(rest[0]) });
       return;
     }
 
@@ -387,6 +435,59 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     bus.emit("ui:info", { message });
   });
 
+  ctx.define("workflow:help", (req: { file: string; module: Record<string, unknown> }) =>
+    helpText(path.basename(req.file), req.module.args as Record<string, unknown> | undefined, req.module.description as string | undefined));
+
+  ctx.define("workflow:run-file", async (req: RunFileRequest): Promise<JobOutcome & { refused?: boolean }> => {
+    const resumeId = req.resume;
+    const store = req.dryRun ? dryRuns : runs;
+    if (resumeId && !store.get(resumeId)) return { content: `No workflow run ${resumeId}.`, isError: true, refused: true };
+    const name = path.basename(req.file).replace(/\.[^.]+$/, "");
+    const wf: WorkflowDef = { name, description: "", file: req.file, scope: "user" };
+    const args = req.tokens ?? req.args;
+    try {
+      workflowArgs(wf, req.module, args);
+    } catch (err) {
+      if (err instanceof ArgsError) return { content: err.message, isError: true, refused: true };
+      throw err;
+    }
+    return executeWorkflow(wf, args, {
+      resumeId, budgetTokens: settings.workflowTokenBudget || undefined, signal: req.signal, progress: req.progress,
+      module: req.module, dryRun: req.dryRun, resumeHint: (id) => `agent-sh run ${req.file} --resume ${id}`,
+      quietMs: 60_000,
+    });
+  });
+
+  ctx.define("workflow:status", (id?: string) => runs.status(id || undefined));
+
+  async function executeWorkflow(wf: WorkflowDef, wfArgs: string | string[], opts: {
+    resumeId?: string;
+    budgetTokens?: number;
+    signal: AbortSignal;
+    progress: (line: string) => void;
+    module?: Record<string, unknown>;
+    dryRun?: boolean;
+    resumeHint: (runId: string) => string;
+    quietMs?: number;
+  }): Promise<JobOutcome> {
+    const run = (opts.dryRun ? dryRuns : runs).create(wf.name, wf.file, [wfArgs].flat().join(" "), opts.resumeId);
+    const footer = `(workflow run ${run.id}; log: ${run.dir})`;
+    try {
+      const result = await runWorkflow(wf, wfArgs, {
+        runTask: opts.dryRun ? dryRunTask : runTask,
+        complete: (messages) => ctx.call("llm:invoke", messages, { maxTokens: 4096 }) as Promise<string>,
+        maxRuns: settings.maxRunsPerWorkflow,
+      }, opts.signal, opts.progress, {
+        run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, module: opts.module, quietMs: opts.quietMs,
+      });
+      return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      opts.progress(`failed: ${message}`);
+      return { content: `Workflow "${wf.name}" failed: ${message}\n\n${footer}. Fix the cause, then resume it with ${opts.resumeHint(run.id)}.`, isError: true };
+    }
+  }
+
   function startBackground(label: string, work: (signal: AbortSignal, progress: (line: string) => void) => Promise<JobOutcome>) {
     const job = jobs.start(label, work);
     bus.emit("agent:pending-work-changed", {});
@@ -408,7 +509,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       const label = specs.length > 1 ? `[${i + 1} ${name}]` : `[${name}]`;
       const line = progress ? (l: string) => progress(`${label} ${l}`) : undefined;
       try {
-        return { ok: true, text: await runOne(spec, spec.agent ? agents.get(spec.agent) : undefined, signal, line) };
+        return { ok: true, text: await runOne(spec, spec.agent ? findAgent(agents, spec.agent) : undefined, signal, line) };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         line?.(`failed: ${message}`);
@@ -427,8 +528,18 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     return { content, isError: results.every(r => !r.ok) };
   }
 
+  async function dryRunTask(spec: RunSpec, ctl: TaskControl): Promise<TaskResult> {
+    if (spec.agent && !findAgent(loadAgents(), spec.agent)) throw new Error(`unknown agent: ${spec.agent}`);
+    const firstLine = spec.task.split("\n")[0]!.slice(0, 120);
+    const value = spec.schema ? example(normalizeSchema(spec.schema)) : undefined;
+    ctl.progress(`(dry run) ${firstLine}${value === undefined ? "" : ` → ${JSON.stringify(value)}`}`);
+    return value === undefined
+      ? { text: `[dry run: ${spec.agent ?? "ad-hoc"} would answer "${firstLine}"]` }
+      : { text: JSON.stringify(value), value };
+  }
+
   async function runTask(spec: RunSpec, ctl: TaskControl): Promise<TaskResult> {
-    const def = spec.agent ? loadAgents().get(spec.agent) : undefined;
+    const def = spec.agent ? findAgent(loadAgents(), spec.agent) : undefined;
     if (spec.agent && !def) throw new Error(`unknown agent: ${spec.agent}`);
     if (!spec.schema) return { text: await runOne(spec, def, ctl.signal, ctl.progress, ctl) };
 
@@ -477,7 +588,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
 
     const parentContext = def?.inheritContext ? parentTranscript() : "";
     const systemPrompt = [
-      def?.systemPrompt || "You are a focused subagent. Complete the task and return a clear, concise result.",
+      def?.systemPrompt || spec.system || "You are a focused subagent. Complete the task and return a clear, concise result.",
       `Working directory: ${cwd}`,
       extra.systemNote,
       parentContext && `[Parent conversation, most recent last]\n${parentContext}`,
@@ -488,15 +599,16 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     let text: string;
     try {
       if (signal?.aborted) throw new Error("cancelled");
+      extra.onStart?.();
       text = await runSubagent({
         llmClient,
         tools,
         systemPrompt,
         task: spec.task,
-        model: def?.model,
+        model: spec.model ?? def?.model,
         signal,
         maxIterations: def?.maxIterations ?? settings.maxIterations,
-        reasoningParams: reasoningParams(def?.thinking, def?.model ?? llmClient.model),
+        reasoningParams: reasoningParams(spec.thinking ?? def?.thinking, spec.model ?? def?.model ?? llmClient.model),
         outMeta: meta,
         onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens) : undefined,
         onMessage: extra.onMessage as SubagentOptions["onMessage"],
@@ -570,6 +682,10 @@ function messageText(content: unknown): string {
 
 function error(content: string) {
   return { content, exitCode: 1, isError: true };
+}
+
+function definedOnly<T extends Record<string, unknown>>(o: T): Partial<T> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
 function toolResult(o: JobOutcome) {

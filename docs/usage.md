@@ -33,6 +33,36 @@ npm run dev
 DEBUG=1 DEEPSEEK_API_KEY="$KEY" agent-sh
 ```
 
+### Run files
+
+`agent-sh run <file> [args...]` runs a workflow file (see the subagents extension's `WORKFLOWS.md`) directly: no shell, no TUI, and no main-agent turn, just the file's script. Progress goes to stderr, the result to stdout. Exit codes: 0 done, 1 the workflow failed or hit its deadline, 2 the run refused to start (including bad arguments), 130 interrupted.
+
+- `--resume <run id>` continues a failed or interrupted run, reusing finished subagent results.
+- `--help` lists the file's own arguments (`export const args`), which it takes as `--flags`.
+- `--dry-run` walks the script with placeholder answers and no model calls (no API key needed), printing each call.
+- agent-sh's own options (`--model`, `--provider`, `-e`) work as usual; put the file's arguments after `--` if a name clashes.
+
+The file can declare the setup it needs, so one file describes the whole run:
+
+```ts
+export const config = {
+  agents: "./agents",            // extra agent definitions, relative to this file
+  concurrency: 6, maxRuns: 200, maxIterations: 60,
+  budgetTokens: 5_000_000,       // cap on subagent tokens
+  hours: 3,                      // time left goes into every request; the run stops at the deadline
+  sandbox: {                     // optional; part of the subagents extension (see its SANDBOX.md)
+    write: ["./out"],            // the only dirs agents may write
+    hide: ["../heldout"],        // paths agents may not read
+    policy: "./rules.json",      // optional extra rules
+    os: "preferred",             // "required" | "preferred" | "off": bubblewrap or Landlock on Linux, Seatbelt on macOS
+  },
+};
+
+export default async ({ run, all, args, log, budget }) => { /* ... */ };
+```
+
+Each extension reads its own section, and the run fails closed: a `sandbox` section that no loaded extension enforces, or an `os: "required"` that can't be met here, stops the run before any model call. Where an OS sandbox is usable, the whole run is restarted inside it; without a `sandbox` section the run isn't sandboxed.
+
 ### Headless mode
 
 `-p` runs one prompt without the shell or TUI, prints the reply to stdout, and exits (1 on an agent error). Piped stdin is appended to the prompt; pass `--no-stdin` when stdin is piped but not meant for the agent (e.g. under a supervisor that keeps it open). Use `--print=<text>` for a prompt that starts with `-`. A reader that closes the pipe early (`| head`) ends the run cleanly. If an extension still has background work when the turn ends (e.g. a background subagent), `-p` waits for it, including any turn its result starts, and `done.response` is the last turn's reply. Tool calls are listed on stderr, so stdout stays clean for piping. Tools run without confirmation.
