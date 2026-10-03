@@ -30,6 +30,48 @@ test("project agents override bundled ones and are advertised", async () => {
   } finally { s.cleanup(); }
 });
 
+test("extensions register agents by advising, before or after the extension loads; local files still win", async () => {
+  const s = setup({
+    reply: () => ({ content: "ok" }),
+    before: (h) => h.advise("subagents:agents", (next) => [...next(), { name: "early", description: "registered early", prompt: "EARLY PROMPT", tools: ["grep"] }]),
+  });
+  try {
+    const file = join(s.root, "late.md");
+    writeFileSync(file, "---\nname: late\ndescription: registered late\n---\nLATE PROMPT");
+    s.h.advise("subagents:agents", (next) => [...next(), file, { name: "reviewer", description: "ext reviewer", prompt: "EXT" }]);
+    writeFileSync(join(s.project, ".agent-sh", "agents", "reviewer.md"), "---\ndescription: project reviewer\n---\nPROJECT");
+    assert.match(s.description(), /- early: registered early/);
+    assert.match(s.description(), /- late: registered late/);
+    assert.match(s.description(), /- reviewer: project reviewer/);
+
+    await s.run({ agent: "early", task: "t" });
+    assert.match(s.calls[0]!.messages[0]!.content, /EARLY PROMPT/);
+    assert.deepEqual(s.calls[0]!.tools!.map(t => t.function.name), ["grep"]);
+    await s.run({ agent: "late", task: "t" });
+    assert.match(s.calls[1]!.messages[0]!.content, /LATE PROMPT/);
+  } finally { s.cleanup(); }
+});
+
+test("scout still runs as explore", async () => {
+  const s = setup({ reply: () => ({ content: "ok" }) });
+  try {
+    const r = await s.run({ agent: "scout", task: "t" });
+    assert.notEqual(r.isError, true);
+    assert.match(s.calls[0]!.messages[0]!.content, /You are an exploring subagent/);
+  } finally { s.cleanup(); }
+});
+
+test("extensions register workflows by advising", async () => {
+  const s = setup({ reply: () => ({ content: "ok" }) });
+  try {
+    const file = join(s.root, "hi.ts");
+    writeFileSync(file, 'export const description = "Says hi";\nexport default async () => "hi";\n');
+    s.h.advise("subagents:workflows", (next) => [...next(), { name: "hi", file }]);
+    assert.match(s.description("run_workflow"), /- hi: Says hi/);
+    assert.equal(String((await s.exec("run_workflow", { name: "hi" })).content).split("\n\n")[0], "hi");
+  } finally { s.cleanup(); }
+});
+
 test("unknown agents are rejected before anything runs", async () => {
   const s = setup({ reply: () => ({ content: "ok" }) });
   try {

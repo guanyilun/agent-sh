@@ -5,7 +5,7 @@ import { runSubagent, type SubagentOptions, type SubagentRunMeta } from "agent-s
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverAgents, type AgentDef } from "./agents.js";
+import { discoverAgents, findAgent, fromRegistration, type AgentDef, type AgentRegistration } from "./agents.js";
 import { describe, JobTable, type JobOutcome } from "./jobs.js";
 import activateSandbox from "./sandbox/index.mjs";
 import { Semaphore } from "./semaphore.js";
@@ -13,12 +13,15 @@ import { RunStore } from "./runs.js";
 import { example, normalizeSchema, validate } from "./schema.js";
 import * as os from "node:os";
 import {
-  ArgsError, discoverWorkflows, formatResult, helpText, runWorkflow, TrustStore, workflowArgs,
+  ArgsError, describeFile, discoverWorkflows, formatResult, helpText, runWorkflow, TrustStore, workflowArgs,
+  type WorkflowRegistration,
   type TaskControl, type TaskResult, type WorkflowDef,
 } from "./workflows.js";
 import type { RunSpec } from "./workflow-types.js";
 
 export type { Workflow, WorkflowApi, RunSpec, JsonSchema } from "./workflow-types.js";
+export type { AgentRegistration } from "./agents.js";
+export type { WorkflowRegistration } from "./workflows.js";
 
 const TOOL_NAME = "spawn_agent";
 const WORKFLOW_TOOL = "run_workflow";
@@ -130,21 +133,38 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     ].join("\n");
   });
 
-  const loadAgents = () => discoverAgents([
-    bundledDir,
-    userDir,
-    path.join(ctx.call("cwd") as string, ".agent-sh", "agents"),
-    ...runAgentDirs,
-  ]);
+  // Other extensions add agents and workflows by advising these handlers, e.g.
+  //   ctx.advise("subagents:agents", (next) => [...next(), { name, description, prompt, tools }]);
+  // Advice made before this extension loads is kept, and the loader removes it when its extension unloads.
+  ctx.define("subagents:agents", () => [] as (AgentRegistration | string)[]);
+  ctx.define("subagents:workflows", () => [] as WorkflowRegistration[]);
+  const registered = <T>(name: string): T[] => [ctx.call(name) ?? []].flat() as T[];
+
+  // Precedence, lowest first: bundled, registered by extensions, yours, the project's, the run file's.
+  const loadAgents = () => {
+    const agents = discoverAgents([bundledDir]);
+    for (const r of registered<AgentRegistration | string>("subagents:agents")) {
+      const def = fromRegistration(r);
+      if (def) agents.set(def.name, def);
+    }
+    const local = discoverAgents([userDir, path.join(ctx.call("cwd") as string, ".agent-sh", "agents"), ...runAgentDirs]);
+    for (const [name, def] of local) agents.set(name, def);
+    return agents;
+  };
 
   const loadWorkflows = () => {
     const projectDir = path.join(ctx.call("cwd") as string, ".agent-sh", "workflows");
-    return discoverWorkflows([
-      { dir: path.join(extDir, "workflows"), scope: "bundled" },
+    const found = discoverWorkflows([{ dir: path.join(extDir, "workflows"), scope: "bundled" }]);
+    for (const w of registered<WorkflowRegistration>("subagents:workflows")) {
+      if (w?.name && w.file) found.set(w.name, { name: w.name, file: w.file, scope: "extension", description: w.description ?? describeFile(w.file) });
+    }
+    const local = discoverWorkflows([
       { dir: userWorkflowDir, scope: "user" },
       // From $HOME the project dir is the user dir; don't demote the user's own workflows to untrusted.
       ...(samePath(projectDir, userWorkflowDir) ? [] : [{ dir: projectDir, scope: "project" as const }]),
     ]);
+    for (const [name, def] of local) found.set(name, def);
+    return found;
   };
   const untrustedHint = (wf: WorkflowDef) =>
     `Workflow "${wf.name}" is a project file (${wf.file}) that hasn't been trusted in its current form. ` +
@@ -209,7 +229,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       if (specs.length === 0) return error("Provide `task` or `tasks`.");
 
       const agents = loadAgents();
-      const unknown = specs.filter(s => s.agent && !agents.has(s.agent)).map(s => s.agent);
+      const unknown = specs.filter(s => s.agent && !findAgent(agents, s.agent)).map(s => s.agent);
       if (unknown.length) {
         return error(`Unknown agent: ${unknown.join(", ")}. Available: ${[...agents.keys()].join(", ") || "(none)"}`);
       }
@@ -482,7 +502,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       const label = specs.length > 1 ? `[${i + 1} ${name}]` : `[${name}]`;
       const line = progress ? (l: string) => progress(`${label} ${l}`) : undefined;
       try {
-        return { ok: true, text: await runOne(spec, spec.agent ? agents.get(spec.agent) : undefined, signal, line) };
+        return { ok: true, text: await runOne(spec, spec.agent ? findAgent(agents, spec.agent) : undefined, signal, line) };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         line?.(`failed: ${message}`);
@@ -503,7 +523,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
 
   // Dry runs check agent names and shapes, then answer with placeholders; no model is called.
   async function dryRunTask(spec: RunSpec, ctl: TaskControl): Promise<TaskResult> {
-    if (spec.agent && !loadAgents().has(spec.agent)) throw new Error(`unknown agent: ${spec.agent}`);
+    if (spec.agent && !findAgent(loadAgents(), spec.agent)) throw new Error(`unknown agent: ${spec.agent}`);
     const firstLine = spec.task.split("\n")[0]!.slice(0, 120);
     const value = spec.schema ? example(normalizeSchema(spec.schema)) : undefined;
     ctl.progress(`(dry run) ${firstLine}${value === undefined ? "" : ` → ${JSON.stringify(value)}`}`);
@@ -513,7 +533,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   }
 
   async function runTask(spec: RunSpec, ctl: TaskControl): Promise<TaskResult> {
-    const def = spec.agent ? loadAgents().get(spec.agent) : undefined;
+    const def = spec.agent ? findAgent(loadAgents(), spec.agent) : undefined;
     if (spec.agent && !def) throw new Error(`unknown agent: ${spec.agent}`);
     if (!spec.schema) return { text: await runOne(spec, def, ctl.signal, ctl.progress, ctl) };
 

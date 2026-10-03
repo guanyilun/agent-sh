@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { fakeLlm, runCli, SUBAGENTS, toolCall, type ChatRequest } from "./fake-llm.js";
 
-const TEMPLATE = fileURLToPath(new URL("../../examples/campaigns/campaign.ts", import.meta.url));
+const TEMPLATE = fileURLToPath(new URL("../../examples/workflows/campaign.ts", import.meta.url));
 // Simulates a machine with no usable OS sandbox (no bubblewrap, no sandbox-exec).
 const NO_OS_SANDBOX = { SBX_BWRAP: "/nonexistent/bwrap", SBX_SANDBOX_EXEC: "/nonexistent/sandbox-exec", SBX_LANDLOCK: "off" };
 const isSubagent = (req: ChatRequest) => String(req.messages[0]?.content ?? "").includes("focused subagent");

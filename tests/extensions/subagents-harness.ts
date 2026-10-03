@@ -24,6 +24,8 @@ export interface HarnessOpts {
   settings?: Record<string, unknown>;
   /** Total tokens reported for each streamed call. */
   usage?: number;
+  /** Runs before the extension activates, e.g. to advise its handlers early. */
+  before?: (h: HandlerRegistry) => void;
 }
 
 export function setup(opts: HarnessOpts) {
@@ -91,6 +93,7 @@ export function setup(opts: HarnessOpts) {
       adviseToolSchema: (n: string, a: (next: () => ToolSchemaView) => ToolSchemaView) => { schemaAdvisors.set(n, a); return () => {}; },
     },
   };
+  opts.before?.(h);
   activate(ctx as never);
 
   const tool = (name: string) => tools.find(t => t.name === name)!;

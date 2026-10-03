@@ -109,7 +109,7 @@ for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
 test("subagents extension fans out parallel scouts under -p", async () => {
   const llm = await fakeLlm((req) => {
     const system = String(req.messages[0]?.content ?? "");
-    if (system.includes("scouting subagent")) return { content: `scouted: ${lastUser(req)}` };
+    if (system.includes("exploring subagent")) return { content: `scouted: ${lastUser(req)}` };
     if (req.messages.some((m) => m.role === "tool")) return { content: "summary" };
     return toolCall("spawn_agent", { tasks: [{ agent: "scout", task: "area A" }, { agent: "scout", task: "area B" }] });
   });
@@ -189,7 +189,7 @@ test("a user .ts workflow with a typed step runs under -p", async () => {
 test("-p stays alive for a background run and exits after the wake turn reads it", async () => {
   const llm = await fakeLlm((req) => {
     const system = String(req.messages[0]?.content ?? "");
-    if (system.includes("scouting subagent")) return { content: "scouted the area" };
+    if (system.includes("exploring subagent")) return { content: "scouted the area" };
     const last = req.messages.at(-1)!;
     const lastText = String(last.content);
     if (last.role === "tool" && lastText.includes("Started background run #1")) return { content: "started it" };
