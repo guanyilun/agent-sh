@@ -43,7 +43,13 @@ export default async ({ run, map, args, log, budget }) => {
   ```
   The shape is shorthand (below) or JSON Schema. The agent gets a `submit_result` tool whose parameters are the shape; a submission that doesn't fit is refused with the reason, so the agent fixes it, and the run ends as soon as one is accepted. If the agent answers in text instead, a short LLM call converts the answer (with one retry). If nothing fits, `run` throws.
 - `run(null, task, { tools })` — an ad-hoc subagent limited to those tools (named agents keep their own). `run({ agent, task, returns, tools })` also works.
+- Per call: `model` and `thinking` override the agent's, `label` names it in progress lines, and for ad-hoc runs `system` sets the role and rules. So a script can define its agents inline, without agent files:
+  ```ts
+  const proofreader = { system: "You proofread a LaTeX paper. Report only typos, grammar and LaTeX problems.", tools: [], label: "proofreader" };
+  const found = await run({ ...proofreader, task: section, returns: ISSUES });
+  ```
 - `map(items, fn)` — call `fn(item, index)` for every item concurrently (up to `subagents.maxConcurrency`) and resolve to the results in order; **an item whose `fn` fails becomes `null`**. `fn` is ordinary async code, so each item can run several steps (`async (x) => { const a = await run(...); return run(..., a); }`) without waiting for the others.
+- `pipeline(items, stage1, stage2, ...)` — each item goes through the stages on its own: an item that finishes stage 1 starts stage 2 without waiting for the others. Each stage gets `(previous result, item, index)`; a stage that throws makes that item `null` and skips its remaining stages. Prefer it to `map` followed by another `map` unless a later step needs all the earlier results together (to merge or dedupe them, say).
 - `all([spec, ...])` — like `map` over `run` specs.
 - `args` — the parsed arguments when the file declares `export const args`, else everything after the file name as text.
 - `log(message)` — a progress line under the tool call (stderr under `agent-sh run`).
@@ -83,7 +89,7 @@ export const args = {
 
 `agent-sh run file.ts --dry-run` runs the script without calling any model: each `run` answers with a placeholder of its shape (the first choice, `false`, `0`, a one-item list, `"<field>"`), unknown agents are reported, and every call is printed. Use it to check loops, branches and arguments before spending tokens.
 
-Budget exhaustion, the run cap, the deadline and Ctrl-C stop the whole workflow; `map()` and `all()` never turn them into `null`.
+Budget exhaustion, the run cap, the deadline and Ctrl-C stop the whole workflow; `map()`, `pipeline()` and `all()` never turn them into `null`.
 
 ## Runs, logs and resuming
 
@@ -95,7 +101,7 @@ Every run gets an id and a folder in `~/.agent-sh/workflow-runs/<id>/`:
 
 `/workflow runs` lists recent runs (a run still marked running after agent-sh exited shows as interrupted). To resume a failed or interrupted run, fix the cause (or edit the workflow), then `/workflow resume <id>`, or have the agent call `run_workflow { resume: "<id>" }`.
 
-Resuming reruns the script from the top. Each `run()` call, numbered in the order the script makes it, reuses the old result if its inputs (agent, task, tools, returns) are unchanged. The first call whose inputs changed, and every call after it, runs live. Runs that failed or never finished run again. For this to work the script must make the same calls in the same order given the same results, so don't let `Date.now()`, `Math.random()` or other outside state decide what to run. Side effects the script performs itself (files, commands) are not replayed.
+Resuming reruns the script from the top. Each `run()` call is identified by where it sits: top-level calls in the order the script makes them, and calls inside a `map` or `pipeline` item in that item's own order, so it doesn't matter which item finishes first. A call reuses the old result if its inputs (agent, task, tools, returns, system, model, thinking) are unchanged. The first call whose inputs changed, and every later call in the same branch, runs live. Runs that failed or never finished run again. For this to work the script must make the same calls in the same order given the same results, so don't let `Date.now()`, `Math.random()` or other outside state decide what to run. Side effects the script performs itself (files, commands) are not replayed.
 
 Agents are the named ones from `/agents` (`explore`, `plan`, `research`, `reviewer`, `oracle`, `worker`, `delegate`, plus ones from other extensions, the user and the project). Subagents can't start subagents or workflows.
 

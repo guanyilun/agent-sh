@@ -22,6 +22,8 @@ const HEARTBEAT_MS = 30_000;
 
 export interface JournalEntry {
   seq: number;
+  /** Where the call sits in the script, e.g. "2" or "3.0/1" (map or pipeline 3, item 0, its first run). */
+  id?: string;
   /** Hash of the run() inputs; a replayed entry must match it. */
   key: string;
   agent?: string;
