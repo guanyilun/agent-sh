@@ -49,7 +49,6 @@ interface RunFileRequest {
   file: string;
   module: Record<string, unknown>;
   args: string;
-  /** The arguments as given on the command line, for declared `export const args`. */
   tokens?: string[];
   dryRun?: boolean;
   resume?: string;
@@ -134,9 +133,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     ].join("\n");
   });
 
-  // Other extensions add agents and workflows by advising these handlers, e.g.
-  //   ctx.advise("subagents:agents", (next) => [...next(), { name, description, prompt, tools }]);
-  // Advice made before this extension loads is kept, and the loader removes it when its extension unloads.
+  // Other extensions add agents and workflows by advising these handlers (see README).
   ctx.define("subagents:agents", () => [] as (AgentRegistration | string)[]);
   ctx.define("subagents:workflows", () => [] as WorkflowRegistration[]);
   const registered = <T>(name: string): T[] => [ctx.call(name) ?? []].flat() as T[];
@@ -531,7 +528,6 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     return { content, isError: results.every(r => !r.ok) };
   }
 
-  // Dry runs check agent names and shapes, then answer with placeholders; no model is called.
   async function dryRunTask(spec: RunSpec, ctl: TaskControl): Promise<TaskResult> {
     if (spec.agent && !findAgent(loadAgents(), spec.agent)) throw new Error(`unknown agent: ${spec.agent}`);
     const firstLine = spec.task.split("\n")[0]!.slice(0, 120);

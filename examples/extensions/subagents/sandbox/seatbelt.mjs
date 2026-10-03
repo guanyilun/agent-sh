@@ -1,9 +1,3 @@
-/**
- * macOS OS sandbox (Seatbelt, via the built-in sandbox-exec): the same policy as sandbox.sh where macOS allows it.
- * Writes only under the write dirs, the agent-sh home's runtime state (its settings, keys, extensions, agents and
- * workflows stay read-only) and the user's temp dirs; hidden paths unreadable. Unlike bubblewrap there's no private
- * /tmp or PID namespace, and network stays on (the agent needs the model).
- */
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -32,7 +26,6 @@ export function seatbeltProfile({ write = [], hide = [], home }) {
   return lines.join("\n");
 }
 
-/** Whether sandbox-exec works here. */
 export function probeSeatbelt(sandboxExec) {
   if (!fs.existsSync(sandboxExec)) return { ok: false, reason: `${sandboxExec} not found` };
   const r = spawnSync(sandboxExec, ["-p", "(version 1)(allow default)", "/usr/bin/true"], { encoding: "utf8", timeout: 10_000 });

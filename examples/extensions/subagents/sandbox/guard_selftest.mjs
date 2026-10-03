@@ -1,5 +1,4 @@
-// Deterministic self-test of guard.mjs (no LLM): built-in rules plus an example policy, checked on both hooks
-// (tool:execute and tool:<name>). Usage: SBX_WRITE_ROOTS=/some/dir [SBX_HIDE=/secret/dir] node guard_selftest.mjs
+// Self-test of guard.mjs, no LLM: SBX_WRITE_ROOTS=/some/dir [SBX_HIDE=/secret/dir] node guard_selftest.mjs
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";

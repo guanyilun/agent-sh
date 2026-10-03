@@ -1,18 +1,7 @@
 #!/bin/bash
-# Unprivileged sandbox (bubblewrap) for unattended agents and untrusted code.
-#
+# bubblewrap sandbox (see SANDBOX.md):
 #   sandbox.sh [--rw DIR]... [--hide PATH]... [--home DIR] [--no-net] [--chdir DIR] -- CMD [ARGS...]
 #   sandbox.sh --selftest WRITABLE_DIR [HIDDEN_DIR]
-#
-#   filesystem : whole host read-only; writable only: each --rw DIR, a private tmpfs
-#                /tmp, and for --home (an AGENT_SH_HOME) its runtime state, while its settings.json, keys.json,
-#                extensions/, agents/ and workflows/ stay read-only
-#   hidden     : each --hide PATH is masked (a dir becomes an empty tmpfs, a file becomes /dev/null), e.g. held-out
-#                data that agents must not read, or a scheduler's socket and client binaries to keep agents off it
-#   processes  : private PID namespace, dies with the parent (killing the sandbox kills everything)
-#   network    : kept (agents need the inference endpoint) unless --no-net
-# Inside, SBX_SANDBOXED=1 is set. Needs /usr/bin/bwrap and unprivileged user namespaces.
-# The selftest checks network reachability only when SBX_ENDPOINT=host:port (your inference endpoint) is set.
 set -euo pipefail
 BW="${SBX_BWRAP:-/usr/bin/bwrap}"
 [ -x "$BW" ] || { echo "sandbox.sh: bubblewrap not found" >&2; exit 97; }

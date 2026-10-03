@@ -12,7 +12,6 @@ const EXTS = [".ts", ".mts", ".js", ".mjs"];
 
 export type WorkflowScope = "bundled" | "extension" | "user" | "project";
 
-/** What other extensions register through the "subagents:workflows" handler. */
 export interface WorkflowRegistration {
   name: string;
   file: string;
@@ -82,7 +81,7 @@ export interface TaskControl {
   progress(line: string): void;
   onUsage(totalTokens: number): void;
   onMessage(message: Record<string, unknown>): void;
-  /** Called once the subagent has a concurrency slot and starts working. */
+  /** Once it has a concurrency slot. */
   onStart?(): void;
 }
 
@@ -102,9 +101,7 @@ export interface WorkflowRunOpts {
   run: RunDir;
   replay?: JournalEntry[];
   budgetTokens?: number;
-  /** Already imported (e.g. by `agent-sh run`); skips loading the file again. */
   module?: Record<string, unknown>;
-  /** After this long without a progress line, print how many subagents are working and queued. */
   quietMs?: number;
 }
 
@@ -121,7 +118,6 @@ export async function runWorkflow(
   opts: WorkflowRunOpts,
 ): Promise<unknown> {
   const { run: record } = opts;
-  // Progress lines, and a status line when nothing has been said for a while.
   const counts = { queued: 0, working: 0, done: 0 };
   const started = Date.now();
   let lastLine = started;
@@ -138,8 +134,7 @@ export async function runWorkflow(
     if (typeof fn !== "function") throw new Error(`${def.file} must export a default function`);
     const apiArgs = workflowArgs(def, mod, args);
 
-    // Each call gets an id from where it sits: top-level calls count up, and every map/pipeline item numbers its
-    // own calls, so ids don't depend on which item finishes first. Journals from before ids replay by call order.
+    // Calls are identified by position (each map/pipeline item numbers its own); old journals replay by call order.
     const entries = opts.replay ?? [];
     const legacy = entries.length > 0 && entries.every(e => e.id === undefined);
     const replay = new Map(entries.map(e => [legacy ? String(e.seq) : e.id, e]));
@@ -237,7 +232,6 @@ export async function runWorkflow(
           }
         })));
       },
-      // Each item goes through the stages on its own: no waiting for the other items between stages.
       pipeline: (items: unknown[], ...stages: ((prev: any, item: any, index: number) => unknown)[]) => {
         const k = ++scope().next;
         return Promise.all(items.map((item, i) => inItem(k, i, async () => {
@@ -310,8 +304,6 @@ function toSpec(a: RunSpec | string | null, task?: string, options?: RunOptions)
   return spec;
 }
 
-/** Strips the first line's indentation from every line that has it, so tasks can be indented with the code
- *  while interpolated multi-line values (which aren't indented) stay intact. */
 export function dedent(text: string): string {
   const lines = text.replace(/^[ \t]*\n/, "").replace(/\n[ \t]*$/, "").split("\n");
   const indent = lines.find((l) => l.trim())?.match(/^[ \t]*/)![0] ?? "";

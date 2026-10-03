@@ -9,7 +9,6 @@ import { fakeLlm, runCli, SUBAGENTS, toolCall, type ChatRequest } from "./fake-l
 import { parseRunArgs } from "../../src/cli/run.js";
 
 const TEMPLATE = fileURLToPath(new URL("../../examples/workflows/campaign.ts", import.meta.url));
-// Simulates a machine with no usable OS sandbox (no bubblewrap, no sandbox-exec).
 const NO_OS_SANDBOX = { SBX_BWRAP: "/nonexistent/bwrap", SBX_SANDBOX_EXEC: "/nonexistent/sandbox-exec", SBX_LANDLOCK: "off" };
 const isSubagent = (req: ChatRequest) => String(req.messages[0]?.content ?? "").includes("focused subagent");
 const write = (home: string, rel: string, text: string) => {
@@ -153,7 +152,6 @@ test("--resume continues a failed run, reusing what finished", async () => {
     assert.equal(llm.requests.length - before, 1);
     assert.ok(readdirSync(join(home, ".agent-sh", "workflow-runs")).length === 2);
 
-    // --status shows the newest run, or one by id, with each subagent's state.
     const newest = second.stdout.match(/\(workflow run (\S+);/)![1]!;
     const status = await runCli(["run", "--status", "-e", SUBAGENTS], llm.url, { home, keepHome: true });
     assert.match(status.stdout, new RegExp(`^${newest}  campaign  done, \\d+s, \\d+ tokens\n  # 2  done +\\d+s  second`, "m"));

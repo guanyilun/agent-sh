@@ -1,15 +1,3 @@
-/**
- * Sandboxing for the subagents extension. Inert unless armed, so interactive sessions are unaffected. Two ways to arm it:
- *
- * 1. `agent-sh run <file>` whose `export const config` has a `sandbox` section (see SANDBOX.md):
- *      sandbox: { write: [...], hide: [...], policy: "rules.json", os: "preferred" }
- *    plus `hours` for the clock. Paths are relative to the file. Where an OS sandbox works (bubblewrap, else Landlock,
- *    on Linux; Seatbelt on macOS), the whole run is re-executed inside it; `os: "required"` refuses to start without
- *    one. Elsewhere (e.g. Windows) the guard alone applies.
- * 2. SBX_* variables, for callers that start agent-sh themselves: SBX_GUARD=1, SBX_WRITE_ROOTS=a:b, SBX_HIDE=a:b,
- *    SBX_POLICY=file.json, SBX_DEADLINE=<unix> (SBX_BUDGET_MIN). Wrap the process in sandbox.sh yourself for isolation.
- * When armed it emits "sandbox guard armed (...)"; headless callers should require that notice.
- */
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -30,11 +18,11 @@ export default function activate(ctx) {
     const msg = `sandbox guard armed (write roots: ${writeRoots().join(":") || "none"}; hidden: ${hidden().length}; policy: ${policyFile() || "none"})`;
     ctx.bus?.emit?.("ui:info", { message: msg });
   }
-  clock(ctx);   // no-op unless a deadline is set
+  clock(ctx);
   if (run?.hours) runClock(ctx, run);
 }
 
-/** Whether bubblewrap actually works here: some systems install it but block unprivileged user namespaces. */
+// Run it once: some systems install bwrap but block unprivileged user namespaces.
 export function probeBwrap(bwrap) {
   if (!fs.existsSync(bwrap)) return { ok: false, reason: `${bwrap} not found` };
   const r = spawnSync(bwrap, ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--unshare-pid", "true"], { encoding: "utf8", timeout: 10_000 });
@@ -42,7 +30,6 @@ export function probeBwrap(bwrap) {
   return { ok: false, reason: `${bwrap} failed: ${(r.stderr || r.error?.message || `exit ${r.status}`).trim().split("\n")[0]}` };
 }
 
-/** Whether Landlock works here, through landlock.py (Linux 5.13+ with Landlock enabled, and python3). */
 export function probeLandlock(python) {
   if (process.env.SBX_LANDLOCK === "off") return { ok: false, reason: "disabled (SBX_LANDLOCK=off)" };
   const r = spawnSync(python, [path.join(HERE, "landlock.py"), "--probe"], { encoding: "utf8", timeout: 10_000 });
@@ -95,7 +82,6 @@ function activateForRun(ctx, run) {
   });
 }
 
-// On Linux bubblewrap, else Landlock; Seatbelt on macOS. Each only if it actually runs here.
 function pickBackend() {
   if (process.platform === "linux") {
     const bwrap = process.env.SBX_BWRAP || "/usr/bin/bwrap";
