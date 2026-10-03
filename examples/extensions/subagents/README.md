@@ -52,10 +52,12 @@ Add `background: true` to `spawn_agent` or `run_workflow` and the call returns a
 
 | Agent | Use it for | Edits files |
 |---|---|---|
-| `scout` | Mapping the relevant code before planning | no |
-| `reviewer` | Reviewing a change for bugs, tests, complexity | no |
+| `explore` | Finding where things are in files, folders, documents or data (`scout` still works) | no |
+| `plan` | Turning a goal into concrete steps, risks and open questions | no |
+| `research` | Answering a question from the web and local files, with sources | no |
+| `reviewer` | Reviewing a result (code, a document, an analysis) for errors and gaps | no |
 | `oracle` | A skeptical second opinion on a plan (sees the parent conversation) | no |
-| `worker` | Implementing a well-specified change and validating it | yes |
+| `worker` | Carrying out a well-specified task and checking the result | yes |
 | `delegate` | General delegation that sees the parent conversation | yes |
 
 `/agents` lists every agent found and where it came from.
@@ -91,10 +93,29 @@ You are a security reviewer. ...
 Agents load from these directories; a later one overrides an earlier one with the same name:
 
 1. this extension's `agents/`
-2. `~/.agent-sh/agents/`
-3. `<cwd>/.agent-sh/agents/` (project agents)
+2. agents other extensions register (below)
+3. `~/.agent-sh/agents/`
+4. `<cwd>/.agent-sh/agents/` (project agents)
 
 Files are re-read on every call, so edits take effect immediately.
+
+### From another extension
+
+An extension adds agents and workflows by advising two handlers; it works whichever extension loads first, and
+the additions go away when that extension unloads:
+
+```ts
+import type { AgentRegistration, WorkflowRegistration } from "agent-sh-subagents";
+
+ctx.advise("subagents:agents", (next) => [...next(),
+  { name: "translator", description: "Translates a document, keeping its formatting", prompt: "You are ...", tools: ["read_file", "write_file"] },
+  path.join(dir, "agents", "glossary.md"),  // or an agent file
+]);
+ctx.advise("subagents:workflows", (next) => [...next(), { name: "translate-all", file: path.join(dir, "translate-all.ts") }]);
+```
+
+A workflow's description defaults to its file's `export const description`. Your and the project's files still
+override registered ones of the same name.
 
 ## Workflows
 
@@ -126,7 +147,7 @@ export default async ({ run, map, args }) => {
 
 Project workflows are code from the repo, so each one runs only after you review it and run `/workflow trust <name>`; editing the file requires trusting it again. Workflows in `~/.agent-sh/workflows/` are trusted.
 
-Full guide, including design patterns for workflows you can trust (adversarial verification, dedupe, loop until nothing new): [WORKFLOWS.md](WORKFLOWS.md). Bundled examples: [`review-loop`](workflows/review-loop.ts) and [`verified-review`](workflows/verified-review.ts). The extension gives the agent two skills: `writing-workflows` (that guide) and `using-subagents` ([USING.md](USING.md): choosing between `spawn_agent`, parallel tasks, background runs and workflows, and running, resuming and debugging workflow runs).
+Full guide, including design patterns for workflows you can trust (adversarial verification, dedupe, loop until nothing new): [WORKFLOWS.md](WORKFLOWS.md). Bundled: [`review-loop`](workflows/review-loop.ts) (review from several angles, fix, repeat) and [`research`](workflows/research.ts) (split a question, research the parts in parallel, check the claims, combine with sources). More examples to copy into `~/.agent-sh/workflows/` are in [`examples/workflows/`](../../workflows/). The extension gives the agent two skills: `writing-workflows` (that guide) and `using-subagents` ([USING.md](USING.md): choosing between `spawn_agent`, parallel tasks, background runs and workflows, and running, resuming and debugging workflow runs).
 
 ## Sandbox
 

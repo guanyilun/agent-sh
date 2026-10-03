@@ -31,12 +31,23 @@ Releases before this file are recorded in the git tags and GitHub releases.
   text, and declared arguments (`export const args`) parsed from `--flags`.
   `agent-sh run <file> --help` lists them; `--dry-run` walks the script with
   placeholder answers and no model calls. Older scripts keep working.
-- `examples/campaigns/campaign.ts`: a run-file template.
+- `examples/workflows/campaign.ts`: a run-file template.
+- Subagents for more than code: `explore` (read-only exploration of files,
+  documents or data), `plan` and `research` (answers from the web and local
+  files, with sources), plus a bundled `research` workflow (split the question,
+  research the parts in parallel, check the claims, combine with sources).
+  `review-loop` takes `--focus` angles.
+- Other extensions can add agents and workflows by advising the
+  `subagents:agents` and `subagents:workflows` handlers, whichever loads first
+  (types `AgentRegistration` and `WorkflowRegistration`).
 
 ### Changed
 
 - Node.js 22 is now the minimum (`engines: >=22`, for agent-sh and ashi).
   Node 18 and 20 have reached end of life. CI tests 22 and 24; publishing uses 22.
+- The `scout` agent is now `explore` (the old name still works); `reviewer`
+  and `worker` are no longer code-only. `verified-review` moved from the bundled
+  workflows to `examples/workflows/`.
 
 ### Fixed
 

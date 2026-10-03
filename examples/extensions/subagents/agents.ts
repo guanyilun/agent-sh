@@ -49,6 +49,44 @@ export function parseAgent(content: string, source: string): AgentDef | null {
   };
 }
 
+/** What other extensions register through the "subagents:agents" handler: a definition, or an agent .md path. */
+export interface AgentRegistration {
+  name: string;
+  description: string;
+  /** The subagent's system prompt. */
+  prompt: string;
+  tools?: string[];
+  model?: string;
+  thinking?: string;
+  maxIterations?: number;
+  inheritContext?: boolean;
+}
+
+// Old names keep working when an agent is renamed.
+export const AGENT_ALIASES: Record<string, string> = { scout: "explore" };
+
+export function findAgent(agents: Map<string, AgentDef>, name: string): AgentDef | undefined {
+  return agents.get(name) ?? (AGENT_ALIASES[name] ? agents.get(AGENT_ALIASES[name]!) : undefined);
+}
+
+export function fromRegistration(r: AgentRegistration | string, source = "registered by an extension"): AgentDef | null {
+  if (typeof r === "string") {
+    try { return parseAgent(fs.readFileSync(r, "utf8"), r); } catch { return null; }
+  }
+  if (!r?.name || !r.prompt) return null;
+  return {
+    name: r.name,
+    description: r.description ?? "",
+    systemPrompt: r.prompt,
+    tools: r.tools?.map(t => TOOL_ALIASES[t] ?? t),
+    model: r.model,
+    thinking: r.thinking,
+    maxIterations: r.maxIterations,
+    inheritContext: r.inheritContext === true,
+    source,
+  };
+}
+
 export function discoverAgents(dirs: string[]): Map<string, AgentDef> {
   const agents = new Map<string, AgentDef>();
   for (const dir of dirs) {

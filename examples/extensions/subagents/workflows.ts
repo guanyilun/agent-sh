@@ -9,7 +9,14 @@ import { ArgsError, helpText, parseArgs, tokenize, type ArgsSpec } from "./args.
 
 const EXTS = [".ts", ".mts", ".js", ".mjs"];
 
-export type WorkflowScope = "bundled" | "user" | "project";
+export type WorkflowScope = "bundled" | "extension" | "user" | "project";
+
+/** What other extensions register through the "subagents:workflows" handler. */
+export interface WorkflowRegistration {
+  name: string;
+  file: string;
+  description?: string;
+}
 
 export interface WorkflowDef {
   name: string;
@@ -33,6 +40,10 @@ export function discoverWorkflows(dirs: { dir: string; scope: WorkflowScope }[])
     }
   }
   return found;
+}
+
+export function describeFile(file: string): string {
+  try { return staticDescription(fs.readFileSync(file, "utf8")); } catch { return ""; }
 }
 
 // Read without importing: listing must never run an untrusted file.

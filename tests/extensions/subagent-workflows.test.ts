@@ -1,12 +1,14 @@
 /** subagents workflows: schema results, loops, trust, run cap, /workflow hand-off. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { normalizeSchema, parseJsonReply, validate } from "../../examples/extensions/subagents/schema.js";
 import { body, lastUser, setup } from "./subagents-harness.js";
 
 const text = (content: string) => () => ({ content });
+const EXAMPLE = (name: string) => fileURLToPath(new URL(`../../examples/workflows/${name}`, import.meta.url));
 const projectWf = (s: ReturnType<typeof setup>, name: string, body: string) =>
   writeFileSync(join(s.project, ".agent-sh", "workflows", name), body);
 const userWf = (s: ReturnType<typeof setup>, name: string, body: string) =>
@@ -29,7 +31,7 @@ test("listing reads descriptions without running files and flags untrusted proje
   try {
     projectWf(s, "boom.ts", 'export const description = "Explodes on import";\nthrow new Error("ran at list time");\n');
     const d = s.description("run_workflow");
-    assert.match(d, /- review-loop: Review in parallel/);
+    assert.match(d, /- review-loop: Review a result from several angles in parallel/);
     assert.match(d, /- boom: Explodes on import \[untrusted: the user must run \/workflow trust boom\]/);
   } finally { s.cleanup(); }
 });
@@ -55,7 +57,7 @@ test("a project workflow runs only after /workflow trust, and editing it revokes
 test("review-loop fixes and re-reviews until the typed verdict is clean", async () => {
   let extraction = 0;
   const s = setup({
-    reply: (o) => ({ content: o.messages[0]!.content.includes("implementation subagent") ? "fixed" : `review of: ${lastUser(o)}` }),
+    reply: (o) => ({ content: o.messages[0]!.content.includes("You carry out the task described") ? "fixed" : `review of: ${lastUser(o)}` }),
     // Round 1: both reviewers report issues; round 2: both clean.
     invoke: () => JSON.stringify(++extraction <= 2
       ? { verdict: "issues", findings: [`finding ${extraction}`] }
@@ -65,7 +67,7 @@ test("review-loop fixes and re-reviews until the typed verdict is clean", async 
     let progress = "";
     const r = await s.exec("run_workflow", { name: "review-loop", args: "HEAD~1" }, (c) => { progress += c; });
     assert.equal(body(r), "Clean after 2 round(s).");
-    const workerTask = s.calls.find(c => c.messages[0]!.content.includes("implementation subagent"));
+    const workerTask = s.calls.find(c => c.messages[0]!.content.includes("You carry out the task described"));
     assert.match(lastUser(workerTask!), /finding 1[\s\S]*finding 2/);
     assert.match(progress, /· round 1: 2 finding\(s\), fixing/);
     assert.match(progress, /\[3 worker\] done/);
@@ -173,6 +175,7 @@ test("verified-review merges repeats across lines but keeps distinct findings, t
     return submit({ refuted, reason: "checked" });
   } });
   try {
+    copyFileSync(EXAMPLE("verified-review.ts"), join(s.root, "workflows", "verified-review.ts"));
     let progress = "";
     const r = await s.exec("run_workflow", { name: "verified-review", args: "HEAD" }, (c) => { progress += c; });
     assert.equal(body(r), [
@@ -201,5 +204,25 @@ test("an edited .ts workflow runs its new code in the same session; its temporar
 
     writeFileSync(join(dir, ".ver.0123456789ab.abcdef.ts"), 'export const description = "leftover";\n');
     assert.doesNotMatch(s.description("run_workflow"), /leftover/);
+  } finally { s.cleanup(); }
+});
+
+test("research splits the question, researches the parts in parallel, checks the claims, and combines", async () => {
+  const submit = (args: unknown) => ({ tool_calls: [{ index: 0, id: "s", function: { name: "submit_result", arguments: JSON.stringify(args) } }] });
+  const s = setup({ reply: (o) => {
+    const task = lastUser(o);
+    if (task.includes("independent sub-questions")) return submit({ parts: ["part A", "part B", "part C"] });
+    if (task === "part B") throw new Error("search down");
+    if (task.startsWith("part ")) return { content: `notes on ${task} [source]` };
+    if (task.includes("claims their sources don't support")) return submit({ problems: ["A overstates"] });
+    assert.match(task, /notes on part A[\s\S]*notes on part C/);
+    assert.match(task, /A overstates/);
+    assert.match(task, /Not researched \(failed\): part B/);
+    return { content: "the answer" };
+  } });
+  try {
+    const r = await s.exec("run_workflow", { name: "research", args: '"why is the sky blue" --parts 3' });
+    assert.equal(body(r), "the answer");
+    assert.match(lastUser(s.calls[0]!), /at most 3 independent sub-questions[\s\S]*why is the sky blue/);
   } finally { s.cleanup(); }
 });

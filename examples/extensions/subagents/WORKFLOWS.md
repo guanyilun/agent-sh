@@ -97,14 +97,14 @@ Every run gets an id and a folder in `~/.agent-sh/workflow-runs/<id>/`:
 
 Resuming reruns the script from the top. Each `run()` call, numbered in the order the script makes it, reuses the old result if its inputs (agent, task, tools, returns) are unchanged. The first call whose inputs changed, and every call after it, runs live. Runs that failed or never finished run again. For this to work the script must make the same calls in the same order given the same results, so don't let `Date.now()`, `Math.random()` or other outside state decide what to run. Side effects the script performs itself (files, commands) are not replayed.
 
-Agents are the named ones from `/agents` (`scout`, `reviewer`, `oracle`, `worker`, `delegate`, plus user/project ones). Subagents can't start subagents or workflows.
+Agents are the named ones from `/agents` (`explore`, `plan`, `research`, `reviewer`, `oracle`, `worker`, `delegate`, plus ones from other extensions, the user and the project). Subagents can't start subagents or workflows.
 
 ## Rules of thumb
 
 - Put loop exits on `returns` data, never on regexes over prose.
 - Always cap loops (`for (let round = 1; round <= 3; round++)`); separately, a workflow may start at most `subagents.maxRunsPerWorkflow` subagents (default 50).
 - Write self-contained tasks: subagents don't see the main conversation (except agents with `inheritContext: true`).
-- Pass results forward explicitly, e.g. include a scout's output in the next task.
+- Pass results forward explicitly, e.g. include an explore run's output in the next task.
 - Only one writing agent (`worker`) at a time on the same files.
 
 ## Patterns
@@ -166,7 +166,12 @@ for (let dry = 0, round = 1; dry < 2 && round <= 5; round++) {
 
 ## Examples
 
-Next to this file, in `workflows/`:
+Bundled, next to this file in `workflows/`:
 
-- `review-loop.ts`: parallel reviewers with a typed verdict, a worker fixing the findings, repeated until clean or three rounds.
+- `review-loop.ts`: one reviewer per `--focus` angle with a typed verdict, a worker fixing the findings, repeated until clean or `--rounds`.
+- `research.ts`: a planner splits the question, research agents answer the parts in parallel, a reviewer checks the claims against their sources, and a final run combines the answer with sources and names what failed.
+
+In the repo's `examples/workflows/` (copy into `~/.agent-sh/workflows/` to use):
+
+- `campaign.ts`: a run-file template with `config`, declared args and a sandbox.
 - `verified-review.ts`: three finders looking different ways, grouped by file with a merge run for files with several claims, then three skeptics per finding attacking it from different angles; only findings most skeptics fail to refute are reported, and merges and caps are logged.

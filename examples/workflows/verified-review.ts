@@ -1,4 +1,4 @@
-import type { Workflow } from "../workflow-types.js";
+import type { Workflow } from "agent-sh-subagents";
 
 export const description = "Find issues from three angles, dedupe, and keep only findings that survive skeptics trying to refute them";
 
