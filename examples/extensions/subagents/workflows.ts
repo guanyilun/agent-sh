@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -137,8 +138,16 @@ export async function runWorkflow(
     if (typeof fn !== "function") throw new Error(`${def.file} must export a default function`);
     const apiArgs = workflowArgs(def, mod, args);
 
-    const replay = new Map((opts.replay ?? []).map(e => [e.seq, e]));
-    let diverged = false;
+    // Each call gets an id from where it sits: top-level calls count up, and every map/pipeline item numbers its
+    // own calls, so ids don't depend on which item finishes first. Journals from before ids replay by call order.
+    const entries = opts.replay ?? [];
+    const legacy = entries.length > 0 && entries.every(e => e.id === undefined);
+    const replay = new Map(entries.map(e => [legacy ? String(e.seq) : e.id, e]));
+    const scopes = new AsyncLocalStorage<Scope>();
+    const root: Scope = { path: "", next: 0, diverged: false };
+    const scope = () => scopes.getStore() ?? root;
+    const inItem = <R>(k: number, i: number, fn: () => R): R =>
+      scopes.run({ path: `${scope().path}${k}.${i}/`, next: 0, diverged: false, parent: scope() }, fn);
     let reused = 0;
     let runs = 0;
     const total = opts.budgetTokens && opts.budgetTokens > 0 ? opts.budgetTokens : null;
@@ -148,21 +157,25 @@ export async function runWorkflow(
     // seq is taken synchronously on call, so the same script calls run() in the same order on replay.
     const run = async (a: RunSpec | string | null, task?: string, options?: RunOptions): Promise<any> => {
       const seq = ++runs;
+      const at = scope();
+      const id = `${at.path}${++at.next}`;
       const spec = toSpec(a, task, options);
       if (!spec.task) throw new Error("run() needs a task");
       if (seq > deps.maxRuns) throw new WorkflowStop(`workflow exceeded ${deps.maxRuns} subagent runs (subagents.maxRunsPerWorkflow)`);
-      const label = `[${seq} ${spec.agent ?? "ad-hoc"}]`;
+      if (spec.system && spec.agent) throw new Error(`run(): "system" is for ad-hoc runs; ${spec.agent} has its own prompt`);
+      const label = `[${seq} ${spec.label ?? spec.agent ?? "ad-hoc"}]`;
       const key = specKey(spec);
 
-      const cached = diverged ? undefined : replay.get(seq);
+      const cached = isDiverged(at) ? undefined : replay.get(legacy ? String(seq) : id);
       if (cached && cached.key === key) {
         reused++;
-        record.append(cached);
+        record.append({ ...cached, seq, id });
         progress(`${label} reused from ${record.record.resumedFrom}`);
         return cached.output;
       }
       if (cached) {
-        diverged = true;
+        // Later calls in this branch may depend on this one, so they run live too.
+        (legacy ? root : at).diverged = true;
         progress(`· replay stopped at run ${seq}: its inputs changed; ${reused} run(s) reused`);
       }
 
@@ -192,7 +205,7 @@ export async function runWorkflow(
         const output = !spec.schema ? result.text
           : result.value !== undefined ? result.value
           : await extract(result.text, normalizeSchema(spec.schema), deps.complete);
-        record.append({ seq, key, agent: spec.agent, output, tokens });
+        record.append({ seq, id, key, agent: spec.agent, output, tokens });
         write({ type: "end", ok: true, tokens });
         return output;
       } catch (err) {
@@ -212,16 +225,35 @@ export async function runWorkflow(
         if (err instanceof WorkflowStop) throw err;
         return null;
       }))),
-      // fn is called synchronously for each item in order, so run() numbering stays stable for resume.
-      map: (items, fn) => Promise.all(items.map(async (item, i) => {
-        try {
-          return await fn(item, i);
-        } catch (err) {
-          if (err instanceof WorkflowStop) throw err;
-          progress(`· map item ${i + 1} failed: ${err instanceof Error ? err.message : String(err)}`);
-          return null;
-        }
-      })),
+      map: (items, fn) => {
+        const k = ++scope().next;
+        return Promise.all(items.map((item, i) => inItem(k, i, async () => {
+          try {
+            return await fn(item, i);
+          } catch (err) {
+            if (err instanceof WorkflowStop) throw err;
+            progress(`· map item ${i + 1} failed: ${err instanceof Error ? err.message : String(err)}`);
+            return null;
+          }
+        })));
+      },
+      // Each item goes through the stages on its own: no waiting for the other items between stages.
+      pipeline: (items: unknown[], ...stages: ((prev: any, item: any, index: number) => unknown)[]) => {
+        const k = ++scope().next;
+        return Promise.all(items.map((item, i) => inItem(k, i, async () => {
+          let value: unknown = item;
+          for (const [n, stage] of stages.entries()) {
+            try {
+              value = await stage(value, item, i);
+            } catch (err) {
+              if (err instanceof WorkflowStop) throw err;
+              progress(`· pipeline item ${i + 1} failed at stage ${n + 1}: ${err instanceof Error ? err.message : String(err)}`);
+              return null;
+            }
+          }
+          return value;
+        })));
+      },
       args: apiArgs,
       log: (message) => progress(`· ${message}`),
       signal,
@@ -286,8 +318,13 @@ export function dedent(text: string): string {
   return indent ? lines.map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join("\n") : lines.join("\n");
 }
 
+interface Scope { path: string; next: number; diverged: boolean; parent?: Scope }
+const isDiverged = (s: Scope | undefined): boolean => !!s && (s.diverged || isDiverged(s.parent));
+
 function specKey(spec: RunSpec): string {
   const inputs = [spec.agent ?? null, spec.task, spec.tools ?? null, spec.schema ?? null];
+  // Added later; only included when set, so older journals still match.
+  for (const k of ["system", "model", "thinking"] as const) if (spec[k] !== undefined) inputs.push(`${k}:${spec[k]}`);
   return createHash("sha256").update(JSON.stringify(inputs)).digest("hex").slice(0, 16);
 }
 

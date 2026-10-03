@@ -34,7 +34,7 @@ const BACKGROUND_PARAM = {
 };
 const PARENT_CONTEXT_CHARS = 12_000;
 
-interface TaskSpec { agent?: string; task: string; tools?: string[] }
+interface TaskSpec { agent?: string; task: string; tools?: string[]; system?: string; model?: string; thinking?: string }
 
 interface RunFileConfig {
   base: string;
@@ -592,7 +592,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
 
     const parentContext = def?.inheritContext ? parentTranscript() : "";
     const systemPrompt = [
-      def?.systemPrompt || "You are a focused subagent. Complete the task and return a clear, concise result.",
+      def?.systemPrompt || spec.system || "You are a focused subagent. Complete the task and return a clear, concise result.",
       `Working directory: ${cwd}`,
       extra.systemNote,
       parentContext && `[Parent conversation, most recent last]\n${parentContext}`,
@@ -609,10 +609,10 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         tools,
         systemPrompt,
         task: spec.task,
-        model: def?.model,
+        model: spec.model ?? def?.model,
         signal,
         maxIterations: def?.maxIterations ?? settings.maxIterations,
-        reasoningParams: reasoningParams(def?.thinking, def?.model ?? llmClient.model),
+        reasoningParams: reasoningParams(spec.thinking ?? def?.thinking, spec.model ?? def?.model ?? llmClient.model),
         outMeta: meta,
         onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens) : undefined,
         onMessage: extra.onMessage as SubagentOptions["onMessage"],

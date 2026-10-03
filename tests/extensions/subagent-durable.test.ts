@@ -212,3 +212,94 @@ test("a quiet workflow prints how many subagents are working and queued", async 
   assert.ok(lines.includes("[1 ad-hoc] started"));
   assert.ok(lines.some((l) => /^· 1 working, 2 queued, 0 finished; 0 min, 0 tokens$/.test(l)), lines.join("\n"));
 });
+
+test("pipeline sends each item to its next stage without waiting for the others", async () => {
+  const order: string[] = [];
+  const s = setup({ reply: async (o) => {
+    const task = lastUser(o);
+    // Item "slow" takes longer in stage 1, so "fast" reaches stage 2 first.
+    await new Promise((r) => setTimeout(r, task === "read slow" ? 80 : 5));
+    order.push(task);
+    return { content: `${task} ok` };
+  } });
+  try {
+    wf(s, "p.ts", [
+      'export default async ({ run, pipeline }) => pipeline(["slow", "fast"],',
+      '  (item) => run({ task: "read " + item, tools: [] }),',
+      '  (prev, item) => run({ task: "check " + item, tools: [] }));',
+    ].join("\n"));
+    const r = await s.exec("run_workflow", { name: "p" });
+    assert.equal(r.isError, false, String(r.content));
+    assert.ok(order.indexOf("check fast") < order.indexOf("read slow"), order.join(", "));
+    assert.match(body(r), /check slow ok[\s\S]*check fast ok/);
+  } finally { s.cleanup(); }
+});
+
+test("resume matches calls by where they sit, not by which item finished first", async () => {
+  let failB = true;
+  let slow = "a";
+  const s = setup({ reply: async (o) => {
+    const task = lastUser(o);
+    await new Promise((r) => setTimeout(r, task.endsWith(slow) ? 60 : 5));
+    if (task === "two b" && failB) throw new Error("boom");
+    return { content: `did ${task}` };
+  } });
+  try {
+    wf(s, "m.ts", [
+      'export default async ({ run, map }) => map(["a", "b"], async (x) => {',
+      '  await run({ task: "one " + x, tools: [] });',
+      '  return run({ task: "two " + x, tools: [] });',
+      '});',
+    ].join("\n"));
+    const first = await s.exec("run_workflow", { name: "m" });
+    const calls = s.calls.length;
+    // Now "b" is the slow one, so its calls happen in a different global order.
+    failB = false; slow = "b";
+    let progress = "";
+    const second = await s.exec("run_workflow", { resume: runId(first) }, (c) => { progress += c; });
+    assert.match(body(second), /did two a[\s\S]*did two b/);
+    assert.equal(s.calls.length - calls, 1, "only the failed call runs again");
+    assert.equal((progress.match(/reused from/g) ?? []).length, 3);
+  } finally { s.cleanup(); }
+});
+
+test("run() takes an inline system prompt, model, thinking and label; system with a named agent is refused", async () => {
+  const s = setup({ reply: () => ({ content: "ok" }) });
+  try {
+    wf(s, "inline.ts", [
+      'const proofreader = { system: "You proofread.", tools: [], model: "m-1", label: "proofreader" };',
+      'export default async ({ run }) => run({ ...proofreader, task: "the text" });',
+    ].join("\n"));
+    let progress = "";
+    const r = await s.exec("run_workflow", { name: "inline" }, (c) => { progress += c; });
+    assert.equal(body(r), "ok");
+    assert.match(s.calls[0]!.messages[0]!.content, /^You proofread\./);
+    assert.equal((s.calls[0] as { model?: string }).model, "m-1");
+    assert.deepEqual(s.calls[0]!.tools ?? [], []);
+    assert.match(progress, /\[1 proofreader\] done/);
+
+    wf(s, "bad.ts", 'export default async ({ run }) => run("reviewer", "t", { system: "x" });\n');
+    const bad = await s.exec("run_workflow", { name: "bad" });
+    assert.match(String(bad.content), /"system" is for ad-hoc runs; reviewer has its own prompt/);
+  } finally { s.cleanup(); }
+});
+
+test("a journal from before call ids still resumes by call order", async () => {
+  let failC = true;
+  const s = setup({ reply: (o) => {
+    if (lastUser(o) === "C" && failC) throw new Error("boom");
+    return { content: `did ${lastUser(o)}` };
+  } });
+  try {
+    wf(s, "old.ts", 'export default async ({ run }) => [await run({ task: "A", tools: [] }), await run({ task: "B", tools: [] }), await run({ task: "C", tools: [] })].join(", ");\n');
+    const first = await s.exec("run_workflow", { name: "old" });
+    const journal = join(s.root, "workflow-runs", runId(first), "journal.jsonl");
+    writeFileSync(journal, readFileSync(journal, "utf8").split("\n").filter(Boolean)
+      .map((l) => { const e = JSON.parse(l); delete e.id; return JSON.stringify(e); }).join("\n") + "\n");
+    failC = false;
+    const before = s.calls.length;
+    const second = await s.exec("run_workflow", { resume: runId(first) });
+    assert.equal(body(second), "did A, did B, did C");
+    assert.equal(s.calls.length - before, 1);
+  } finally { s.cleanup(); }
+});

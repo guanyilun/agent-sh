@@ -51,6 +51,12 @@ Releases before this file are recorded in the git tags and GitHub releases.
   running run touches its `run.json` every 30 s, so other processes (or
   machines sharing the disk) can tell running from interrupted.
 - Agent files accept `tools: none`.
+- Workflow scripts: `pipeline(items, ...stages)` moves each item through the
+  stages without waiting for the others, and `run()` takes `model`, `thinking`,
+  `label`, and (for ad-hoc runs) `system`, so agents can be defined inline.
+  Resume now identifies calls by where they sit in the script, so `map` items
+  with several steps, and `pipeline`, resume correctly whatever order items
+  finish in. Older journals still resume by call order.
 
 ### Changed
 
