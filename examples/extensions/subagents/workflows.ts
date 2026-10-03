@@ -81,6 +81,8 @@ export interface TaskControl {
   progress(line: string): void;
   onUsage(totalTokens: number): void;
   onMessage(message: Record<string, unknown>): void;
+  /** Called once the subagent has a concurrency slot and starts working. */
+  onStart?(): void;
 }
 
 export interface TaskResult {
@@ -101,6 +103,8 @@ export interface WorkflowRunOpts {
   budgetTokens?: number;
   /** Already imported (e.g. by `agent-sh run`); skips loading the file again. */
   module?: Record<string, unknown>;
+  /** After this long without a progress line, print how many subagents are working and queued. */
+  quietMs?: number;
 }
 
 /** Ends the whole workflow; all() rethrows it instead of returning null. */
@@ -116,6 +120,17 @@ export async function runWorkflow(
   opts: WorkflowRunOpts,
 ): Promise<unknown> {
   const { run: record } = opts;
+  // Progress lines, and a status line when nothing has been said for a while.
+  const counts = { queued: 0, working: 0, done: 0 };
+  const started = Date.now();
+  let lastLine = started;
+  const say = progress;
+  progress = (line) => { lastLine = Date.now(); say(line); };
+  const quiet = opts.quietMs && setInterval(() => {
+    if (Date.now() - lastLine < opts.quietMs! || !counts.queued && !counts.working) return;
+    progress(`· ${counts.working} working, ${counts.queued} queued, ${counts.done} finished; ${Math.round((Date.now() - started) / 60_000)} min, ${record.record.tokens} tokens`);
+  }, Math.min(opts.quietMs, 10_000));
+  if (quiet) quiet.unref();
   try {
     const mod = opts.module ?? await importFresh(def);
     const fn = mod.default ?? mod.run;
@@ -157,9 +172,17 @@ export async function runWorkflow(
       const write = record.transcript(seq);
       write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema });
       let tokens = 0;
+      let state: "queued" | "working" = "queued";
+      counts.queued++;
       try {
         const result = await deps.runTask(spec, {
           signal,
+          onStart: () => {
+            if (state === "working") return;
+            state = "working"; counts.queued--; counts.working++;
+            write({ type: "running" });
+            progress(`${label} started`);
+          },
           progress: (line) => progress(`${label} ${line}`),
           onUsage: (t) => { tokens += t; record.record.tokens += t; },
           onMessage: (m) => write({ type: "message", ...m }),
@@ -177,6 +200,9 @@ export async function runWorkflow(
         write({ type: "end", ok: false, error: message, tokens });
         progress(`${label} failed: ${message}`);
         throw signal.aborted ? new WorkflowStop("cancelled") : err;
+      } finally {
+        counts[state]--;
+        counts.done++;
       }
     };
 
@@ -208,6 +234,8 @@ export async function runWorkflow(
     const message = err instanceof Error ? err.message : String(err);
     record.finish(signal.aborted ? "cancelled" : "failed", message);
     throw err;
+  } finally {
+    if (quiet) clearInterval(quiet);
   }
 }
 

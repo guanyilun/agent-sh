@@ -63,6 +63,7 @@ interface RunExtras {
   shouldStop?: () => boolean;
   onUsage?: (totalTokens: number) => void;
   onMessage?: (message: Record<string, unknown>) => void;
+  onStart?: () => void;
 }
 
 export default function activate(ctx: ExtensionContext & AgentContext): void {
@@ -310,7 +311,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     path.join(extDir, "USING.md"),
   );
 
-  ctx.registerCommand("workflow", "Workflows: /workflow [<name> [args] | trust <name> | runs | resume <run id>]", (input) => {
+  ctx.registerCommand("workflow", "Workflows: /workflow [<name> [args] | trust <name> | runs | status [run id] | resume <run id>]", (input) => {
     const [first = "", ...rest] = input.trim().split(/\s+/).filter(Boolean);
     const workflows = loadWorkflows();
 
@@ -330,6 +331,11 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
             `${r.resumedFrom ? `  (resumed from ${r.resumedFrom})` : ""}${r.error ? `\n    ${r.error}` : ""}`).join("\n")
         : "No workflow runs yet.";
       bus.emit("ui:info", { message });
+      return;
+    }
+
+    if (first === "status") {
+      bus.emit("ui:info", { message: runs.status(rest[0]) });
       return;
     }
 
@@ -451,8 +457,11 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     return executeWorkflow(wf, args, {
       resumeId, budgetTokens: settings.workflowTokenBudget || undefined, signal: req.signal, progress: req.progress,
       module: req.module, dryRun: req.dryRun, resumeHint: (id) => `agent-sh run ${req.file} --resume ${id}`,
+      quietMs: 60_000,
     });
   });
+
+  ctx.define("workflow:status", (id?: string) => runs.status(id || undefined));
 
   async function executeWorkflow(wf: WorkflowDef, wfArgs: string | string[], opts: {
     resumeId?: string;
@@ -462,6 +471,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     module?: Record<string, unknown>;
     dryRun?: boolean;
     resumeHint: (runId: string) => string;
+    quietMs?: number;
   }): Promise<JobOutcome> {
     const run = (opts.dryRun ? dryRuns : runs).create(wf.name, wf.file, [wfArgs].flat().join(" "), opts.resumeId);
     const footer = `(workflow run ${run.id}; log: ${run.dir})`;
@@ -471,7 +481,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         complete: (messages) => ctx.call("llm:invoke", messages, { maxTokens: 4096 }) as Promise<string>,
         maxRuns: settings.maxRunsPerWorkflow,
       }, opts.signal, opts.progress, {
-        run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, module: opts.module,
+        run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, module: opts.module, quietMs: opts.quietMs,
       });
       return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
     } catch (err) {
@@ -593,6 +603,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     let text: string;
     try {
       if (signal?.aborted) throw new Error("cancelled");
+      extra.onStart?.();
       text = await runSubagent({
         llmClient,
         tools,

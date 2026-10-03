@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { fakeLlm, runCli, SUBAGENTS, toolCall, type ChatRequest } from "./fake-llm.js";
+import { parseRunArgs } from "../../src/cli/run.js";
 
 const TEMPLATE = fileURLToPath(new URL("../../examples/workflows/campaign.ts", import.meta.url));
 // Simulates a machine with no usable OS sandbox (no bubblewrap, no sandbox-exec).
@@ -151,6 +152,13 @@ test("--resume continues a failed run, reusing what finished", async () => {
     assert.match(second.stderr, new RegExp(`\\[1 ad-hoc\\] reused from ${id}`));
     assert.equal(llm.requests.length - before, 1);
     assert.ok(readdirSync(join(home, ".agent-sh", "workflow-runs")).length === 2);
+
+    // --status shows the newest run, or one by id, with each subagent's state.
+    const newest = second.stdout.match(/\(workflow run (\S+);/)![1]!;
+    const status = await runCli(["run", "--status", "-e", SUBAGENTS], llm.url, { home, keepHome: true });
+    assert.match(status.stdout, new RegExp(`^${newest}  campaign  done, \\d+s, \\d+ tokens\n  # 2  done +\\d+s  second`, "m"));
+    const old = await runCli(["run", "--status", id, "-e", SUBAGENTS], llm.url, { home, keepHome: true });
+    assert.match(old.stdout, /campaign  failed[\s\S]*# 1  done[\s\S]*# 2  failed/);
     rmSync(home, { recursive: true, force: true });
   } finally { llm.server.close(); }
 });
@@ -320,4 +328,12 @@ test("on Linux without bubblewrap, Landlock stops what the guard can't", { skip:
     llm.server.close();
     rmSync(ws, { recursive: true, force: true });
   }
+});
+
+test("run arguments: --status takes an optional run id and needs no file", () => {
+  assert.deepEqual(parseRunArgs(["--status"])?.status, "");
+  assert.deepEqual(parseRunArgs(["--status", "20261003-002912-9397"])?.status, "20261003-002912-9397");
+  assert.equal(parseRunArgs(["--status", "f.ts"])?.file, "f.ts");
+  assert.equal(parseRunArgs(["f.ts"])?.status, undefined);
+  assert.equal(parseRunArgs([]), null);
 });

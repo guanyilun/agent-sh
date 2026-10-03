@@ -38,8 +38,9 @@ export function parseAgent(content: string, source: string): AgentDef | null {
     name,
     description: meta.description ?? "",
     systemPrompt: match[2]!.trim(),
-    tools: meta.tools
-      ? meta.tools.split(",").map(t => t.trim()).filter(Boolean).map(t => TOOL_ALIASES[t] ?? t)
+    // Omitted: all tools; "none": no tools (everything it needs is in the task).
+    tools: meta.tools === "none" ? []
+      : meta.tools ? meta.tools.split(",").map(t => t.trim()).filter(Boolean).map(t => TOOL_ALIASES[t] ?? t)
       : undefined,
     model: meta.model || undefined,
     thinking: meta.thinking || undefined,

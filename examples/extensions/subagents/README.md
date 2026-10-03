@@ -84,7 +84,7 @@ You are a security reviewer. ...
 |---|---|
 | `name` | Defaults to the file name |
 | `description` | Shown to the parent agent so it can choose |
-| `tools` | Comma-separated tool names; omit for all tools. pi names (`read`, `write`, `edit`, `find`) are accepted |
+| `tools` | Comma-separated tool names; omit for all tools, `none` for none. pi names (`read`, `write`, `edit`, `find`) are accepted |
 | `model` | Model id; must be served by the active provider |
 | `thinking` | `off`/`low`/`medium`/`high`; ignored if the model doesn't support reasoning effort |
 | `maxIterations` | Tool-loop cap (default from settings) |
@@ -125,6 +125,7 @@ A workflow is a script that coordinates subagents with ordinary code: sequences,
 /workflow                              # list
 /workflow review-loop HEAD~3..HEAD     # the main agent runs it and acts on the result
 /workflow runs                         # recent runs, with ids and status
+/workflow status [id]                  # each subagent of a run: queued, working, done (agent-sh run --status [id] outside the shell)
 /workflow resume <id>                  # continue a failed or interrupted run
 ```
 
