@@ -44,6 +44,13 @@ Releases before this file are recorded in the git tags and GitHub releases.
 - Other extensions can add agents and workflows by advising the
   `subagents:agents` and `subagents:workflows` handlers, whichever loads first
   (types `AgentRegistration` and `WorkflowRegistration`).
+- Watching a workflow run: `agent-sh run` prints when each subagent starts, and
+  a "2 working, 5 queued" line when it has been quiet for a minute.
+  `agent-sh run --status [id]` (and `/workflow status [id]`) shows each
+  subagent of a run as queued, working, done or failed, with how long. A
+  running run touches its `run.json` every 30 s, so other processes (or
+  machines sharing the disk) can tell running from interrupted.
+- Agent files accept `tools: none`.
 
 ### Changed
 

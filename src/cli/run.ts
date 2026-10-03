@@ -17,9 +17,12 @@ export interface RunArgs {
   resume?: string;
   dryRun: boolean;
   help: boolean;
+  /** `--status [id]`: print a run's progress instead of running ("" for the newest run). */
+  status?: string;
 }
 
 const WRAPPED = "AGENT_SH_RUN_WRAPPED";
+const RUN_ID = /^\d{8}-\d{6}-[0-9a-f]{4}$/;
 const CLI_VALUE_FLAGS = new Set(["--model", "--provider", "--api-key", "--base-url", "--backend", "--shell", "-e", "--extensions"]);
 
 /** Splits `run` arguments: the file, agent-sh's options, and the rest (or everything after `--`) for the workflow. */
@@ -30,12 +33,13 @@ export function parseRunArgs(argv: string[]): RunArgs | null {
     if (a === "--") { r.tokens.push(...argv.slice(i + 1)); break; }
     if (a === "--resume") r.resume = argv[++i];
     else if (a === "--dry-run") r.dryRun = true;
+    else if (a === "--status") r.status = RUN_ID.test(argv[i + 1] ?? "") ? argv[++i] : "";
     else if (a === "--help" || a === "-h") r.help = true;
     else if (CLI_VALUE_FLAGS.has(a)) r.cli.push(a, argv[++i] ?? "");
     else if (!r.file) r.file = a;
     else r.tokens.push(a);
   }
-  return r.file ? { ...r, file: r.file } : null;
+  return r.file || r.status !== undefined ? { ...r, file: r.file ?? "" } : null;
 }
 
 export async function runFile(cli: CliConfig, run: RunArgs): Promise<never> {
@@ -43,6 +47,8 @@ export async function runFile(cli: CliConfig, run: RunArgs): Promise<never> {
     if (message) process.stderr.write(`agent-sh run: ${message}\n`);
     process.exit(code);
   };
+
+  if (run.status !== undefined) return printStatus(cli, run.status);
 
   const file = path.resolve(run.file);
   if (!fs.existsSync(file)) exit(1, `no such file: ${run.file}`);
@@ -113,5 +119,20 @@ export async function runFile(cli: CliConfig, run: RunArgs): Promise<never> {
   if (controller.signal.aborted && interrupts) exit(130, "interrupted");
   const reason = controller.signal.aborted ? (controller.signal.reason as Error).message : undefined;
   process.stdout.write(`${result.content}\n`, () => exit(result.isError || reason ? 1 : 0, reason));
+  return new Promise<never>(() => {});
+}
+
+// Status needs no run file: the extension that keeps the runs prints it.
+async function printStatus(cli: CliConfig, id: string): Promise<never> {
+  const core = createCore(cli);
+  core.bus.on("ui:error", ({ message }) => process.stderr.write(`agent-sh: ${message}\n`));
+  const extCtx = core.extensionContext({ quit: () => process.exit(0) });
+  activateAgent(extCtx);
+  await loadAllExtensions(extCtx, cli.extensions);
+  if (!core.handlers.list().includes("workflow:status")) {
+    process.stderr.write("agent-sh run: --status needs the subagents extension.\n");
+    process.exit(2);
+  }
+  process.stdout.write(`${core.handlers.call("workflow:status", id) as string}\n`, () => process.exit(0));
   return new Promise<never>(() => {});
 }

@@ -14,6 +14,8 @@ test("parseAgent reads frontmatter and maps pi tool names", () => {
     maxIterations: 7, inheritContext: true, source: undefined,
   });
   assert.equal(parseAgent("no frontmatter", "/a/y.md"), null);
+  assert.deepEqual(parseAgent("---\ntools: none\n---\nP", "/a/z.md")?.tools, []);
+  assert.equal(parseAgent("---\ndescription: d\n---\nP", "/a/z.md")?.tools, undefined);
 });
 
 test("project agents override bundled ones and are advertised", async () => {

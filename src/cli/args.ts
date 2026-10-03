@@ -17,6 +17,7 @@ Usage: agent-sh [options]
        agent-sh run <file> [--dry-run] [--resume <id>] [args...]
                                           Run a workflow file headless, with the setup it declares in \`config\`
                                           (agent-sh run <file> --help lists the file's own arguments)
+       agent-sh run --status [id]         Show a workflow run's subagents: queued, working, done (newest run if no id)
 
 Provider Profiles:
   --provider <name>   Use a provider from ~/.agent-sh/settings.json

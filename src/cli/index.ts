@@ -34,7 +34,7 @@ async function main(): Promise<void> {
 
   const runArgs = rawArgs[0] === "run" ? parseRunArgs(rawArgs.slice(1)) : undefined;
   if (rawArgs[0] === "run" && !runArgs) {
-    console.error("usage: agent-sh run <file> [--resume <run id>] [options] [--] [args...]");
+    console.error("usage: agent-sh run <file> [--resume <run id>] [options] [--] [args...]\n       agent-sh run --status [run id]");
     process.exit(1);
   }
   const config = parseArgs(runArgs ? runArgs.cli : rawArgs);

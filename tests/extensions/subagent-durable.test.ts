@@ -1,9 +1,11 @@
 /** Durable workflow runs: submit_result, null on failure, budget, resume, transcripts. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RunStore } from "../../examples/extensions/subagents/runs.js";
+import { runWorkflow } from "../../examples/extensions/subagents/workflows.js";
 import { body, lastUser, setup } from "./subagents-harness.js";
 
 type S = ReturnType<typeof setup>;
@@ -126,10 +128,15 @@ test("each run writes a transcript; /workflow runs lists runs and flags interrup
     const r = await s.exec("run_workflow", { name: "one" });
     const id = runId(r);
     const lines = readFileSync(join(s.root, "workflow-runs", id, "agents", "1.jsonl"), "utf8").trim().split("\n").map(l => JSON.parse(l));
-    assert.deepEqual(lines.map(l => l.type === "message" ? `${l.type}:${l.role}` : l.type), ["start", "message:user", "message:assistant", "end"]);
+    assert.deepEqual(lines.map(l => l.type === "message" ? `${l.type}:${l.role}` : l.type), ["start", "running", "message:user", "message:assistant", "end"]);
+    assert.ok(lines.every(l => typeof l.at === "number"));
 
-    // A run another process left marked "running" (e.g. it crashed).
-    const dead = store(s).create("one", "f", "", undefined);
+    // A run another process left marked "running" with no heartbeat since (e.g. it crashed).
+    const dead = { id: "20260101-000000-dead" };
+    const deadDir = join(s.root, "workflow-runs", dead.id);
+    mkdirSync(deadDir, { recursive: true });
+    writeFileSync(join(deadDir, "run.json"), JSON.stringify({ id: dead.id, workflow: "one", file: "f", args: "", status: "running", startedAt: new Date(0).toISOString(), tokens: 0 }));
+    utimesSync(join(deadDir, "run.json"), new Date(0), new Date(0));
     const infos: string[] = [];
     s.bus.on("ui:info", (e) => { infos.push(e.message); });
     await s.command("workflow", "runs");
@@ -156,4 +163,52 @@ test("run.json keeps the token count current before the run finishes", async () 
     release();
     await running;
   } finally { s.cleanup(); }
+});
+
+test("status shows each subagent queued, working or done; a run with a heartbeat counts as running", () => {
+  const root = join(tmpdir(), `runs-${Date.now()}`);
+  const store = new RunStore(root);
+  const run = store.create("wf", "f", "");
+  const t0 = Date.parse(run.record.startedAt);
+  const events: Record<number, Record<string, unknown>[]> = {
+    1: [{ type: "start", task: "first\nmore", at: t0 }, { type: "running", at: t0 + 1000 }, { type: "end", ok: true, at: t0 + 61_000 }],
+    2: [{ type: "start", task: "second", at: t0 }, { type: "running", at: t0 + 2000 }],
+    3: [{ type: "start", task: "third", at: t0 }],
+  };
+  for (const [n, evs] of Object.entries(events)) writeFileSync(join(run.dir, "agents", `${n}.jsonl`), evs.map(e => JSON.stringify(e)).join("\n") + "\n");
+  // Read as another process would: a fresh store, which only has the heartbeat to go on.
+  const text = new RunStore(root).status(undefined, t0 + 122_000);
+  assert.equal(text, [
+    `${run.id}  wf  running, 2m02s, 0 tokens`,
+    "  # 1  done      1m00s  first",
+    "  # 2  working   2m00s  second",
+    "  # 3  queued    2m02s  third",
+  ].join("\n"));
+  run.finish("done");
+  assert.match(new RunStore(root).status(run.id), /wf {2}done/);
+  assert.equal(new RunStore(root).status("nope"), "No workflow run nope.");
+});
+
+test("a quiet workflow prints how many subagents are working and queued", async () => {
+  const root = join(tmpdir(), `quiet-${Date.now()}`);
+  mkdirSync(root, { recursive: true });
+  const file = join(root, "q.mjs");
+  const lines: string[] = [];
+  let slots = 1;
+  const waiting: (() => void)[] = [];
+  const mod = { default: async ({ run }: { run: (s: { task: string }) => Promise<unknown> }) => Promise.all(["a", "b", "c"].map((task) => run({ task }))) };
+  await runWorkflow({ name: "q", description: "", file, scope: "user" }, "", {
+    maxRuns: 10,
+    complete: async () => "",
+    runTask: async (_spec, ctl) => {
+      if (slots > 0) slots--; else await new Promise<void>((r) => waiting.push(r));
+      ctl.onStart?.();
+      await new Promise((r) => setTimeout(r, 120));
+      waiting.shift()?.();
+      if (!waiting.length) slots++;
+      return { text: "ok" };
+    },
+  }, new AbortController().signal, (l) => lines.push(l), { run: new RunStore(root).create("q", file, ""), module: mod, quietMs: 50 });
+  assert.ok(lines.includes("[1 ad-hoc] started"));
+  assert.ok(lines.some((l) => /^· 1 working, 2 queued, 0 finished; 0 min, 0 tokens$/.test(l)), lines.join("\n"));
 });
