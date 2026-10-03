@@ -27,13 +27,12 @@ interface Finding { file: string; line?: number; claim: string; scenario: string
 const where = (f: Finding) => `${f.file}${f.line ? `:${f.line}` : ""}`;
 
 export default (async ({ run, map, args, log }) => {
-  // 1. Finders, each looking a different way.
   const found: Finding[] = (await map(LENSES, (lens) => run("reviewer", `
     Review ${args.target}. Report only ${lens}. Give file, line, the claim, and a concrete scenario.
     Report nothing you can't point to in the code.
   `, { returns: FINDINGS }))).filter(Boolean).flatMap((r) => r.findings);
 
-  // 2. Group per file; a merge run splits distinct bugs from repeats worded or cited differently.
+  // A merge run splits distinct bugs from repeats worded or cited differently.
   const groups = [...Map.groupBy(found, (f) => f.file).values()];
   const merged = await map(groups, (group) => group.length === 1 ? Promise.resolve({ issues: group }) : run("reviewer", `
     These findings about ${group[0]!.file} may repeat each other.
@@ -49,7 +48,7 @@ export default (async ({ run, map, args, log }) => {
     log(`checking ${checked.length} of ${unique.length} findings; not checked: ${unique.slice(MAX_CHECKED).map((f) => f.claim).join("; ")}`);
   }
 
-  // 3. Skeptics, each attacking a finding from a different angle. A failed skeptic doesn't uphold it.
+  // A failed skeptic doesn't uphold a finding.
   const judged = await map(checked, async (f) => {
     const votes = (await map(ANGLES, (angle) => run("reviewer", `
       Try to refute this finding about ${args.target}. ${angle}

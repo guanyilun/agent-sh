@@ -38,7 +38,6 @@ export function parseAgent(content: string, source: string): AgentDef | null {
     name,
     description: meta.description ?? "",
     systemPrompt: match[2]!.trim(),
-    // Omitted: all tools; "none": no tools (everything it needs is in the task).
     tools: meta.tools === "none" ? []
       : meta.tools ? meta.tools.split(",").map(t => t.trim()).filter(Boolean).map(t => TOOL_ALIASES[t] ?? t)
       : undefined,
@@ -50,11 +49,9 @@ export function parseAgent(content: string, source: string): AgentDef | null {
   };
 }
 
-/** What other extensions register through the "subagents:agents" handler: a definition, or an agent .md path. */
 export interface AgentRegistration {
   name: string;
   description: string;
-  /** The subagent's system prompt. */
   prompt: string;
   tools?: string[];
   model?: string;
@@ -63,7 +60,6 @@ export interface AgentRegistration {
   inheritContext?: boolean;
 }
 
-// Old names keep working when an agent is renamed.
 export const AGENT_ALIASES: Record<string, string> = { scout: "explore" };
 
 export function findAgent(agents: Map<string, AgentDef>, name: string): AgentDef | undefined {

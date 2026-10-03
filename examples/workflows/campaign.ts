@@ -1,8 +1,4 @@
-// Template: a whole unattended campaign in one file.
-//   agent-sh run campaign.ts --target "the problem in README.md"     (needs the subagents extension)
-//   agent-sh run campaign.ts --help                                  (lists the arguments below)
-//   agent-sh run campaign.ts --dry-run                               (no model calls: checks the flow)
-// On a cluster, a job script reduces to:  module load node-js/22; agent-sh run campaign.ts --target ...
+// Template run file: agent-sh run campaign.ts [--help | --dry-run | --target "..."]
 import type { Workflow } from "agent-sh-subagents";
 
 export const description = "Plan, fan out, collect; repeat until the planner says it's done.";
@@ -13,7 +9,7 @@ export const args = {
 };
 
 export const config = {
-  agents: "./agents",                 // your role prompts (*.md), next to this file
+  agents: "./agents",
   concurrency: 6,
   maxRuns: 200,
   budgetTokens: 5_000_000,

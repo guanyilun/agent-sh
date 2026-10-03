@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ensureTsSupport } from "./extension-loader.js";
 
-/** Imports a user's .ts/.js fresh via a hidden .mts/.mjs sibling copy: loaders cache by path, and tsx loads untyped files as CommonJS. */
+/** Imports a fresh hidden .mts/.mjs copy: loaders cache by path, and tsx loads plain .ts as CommonJS. */
 export async function importUserModule(file: string): Promise<Record<string, unknown>> {
   await ensureTsSupport();
   const ext = /\.m?tsx?$/.test(file) ? ".mts" : ".mjs";

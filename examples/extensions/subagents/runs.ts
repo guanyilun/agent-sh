@@ -22,7 +22,7 @@ const HEARTBEAT_MS = 30_000;
 
 export interface JournalEntry {
   seq: number;
-  /** Where the call sits in the script, e.g. "2" or "3.0/1" (map or pipeline 3, item 0, its first run). */
+  /** Position in the script, e.g. "2", or "3.0/1" for map/pipeline 3, item 0, first run. */
   id?: string;
   /** Hash of the run() inputs; a replayed entry must match it. */
   key: string;
@@ -61,7 +61,6 @@ export class RunStore {
     } catch { return []; }
   }
 
-  // "running" on disk with no recent heartbeat (and not live here) means it was interrupted.
   list(limit = 10): (RunRecord & { interrupted: boolean })[] {
     let ids: string[];
     try { ids = fs.readdirSync(this.root); } catch { return []; }
@@ -76,7 +75,6 @@ export class RunStore {
     try { return Date.now() - fs.statSync(path.join(this.root, id, "run.json")).mtimeMs < 3 * HEARTBEAT_MS; } catch { return false; }
   }
 
-  /** A run and each of its subagents: queued, working, done or failed, with how long. Newest run if no id. */
   status(id?: string, now = Date.now()): string {
     const r = id ? this.list(Infinity).find(x => x.id === id) : this.list(1)[0];
     if (!r) return id ? `No workflow run ${id}.` : "No workflow runs yet.";
@@ -90,7 +88,6 @@ export class RunStore {
       const at = (type: string) => events.find(e => e.type === type)?.at as number | undefined;
       const end = events.find(e => e.type === "end");
       const started = at("running") ?? at("message");
-      // Only a live run has subagents still working or queued.
       const s = end ? (end.ok ? "done" : "failed") : !r.interrupted && r.status === "running" ? (started ? "working" : "queued") : "stopped";
       const since = end ? (end.at as number | undefined) ?? now : now;
       const from = s === "queued" ? at("start") : started;

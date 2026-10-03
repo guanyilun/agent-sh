@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
-"""Landlock OS sandbox for Linux when bubblewrap isn't usable (needs Linux 5.13+ with Landlock enabled).
+"""Landlock sandbox for Linux where bubblewrap isn't usable (Linux 5.13+; see SANDBOX.md).
 
-  landlock.py --probe                        exit 0 and print the ABI version if Landlock works here
-  landlock.py --plan [options]               print the rules as JSON without applying them (for tests)
-  landlock.py [options] -- CMD [ARGS...]     apply the rules to this process, then exec CMD
-
-options: --rw DIR (writable), --hide PATH (unreadable), --home AGENT_SH_HOME (its entries writable, except settings,
-keys, extensions, agents and workflows). Also writable: /tmp, /var/tmp, /dev/shm, $TMPDIR; /dev files for writing.
-
-Landlock only allows, so hiding a path means allowing reads beside it at each level of its path: entries created
-later next to a hidden path's ancestors aren't readable, and names inside a hidden dir can be listed (not read).
-New top-level entries in the home can't be created. Network and processes aren't restricted.
+  landlock.py --probe | --plan [options] | [--rw DIR]... [--hide PATH]... [--home DIR] -- CMD [ARGS...]
 """
 import ctypes
 import json
@@ -28,7 +19,7 @@ EXECUTE, WRITE_FILE, READ_FILE, READ_DIR = 1 << 0, 1 << 1, 1 << 2, 1 << 3
 WRITE_DIR = sum(1 << b for b in range(4, 13))  # remove dir/file, make char/dir/reg/sock/fifo/block/sym
 REFER, TRUNCATE = 1 << 13, 1 << 14
 READ = READ_FILE | READ_DIR
-FILE_RIGHTS = EXECUTE | WRITE_FILE | READ_FILE | TRUNCATE  # rights that apply to a non-directory
+FILE_RIGHTS = EXECUTE | WRITE_FILE | READ_FILE | TRUNCATE
 
 
 def write_rights(abi):
@@ -54,7 +45,7 @@ def plan(rw, hide, home, abi):
                 rules.append((os.path.join(home, name), w))
 
     if hide:
-        # Directory listings stay allowed everywhere; file contents are allowed beside each hidden path, level by level.
+        # Landlock only allows: list everywhere, read beside each hidden path at every level.
         rules.append(("/", READ_DIR))
 
         def beside(d):
@@ -104,7 +95,7 @@ def apply(rules, handled, abi, lib):
         try:
             pfd = os.open(path, os.O_PATH | os.O_CLOEXEC)
         except OSError:
-            continue  # gone or unreachable: nothing to allow
+            continue
         try:
             if not stat.S_ISDIR(os.fstat(pfd).st_mode):
                 rights &= FILE_RIGHTS

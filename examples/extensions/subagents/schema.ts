@@ -2,13 +2,6 @@ import type { JsonSchema } from "./workflow-types.js";
 
 const TYPES = new Set(["string", "number", "integer", "boolean"]);
 
-/**
- * Turns shorthand into JSON Schema. A plain map is an object whose fields are required unless marked "?":
- *   { verdict: "clean | issues", findings: "string[]", score: "number?", detail: { file: "string", line: "integer" } }
- * Field values: "string" | "number" | "integer" | "boolean", "a | b" (one of these words), a "[]" suffix for a
- * list, [shape] for a list of that shape (e.g. [{ file: "string", line: "integer?" }]), a nested map, or any
- * JSON Schema. A top-level JSON Schema passes through unchanged.
- */
 export function normalizeSchema(schema: JsonSchema | string | unknown[]): JsonSchema {
   if (typeof schema === "string") return field(schema).schema;
   if (Array.isArray(schema)) return { type: "array", items: normalizeSchema(schema[0] as JsonSchema) };
@@ -43,7 +36,6 @@ function field(spec: string): { schema: JsonSchema; optional: boolean } {
   throw new Error(`can't read schema shorthand "${spec}"; use string, number, integer, boolean, "a | b", a [] suffix, or JSON Schema`);
 }
 
-/** A placeholder value of the schema's shape, for dry runs: first choice, false, 0, one-item lists. */
 export function example(schema: JsonSchema, name = "text"): unknown {
   if (Array.isArray(schema.enum)) return schema.enum[0];
   if ("const" in schema) return schema.const;

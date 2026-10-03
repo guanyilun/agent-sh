@@ -1,7 +1,3 @@
-/**
- * Declared workflow arguments: `export const args = { target: { default: "src", help: "what to review" }, rounds: 3 }`.
- * A bare value is the default; its type (string, number, boolean) is the argument's type.
- */
 export type ArgsSpec = Record<string, unknown>;
 
 interface Field {
@@ -25,7 +21,6 @@ function fields(spec: ArgsSpec): Field[] {
 const flagName = (name: string) => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 const squash = (s: string) => s.replace(/-/g, "").toLowerCase();
 
-/** Parses CLI-style tokens against the spec: --name value, --name=value, --flag / --no-flag, positional text. */
 export function parseArgs(spec: ArgsSpec, tokens: string[]): Record<string, unknown> {
   const fs = fields(spec);
   const out: Record<string, unknown> = {};
@@ -53,7 +48,6 @@ export function parseArgs(spec: ArgsSpec, tokens: string[]): Record<string, unkn
     if (!f) throw new ArgsError(`unexpected argument "${positional.join(" ")}"`);
     out[f.name] = positional.join(" ");
   }
-  // In declaration order, so printed args read like the file.
   const ordered: Record<string, unknown> = {};
   for (const f of fs) {
     if (!(f.name in out) && f.required) throw new ArgsError(`--${flagName(f.name)} is required`);
@@ -87,7 +81,6 @@ export function helpText(file: string, spec: ArgsSpec | undefined, description?:
   return lines.join("\n");
 }
 
-/** Splits free text like a shell would (quotes group words), for arguments given as one string. */
 export function tokenize(text: string): string[] {
   const out: string[] = [];
   for (const m of text.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)) out.push(m[1] ?? m[2] ?? m[3]!);

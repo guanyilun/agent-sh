@@ -1,7 +1,4 @@
-/**
- * Clock for time-limited headless agents: LLMs cannot sense elapsed time, so the remaining time goes into EVERY
- * model request (agent-sh per-request context). No-op unless SBX_DEADLINE (unix seconds) is set.
- */
+// Puts the time left (SBX_DEADLINE) into every model request: models can't sense elapsed time.
 import { deadline as dl, budgetMin } from "./env.mjs";
 
 export default function activate(ctx, { deadline = dl(), budget = budgetMin() } = {}) {

@@ -24,7 +24,6 @@ export interface HarnessOpts {
   settings?: Record<string, unknown>;
   /** Total tokens reported for each streamed call. */
   usage?: number;
-  /** Runs before the extension activates, e.g. to advise its handlers early. */
   before?: (h: HandlerRegistry) => void;
 }
 

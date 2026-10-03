@@ -1,4 +1,3 @@
-/** `agent-sh run <file>`: run a workflow file directly, with the setup it declares in `export const config`. */
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -10,14 +9,12 @@ import { loadAllExtensions, requireBackends } from "./boot.js";
 
 export interface RunArgs {
   file: string;
-  /** The workflow's own arguments, as given. */
   tokens: string[];
-  /** agent-sh options (--model, -e, ...), for the usual CLI parser. */
   cli: string[];
   resume?: string;
   dryRun: boolean;
   help: boolean;
-  /** `--status [id]`: print a run's progress instead of running ("" for the newest run). */
+  /** "" for the newest run. */
   status?: string;
 }
 
@@ -25,7 +22,6 @@ const WRAPPED = "AGENT_SH_RUN_WRAPPED";
 const RUN_ID = /^\d{8}-\d{6}-[0-9a-f]{4}$/;
 const CLI_VALUE_FLAGS = new Set(["--model", "--provider", "--api-key", "--base-url", "--backend", "--shell", "-e", "--extensions"]);
 
-/** Splits `run` arguments: the file, agent-sh's options, and the rest (or everything after `--`) for the workflow. */
 export function parseRunArgs(argv: string[]): RunArgs | null {
   const r: Omit<RunArgs, "file"> & { file?: string } = { tokens: [], cli: [], dryRun: false, help: false };
   for (let i = 0; i < argv.length; i++) {
@@ -122,7 +118,6 @@ export async function runFile(cli: CliConfig, run: RunArgs): Promise<never> {
   return new Promise<never>(() => {});
 }
 
-// Status needs no run file: the extension that keeps the runs prints it.
 async function printStatus(cli: CliConfig, id: string): Promise<never> {
   const core = createCore(cli);
   core.bus.on("ui:error", ({ message }) => process.stderr.write(`agent-sh: ${message}\n`));

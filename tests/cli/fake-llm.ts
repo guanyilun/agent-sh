@@ -64,9 +64,7 @@ export interface RunOpts {
   env?: Record<string, string>;
   onSpawn?: (child: ChildProcess) => void;
   prepare?: (home: string) => void;
-  /** Reuse this home (cwd and HOME) instead of a fresh temp dir. */
   home?: string;
-  /** Leave the home in place afterwards. */
   keepHome?: boolean;
 }
 

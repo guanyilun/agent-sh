@@ -1,4 +1,3 @@
-/** Configuration from SBX_* variables, for callers that start agent-sh themselves (see SANDBOX.md). */
 import * as os from "node:os";
 import * as path from "node:path";
 

@@ -1,13 +1,4 @@
-/**
- * Guard for headless agent-sh runs (tools run without confirmation there): a tripwire against honest mistakes, not
- * a sandbox. bash can still reach files by other means, so for isolation run inside sandbox.sh as well.
- *
- * Built-in rules: write_file/edit_file only under the write roots; no reads (file tools or bash) of hidden paths;
- * no git commands that change history or branches; no rm -r outside the write roots.
- * Policy files (`policy` in a run file's config, or SBX_POLICY) add:
- *   { "forbid": [{ "regex": "...", "message": "..." }],                         // bash/pwsh commands
- *     "noRecursiveSearch": { "at": [paths], "under": [paths], "message": "..." } } // shared filesystems
- */
+// A tripwire for headless runs, not isolation (SANDBOX.md).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -46,7 +37,6 @@ function loadRules(files) {
   return { forbid, searchAt, atRe, underRe, searchMessage };
 }
 
-/** Builds the guard's rules from explicit settings (a run file's config) instead of SBX_* variables. */
 export function makeVerdict({ write = [], hide = [], policy = [] } = {}) {
   const ROOTS = write.map(expand);
   const HIDDEN = hide.map(expand);
@@ -80,14 +70,12 @@ export function makeVerdict({ write = [], hide = [], policy = [] } = {}) {
   };
 }
 
-/** The SBX_*-configured rules, for callers that start agent-sh themselves. */
 export const verdict = makeVerdict({ write: writeRoots(), hide: hidden(), policy: policyFile() });
 
 const TOOLS = ["bash", "pwsh", "write_file", "edit_file", "read_file", "ls", "glob", "grep"];
 export default function activate(ctx, check = verdict) {
-  // main agent loop
   ctx.advise("tool:execute", async (next, t) => check(t.name, t.args) || next(t));
-  // subagents and workflows call tools through tool:<name> (adviseTool), bypassing tool:execute
+  // subagents call tools through tool:<name>, bypassing tool:execute
   for (const name of TOOLS)
     ctx.advise(`tool:${name}`, async (next, args, ...rest) => check(name, args) || next(args, ...rest));
 }
