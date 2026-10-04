@@ -49,19 +49,13 @@ export const config = {
   agents: "./agents",            // extra agent definitions, relative to this file
   concurrency: 6, maxRuns: 200, maxIterations: 60,
   budgetTokens: 5_000_000,       // cap on subagent tokens
-  hours: 3,                      // time left goes into every request; the run stops at the deadline
-  sandbox: {                     // optional; part of the subagents extension (see its SANDBOX.md)
-    write: ["./out"],            // the only dirs agents may write
-    hide: ["../heldout"],        // paths agents may not read
-    policy: "./rules.json",      // optional extra rules
-    os: "preferred",             // "required" | "preferred" | "off": bubblewrap or Landlock on Linux, Seatbelt on macOS
-  },
+  hours: 3,                      // the run stops at this deadline
 };
 
 export default async ({ run, all, args, log, budget }) => { /* ... */ };
 ```
 
-Each extension reads its own keys, and the run fails closed: a key that nothing handles (a misspelled limit, or a section whose extension isn't loaded), or an `os: "required"` that can't be met here, stops the run before any model call. Where an OS sandbox is usable, the whole run is restarted inside it; without a `sandbox` section the run isn't sandboxed.
+`model`, `provider` and `hours` are read by `agent-sh run` itself and the rest by the subagents extension; other extensions can add sections of their own. The run fails closed: a key that nothing handles (a misspelled limit, or a section whose extension isn't loaded), or a requirement an extension can't meet, stops the run before any model call.
 
 ### Headless mode
 

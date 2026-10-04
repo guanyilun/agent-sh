@@ -16,19 +16,12 @@ Releases before this file are recorded in the git tags and GitHub releases.
   `/codex-status`, `/codex-logout`). Not yet tested against the live backend.
 - `agent-sh run <file> [args]` runs a workflow file directly: no shell, no TUI,
   no main-agent turn. The file can `export const config` to declare its setup
-  (extra agent dirs, concurrency, run caps, a token budget, `hours` for a
-  deadline, and a `sandbox` section), so a whole campaign lives in one file.
+  (extra agent dirs, concurrency, run caps, a token budget, and `hours` for a
+  deadline), so a whole campaign lives in one file.
   `--resume <id>` continues a failed run. Extensions read their section through
   a `run:config` handler and enforce it via the `run:checks` and `run:wrap`
   pipes; the run fails closed when a config key isn't handled by anything (a
   typo, or an extension that isn't loaded) or a requirement can't be met.
-- Sandboxing in the `subagents` extension: a run file's `config.sandbox` limits
-  what every agent may write and read, adds rules from your own policy files, and
-  restarts the whole run inside an OS sandbox where one actually works (probed,
-  not just found): bubblewrap on Linux, falling back to Landlock where user
-  namespaces are blocked, and Seatbelt (`sandbox-exec`) on macOS.
-  Without one it runs with the guard only, unless `os: "required"`. The `SBX_*`
-  variables still arm it for other callers.
 - Easier workflow scripts: `run(agent, task, { returns })` with shape shorthand
   (`{ verdict: "clean | issues", findings: "string[]", line: "integer?" }`,
   `[{ ... }]` for lists of objects), `run(null, task)` for ad-hoc subagents,

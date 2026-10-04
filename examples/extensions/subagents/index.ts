@@ -7,7 +7,6 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgents, findAgent, fromRegistration, type AgentDef, type AgentRegistration } from "./agents.js";
 import { describe, JobTable, type JobOutcome } from "./jobs.js";
-import activateSandbox from "./sandbox/index.mjs";
 import { Semaphore } from "./semaphore.js";
 import { RunStore } from "./runs.js";
 import { example, normalizeSchema, validate } from "./schema.js";
@@ -71,7 +70,6 @@ interface RunExtras {
 
 export default function activate(ctx: ExtensionContext & AgentContext): void {
   const { bus } = ctx;
-  activateSandbox(ctx);
   // Under `agent-sh run <file>`, the file's config overrides settings; there's no main agent to wake.
   const runConfig = ctx.list?.().includes("run:config") ? ctx.call("run:config") as RunFileConfig : undefined;
   const settings = {

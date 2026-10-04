@@ -1,15 +1,13 @@
 /** `agent-sh run <file>` end to end: the built CLI against a local fake OpenAI-compatible server. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
 import { fakeLlm, runCli, SUBAGENTS, toolCall, type ChatRequest } from "./fake-llm.js";
 import { parseRunArgs } from "../../src/cli/run.js";
 
 const TEMPLATE = fileURLToPath(new URL("../../examples/workflows/campaign.ts", import.meta.url));
-const NO_OS_SANDBOX = { SBX_BWRAP: "/nonexistent/bwrap", SBX_SANDBOX_EXEC: "/nonexistent/sandbox-exec", SBX_LANDLOCK: "off" };
 const isSubagent = (req: ChatRequest) => String(req.messages[0]?.content ?? "").includes("focused subagent");
 const write = (home: string, rel: string, text: string) => {
   mkdirSync(join(home, rel, ".."), { recursive: true });
@@ -50,44 +48,39 @@ test("config.agents adds agent definitions next to the file", async () => {
   } finally { llm.server.close(); }
 });
 
-test("config.sandbox arms the guard: a write outside the allowed dirs is blocked", async () => {
-  const llm = await fakeLlm((req) => {
-    const tool = req.messages.find((m) => m.role === "tool");
-    if (tool) return { content: `tool said: ${tool.content}` };
-    return toolCall("write_file", { path: "/tmp/agent-sh-run-test-outside.txt", content: "x" });
-  });
+test("refuses to start, before any model call, on a config key nothing handles", async () => {
+  const llm = await fakeLlm(() => ({ content: "ok" }));
   try {
     const r = await runCli(["run", "campaign.ts", "-e", SUBAGENTS], llm.url, {
-      prepare: (home) => write(home, "campaign.ts", [
-        'export const config = { sandbox: { write: ["./out"], os: "off" } };',
-        'export default async ({ run }) => run({ task: "write a file", tools: ["write_file"] });',
-      ].join("\n")),
+      prepare: (home) => write(home, "campaign.ts", 'export const config = { budgetToken: 5, hours: 1 };\nexport default async ({ run }) => run({ task: "t", tools: [] });\n'),
     });
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stderr, /sandbox guard armed \(write roots: .*\/out; hidden: 0; policy: none; os sandbox: off\)/);
-    assert.match(r.stdout, /tool said: Error: Blocked by sandbox guard: writes are limited to .*\/out/);
-    assert.ok(!existsSync("/tmp/agent-sh-run-test-outside.txt"));
+    assert.equal(r.code, 2, r.stderr);
+    assert.match(r.stderr, /config\.budgetToken is set but nothing handles it/);
+    assert.equal(llm.requests.length, 0);
   } finally { llm.server.close(); }
 });
 
-for (const [name, config, env, message] of [
-  ["a config key nothing handles", "{ budgetToken: 5, hours: 1 }", {}, /config\.budgetToken is set but nothing handles it/],
-  ["os: \"required\" without an OS sandbox", '{ sandbox: { os: "required" } }', NO_OS_SANDBOX, /"required" but no OS sandbox is usable here/],
-  ["net: false (the run itself needs the model)", "{ sandbox: { net: false } }", {}, /net: false isn't supported yet: the run itself needs the network to reach the model/],
-] as const) {
-  test(`refuses to start, before any model call: ${name}`, async () => {
-    const llm = await fakeLlm(() => ({ content: "ok" }));
-    try {
-      const r = await runCli(["run", "campaign.ts", "-e", SUBAGENTS], llm.url, {
-        env,
-        prepare: (home) => write(home, "campaign.ts", `export const config = ${config};\nexport default async ({ run }) => run({ task: "t", tools: [] });\n`),
-      });
-      assert.equal(r.code, 2, r.stderr);
-      assert.match(r.stderr, message);
-      assert.equal(llm.requests.length, 0);
-    } finally { llm.server.close(); }
-  });
-}
+test("an extension owns its config section: it claims the key and can refuse the run", async () => {
+  const llm = await fakeLlm(() => ({ content: "ok" }));
+  const quota = [
+    "export default (ctx) => {",
+    '  const { quota } = ctx.call("run:config");',
+    '  ctx.bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, "quota"],',
+    '    problems: quota.max > 1 ? [...p.problems, "config.quota.max is over the limit"] : p.problems }));',
+    "};",
+  ].join("\n");
+  const campaign = (max: number) => `export const config = { quota: { max: ${max} } };\nexport default async ({ run }) => run({ task: "t", tools: [] });\n`;
+  try {
+    const prepare = (max: number) => (home: string) => { write(home, "quota.mjs", quota); write(home, "campaign.ts", campaign(max)); };
+    const ok = await runCli(["run", "campaign.ts", "-e", SUBAGENTS, "-e", "./quota.mjs"], llm.url, { prepare: prepare(1) });
+    assert.equal(ok.code, 0, ok.stderr);
+    const calls = llm.requests.length;
+    const refused = await runCli(["run", "campaign.ts", "-e", SUBAGENTS, "-e", "./quota.mjs"], llm.url, { prepare: prepare(5) });
+    assert.equal(refused.code, 2, refused.stderr);
+    assert.match(refused.stderr, /refusing to start:\n  - config\.quota\.max is over the limit/);
+    assert.equal(llm.requests.length, calls);
+  } finally { llm.server.close(); }
+});
 
 test("an extension can wrap the run; the CLI re-runs it inside the wrapper once", async () => {
   const llm = await fakeLlm(() => ({ content: "ok" }));
@@ -171,35 +164,11 @@ test("the campaign template runs end to end", async () => {
   });
   try {
     const r = await runCli(["run", "campaign.ts", "the target", "-e", SUBAGENTS], llm.url, {
-      env: NO_OS_SANDBOX,
       prepare: (home) => write(home, "campaign.ts", readFileSync(TEMPLATE, "utf8")),
     });
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /^Done after 1 round\(s\)\.\n\n## Round 1\nresult of task A\n---\nresult of task B/);
-    assert.match(r.stderr, /sandbox guard armed .*os sandbox: off/);
     assert.match(r.stderr, /· round 1: 2\/2 tasks finished/);
-  } finally { llm.server.close(); }
-});
-
-test("config.sandbox.policy adds its rules: a forbidden command is blocked, and allowed without the policy", async () => {
-  const llm = await fakeLlm((req) => {
-    const tool = req.messages.find((m) => m.role === "tool");
-    if (tool) return { content: `tool said: ${tool.content}` };
-    return toolCall("bash", { command: "squeue -u someone" });
-  });
-  try {
-    const campaign = (policy: string) => `export const config = { sandbox: { write: ["./out"], os: "off"${policy} } };\nexport default async ({ run }) => run(null, "check jobs", { tools: ["bash"] });\n`;
-    const rules = JSON.stringify({ forbid: [{ regex: "(^|\\s)squeue\\b", message: "agents don't use the scheduler" }] });
-    const withPolicy = await runCli(["run", "campaign.ts", "-e", SUBAGENTS], llm.url, {
-      prepare: (h) => { write(h, "rules.json", rules); write(h, "campaign.ts", campaign(', policy: "./rules.json"')); },
-    });
-    assert.equal(withPolicy.code, 0, withPolicy.stderr);
-    assert.match(withPolicy.stderr, /policy: .*rules\.json/);
-    assert.match(withPolicy.stdout, /tool said: Error: Blocked by sandbox guard: agents don't use the scheduler/);
-
-    const without = await runCli(["run", "campaign.ts", "-e", SUBAGENTS], llm.url, { prepare: (h) => write(h, "campaign.ts", campaign("")) });
-    assert.equal(without.code, 0, without.stderr);
-    assert.doesNotMatch(without.stdout, /Blocked by sandbox guard/);
   } finally { llm.server.close(); }
 });
 
@@ -237,9 +206,8 @@ test("--dry-run walks the script with placeholder answers and no model calls", a
   const llm = await fakeLlm(() => ({ content: "ok" }));
   try {
     const r = await runCli(["run", "campaign.ts", "--dry-run", "-e", SUBAGENTS], llm.url, {
-      env: NO_OS_SANDBOX,
       prepare: (h) => write(h, "campaign.ts", [
-        'export const config = { sandbox: { os: "required" } };',
+        'export const config = { budgetToken: 5 };',
         "export default async ({ run, map }) => {",
         '  const plan = await run("scout", "Plan the work", { returns: { tasks: "string[]", done: "boolean" } });',
         '  const out = await map(plan.tasks, (t) => run("reviewer", `Do ${t}`));',
@@ -249,7 +217,7 @@ test("--dry-run walks the script with placeholder answers and no model calls", a
     });
     assert.equal(r.code, 0, r.stderr);
     assert.equal(llm.requests.length, 0);
-    assert.match(r.stderr, /\(dry run\) a real run would refuse to start:\n  - config\.sandbox\.os is "required"/);
+    assert.match(r.stderr, /\(dry run\) a real run would refuse to start:\n  - config\.budgetToken is set but nothing handles it/);
     assert.match(r.stderr, /\[1 scout\] \(dry run\) Plan the work → \{"tasks":\["<tasks>"\],"done":false\}/);
     assert.match(r.stderr, /\[2 reviewer\] \(dry run\) Do <tasks>/);
     assert.match(r.stdout, /"out":\["\[dry run: reviewer would answer \\"Do <tasks>\\"\]"\]/);
@@ -265,67 +233,6 @@ test("--dry-run reports an unknown agent", async () => {
     assert.equal(r.code, 1);
     assert.match(r.stdout, /unknown agent: nosuchagent/);
   } finally { llm.server.close(); }
-});
-
-test("on macOS, Seatbelt stops what the guard can't: bash writes outside and disguised reads of hidden paths", { skip: process.platform !== "darwin" }, async () => {
-  // Outside the temp dir, which Seatbelt leaves writable by design.
-  const ws = mkdtempSync(join(fileURLToPath(new URL("../..", import.meta.url)), ".sbx-test-"));
-  const disguised = join(ws, "held''out", "secret.txt");
-  const llm = await fakeLlm((req) => {
-    const tool = req.messages.find((m) => m.role === "tool");
-    if (tool) return { content: `tool said: ${tool.content}` };
-    return toolCall("bash", { command: `echo x > ${ws}/outside.txt; echo y > ${ws}/out/inside.txt; cat ${disguised}; echo done` });
-  });
-  try {
-    mkdirSync(join(ws, "heldout"));
-    writeFileSync(join(ws, "heldout", "secret.txt"), "TOPSECRET");
-    writeFileSync(join(ws, "campaign.ts"), [
-      'export const config = { sandbox: { write: ["./out"], hide: ["./heldout"] } };',
-      'export default async ({ run }) => run(null, "do it", { tools: ["bash"] });',
-    ].join("\n"));
-    const r = await runCli(["run", join(ws, "campaign.ts"), "-e", SUBAGENTS], llm.url);
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stderr, /os sandbox: on \(seatbelt\)/);
-    assert.ok(!existsSync(join(ws, "outside.txt")), "write outside the write dirs was blocked");
-    assert.ok(existsSync(join(ws, "out", "inside.txt")), "write inside the write dirs worked");
-    assert.match(r.stdout, /Operation not permitted/);
-    assert.doesNotMatch(r.stdout, /TOPSECRET/);
-  } finally {
-    llm.server.close();
-    rmSync(ws, { recursive: true, force: true });
-  }
-});
-
-const landlockHere = process.platform === "linux"
-  && spawnSync("python3", [fileURLToPath(new URL("../../examples/extensions/subagents/sandbox/landlock.py", import.meta.url)), "--probe"]).status === 0;
-
-test("on Linux without bubblewrap, Landlock stops what the guard can't", { skip: !landlockHere }, async () => {
-  // Outside /tmp, which the sandbox leaves writable by design.
-  const ws = mkdtempSync(join(fileURLToPath(new URL("../..", import.meta.url)), ".sbx-test-"));
-  const disguised = join(ws, "held''out", "secret.txt");
-  const llm = await fakeLlm((req) => {
-    const tool = req.messages.find((m) => m.role === "tool");
-    if (tool) return { content: `tool said: ${tool.content}` };
-    return toolCall("bash", { command: `echo x > ${ws}/outside.txt; echo y > ${ws}/out/inside.txt; cat ${disguised}; echo done` });
-  });
-  try {
-    mkdirSync(join(ws, "heldout"));
-    writeFileSync(join(ws, "heldout", "secret.txt"), "TOPSECRET");
-    writeFileSync(join(ws, "campaign.ts"), [
-      'export const config = { sandbox: { write: ["./out"], hide: ["./heldout"] } };',
-      'export default async ({ run }) => run(null, "do it", { tools: ["bash"] });',
-    ].join("\n"));
-    const r = await runCli(["run", join(ws, "campaign.ts"), "-e", SUBAGENTS], llm.url, { env: { SBX_BWRAP: "/nonexistent/bwrap" } });
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stderr, /os sandbox: on \(landlock\)/);
-    assert.ok(!existsSync(join(ws, "outside.txt")), "write outside the write dirs was blocked");
-    assert.ok(existsSync(join(ws, "out", "inside.txt")), "write inside the write dirs worked");
-    assert.match(r.stdout, /Permission denied/);
-    assert.doesNotMatch(r.stdout, /TOPSECRET/);
-  } finally {
-    llm.server.close();
-    rmSync(ws, { recursive: true, force: true });
-  }
 });
 
 test("run arguments: --status takes an optional run id and needs no file", () => {

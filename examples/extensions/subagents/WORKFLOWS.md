@@ -181,7 +181,7 @@ for (let dry = 0, round = 1; dry < 2 && round <= 5; round++) {
 
 - `/workflow` lists workflows; `/workflow <name> <args>` asks the main agent to run it and act on the result.
 - The main agent can call the `run_workflow` tool itself.
-- Directly, with no main agent: `agent-sh run <file> [args]`. The file may also `export const config = { agents, model, provider, concurrency, maxRuns, maxIterations, budgetTokens, hours, sandbox }` to declare its setup (see docs/usage.md "Run files"), so a whole campaign lives in one file. `--resume <id>` continues a failed run. Progress goes to stderr: a line when each subagent starts and finishes, and a "2 working, 5 queued" line after a quiet minute. From another terminal (or for a run under nohup), `agent-sh run --status [id]` shows each subagent's state and how long it has been in it.
+- Directly, with no main agent: `agent-sh run <file> [args]`. The file may also `export const config = { agents, model, provider, concurrency, maxRuns, maxIterations, budgetTokens, hours }` to declare its setup (see docs/usage.md "Run files"), so a whole campaign lives in one file. `--resume <id>` continues a failed run. Progress goes to stderr: a line when each subagent starts and finishes, and a "2 working, 5 queued" line after a quiet minute. From another terminal (or for a run under nohup), `agent-sh run --status [id]` shows each subagent's state and how long it has been in it.
 - Through the main agent, e.g. in CI: `agent-sh -p "run the <name> workflow on <args>"`.
 
 ## Examples
@@ -193,5 +193,5 @@ Bundled, next to this file in `workflows/`:
 
 In the repo's `examples/workflows/` (copy into `~/.agent-sh/workflows/` to use):
 
-- `campaign.ts`: a run-file template with `config`, declared args and a sandbox.
+- `campaign.ts`: a run-file template with `config` and declared args.
 - `verified-review.ts`: three finders looking different ways, grouped by file with a merge run for files with several claims, then three skeptics per finding attacking it from different angles; only findings most skeptics fail to refute are reported, and merges and caps are logged.

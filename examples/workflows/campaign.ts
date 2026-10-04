@@ -14,7 +14,6 @@ export const config = {
   maxRuns: 200,
   budgetTokens: 5_000_000,
   hours: 3,
-  sandbox: { write: ["./out"], os: "preferred" },
 };
 
 export default (async ({ run, map, args, log, budget }) => {

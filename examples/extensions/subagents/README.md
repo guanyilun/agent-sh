@@ -150,13 +150,6 @@ Project workflows are code from the repo, so each one runs only after you review
 
 Full guide, including design patterns for workflows you can trust (adversarial verification, dedupe, loop until nothing new): [WORKFLOWS.md](WORKFLOWS.md). Bundled: [`review-loop`](workflows/review-loop.ts) (review from several angles, fix, repeat) and [`research`](workflows/research.ts) (split a question, research the parts in parallel, check the claims, combine with sources). More examples to copy into `~/.agent-sh/workflows/` are in [`examples/workflows/`](../../workflows/). The extension gives the agent two skills: `writing-workflows` (that guide) and `using-subagents` ([USING.md](USING.md): choosing between `spawn_agent`, parallel tasks, background runs and workflows, and running, resuming and debugging workflow runs).
 
-## Sandbox
-
-For unattended runs, a run file's `config.sandbox` limits what every agent may write and read, adds your own rules
-(a policy file), and restarts the whole run inside an OS sandbox where one works (bubblewrap or Landlock on Linux,
-Seatbelt on macOS). Interactive sessions are unaffected. See
-[SANDBOX.md](SANDBOX.md).
-
 ## Settings
 
 ```json
