@@ -38,13 +38,48 @@ export function parseAgent(content: string, source: string): AgentDef | null {
     name,
     description: meta.description ?? "",
     systemPrompt: match[2]!.trim(),
-    tools: meta.tools
-      ? meta.tools.split(",").map(t => t.trim()).filter(Boolean).map(t => TOOL_ALIASES[t] ?? t)
+    tools: meta.tools === "none" ? []
+      : meta.tools ? meta.tools.split(",").map(t => t.trim()).filter(Boolean).map(t => TOOL_ALIASES[t] ?? t)
       : undefined,
     model: meta.model || undefined,
     thinking: meta.thinking || undefined,
     maxIterations: Number.isFinite(maxIterations) && maxIterations > 0 ? maxIterations : undefined,
     inheritContext: meta.inheritContext === "true",
+    source,
+  };
+}
+
+export interface AgentRegistration {
+  name: string;
+  description: string;
+  prompt: string;
+  tools?: string[];
+  model?: string;
+  thinking?: string;
+  maxIterations?: number;
+  inheritContext?: boolean;
+}
+
+export const AGENT_ALIASES: Record<string, string> = { scout: "explore" };
+
+export function findAgent(agents: Map<string, AgentDef>, name: string): AgentDef | undefined {
+  return agents.get(name) ?? (AGENT_ALIASES[name] ? agents.get(AGENT_ALIASES[name]!) : undefined);
+}
+
+export function fromRegistration(r: AgentRegistration | string, source = "registered by an extension"): AgentDef | null {
+  if (typeof r === "string") {
+    try { return parseAgent(fs.readFileSync(r, "utf8"), r); } catch { return null; }
+  }
+  if (!r?.name || !r.prompt) return null;
+  return {
+    name: r.name,
+    description: r.description ?? "",
+    systemPrompt: r.prompt,
+    tools: r.tools?.map(t => TOOL_ALIASES[t] ?? t),
+    model: r.model,
+    thinking: r.thinking,
+    maxIterations: r.maxIterations,
+    inheritContext: r.inheritContext === true,
     source,
   };
 }

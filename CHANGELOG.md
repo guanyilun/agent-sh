@@ -14,11 +14,61 @@ Releases before this file are recorded in the git tags and GitHub releases.
   `ash` provider. A loopback proxy translates Chat Completions to the Codex
   Responses API and signs requests with ChatGPT OAuth (`/codex-login`,
   `/codex-status`, `/codex-logout`). Not yet tested against the live backend.
+- `agent-sh run <file> [args]` runs a workflow file directly: no shell, no TUI,
+  no main-agent turn. The file can `export const config` to declare its setup
+  (extra agent dirs, concurrency, run caps, a token budget, and `hours` for a
+  deadline), so a whole campaign lives in one file.
+  `--resume <id>` continues a failed run. Extensions read their section through
+  a `run:config` handler and enforce it via the `run:checks` and `run:wrap`
+  pipes; the run fails closed when a config key isn't handled by anything (a
+  typo, or an extension that isn't loaded) or a requirement can't be met.
+- Easier workflow scripts: `run(agent, task, { returns })` with shape shorthand
+  (`{ verdict: "clean | issues", findings: "string[]", line: "integer?" }`,
+  `[{ ... }]` for lists of objects), `run(null, task)` for ad-hoc subagents,
+  `map(items, fn)` for fan-out (in order, `null` for failures), dedented task
+  text, and declared arguments (`export const args`) parsed from `--flags`.
+  `agent-sh run <file> --help` lists them; `--dry-run` walks the script with
+  placeholder answers and no model calls. Older scripts keep working.
+- `examples/workflows/campaign.ts`: a run-file template.
+- Subagents for more than code: `explore` (read-only exploration of files,
+  documents or data), `plan` and `research` (answers from the web and local
+  files, with sources), plus a bundled `research` workflow (split the question,
+  research the parts in parallel, check the claims, combine with sources).
+  `review-loop` takes `--focus` angles.
+- Other extensions can add agents and workflows by advising the
+  `subagents:agents` and `subagents:workflows` handlers, whichever loads first
+  (types `AgentRegistration` and `WorkflowRegistration`).
+- Watching a workflow run: `agent-sh run` prints when each subagent starts, and
+  a "2 working, 5 queued" line when it has been quiet for a minute.
+  `agent-sh run --status [id]` (and `/workflow status [id]`) shows each
+  subagent of a run as queued, working, done or failed, with how long. A
+  running run touches its `run.json` every 30 s, so other processes (or
+  machines sharing the disk) can tell running from interrupted.
+- Agent files accept `tools: none`.
+- Workflow scripts: `pipeline(items, ...stages)` moves each item through the
+  stages without waiting for the others, and `run()` takes `model`, `thinking`,
+  `label`, and (for ad-hoc runs) `system`, so agents can be defined inline.
+  Resume now identifies calls by where they sit in the script, so `map` items
+  with several steps, and `pipeline`, resume correctly whatever order items
+  finish in. Older journals still resume by call order.
+- Workflow scripts: `race(items, fn, accept?)` keeps the first result that
+  passes and cancels the other items' subagents, and `agent(name)` returns a
+  handle whose `ask()` turns continue one conversation. Both resume: a race
+  reruns only its recorded winner, and a conversation is restored from the
+  journal. `runSubagent` takes `history` and returns `outMeta.messages`.
 
 ### Changed
 
 - Node.js 22 is now the minimum (`engines: >=22`, for agent-sh and ashi).
   Node 18 and 20 have reached end of life. CI tests 22 and 24; publishing uses 22.
+- The `scout` agent is now `explore` (the old name still works); `reviewer`
+  and `worker` are no longer code-only. `verified-review` moved from the bundled
+  workflows to `examples/workflows/`.
+
+### Fixed
+
+- A workflow subagent stopped by Ctrl-C or a deadline no longer counts as a
+  finished run with its partial text.
 
 ## [0.15.17] - 2026-09-26
 

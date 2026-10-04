@@ -10,7 +10,7 @@
  * Used by the subagent extension to delegate tasks from the main agent.
  */
 import type { EventBus } from "../core/event-bus.js";
-import type { LlmClient } from "./llm-client.js";
+import type { ChatCompletionMessageParam, LlmClient } from "./llm-client.js";
 import { contentText, type ToolDefinition } from "./types.js";
 import { LiveView } from "./live-view.js";
 import { normalizeToolArgs } from "./normalize-args.js";
@@ -68,6 +68,8 @@ export interface SubagentOptions {
   onMessage?: (message: SubagentMessage) => void;
   /** Checked after each round of tool calls; returning true ends the run. */
   shouldStop?: () => boolean;
+  /** An earlier run's `outMeta.messages`; the task continues that conversation. */
+  history?: ChatCompletionMessageParam[];
 }
 
 export interface SubagentMessage {
@@ -82,6 +84,8 @@ export interface SubagentRunMeta {
   degraded?: "budget" | "iterations" | null;
   tokensUsed?: number;
   mutatingToolExecuted?: boolean;
+  /** The conversation so far, to pass as the next run's `history`. */
+  messages?: ChatCompletionMessageParam[];
 }
 
 /**
@@ -105,6 +109,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     outMeta,
     onMessage,
     shouldStop,
+    history,
   } = opts;
   if (outMeta) {
     outMeta.degraded = null;
@@ -123,6 +128,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
   }));
 
   const conversation = new LiveView();
+  if (history) conversation.replaceMessages([...history]);
   conversation.addUserMessage(task);
   onMessage?.({ role: "user", content: task });
   const addToolResult = (tc: PendingToolCall, content: Parameters<LiveView["addToolResult"]>[1], isError: boolean) => {
@@ -222,6 +228,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     }
     if (shouldStop?.()) break;
   }
+  if (outMeta) outMeta.messages = conversation.forLLM();
 
   if (budgetExhausted) {
     if (outMeta) outMeta.degraded = "budget";

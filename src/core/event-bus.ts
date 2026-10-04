@@ -23,6 +23,17 @@ export interface BusEvents {
   "config:get-backends": { names: string[]; active: string | null };
   "config:switch-backend": { name: string };
   "config:list-backends": Record<string, never>;
+
+  /** `agent-sh run`: an extension may wrap the command (e.g. in an OS sandbox); the CLI then re-runs it inside. */
+  "run:wrap": { argv: string[]; config: RunConfig };
+  /** `agent-sh run`: extensions claim config keys and report problems; an unclaimed key or a problem refuses the run. */
+  "run:checks": { config: RunConfig; problems: string[]; handled: string[] };
+}
+
+/** A run file's `export const config`, plus `base`: the file's directory, for resolving relative paths. */
+export interface RunConfig {
+  base: string;
+  [key: string]: unknown;
 }
 
 // ── Content block types (used by transform pipeline) ────────────

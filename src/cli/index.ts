@@ -12,6 +12,7 @@ import { parseArgs } from "./args.js";
 import { captureShellEnvAsync, mergeShellEnv } from "./shell-env.js";
 import { loadAllExtensions, requireBackends } from "./boot.js";
 import { runHeadless } from "./headless.js";
+import { parseRunArgs, runFile } from "./run.js";
 
 declare module "../core/event-bus.js" {
   interface BusEvents {
@@ -31,8 +32,13 @@ async function main(): Promise<void> {
   const rawArgs = process.argv.slice(2);
   if (await dispatchSubcommand(rawArgs)) return;
 
-  const config = parseArgs(rawArgs);
-  const headless = config.print !== undefined;
+  const runArgs = rawArgs[0] === "run" ? parseRunArgs(rawArgs.slice(1)) : undefined;
+  if (rawArgs[0] === "run" && !runArgs) {
+    console.error("usage: agent-sh run <file> [--resume <run id>] [options] [--] [args...]\n       agent-sh run --status [run id]");
+    process.exit(1);
+  }
+  const config = parseArgs(runArgs ? runArgs.cli : rawArgs);
+  const headless = config.print !== undefined || runArgs !== undefined;
 
   // Headless runs spawn no shell, so they're safe inside an agent-sh session.
   if (process.env.AGENT_SH && !headless) {
@@ -70,7 +76,8 @@ async function main(): Promise<void> {
   }
 
   const selectedBackend = config.backend ?? getSettings().defaultBackend ?? "ash";
-  if (selectedBackend === "ash" && !config.apiKey && !config.provider && !anyProviderConfigured()) {
+  const noModel = runArgs?.dryRun || runArgs?.help;
+  if (selectedBackend === "ash" && !noModel && !config.apiKey && !config.provider && !anyProviderConfigured()) {
     const envVars = KNOWN_PROVIDERS
       .map((p) => p.envVar)
       .filter((v): v is string => Boolean(v))
@@ -84,6 +91,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  if (runArgs) await runFile(config, runArgs);
   if (headless) await runHeadless(config);
 
   // ── Core (frontend-agnostic) ──────────────────────────────────
