@@ -181,6 +181,7 @@ agent-sh/
 │       ├── user-shell.ts        # Run commands in the live PTY
 │       ├── questionnaire.ts     # Interactive question prompts
 │       ├── subagents/           # Named + parallel subagents
+│       ├── sandbox/             # Guard + OS sandbox for `agent-sh run` files
 │       ├── solarized-theme.ts   # Theme example
 │       ├── secret-guard.ts      # Secret redaction
 │       ├── latex-images.ts      # LaTeX equation rendering

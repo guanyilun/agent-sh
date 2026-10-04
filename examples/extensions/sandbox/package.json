@@ -1,0 +1,10 @@
+{
+  "name": "agent-sh-sandbox",
+  "version": "0.1.0",
+  "description": "Sandbox for agent-sh run files: a tool-call guard plus an OS sandbox around the whole run",
+  "type": "module",
+  "main": "index.ts",
+  "dependencies": {
+    "agent-sh": "^0.15.16"
+  }
+}

@@ -55,7 +55,7 @@ export const config = {
 export default async ({ run, all, args, log, budget }) => { /* ... */ };
 ```
 
-`model`, `provider` and `hours` are read by `agent-sh run` itself and the rest by the subagents extension; other extensions can add sections of their own. The run fails closed: a key that nothing handles (a misspelled limit, or a section whose extension isn't loaded), or a requirement an extension can't meet, stops the run before any model call.
+`model`, `provider` and `hours` are read by `agent-sh run` itself and the rest by the subagents extension; other extensions can add sections of their own, such as `sandbox` from the [sandbox extension](../examples/extensions/sandbox/README.md), which limits what agents may write and read and restarts the run inside an OS sandbox. The run fails closed: a key that nothing handles (a misspelled limit, or a section whose extension isn't loaded), or a requirement an extension can't meet, stops the run before any model call.
 
 ### Headless mode
 
