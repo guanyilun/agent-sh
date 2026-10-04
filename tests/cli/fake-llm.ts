@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 export const CLI = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
 export const SUBAGENTS = fileURLToPath(new URL("../../examples/extensions/subagents", import.meta.url));
+export const SANDBOX = fileURLToPath(new URL("../../examples/extensions/sandbox", import.meta.url));
 
 export interface ChatRequest { messages: { role: string; content: unknown }[]; tools?: { function: { name: string } }[]; stream?: boolean }
 export type Reply = Record<string, unknown> | { status: number } | { hang: true };

@@ -3,3 +3,4 @@ dist/
 *.tsbuildinfo
 *.org
 package-lock.json
+__pycache__/

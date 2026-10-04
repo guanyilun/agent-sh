@@ -22,6 +22,13 @@ Releases before this file are recorded in the git tags and GitHub releases.
   a `run:config` handler and enforce it via the `run:checks` and `run:wrap`
   pipes; the run fails closed when a config key isn't handled by anything (a
   typo, or an extension that isn't loaded) or a requirement can't be met.
+- `sandbox` example extension: a run file's `config.sandbox` limits what every
+  agent may write and read, adds rules from your own policy files, and restarts
+  the whole run inside an OS sandbox where one actually works (probed, not just
+  found): bubblewrap on Linux, falling back to Landlock where user namespaces
+  are blocked, and Seatbelt (`sandbox-exec`) on macOS. Without one it runs with
+  the guard only, unless `os: "required"`. `SBX_GUARD=1` arms the guard for
+  callers that start agent-sh themselves.
 - Easier workflow scripts: `run(agent, task, { returns })` with shape shorthand
   (`{ verdict: "clean | issues", findings: "string[]", line: "integer?" }`,
   `[{ ... }]` for lists of objects), `run(null, task)` for ad-hoc subagents,
