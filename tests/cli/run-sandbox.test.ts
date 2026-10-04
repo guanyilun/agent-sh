@@ -85,6 +85,24 @@ test("config.sandbox.policy adds its rules: a forbidden command is blocked, and 
   } finally { llm.server.close(); }
 });
 
+test("SBX_GUARD=1 arms the guard for callers that start agent-sh themselves; without it the extension does nothing", async () => {
+  const llm = await callsTool("write_file", { path: "/tmp/agent-sh-run-test-outside.txt", content: "x" });
+  try {
+    const rules = JSON.stringify({ forbid: [{ regex: "x^", message: "never matches" }] });
+    const armed = await runCli(["-p", "write a file", "--output", "json", "-e", SANDBOX], llm.url, {
+      env: { SBX_GUARD: "1", SBX_WRITE_ROOTS: "/w/out:/w/tmp", SBX_HIDE: "/w/private", SBX_POLICY: "rules.json" },
+      prepare: (home) => write(home, "rules.json", rules),
+    });
+    assert.equal(armed.code, 0, armed.stderr);
+    assert.match(armed.stdout, /sandbox guard armed \(write roots: \/w\/out:\/w\/tmp; hidden: 1; policy: rules\.json; os sandbox: off\)/);
+    assert.match(armed.stdout, /Blocked by sandbox guard: writes are limited to \/w\/out:\/w\/tmp/);
+    assert.ok(!existsSync("/tmp/agent-sh-run-test-outside.txt"));
+
+    const inert = await runCli(["-p", "say hi", "--output", "json", "-e", SANDBOX], llm.url, { env: { SBX_WRITE_ROOTS: "/w/out" } });
+    assert.doesNotMatch(inert.stdout, /sandbox guard/);
+  } finally { llm.server.close(); }
+});
+
 const landlockHere = process.platform === "linux"
   && spawnSync("python3", ["-B", join(SANDBOX, "landlock.py"), "--probe"]).status === 0;
 

@@ -1,4 +1,4 @@
-/** Sandbox for `agent-sh run` files: `config.sandbox` arms a tool-call guard and restarts the run inside an OS sandbox; see README.md. */
+/** Sandbox for unattended runs: a tool-call guard, plus an OS sandbox around `agent-sh run` files; see README.md. */
 import type { ExtensionContext } from "agent-sh/types";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -26,21 +26,29 @@ type Backend = Probe & { kind?: "bubblewrap" | "landlock" | "seatbelt"; path?: s
 export default function activate(ctx: ExtensionContext): void {
   const run = ctx.list().includes("run:config") ? ctx.call("run:config") as { base: string; sandbox?: SandboxConfig } : undefined;
   const sb = run?.sandbox;
-  if (!run || !sb) return;
+  // Set by the wrappers themselves, so it's only true once one is really around this process.
+  const isolated = process.env.SBX_SANDBOXED === "1";
+  const arm = (write: string[], hide: string[], policy: string[]) => {
+    armGuard(ctx, makeVerdict({ write, hide, policy }));
+    const kind = isolated ? `on (${process.env.SBX_SANDBOX_KIND || "bubblewrap"})` : "off";
+    ctx.bus.emit("ui:info", { message: `sandbox guard armed (write roots: ${write.join(":") || "none"}; hidden: ${hide.length}; policy: ${policy.join(":") || "none"}; os sandbox: ${kind})` });
+  };
+
+  if (!run || !sb) {
+    // For callers that start agent-sh themselves (e.g. `agent-sh -p` under their own sandbox.sh).
+    const list = (v?: string) => (v || "").split(":").filter(Boolean);
+    if (process.env.SBX_GUARD === "1") arm(list(process.env.SBX_WRITE_ROOTS), list(process.env.SBX_HIDE), list(process.env.SBX_POLICY));
+    return;
+  }
 
   const abs = (p: string) => path.resolve(run.base, p);
   const write = (sb.write ?? []).map(abs);
   const hide = (sb.hide ?? []).map(abs);
-  const policy = sb.policy ? abs(sb.policy) : "";
   const mode = sb.os ?? "preferred";
-  // Set by the wrappers themselves, so it's only true once one is really around this process.
-  const isolated = process.env.SBX_SANDBOXED === "1";
   let backend: Backend | undefined;
   const osSandbox = () => (backend ??= pickBackend());
 
-  armGuard(ctx, makeVerdict({ write, hide, policy }));
-  const kind = isolated ? `on (${process.env.SBX_SANDBOX_KIND || "bubblewrap"})` : "off";
-  ctx.bus.emit("ui:info", { message: `sandbox guard armed (write roots: ${write.join(":") || "none"}; hidden: ${hide.length}; policy: ${policy || "none"}; os sandbox: ${kind})` });
+  arm(write, hide, sb.policy ? [abs(sb.policy)] : []);
 
   ctx.bus.onPipe("run:checks", (p) => {
     p.handled.push("sandbox");

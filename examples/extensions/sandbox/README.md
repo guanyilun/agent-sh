@@ -1,7 +1,7 @@
 # Sandbox
 
-Sandboxing for unattended `agent-sh run` files. It does nothing unless the run file has a `sandbox` section, so
-interactive sessions are unaffected. There are two layers:
+Sandboxing for unattended runs. It does nothing unless a run file has a `sandbox` section or `SBX_GUARD=1` is set,
+so interactive sessions are unaffected. There are two layers:
 
 - **Guard**, on every platform: refuses tool calls that break the policy, for every agent in the run. It's a tripwire
   against honest mistakes, not isolation: `bash` can still reach files by other means.
@@ -77,6 +77,27 @@ A policy file adds rules for your environment or project:
 under (`under`) those paths, from `bash` and from `glob`/`grep`. An unreadable policy refuses every tool call rather
 than silently dropping its rules.
 
+## From environment variables
+
+For callers that start agent-sh themselves, such as a controller running many `agent-sh -p` agents:
+
+| Variable | Effect |
+|---|---|
+| `SBX_GUARD=1` | arms the guard |
+| `SBX_WRITE_ROOTS=a:b` | the write dirs (unset: every write is refused) |
+| `SBX_HIDE=a:b` | hidden paths |
+| `SBX_POLICY=a.json:b.json` | policy files |
+
+When armed it emits the notice `sandbox guard armed (...)` (a `notice` event under `--output json`); a caller
+should require it, since an extension that failed to load arms nothing. This path arms only the guard. For OS
+isolation, wrap each process yourself:
+
+```bash
+sandbox.sh [--rw DIR]... [--hide PATH]... [--home AGENT_SH_HOME] [--no-net] [--chdir DIR] -- agent-sh -p "..."
+```
+
+`--no-net` cuts the network, for running generated code rather than an agent, which needs to reach the model.
+
 ## Limits
 
 - The guard reads commands as text. A path built up inside a command (quoting tricks, variables, a script) gets past
@@ -88,6 +109,7 @@ than silently dropping its rules.
 
 ## Self-test
 
-`sandbox.sh --selftest /dir [/hidden-dir]` checks bubblewrap on a Linux machine. The guard, the Seatbelt profile and
+`sandbox.sh --selftest /dir [/hidden-dir]` checks bubblewrap on a Linux machine (set `SBX_ENDPOINT=host:port` to
+check the network too). The guard, the Seatbelt profile and
 the Landlock rule plan are covered by `tests/extensions/sandbox-guard.test.ts`, and Seatbelt and Landlock are
 exercised for real by `tests/cli/run-sandbox.test.ts` where they're available.
