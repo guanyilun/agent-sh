@@ -1,4 +1,3 @@
-/** Loopback Chat Completions → Codex Responses proxy; 127.0.0.1 only, per-process secret. */
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as os from "node:os";
@@ -18,7 +17,6 @@ export const SESSION_HEADER = "x-agent-sh-session";
 
 export interface ProxyOptions {
   secret: string;
-  /** Full Codex responses URL, e.g. https://chatgpt.com/backend-api/codex/responses */
   upstreamURL: string;
   originator: string;
   getCredentials: () => Promise<Credentials | null>;

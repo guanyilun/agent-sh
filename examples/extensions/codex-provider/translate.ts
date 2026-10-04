@@ -1,8 +1,3 @@
-/**
- * Chat Completions ⇄ Codex Responses translation (pure, no I/O).
- * Encrypted reasoning round-trips via reasoning_details (needs echoReasoning).
- */
-
 export interface ChatToolCall {
   id: string;
   type?: string;
@@ -287,7 +282,6 @@ export class CodexStreamTranslator {
   }
 }
 
-/** Fold translated chunks into a non-streaming chat.completion body. */
 export function aggregate(chunks: ChatChunk[]): Record<string, unknown> {
   let content = "";
   let finish: string | null = null;

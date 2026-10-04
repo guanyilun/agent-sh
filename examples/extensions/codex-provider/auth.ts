@@ -1,7 +1,3 @@
-/**
- * ChatGPT OAuth (PKCE) and a token store shared across processes.
- * Refresh tokens rotate, so refreshes take a file lock and re-read first.
- */
 import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -47,7 +43,6 @@ export function accountIdOf(accessToken: string): string | null {
   return typeof id === "string" && id ? id : null;
 }
 
-/** "me@example.com, plus plan" — for status lines; never includes secrets. */
 export function describeAccount(creds: Credentials): string {
   const claims = decodeJwtPayload(creds.access) ?? {};
   const email = claims[PROFILE_CLAIM]?.email;
@@ -169,7 +164,6 @@ export interface PendingLogin {
   url: string;
   /** False when port 1455 was busy: the user must paste the redirect URL. */
   callbackListening: boolean;
-  /** Resolves after the code is exchanged. */
   result: Promise<Credentials>;
   /** Accept a pasted redirect URL (or bare code). Throws on a foreign state. */
   supply: (input: string) => void;

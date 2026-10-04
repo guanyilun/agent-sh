@@ -1,4 +1,3 @@
-/** Model catalog: the Codex client's ~/.codex/models_cache.json, else a static fallback. */
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -34,7 +33,6 @@ function toModel(id: string, contextWindow?: unknown, input?: unknown): CodexMod
   };
 }
 
-/** Listed (user-selectable) models from the Codex cache; [] if unreadable. */
 export function readCodexCache(file = codexCachePath()): CodexModel[] {
   let data: { models?: Array<Record<string, unknown>> };
   try {

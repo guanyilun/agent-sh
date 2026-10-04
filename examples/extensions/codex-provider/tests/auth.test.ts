@@ -37,7 +37,6 @@ before(async () => {
         return;
       }
       issued++;
-      // Small delay so concurrent refreshes overlap.
       setTimeout(() => {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ access_token: jwt(`t${issued}`), refresh_token: `r${issued}`, expires_in: 3600 }));

@@ -1,4 +1,3 @@
-/** OpenAI SDK → proxy → fake Codex backend. */
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
