@@ -36,6 +36,8 @@ const PARENT_CONTEXT_CHARS = 12_000;
 
 interface TaskSpec { agent?: string; task: string; tools?: string[]; system?: string; model?: string; thinking?: string }
 
+const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens"];
+
 interface RunFileConfig {
   base: string;
   agents?: string | string[];
@@ -84,6 +86,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       backgroundWake: runConfig ? false : undefined,
     }),
   };
+  if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS] }));
   const runAgentDirs = [runConfig?.agents ?? []].flat().map(d => path.resolve(runConfig!.base, d));
   const extDir = path.dirname(fileURLToPath(import.meta.url));
   const bundledDir = path.join(extDir, "agents");

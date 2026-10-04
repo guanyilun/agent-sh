@@ -19,6 +19,8 @@ export interface RunArgs {
 }
 
 const WRAPPED = "AGENT_SH_RUN_WRAPPED";
+/** Config keys the CLI itself reads; extensions claim the rest on `run:checks`. */
+const OWN_KEYS = ["base", "model", "provider", "hours"];
 const RUN_ID = /^\d{8}-\d{6}-[0-9a-f]{4}$/;
 const CLI_VALUE_FLAGS = new Set(["--model", "--provider", "--api-key", "--base-url", "--backend", "--shell", "-e", "--extensions"]);
 
@@ -89,13 +91,13 @@ export async function runFile(cli: CliConfig, run: RunArgs): Promise<never> {
     }
   }
 
-  const { problems, handled } = bus.emitPipe("run:checks", { config, problems: [], handled: [] });
-  if (config.sandbox && !handled.includes("sandbox")) {
-    problems.push("config.sandbox is set but no loaded extension enforces it (load the sandbox extension).");
+  if (!has("workflow:run-file")) exit(2, "running a workflow file needs the subagents extension.");
+  const { problems, handled } = bus.emitPipe("run:checks", { config, problems: [], handled: [...OWN_KEYS] });
+  for (const key of Object.keys(config)) {
+    if (!handled.includes(key)) problems.push(`config.${key} is set but nothing handles it: check the spelling, or load the extension that enforces it.`);
   }
   if (problems.length && run.dryRun) process.stderr.write(`agent-sh run: (dry run) a real run would refuse to start:\n  - ${problems.join("\n  - ")}\n`);
   else if (problems.length) exit(2, `refusing to start:\n  - ${problems.join("\n  - ")}`);
-  if (!has("workflow:run-file")) exit(2, "running a workflow file needs the subagents extension.");
 
   const controller = new AbortController();
   let interrupts = 0;

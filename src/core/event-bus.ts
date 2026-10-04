@@ -26,7 +26,7 @@ export interface BusEvents {
 
   /** `agent-sh run`: an extension may wrap the command (e.g. in an OS sandbox); the CLI then re-runs it inside. */
   "run:wrap": { argv: string[]; config: RunConfig };
-  /** `agent-sh run`: extensions report problems (the run refuses to start) and name the config sections they enforce. */
+  /** `agent-sh run`: extensions report problems and name the config keys they handle; a problem or an unhandled key refuses the run. */
   "run:checks": { config: RunConfig; problems: string[]; handled: string[] };
 }
 

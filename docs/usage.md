@@ -61,7 +61,7 @@ export const config = {
 export default async ({ run, all, args, log, budget }) => { /* ... */ };
 ```
 
-Each extension reads its own section, and the run fails closed: a `sandbox` section that no loaded extension enforces, or an `os: "required"` that can't be met here, stops the run before any model call. Where an OS sandbox is usable, the whole run is restarted inside it; without a `sandbox` section the run isn't sandboxed.
+Each extension reads its own keys, and the run fails closed: a key that nothing handles (a misspelled limit, or a section whose extension isn't loaded), or an `os: "required"` that can't be met here, stops the run before any model call. Where an OS sandbox is usable, the whole run is restarted inside it; without a `sandbox` section the run isn't sandboxed.
 
 ### Headless mode
 

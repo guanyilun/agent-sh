@@ -70,17 +70,17 @@ test("config.sandbox arms the guard: a write outside the allowed dirs is blocked
   } finally { llm.server.close(); }
 });
 
-for (const [name, sandbox, extensions, env, message] of [
-  ["config.sandbox with no extension to enforce it", "{ write: [] }", [], {}, /no loaded extension enforces it/],
-  ["os: \"required\" without an OS sandbox", '{ os: "required" }', [SUBAGENTS], NO_OS_SANDBOX, /"required" but no OS sandbox is usable here/],
-  ["net: false (the run itself needs the model)", "{ net: false }", [SUBAGENTS], {}, /net: false isn't supported yet: the run itself needs the network to reach the model/],
+for (const [name, config, env, message] of [
+  ["a config key nothing handles", "{ budgetToken: 5, hours: 1 }", {}, /config\.budgetToken is set but nothing handles it/],
+  ["os: \"required\" without an OS sandbox", '{ sandbox: { os: "required" } }', NO_OS_SANDBOX, /"required" but no OS sandbox is usable here/],
+  ["net: false (the run itself needs the model)", "{ sandbox: { net: false } }", {}, /net: false isn't supported yet: the run itself needs the network to reach the model/],
 ] as const) {
   test(`refuses to start, before any model call: ${name}`, async () => {
     const llm = await fakeLlm(() => ({ content: "ok" }));
     try {
-      const r = await runCli(["run", "campaign.ts", ...extensions.flatMap((e) => ["-e", e])], llm.url, {
+      const r = await runCli(["run", "campaign.ts", "-e", SUBAGENTS], llm.url, {
         env,
-        prepare: (home) => write(home, "campaign.ts", `export const config = { sandbox: ${sandbox} };\nexport default async ({ run }) => run({ task: "t", tools: [] });\n`),
+        prepare: (home) => write(home, "campaign.ts", `export const config = ${config};\nexport default async ({ run }) => run({ task: "t", tools: [] });\n`),
       });
       assert.equal(r.code, 2, r.stderr);
       assert.match(r.stderr, message);
