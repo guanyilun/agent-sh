@@ -110,7 +110,7 @@ test("SBX_GUARD=1 arms the guard for callers that start agent-sh themselves; wit
 const landlockHere = process.platform === "linux"
   && spawnSync("python3", ["-B", join(SANDBOX, "landlock.py"), "--probe"]).status === 0;
 
-// One bash command tries an outside write, an inside write, and a hidden read through a path the guard can't recognise.
+// The hidden path is split with '' so the guard can't recognise it.
 for (const [name, skip, env, kind, denied] of [
   ["on macOS, Seatbelt", process.platform !== "darwin", {}, "seatbelt", /Operation not permitted/],
   ["on Linux without bubblewrap, Landlock", !landlockHere, { SBX_BWRAP: "/nonexistent/bwrap" }, "landlock", /Permission denied/],

@@ -59,7 +59,7 @@ export function makeVerdict({ write = [], hide = [], policy = [] }: GuardPolicy 
   const hidden = hide.map(expand);
   const rules = loadRules([policy].flat().filter(Boolean));
   const isHidden = (p: string) => hidden.length > 0 && underAny(p, hidden);
-  // Only words that look like paths: a command may mention a hidden dir's name without touching it.
+  // Only words that look like paths: naming a hidden dir isn't reading it.
   const reachesHidden = (command: string) => hidden.some(h => command.includes(h))
     || command.split(/[\s;|&()<>"'`=]+/).some(word => /^~|\//.test(word) && isHidden(word));
 

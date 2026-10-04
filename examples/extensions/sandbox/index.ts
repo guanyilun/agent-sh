@@ -26,7 +26,7 @@ type Backend = Probe & { kind?: "bubblewrap" | "landlock" | "seatbelt"; path?: s
 export default function activate(ctx: ExtensionContext): void {
   const run = ctx.list().includes("run:config") ? ctx.call("run:config") as { base: string; sandbox?: SandboxConfig } : undefined;
   const sb = run?.sandbox;
-  // Set by the wrappers themselves, so it's only true once one is really around this process.
+  // Set by the wrappers themselves, so it's only true inside one.
   const isolated = process.env.SBX_SANDBOXED === "1";
   const arm = (write: string[], hide: string[], policy: string[]) => {
     armGuard(ctx, makeVerdict({ write, hide, policy }));
@@ -35,7 +35,7 @@ export default function activate(ctx: ExtensionContext): void {
   };
 
   if (!run || !sb) {
-    // For callers that start agent-sh themselves (e.g. `agent-sh -p` under their own sandbox.sh).
+    // For callers that start agent-sh themselves.
     const list = (v?: string) => (v || "").split(":").filter(Boolean);
     if (process.env.SBX_GUARD === "1") arm(list(process.env.SBX_WRITE_ROOTS), list(process.env.SBX_HIDE), list(process.env.SBX_POLICY));
     return;
@@ -54,7 +54,7 @@ export default function activate(ctx: ExtensionContext): void {
     p.handled.push("sandbox");
     for (const key of Object.keys(sb)) if (!OPTIONS.includes(key)) p.problems.push(`config.sandbox.${key} isn't a sandbox option (${OPTIONS.join(", ")}).`);
     if (!OS_MODES.includes(mode)) p.problems.push(`config.sandbox.os must be one of ${OS_MODES.join(", ")}; got ${JSON.stringify(sb.os)}.`);
-    // The whole run is one process that must reach the model, so cutting its network can't work yet.
+    // The run is one process, and it must reach the model.
     if (sb.net === false) p.problems.push("config.sandbox.net: false isn't supported yet: the run itself needs the network to reach the model. Cutting the network for agents' commands needs per-agent isolation.");
     if (isolated || mode === "off") return p;
     const { ok, reason } = osSandbox();
