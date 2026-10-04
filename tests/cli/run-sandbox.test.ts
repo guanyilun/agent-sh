@@ -98,8 +98,12 @@ test("SBX_GUARD=1 arms the guard for callers that start agent-sh themselves; wit
     assert.match(armed.stdout, /Blocked by sandbox guard: writes are limited to \/w\/out:\/w\/tmp/);
     assert.ok(!existsSync("/tmp/agent-sh-run-test-outside.txt"));
 
-    const inert = await runCli(["-p", "say hi", "--output", "json", "-e", SANDBOX], llm.url, { env: { SBX_WRITE_ROOTS: "/w/out" } });
-    assert.doesNotMatch(inert.stdout, /sandbox guard/);
+    const plain = await fakeLlm(() => ({ content: "hi" }));
+    try {
+      const inert = await runCli(["-p", "say hi", "--output", "json", "-e", SANDBOX], plain.url, { env: { SBX_WRITE_ROOTS: "/w/out" } });
+      assert.equal(inert.code, 0, inert.stderr);
+      assert.doesNotMatch(inert.stdout, /sandbox guard/);
+    } finally { plain.server.close(); }
   } finally { llm.server.close(); }
 });
 
