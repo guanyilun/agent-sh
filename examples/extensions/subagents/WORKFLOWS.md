@@ -51,6 +51,18 @@ export default async ({ run, map, args, log, budget }) => {
 - `map(items, fn)` — call `fn(item, index)` for every item concurrently (up to `subagents.maxConcurrency`) and resolve to the results in order; **an item whose `fn` fails becomes `null`**. `fn` is ordinary async code, so each item can run several steps (`async (x) => { const a = await run(...); return run(..., a); }`) without waiting for the others.
 - `pipeline(items, stage1, stage2, ...)` — each item goes through the stages on its own: an item that finishes stage 1 starts stage 2 without waiting for the others. Each stage gets `(previous result, item, index)`; a stage that throws makes that item `null` and skips its remaining stages. Prefer it to `map` followed by another `map` unless a later step needs all the earlier results together (to merge or dedupe them, say).
 - `all([spec, ...])` — like `map` over `run` specs.
+- `race(items, fn, accept?)` — call `fn(item, index)` for every item concurrently and resolve to `{ value, index }` for the first result that `accept(value, item, index)` passes (any result, without `accept`); `null` if none does. The other items are cancelled: their subagents stop, and their next `run()` throws. Cancelled items leave behind whatever they already wrote, so give each one its own output directory.
+  ```ts
+  const won = await race(["induction", "contradiction", "direct"],
+    (how) => run("worker", `Prove the lemma by ${how}.`, { returns: PROOF }),
+    (proof) => checks(proof));
+  ```
+- `agent(name, options?)` — a handle on one conversation: each `ask(task, options?)` is a turn the agent answers remembering the earlier ones, so a follow-up doesn't have to restate them. `name` is a named agent or `null`; `options` (`system`, `tools`, `model`, ...) apply to every turn and `ask`'s own to that turn. Turns run one at a time, and every turn counts as a run. Use it for repair loops:
+  ```ts
+  const prover = agent("worker");
+  let proof = await prover.ask(`Prove the lemma.`, { returns: PROOF });
+  for (let i = 0; i < 5 && !(await checks(proof)); i++) proof = await prover.ask(`It fails:\n${lastError}`, { returns: PROOF });
+  ```
 - `args` — the parsed arguments when the file declares `export const args`, else everything after the file name as text.
 - `log(message)` — a progress line under the tool call (stderr under `agent-sh run`).
 - `signal` — aborted on Ctrl-C or at the deadline.
@@ -101,7 +113,9 @@ Every run gets an id and a folder in `~/.agent-sh/workflow-runs/<id>/`:
 
 `/workflow runs` lists recent runs (a run still marked running after agent-sh exited shows as interrupted). To resume a failed or interrupted run, fix the cause (or edit the workflow), then `/workflow resume <id>`, or have the agent call `run_workflow { resume: "<id>" }`.
 
-Resuming reruns the script from the top. Each `run()` call is identified by where it sits: top-level calls in the order the script makes them, and calls inside a `map` or `pipeline` item in that item's own order, so it doesn't matter which item finishes first. A call reuses the old result if its inputs (agent, task, tools, returns, system, model, thinking) are unchanged. The first call whose inputs changed, and every later call in the same branch, runs live. Runs that failed or never finished run again. For this to work the script must make the same calls in the same order given the same results, so don't let `Date.now()`, `Math.random()` or other outside state decide what to run. Side effects the script performs itself (files, commands) are not replayed.
+Resuming reruns the script from the top. Each `run()` call is identified by where it sits: top-level calls in the order the script makes them, and calls inside a `map`, `pipeline` or `race` item in that item's own order, so it doesn't matter which item finishes first. A call reuses the old result if its inputs (agent, task, tools, returns, system, model, thinking) are unchanged. The first call whose inputs changed, and every later call in the same branch, runs live. Runs that failed or never finished run again. For this to work the script must make the same calls in the same order given the same results, so don't let `Date.now()`, `Math.random()` or other outside state decide what to run. Side effects the script performs itself (files, commands) are not replayed.
+
+A `race` records which item won; resuming runs only that item (and `accept` on its result), and the others race again only if it no longer passes. An `agent()` turn is reused only if it and every turn before it are unchanged, and the first live turn continues from the recorded conversation.
 
 Agents are the named ones from `/agents` (`explore`, `plan`, `research`, `reviewer`, `oracle`, `worker`, `delegate`, plus ones from other extensions, the user and the project). Subagents can't start subagents or workflows.
 

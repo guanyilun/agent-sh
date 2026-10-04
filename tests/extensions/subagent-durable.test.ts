@@ -303,3 +303,76 @@ test("a journal from before call ids still resumes by call order", async () => {
     assert.equal(s.calls.length - before, 1);
   } finally { s.cleanup(); }
 });
+
+test("race keeps the first result that passes, cancels the rest, and resume runs only the winner", async () => {
+  let failAfter = true;
+  let slowSignal: AbortSignal | undefined;
+  const s = setup({ reply: async (o) => {
+    const task = lastUser(o);
+    if (task === "try slow") slowSignal = (o as { signal?: AbortSignal }).signal;
+    await new Promise((r) => setTimeout(r, task === "try slow" ? 80 : 5));
+    if (task === "after" && failAfter) throw new Error("boom");
+    return { content: `did ${task}` };
+  } });
+  try {
+    wf(s, "r.ts", [
+      'export default async ({ run, race }) => {',
+      '  const won = await race(["slow", "bad", "fast"], async (x) => {',
+      '    await run({ task: "try " + x, tools: [] });',
+      '    return run({ task: "polish " + x, tools: [] });',
+      '  }, (v) => !v.includes("bad"));',
+      '  const none = await race(["bad"], (x) => run({ task: "try " + x, tools: [] }), () => false);',
+      '  await run({ task: "after", tools: [] });',
+      '  return JSON.stringify({ won, none });',
+      '};',
+    ].join("\n"));
+    let progress = "";
+    const first = await s.exec("run_workflow", { name: "r" }, (c) => { progress += c; });
+    assert.equal(first.isError, true);
+    assert.equal(slowSignal?.aborted, true);
+    assert.match(progress, /\[1 ad-hoc\] cancelled/);
+    assert.ok(!s.calls.some((c) => lastUser(c) === "polish slow"));
+    const calls = s.calls.length;
+
+    failAfter = false;
+    progress = "";
+    const second = await s.exec("run_workflow", { resume: runId(first) }, (c) => { progress += c; });
+    assert.deepEqual(JSON.parse(body(second)), { won: { value: "did polish fast", index: 2 }, none: null });
+    assert.deepEqual(s.calls.slice(calls).map(lastUser), ["after"], "the losers of the first race don't run again");
+    assert.equal((progress.match(/reused from/g) ?? []).length, 3);
+  } finally { s.cleanup(); }
+});
+
+test("agent() keeps one conversation across ask() turns, and resume restores it", async () => {
+  let failThird = true;
+  const s = setup({ reply: (o) => {
+    if (lastUser(o) === "third" && failThird) throw new Error("boom");
+    return { content: `${lastUser(o)} sees ${o.messages.filter((m) => m.role === "user").length}` };
+  } });
+  try {
+    const script = (first: string) => [
+      'export default async ({ agent }) => {',
+      '  const a = agent(null, { tools: [], system: "You remember." });',
+      `  const one = await a.ask("${first}");`,
+      '  const [two, three] = await Promise.all([a.ask("second"), a.ask("third")]);',
+      '  return [one, two, three].join("; ");',
+      '};',
+    ].join("\n");
+    wf(s, "chat.ts", script("first"));
+    const first = await s.exec("run_workflow", { name: "chat" });
+    assert.equal(first.isError, true);
+    assert.equal(s.calls.length, 3);
+    assert.equal(s.calls[1]!.messages[0]!.content.startsWith("You remember."), true);
+
+    failThird = false;
+    const second = await s.exec("run_workflow", { resume: runId(first) });
+    assert.equal(body(second), "first sees 1; second sees 2; third sees 3");
+    assert.equal(s.calls.length, 4, "only the failed turn runs again, with the earlier turns restored");
+
+    // A changed first turn makes every later turn run again.
+    wf(s, "chat.ts", script("first!"));
+    const third = await s.exec("run_workflow", { resume: runId(second) });
+    assert.equal(body(third), "first! sees 1; second sees 2; third sees 3");
+    assert.equal(s.calls.length, 7);
+  } finally { s.cleanup(); }
+});

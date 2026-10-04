@@ -63,6 +63,8 @@ interface RunExtras {
   onUsage?: (totalTokens: number) => void;
   onMessage?: (message: Record<string, unknown>) => void;
   onStart?: () => void;
+  history?: unknown[];
+  onHistory?: (messages: unknown[]) => void;
 }
 
 export default function activate(ctx: ExtensionContext & AgentContext): void {
@@ -613,7 +615,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens) : undefined,
         onMessage: extra.onMessage as SubagentOptions["onMessage"],
         shouldStop: extra.shouldStop,
+        history: extra.history as SubagentOptions["history"],
       });
+      if (meta.messages) extra.onHistory?.(meta.messages);
     } finally {
       slots.release();
     }

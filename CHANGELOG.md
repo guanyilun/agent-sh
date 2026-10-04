@@ -57,6 +57,11 @@ Releases before this file are recorded in the git tags and GitHub releases.
   Resume now identifies calls by where they sit in the script, so `map` items
   with several steps, and `pipeline`, resume correctly whatever order items
   finish in. Older journals still resume by call order.
+- Workflow scripts: `race(items, fn, accept?)` keeps the first result that
+  passes and cancels the other items' subagents, and `agent(name)` returns a
+  handle whose `ask()` turns continue one conversation. Both resume: a race
+  reruns only its recorded winner, and a conversation is restored from the
+  journal. `runSubagent` takes `history` and returns `outMeta.messages`.
 
 ### Changed
 
