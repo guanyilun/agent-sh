@@ -70,7 +70,7 @@ interface RunExtras {
 
 export default function activate(ctx: ExtensionContext & AgentContext): void {
   const { bus } = ctx;
-  // Under `agent-sh run <file>`, the file's config overrides settings; there's no main agent to wake.
+  // A run file's config overrides settings; it has no main agent to wake.
   const runConfig = ctx.list?.().includes("run:config") ? ctx.call("run:config") as RunFileConfig : undefined;
   const settings = {
     ...ctx.getExtensionSettings("subagents", {

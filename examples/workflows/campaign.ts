@@ -19,7 +19,7 @@ export const config = {
 export default (async ({ run, map, args, log, budget }) => {
   let notes = "";
   for (let round = 1; round <= args.rounds && budget.remaining() > 200_000; round++) {
-    // The "master" is just a typed run in a loop; its memory is the notes it carries forward (or files in ./out).
+    // The planner's only memory is the notes it's handed each round.
     const plan = await run(null, `
       Plan round ${round} for ${args.target}. Notes so far:
       ${notes || "(none)"}

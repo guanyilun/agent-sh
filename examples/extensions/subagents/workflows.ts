@@ -83,7 +83,7 @@ export interface TaskControl {
   onMessage(message: Record<string, unknown>): void;
   /** Once it has a concurrency slot. */
   onStart?(): void;
-  /** agent() turns: the conversation to continue, and where to hand back the updated one. */
+  /** agent() turns: the conversation so far in, the updated one out. */
   history?: unknown[];
   onHistory?(messages: unknown[]): void;
 }
@@ -244,7 +244,7 @@ export async function runWorkflow(
         let turns = 0;
         let last: Promise<unknown> = Promise.resolve();
         return {
-          // Position and number are taken on call; the turn itself waits for the one before it.
+          // Numbered on call; run after the turn before it.
           ask: (task, options) => {
             const spec = toSpec(name, task, { ...base, ...options });
             const seq = ++runs;
@@ -390,7 +390,6 @@ export function dedent(text: string): string {
 }
 
 interface Scope { path: string; next: number; diverged: boolean; parent?: Scope; signal: AbortSignal }
-/** An agent() conversation: the last turn's key and the messages so far. */
 interface Chat { key: string; history: unknown[] }
 const isDiverged = (s: Scope | undefined): boolean => !!s && (s.diverged || isDiverged(s.parent));
 

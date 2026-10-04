@@ -29,9 +29,9 @@ export interface JournalEntry {
   agent?: string;
   output: unknown;
   tokens: number;
-  /** agent() turns: the messages this turn added to the conversation. */
+  /** agent() turns: the messages this turn added. */
   added?: unknown[];
-  /** race(): the index of the item that won. */
+  /** race(): the winning item's index. */
   winner?: number;
 }
 

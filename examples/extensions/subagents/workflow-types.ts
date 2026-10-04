@@ -9,7 +9,7 @@ export interface RunOptions {
   schema?: JsonSchema | string;
   /** Ad-hoc subagents only: tool names to allow ([] for none). */
   tools?: string[];
-  /** Ad-hoc subagents only: the system prompt (its role and rules); the task is the message. */
+  /** Ad-hoc subagents only: the system prompt. */
   system?: string;
   model?: string;
   thinking?: string;
@@ -23,16 +23,16 @@ export interface RunSpec extends RunOptions {
 }
 
 export interface AgentHandle {
-  /** The next turn of one conversation: the agent remembers the earlier ones. One turn runs at a time. */
+  /** The next turn of the same conversation; one runs at a time. */
   ask(task: string, options?: RunOptions): Promise<any>;
 }
 
 export interface WorkflowApi {
   run(agent: string | null, task: string, options?: RunOptions): Promise<any>;
   run(spec: RunSpec): Promise<any>;
-  /** An agent that keeps its conversation between ask() calls; `options` apply to every turn. */
+  /** Keeps its conversation between ask() calls; `options` apply to every turn. */
   agent(agent: string | null, options?: RunOptions): AgentHandle;
-  /** The first item whose result passes `accept` (default: any result) wins and the rest are cancelled; null if none does. */
+  /** The first result that passes `accept` wins and the other items are cancelled; null if none does. */
   race<T, R>(items: T[], fn: (item: T, index: number) => Promise<R>, accept?: (value: R, item: T, index: number) => unknown): Promise<{ value: R; index: number } | null>;
   /** A failed item becomes null. */
   map<T, R>(items: T[], fn: (item: T, index: number) => Promise<R>): Promise<(R | null)[]>;
