@@ -139,6 +139,53 @@ test("@checkpoint saves a function's result; a bare --resume continues the lates
   } finally { llm.server.close(); }
 });
 
+const hasRay = !skip && spawnSync(PYTHON, ["-c", "import ray"]).status === 0;
+
+test("Ray does the script's own compute while the agents stay here; checkpoints keep a resume from redoing it", { skip: !hasRay }, async () => {
+  let fail = true;
+  const llm = await fakeLlm((req) => (lastUser(req) === "summarise" && fail ? { status: 400 } : { content: `did ${lastUser(req)}` }));
+  try {
+    let home = "";
+    const prepare = (h: string) => {
+      home = h;
+      write(h, "campaign.py", [
+        "import asyncio, os, ray",
+        "from agentsh import checkpoint, run",
+        "",
+        "@ray.remote",
+        "def build(directory, log):",
+        '    with open(log, "a") as file:',
+        '        file.write(directory + "\\n")',
+        '    return f"built {directory}", os.getpid()',
+        "",
+        "@checkpoint",
+        "async def build_on_cluster(directory, log):",
+        "    return await build.remote(directory, log)",
+        "",
+        "async def main():",
+        '    ray.init(num_cpus=2, include_dashboard=False, logging_level="ERROR")',
+        '    log = os.path.abspath("builds.txt")',
+        '    proofs = await asyncio.gather(run("prove a", tools=[]), run("prove b", tools=[]))',
+        '    builds = await asyncio.gather(build_on_cluster("a", log), build_on_cluster("b", log))',
+        '    final = await run("summarise", tools=[])',
+        '    return {"proofs": proofs, "builds": [b[0] for b in builds], "elsewhere": all(b[1] != os.getpid() for b in builds), "final": final}',
+      ]);
+    };
+    const first = await run("campaign.py", [], llm.url, { prepare, keepHome: true });
+    assert.equal(first.code, 1, first.stderr);
+    assert.equal(readFileSync(join(home, "builds.txt"), "utf8").split("\n").filter(Boolean).sort().join(), "a,b");
+
+    fail = false;
+    const before = llm.requests.length;
+    const second = await run("campaign.py", ["--resume"], llm.url, { home, keepHome: true });
+    assert.equal(second.code, 0, second.stderr);
+    assert.deepEqual(result(second.stdout), { proofs: ["did prove a", "did prove b"], builds: ["built a", "built b"], elsewhere: true, final: "did summarise" });
+    assert.deepEqual(llm.requests.slice(before).map(lastUser), ["summarise"]);
+    assert.equal(readFileSync(join(home, "builds.txt"), "utf8").split("\n").filter(Boolean).length, 2, "no build ran again");
+    rmSync(home, { recursive: true, force: true });
+  } finally { llm.server.close(); }
+});
+
 test("race keeps the first accepted result and stops the others; --resume reruns only the winner", { skip }, async () => {
   let failAfter = true;
   const llm = await fakeLlm((req) => {

@@ -16,6 +16,8 @@ Releases before this file are recorded in the git tags and GitHub releases.
   the agents for it, so the journal, resume, budget, dry run and sandbox work
   as for JavaScript files. Concurrency is plain `asyncio.gather`, cancelling a
   task stops its agent, and `returns` takes a dataclass. Needs Python 3.9+.
+  The file can use Ray, Dask or submitit for its own compute while the agents
+  stay in the agent-sh process.
 - Workflow scripts: `checkpoint(name, fn)` (Python: the `@checkpoint`
   decorator) saves the result of the script's own work, such as a test suite
   or a build, so a resumed run gets the saved result instead of doing it again.

@@ -8,6 +8,8 @@ import type { RunSpec, WorkflowApi } from "./workflow-types.js";
 
 const LIB = path.join(path.dirname(fileURLToPath(import.meta.url)), "python");
 const HELLO_MS = 30_000;
+/** How long the script gets to clean up after itself (e.g. shut down a Ray cluster it started) before it is killed. */
+const EXIT_MS = 10_000;
 
 /** What a script in another process needs beyond WorkflowApi: it numbers its own calls. */
 export interface ScriptHost {
@@ -41,7 +43,13 @@ export function pythonModule(file: string, python = defaultPython()): Promise<Py
   const toChild = child.stdio[3] as Writable;
   const send = (message: unknown) => { if (toChild.writable) toChild.write(`${JSON.stringify(message)}\n`); };
   toChild.on("error", () => {});
-  const dispose = () => { if (child.exitCode === null && !child.killed) child.kill("SIGTERM"); };
+  const running = () => child.exitCode === null && child.signalCode === null;
+  // SIGTERM lets Python run its exit handlers; SIGKILL is for a script that won't go.
+  const dispose = () => {
+    if (!running()) return;
+    child.kill("SIGTERM");
+    setTimeout(() => { if (running()) child.kill("SIGKILL"); }, EXIT_MS).unref();
+  };
 
   const errors: string[] = [];
   let print = (_line: string) => {};
@@ -100,8 +108,14 @@ export function pythonModule(file: string, python = defaultPython()): Promise<Py
         }
         else if (m.t === "checkpoint_set") reply(m.rid, () => host.checkpointRecord(m.id, m.key, m.value));
         else if (m.t === "log") api.log(String(m.message));
-        else if (m.t === "done") { onExit = () => {}; resolve(m.result ?? undefined); }
-        else if (m.t === "fail") { onExit = () => {}; reject(m.stop ? host.stop(m.error) : new Error(m.traceback ? `${m.error}\n${String(m.traceback).trim()}` : m.error)); }
+        else if (m.t === "done") finish(() => resolve(m.result ?? undefined));
+        else if (m.t === "fail") finish(() => reject(m.stop ? host.stop(m.error) : new Error(m.traceback ? `${m.error}\n${String(m.traceback).trim()}` : m.error)));
+      };
+      // The outcome is reported once the script has exited, so its own cleanup is over by then.
+      const finish = (settle: () => void) => {
+        const timer = setTimeout(() => { dispose(); settle(); }, EXIT_MS);
+        onExit = () => { clearTimeout(timer); settle(); };
+        if (!running()) onExit("");
       };
       send({ t: "start", args: api.args, budget: usage() });
     }).finally(dispose);

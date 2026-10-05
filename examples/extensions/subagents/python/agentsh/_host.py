@@ -8,6 +8,8 @@ import asyncio
 import inspect
 import json
 import os
+import signal
+import sys
 import threading
 import traceback
 import types
@@ -33,8 +35,11 @@ class Connection:
 
     def send(self, kind, **fields):
         with self._write_lock:
-            self._outgoing.write(json.dumps({"t": kind, **fields}, default=_shapes.plain) + "\n")
-            self._outgoing.flush()
+            try:
+                self._outgoing.write(json.dumps({"t": kind, **fields}, default=_shapes.plain) + "\n")
+                self._outgoing.flush()
+            except OSError:
+                pass  # agent-sh has gone; there is nobody left to tell
 
     def receive(self):
         """Wait for the next message; None once agent-sh has gone."""
@@ -130,6 +135,8 @@ def serve(module, read_fd, write_fd):
     """Run the file's `main` and report how it went. Returns the exit code."""
     global _link
     _link = Connection(read_fd, write_fd)
+    # Asked to stop: leave through the normal exit path, so exit handlers (the program's, a library's) still run.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
     main = getattr(module, "main", None)
     if not inspect.iscoroutinefunction(main):
         _link.send("hello", error="the file must define `async def main()`")

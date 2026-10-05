@@ -151,6 +151,31 @@ How it fits with `asyncio`:
 - **Hitting a limit cancels the program.** When the budget, run cap or deadline is reached, or you press Ctrl-C, `main()` is cancelled the way asyncio cancels any task, so `finally` blocks run and nothing can loop past the limit.
 - **`print()`** becomes a progress line.
 
+Heavy work on other machines:
+
+The agents all live in the one agent-sh process, where they mostly wait on the model. Work of your own that needs real compute (builds, test suites, simulations) can go to a cluster through whatever you already use, since the file is plain Python: Ray, Dask, submitit. Wrap it in `@checkpoint` so a resumed run doesn't send it again:
+
+```python
+import ray
+from agentsh import checkpoint, run
+
+@ray.remote(num_cpus=8)
+def build(directory):            # runs wherever Ray puts it
+    ...
+    return passed, output
+
+@checkpoint
+async def build_on_cluster(directory):
+    return await build.remote(directory)
+
+async def main():
+    ray.init(address="auto")     # a Ray cluster that is already up, e.g. inside your Slurm allocation
+    proof = await run("Prove the lemma in Lemma.lean.", agent="worker")
+    passed, output = await build_on_cluster("./out/lemma")
+```
+
+Only the main program can call `run`, `Agent` and `race`: a function running on a Ray or Dask worker has no connection to agent-sh. Start the cluster library inside `main()`, not at the top of the file, which is also loaded for `--help`. When the run ends the program gets ten seconds to exit on its own, so a cluster it started is shut down properly.
+
 The file itself:
 
 - **`async def main()`**, or `main(args)` to get the parsed arguments (`args.target`).
