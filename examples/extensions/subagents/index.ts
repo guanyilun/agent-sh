@@ -310,6 +310,11 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     path.join(extDir, "WORKFLOWS.md"),
   );
   ctx.agent.registerSkill(
+    "writing-python-workflows",
+    "How to write an agent-sh workflow as a Python asyncio program (run, Agent, race, checkpoint, typed answers, resume rules)",
+    path.join(extDir, "PYTHON.md"),
+  );
+  ctx.agent.registerSkill(
     "using-subagents",
     "Choosing between spawn_agent, parallel tasks, background runs and workflows; running, monitoring, resuming and debugging workflow runs",
     path.join(extDir, "USING.md"),

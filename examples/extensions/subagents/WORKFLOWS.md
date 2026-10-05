@@ -106,7 +106,7 @@ Budget exhaustion, the run cap, the deadline and Ctrl-C stop the whole workflow;
 
 ## Python
 
-A workflow can be a `.py` file instead: an ordinary `asyncio` program in its own Python process, with agent-sh running the agents for it. Subagents, tools, the journal, the budget and the sandbox are the same as for a JavaScript file.
+The full guide for Python is [PYTHON.md](PYTHON.md); this section is a summary. A workflow can be a `.py` file instead: an ordinary `asyncio` program in its own Python process, with agent-sh running the agents for it. Subagents, tools, the journal, the budget and the sandbox are the same as for a JavaScript file.
 
 ```python
 import asyncio

@@ -153,7 +153,8 @@ test("progress lines show paths relative to the working directory", async () => 
 test("registers the authoring and usage skills, each backed by a real guide", () => {
   const s = setup({ reply: () => ({ content: "ok" }) });
   try {
-    assert.deepEqual([...s.skills.keys()].sort(), ["using-subagents", "writing-workflows"]);
+    assert.deepEqual([...s.skills.keys()].sort(), ["using-subagents", "writing-python-workflows", "writing-workflows"]);
+    assert.match(readFileSync(s.skills.get("writing-python-workflows")!, "utf8"), /^# Writing agent-sh workflows in Python/);
     assert.match(readFileSync(s.skills.get("using-subagents")!, "utf8"), /^# Using subagents and workflows/);
     assert.match(readFileSync(s.skills.get("writing-workflows")!, "utf8"), /^# Writing workflows/);
   } finally { s.cleanup(); }
