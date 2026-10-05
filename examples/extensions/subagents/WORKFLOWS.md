@@ -4,7 +4,7 @@ A workflow is a script that coordinates subagents: steps in sequence, steps in p
 
 ## Where it goes
 
-One `.ts` or `.js` file; the file name is the workflow name. Nothing to build or install.
+One `.ts`, `.js` or `.py` file (see "Python"); the file name is the workflow name. Nothing to build or install.
 
 | Directory | Scope |
 |---|---|
@@ -103,6 +103,48 @@ export const args = {
 
 Budget exhaustion, the run cap, the deadline and Ctrl-C stop the whole workflow; `map()`, `pipeline()` and `all()` never turn them into `null`.
 
+## Python
+
+A workflow can be a `.py` file instead. The script runs in its own Python process and drives agent-sh over a pipe, so subagents, tools, the journal, the budget and the sandbox are the same; only the control flow is yours, in `asyncio`.
+
+```python
+from dataclasses import dataclass
+from agentsh import agent, log, map, race, run
+
+description = "Review until clean"
+args = dict(target=dict(default="the uncommitted changes", help="what to review"), rounds=3)
+config = dict(concurrency=6, budgetTokens=5_000_000, hours=3)
+
+@dataclass
+class Review:
+    verdict: str
+    findings: list[str]
+
+async def main(args):
+    for round in range(args.rounds):
+        reviews = await map(["correctness", "tests"], lambda focus:
+            run("reviewer", f"Review {args.target} for {focus}.", returns=Review))
+        findings = [f for r in reviews if r for f in r.findings]
+        if not findings:
+            return f"Clean after {round + 1} round(s)."
+        await run("worker", "Fix only these findings:\n" + "\n".join(findings))
+```
+
+`agent-sh run review.py --target src --rounds 2`, with `--help`, `--dry-run` and `--resume` as for any run file. A `.py` file in a workflows folder is listed and run like the others.
+
+What differs from the JavaScript API:
+
+- **The entry point is `async def main()`**, or `main(args)` to get the parsed arguments (`args.target`).
+- **`run()` starts the subagent immediately** and returns an awaitable, so `a = run(...); b = run(...); await a` runs both at once. Options are keywords: `returns`, `tools`, `system`, `model`, `thinking`, `label`.
+- **`returns` also takes a dataclass** (or `list[SomeDataclass]`); the run then resolves to an instance. Fields may be `str`, `int`, `float`, `bool`, lists, nested dataclasses, `Literal[...]`, and `Optional[...]` for fields the agent may omit. The shorthand and JSON Schema work too, and resolve to plain dicts.
+- **Callbacks take the item only**: `map(items, fn)` calls `fn(item)`, `pipeline` stages get `(previous, item)`, and `race(items, fn, accept)` calls `fn(item)` and `accept(value)`. `race` resolves to `Won(value, index)` or `None`.
+- **Failures are exceptions**: a failed run raises `RunError`; `WorkflowStop` means the whole workflow is ending (budget, run cap, deadline) and `map`, `pipeline` and `race` let it through.
+- **`budget.spent()` and `budget.remaining()`** are as of the latest finished run.
+- **`config` must be a literal** (plain values, lists, dicts or `dict(...)`): it is read without running the file. `python: ".venv/bin/python"` in it picks the interpreter, relative to the file; otherwise `AGENT_SH_PYTHON`, then `python3`.
+- `print()` and `log()` both become progress lines.
+
+Resuming follows the same rule as in JavaScript: the script must make the same calls in the same order given the same results. Needs Python 3.9+; not tried on Windows.
+
 ## Runs, logs and resuming
 
 Every run gets an id and a folder in `~/.agent-sh/workflow-runs/<id>/`:
@@ -193,5 +235,5 @@ Bundled, next to this file in `workflows/`:
 
 In the repo's `examples/workflows/` (copy into `~/.agent-sh/workflows/` to use):
 
-- `campaign.ts`: a run-file template with `config` and declared args.
+- `campaign.ts`: a run-file template with `config` and declared args; `campaign.py` is the same in Python.
 - `verified-review.ts`: three finders looking different ways, grouped by file with a merge run for files with several claims, then three skeptics per finding attacking it from different angles; only findings most skeptics fail to refute are reported, and merges and caps are logged.

@@ -17,6 +17,7 @@ import {
   type TaskControl, type TaskResult, type WorkflowDef,
 } from "./workflows.js";
 import type { RunSpec } from "./workflow-types.js";
+import { isPython, pythonModule } from "./python.js";
 
 export type { Workflow, WorkflowApi, RunSpec, JsonSchema } from "./workflow-types.js";
 export type { AgentRegistration } from "./agents.js";
@@ -35,7 +36,7 @@ const PARENT_CONTEXT_CHARS = 12_000;
 
 interface TaskSpec { agent?: string; task: string; tools?: string[]; system?: string; model?: string; thinking?: string }
 
-const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens"];
+const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "python"];
 
 interface RunFileConfig {
   base: string;
@@ -44,6 +45,7 @@ interface RunFileConfig {
   maxIterations?: number;
   maxRuns?: number;
   budgetTokens?: number;
+  python?: string;
 }
 
 interface RunFileRequest {
@@ -85,6 +87,8 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     }),
   };
   if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS] }));
+  // A path (e.g. a venv's interpreter) is relative to the run file; a bare name is looked up on PATH.
+  const python = runConfig?.python?.includes("/") ? path.resolve(runConfig.base, runConfig.python) : runConfig?.python;
   const runAgentDirs = [runConfig?.agents ?? []].flat().map(d => path.resolve(runConfig!.base, d));
   const extDir = path.dirname(fileURLToPath(import.meta.url));
   const bundledDir = path.join(extDir, "agents");
@@ -438,8 +442,11 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     bus.emit("ui:info", { message });
   });
 
-  ctx.define("workflow:help", (req: { file: string; module: Record<string, unknown> }) =>
-    helpText(path.basename(req.file), req.module.args as Record<string, unknown> | undefined, req.module.description as string | undefined));
+  ctx.define("workflow:help", async (req: { file: string; module: Record<string, unknown> }) => {
+    const mod = isPython(req.file) ? await pythonModule(req.file, python) : req.module;
+    (mod.dispose as (() => void) | undefined)?.();
+    return helpText(path.basename(req.file), mod.args as Record<string, unknown> | undefined, mod.description as string | undefined);
+  });
 
   ctx.define("workflow:run-file", async (req: RunFileRequest): Promise<JobOutcome & { refused?: boolean }> => {
     const resumeId = req.resume;
@@ -448,15 +455,18 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     const name = path.basename(req.file).replace(/\.[^.]+$/, "");
     const wf: WorkflowDef = { name, description: "", file: req.file, scope: "user" };
     const args = req.tokens ?? req.args;
+    let mod = req.module;
     try {
-      workflowArgs(wf, req.module, args);
+      if (isPython(req.file)) mod = await pythonModule(req.file, python);
+      workflowArgs(wf, mod, args);
     } catch (err) {
-      if (err instanceof ArgsError) return { content: err.message, isError: true, refused: true };
+      (mod.dispose as (() => void) | undefined)?.();
+      if (err instanceof ArgsError || isPython(req.file)) return { content: err instanceof Error ? err.message : String(err), isError: true, refused: true };
       throw err;
     }
     return executeWorkflow(wf, args, {
       resumeId, budgetTokens: settings.workflowTokenBudget || undefined, signal: req.signal, progress: req.progress,
-      module: req.module, dryRun: req.dryRun, resumeHint: (id) => `agent-sh run ${req.file} --resume ${id}`,
+      module: mod, dryRun: req.dryRun, resumeHint: (id) => `agent-sh run ${req.file} --resume ${id}`,
       quietMs: 60_000,
     });
   });
@@ -481,7 +491,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         complete: (messages) => ctx.call("llm:invoke", messages, { maxTokens: 4096 }) as Promise<string>,
         maxRuns: settings.maxRunsPerWorkflow,
       }, opts.signal, opts.progress, {
-        run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, module: opts.module, quietMs: opts.quietMs,
+        run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, module: opts.module, quietMs: opts.quietMs, python,
       });
       return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
     } catch (err) {

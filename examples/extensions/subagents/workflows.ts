@@ -7,8 +7,9 @@ import { normalizeSchema, parseJsonReply, validate } from "./schema.js";
 import type { JournalEntry, RunDir } from "./runs.js";
 import type { JsonSchema, RunOptions, RunSpec, WorkflowApi } from "./workflow-types.js";
 import { ArgsError, helpText, parseArgs, tokenize, type ArgsSpec } from "./args.js";
+import { isPython, pythonModule, type ScriptHost } from "./python.js";
 
-const EXTS = [".ts", ".mts", ".js", ".mjs"];
+const EXTS = [".ts", ".mts", ".js", ".mjs", ".py"];
 
 export type WorkflowScope = "bundled" | "extension" | "user" | "project";
 
@@ -48,7 +49,7 @@ export function describeFile(file: string): string {
 
 // Read without importing: listing must never run an untrusted file.
 function staticDescription(source: string): string {
-  const m = source.match(/export\s+const\s+description\s*=\s*(["'`])([\s\S]*?)\1/);
+  const m = source.match(/(?:export\s+const\s+|^)description\s*=\s*(["'`])([\s\S]*?)\1/m);
   return m ? m[2]!.replace(/\s+/g, " ").trim() : "";
 }
 
@@ -106,6 +107,8 @@ export interface WorkflowRunOpts {
   budgetTokens?: number;
   module?: Record<string, unknown>;
   quietMs?: number;
+  /** Interpreter for .py workflows. */
+  python?: string;
 }
 
 /** Ends the whole workflow; all() rethrows it instead of returning null. */
@@ -134,9 +137,10 @@ export async function runWorkflow(
     progress(`· ${counts.working} working, ${counts.queued} queued, ${counts.done} finished; ${Math.round((Date.now() - started) / 60_000)} min, ${record.record.tokens} tokens`);
   }, Math.min(opts.quietMs, 10_000));
   if (quiet) quiet.unref();
+  let mod: Record<string, unknown> | undefined = opts.module;
   try {
-    const mod = opts.module ?? await importFresh(def);
-    const fn = mod.default ?? mod.run;
+    mod ??= isPython(def.file) ? await pythonModule(def.file, opts.python) : await importFresh(def);
+    const fn = (mod.default ?? mod.run) as ((api: WorkflowApi, host: ScriptHost) => unknown) | undefined;
     if (typeof fn !== "function") throw new Error(`${def.file} must export a default function`);
     const apiArgs = workflowArgs(def, mod, args);
 
@@ -332,7 +336,43 @@ export async function runWorkflow(
       signal,
       budget,
     };
-    const result = await fn(api);
+    // For scripts in another process, which number their own calls and scopes.
+    const held = new Map<string, Scope & { stop: AbortController }>();
+    const scopeAt = (p: string): Scope => {
+      if (!p) return root;
+      let s = held.get(p);
+      if (!s) {
+        const parent = scopeAt(p.replace(/[^/]+\/$/, ""));
+        const stop = new AbortController();
+        s = { path: p, next: 0, diverged: false, parent, signal: AbortSignal.any([parent.signal, stop.signal]), stop };
+        held.set(p, s);
+      }
+      return s;
+    };
+    const chats = new Map<string, Chat>();
+    const inflight = new Set<{ scope: string; done: Promise<unknown> }>();
+    const host: ScriptHost = {
+      run: (spec, id, at, session) => {
+        if (session && !chats.has(session)) chats.set(session, { key: "", history: [] });
+        const entry = { scope: at, done: exec(toSpec(spec), ++runs, scopeAt(at), id, session ? chats.get(session) : undefined) };
+        inflight.add(entry);
+        entry.done.catch(() => {}).finally(() => inflight.delete(entry));
+        return entry.done;
+      },
+      raceWinner: (id, key, at) => {
+        const cached = isDiverged(scopeAt(at)) ? undefined : replay.get(id);
+        return cached?.key === key ? cached.winner : undefined;
+      },
+      raceRecord: (id, key, winner) => record.append({ seq: runs, id, key, winner, output: null, tokens: 0 }),
+      cancel: async (paths) => {
+        for (const p of paths) { scopeAt(p); held.get(p)!.stop.abort(); }
+        await Promise.allSettled([...inflight].filter(e => paths.some(p => e.scope.startsWith(p))).map(e => e.done));
+      },
+      kind: (err) => err instanceof WorkflowStop ? "stop" : err instanceof Cancelled ? "cancelled" : "error",
+      stop: (message) => new WorkflowStop(message),
+    };
+
+    const result = await fn(api, host);
     record.finish("done");
     return result;
   } catch (err) {
@@ -341,6 +381,7 @@ export async function runWorkflow(
     throw err;
   } finally {
     if (quiet) clearInterval(quiet);
+    (mod?.dispose as (() => void) | undefined)?.();
   }
 }
 
@@ -380,6 +421,7 @@ function toSpec(a: RunSpec | string | null, task?: string, options?: RunOptions)
   if (spec.returns !== undefined && spec.schema === undefined) spec.schema = spec.returns;
   delete spec.returns;
   spec.task = dedent(String(spec.task ?? ""));
+  if (spec.agent == null) delete spec.agent;
   return spec;
 }
 

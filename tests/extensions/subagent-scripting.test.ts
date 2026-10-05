@@ -2,6 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { normalizeSchema, validate, example } from "../../examples/extensions/subagents/schema.js";
 import { dedent } from "../../examples/extensions/subagents/workflows.js";
@@ -88,5 +89,21 @@ test("declared args parse run_workflow's free text, and a bad flag fails with th
     const bad = await s.exec("run_workflow", { name: "params", args: "--nope 1" });
     assert.equal(bad.isError, true);
     assert.match(String(bad.content), /unknown argument --nope[\s\S]*Usage: agent-sh run params\.ts \[--target <text>\] \[--rounds <number>\]/);
+  } finally { s.cleanup(); }
+});
+
+test("a .py file in the workflows folder is listed and runs through run_workflow", { skip: spawnSync("python3", ["--version"]).status !== 0 }, async () => {
+  const s = setup({ reply: (o) => ({ content: `answer to ${lastUser(o)}` }) });
+  try {
+    wf(s, "greet.py", [
+      'description = "Greets twice"',
+      'args = dict(name="world")',
+      "from agentsh import map, run",
+      "async def main(args):",
+      '    return " | ".join(await map(["hello", "bye"], lambda w: run(None, f"{w} {args.name}", tools=[])))',
+    ].join("\n"));
+    assert.match(s.description("run_workflow"), /- greet: Greets twice/);
+    const r = await s.exec("run_workflow", { name: "greet", args: "--name there" });
+    assert.equal(body(r), "answer to hello there | answer to bye there");
   } finally { s.cleanup(); }
 });
