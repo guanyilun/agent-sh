@@ -9,6 +9,8 @@ export interface RunRecord {
   workflow: string;
   file: string;
   args: string;
+  /** The arguments as separate words, when they were given that way. */
+  argv?: string[];
   status: RunStatus;
   startedAt: string;
   endedAt?: string;
@@ -40,13 +42,14 @@ export class RunStore {
 
   constructor(private readonly root: string) {}
 
-  create(workflow: string, file: string, args: string, resumedFrom?: string): RunDir {
+  create(workflow: string, file: string, args: string | string[], resumedFrom?: string): RunDir {
     const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
     const id = `${stamp}-${randomBytes(2).toString("hex")}`;
     const dir = path.join(this.root, id);
     fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
     const record: RunRecord = {
-      id, workflow, file, args, status: "running", startedAt: new Date().toISOString(), resumedFrom, tokens: 0,
+      id, workflow, file, args: [args].flat().join(" "), ...(Array.isArray(args) && { argv: args }),
+      status: "running", startedAt: new Date().toISOString(), resumedFrom, tokens: 0,
     };
     this.active.add(id);
     const run = new RunDir(dir, record, () => this.active.delete(id));

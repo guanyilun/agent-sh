@@ -1,6 +1,8 @@
-"""The calls a workflow makes: run, Agent and race."""
+"""The calls a workflow makes: run, Agent, race and step."""
 import asyncio
+import hashlib
 import inspect
+import json
 
 from . import _host, _shapes
 from ._positions import Position, here, start
@@ -125,6 +127,39 @@ async def race(*attempts, accept=None):
             await asyncio.wait(unfinished)
     await _finish_race(link, race_id, kind, winner)
     return result if winner is not None else None
+
+
+async def step(function, *args, **kwargs):
+    """Do a piece of the program's own work once per run.
+
+        passed, output = await step(run_tests, directory)
+
+    This calls `run_tests(directory)` and records the result next to the agents' answers. When an
+    interrupted run is resumed, the recorded result is handed back and the function is not called
+    again. Use it for work that is slow, or that would not give the same result a second time.
+
+    `function` may be async or not. Its result must be plain data (numbers, text, lists, dicts);
+    a tuple comes back as a list.
+    """
+    link = _host.link()
+    position = here()
+    step_id = position.next()
+    called_with = json.dumps([function.__qualname__, args, kwargs], default=str, sort_keys=True)
+    kind = "step:" + hashlib.sha256(called_with.encode()).hexdigest()[:16]
+
+    recorded = await link.request("step_get", id=step_id, key=kind, scope=position.path, name=function.__name__)
+    if recorded["found"]:
+        return recorded["value"]
+
+    async def call():
+        result = function(*args, **kwargs)
+        return await result if inspect.isawaitable(result) else result
+
+    # Below its own position, so whatever the function does can't shift the numbering of the calls after it.
+    result = await start(call(), Position(step_id + "/"))
+    result = json.loads(json.dumps(result, default=_shapes.plain))
+    await link.request("step_set", id=step_id, key=kind, value=result)
+    return result
 
 
 async def _finish_race(link, race_id, kind, winner):

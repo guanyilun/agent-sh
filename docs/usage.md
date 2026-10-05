@@ -37,7 +37,7 @@ DEBUG=1 DEEPSEEK_API_KEY="$KEY" agent-sh
 
 `agent-sh run <file> [args...]` runs a workflow file, in TypeScript, JavaScript or Python (see the subagents extension's `WORKFLOWS.md`), directly: no shell, no TUI, and no main-agent turn, just the file's script. Progress goes to stderr, the result to stdout. Exit codes: 0 done, 1 the workflow failed or hit its deadline, 2 the run refused to start (including bad arguments), 130 interrupted.
 
-- `--resume <run id>` continues a failed or interrupted run, reusing finished subagent results.
+- `--resume [run id]` continues a failed or interrupted run (this file's latest, without an id), reusing finished subagent results. With no arguments it repeats the earlier run's.
 - `--help` lists the file's own arguments (`export const args`), which it takes as `--flags`.
 - `--dry-run` walks the script with placeholder answers and no model calls (no API key needed), printing each call.
 - agent-sh's own options (`--model`, `--provider`, `-e`) work as usual; put the file's arguments after `--` if a name clashes.

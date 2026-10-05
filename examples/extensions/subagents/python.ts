@@ -16,6 +16,8 @@ export interface ScriptHost {
   quiet(): Promise<void>;
   raceWinner(id: string, key: string, scope: string): number | undefined;
   raceRecord(id: string, key: string, winner: number): void;
+  stepResult(id: string, key: string, scope: string, name: string): { value: unknown } | undefined;
+  stepRecord(id: string, key: string, value: unknown): void;
   kind(err: unknown): "stop" | "cancelled" | "error";
   stop(message: string): Error;
 }
@@ -90,6 +92,13 @@ export function pythonModule(file: string, python = defaultPython()): Promise<Py
         else if (m.t === "quiet") reply(m.rid, () => host.quiet());
         else if (m.t === "race_get") reply(m.rid, () => host.raceWinner(m.id, m.key, m.scope));
         else if (m.t === "race_set") reply(m.rid, () => host.raceRecord(m.id, m.key, m.winner));
+        else if (m.t === "step_get") {
+          reply(m.rid, () => {
+            const hit = host.stepResult(m.id, m.key, m.scope, m.name);
+            return { found: !!hit, value: hit?.value ?? null };
+          });
+        }
+        else if (m.t === "step_set") reply(m.rid, () => host.stepRecord(m.id, m.key, m.value));
         else if (m.t === "log") api.log(String(m.message));
         else if (m.t === "done") { onExit = () => {}; resolve(m.result ?? undefined); }
         else if (m.t === "fail") { onExit = () => {}; reject(m.stop ? host.stop(m.error) : new Error(m.traceback ? `${m.error}\n${String(m.traceback).trim()}` : m.error)); }

@@ -449,12 +449,17 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   });
 
   ctx.define("workflow:run-file", async (req: RunFileRequest): Promise<JobOutcome & { refused?: boolean }> => {
-    const resumeId = req.resume;
-    const store = req.dryRun ? dryRuns : runs;
-    if (resumeId && !store.get(resumeId)) return { content: `No workflow run ${resumeId}.`, isError: true, refused: true };
+    // `--resume` without an id continues this file's latest run.
+    const resumeId = req.resume === "" ? runs.list(Infinity).find(r => r.file === req.file)?.id : req.resume;
+    const earlier = resumeId ? runs.get(resumeId) : undefined;
+    if (req.resume !== undefined && !earlier) {
+      return { content: resumeId ? `No workflow run ${resumeId}.` : `No earlier run of ${req.file} to resume.`, isError: true, refused: true };
+    }
+    if (earlier && req.resume === "") req.progress(`resuming ${earlier.id}`);
     const name = path.basename(req.file).replace(/\.[^.]+$/, "");
     const wf: WorkflowDef = { name, description: "", file: req.file, scope: "user" };
-    const args = req.tokens ?? req.args;
+    // A resume given no arguments repeats the earlier run's.
+    const args = !req.tokens?.length && earlier?.argv ? earlier.argv : req.tokens ?? req.args;
     let mod = req.module;
     try {
       if (isPython(req.file)) mod = await pythonModule(req.file, python);
@@ -483,7 +488,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     resumeHint: (runId: string) => string;
     quietMs?: number;
   }): Promise<JobOutcome> {
-    const run = (opts.dryRun ? dryRuns : runs).create(wf.name, wf.file, [wfArgs].flat().join(" "), opts.resumeId);
+    const run = (opts.dryRun ? dryRuns : runs).create(wf.name, wf.file, wfArgs, opts.resumeId);
     const footer = `(workflow run ${run.id}; log: ${run.dir})`;
     try {
       const result = await runWorkflow(wf, wfArgs, {

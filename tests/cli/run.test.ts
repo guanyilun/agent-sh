@@ -236,6 +236,8 @@ test("--dry-run reports an unknown agent", async () => {
 });
 
 test("run arguments: --status takes an optional run id and needs no file", () => {
+  assert.deepEqual([parseRunArgs(["f.ts", "--resume"])?.resume, parseRunArgs(["f.ts"])?.resume], ["", undefined]);
+  assert.deepEqual(parseRunArgs(["--resume", "20261003-002912-9397", "f.ts"]), { ...parseRunArgs(["f.ts"])!, resume: "20261003-002912-9397" });
   assert.deepEqual(parseRunArgs(["--status"])?.status, "");
   assert.deepEqual(parseRunArgs(["--status", "20261003-002912-9397"])?.status, "20261003-002912-9397");
   assert.equal(parseRunArgs(["--status", "f.ts"])?.file, "f.ts");

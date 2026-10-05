@@ -11,6 +11,7 @@ export interface RunArgs {
   file: string;
   tokens: string[];
   cli: string[];
+  /** "" for the file's latest run. */
   resume?: string;
   dryRun: boolean;
   help: boolean;
@@ -29,7 +30,7 @@ export function parseRunArgs(argv: string[]): RunArgs | null {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--") { r.tokens.push(...argv.slice(i + 1)); break; }
-    if (a === "--resume") r.resume = argv[++i];
+    if (a === "--resume") r.resume = RUN_ID.test(argv[i + 1] ?? "") ? argv[++i] : "";
     else if (a === "--dry-run") r.dryRun = true;
     else if (a === "--status") r.status = RUN_ID.test(argv[i + 1] ?? "") ? argv[++i] : "";
     else if (a === "--help" || a === "-h") r.help = true;
@@ -74,7 +75,7 @@ export async function runFile(cli: CliConfig, run: RunArgs): Promise<never> {
   if (run.help) {
     const text = has("workflow:help") ? await core.handlers.call("workflow:help", { file, module: mod }) as string
       : `Usage: agent-sh run ${run.file} [args...]`;
-    process.stdout.write(`${text}\n\nagent-sh run options: --dry-run (no model calls), --resume <run id>, --model, --provider, -e <extension>\n`, () => exit(0));
+    process.stdout.write(`${text}\n\nagent-sh run options: --dry-run (no model calls), --resume [run id], --model, --provider, -e <extension>\n`, () => exit(0));
     return new Promise<never>(() => {});
   }
   if (!run.dryRun) requireBackends(core, cli.backend);

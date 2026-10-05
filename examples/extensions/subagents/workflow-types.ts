@@ -40,6 +40,8 @@ export interface WorkflowApi {
   pipeline<T>(items: T[], ...stages: ((prev: any, item: T, index: number) => unknown)[]): Promise<any[]>;
   /** Runs specs concurrently (up to maxConcurrency), in order; a run that fails becomes null. */
   all(specs: RunSpec[]): Promise<any[]>;
+  /** The script's own work, done once per run: a resumed run gets the recorded result (JSON data) instead of calling fn. */
+  step<T>(name: string, fn: () => T | Promise<T>): Promise<T>;
   args: any;
   log(message: string): void;
   signal: AbortSignal;

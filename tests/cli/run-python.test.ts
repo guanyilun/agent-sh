@@ -98,6 +98,46 @@ test("plain asyncio tasks number their own calls, so --resume reruns only what f
   } finally { llm.server.close(); }
 });
 
+test("step records the program's own work; a bare --resume continues the latest run with its arguments", { skip }, async () => {
+  let fail = true;
+  const llm = await fakeLlm((req) => (fail ? { status: 400 } : { content: `did ${lastUser(req)}` }));
+  try {
+    let home = "";
+    const prepare = (h: string) => {
+      home = h;
+      write(h, "steps.py", [
+        "from agentsh import run, step",
+        "",
+        'args = dict(name="nobody")',
+        "",
+        "def count(path):",
+        '    with open(path, "a") as file:',
+        '        file.write("called\\n")',
+        "    return sum(1 for _ in open(path))",
+        "",
+        "async def main(args):",
+        '    times = await step(count, "calls.txt")',
+        '    answer = await run(f"greet {args.name}", tools=[])',
+        '    return f"{answer}; counted {times}"',
+      ]);
+    };
+    const first = await run("steps.py", ["--name", "two words"], llm.url, { prepare, keepHome: true });
+    assert.equal(first.code, 1, first.stderr);
+
+    fail = false;
+    const second = await run("steps.py", ["--resume"], llm.url, { home, keepHome: true });
+    assert.equal(second.code, 0, second.stderr);
+    assert.match(second.stderr, new RegExp(`resuming ${runId(first.stdout)}\n\\[step count\\] reused from`));
+    assert.match(second.stdout, /^did greet two words; counted 1\n/);
+    assert.equal(readFileSync(join(home, "calls.txt"), "utf8"), "called\n", "the step was not run again");
+    rmSync(home, { recursive: true, force: true });
+
+    const none = await run("steps.py", ["--resume"], llm.url, { prepare });
+    assert.equal(none.code, 2);
+    assert.match(none.stderr, /No earlier run of .*steps\.py to resume\./);
+  } finally { llm.server.close(); }
+});
+
 test("race keeps the first accepted result and stops the others; --resume reruns only the winner", { skip }, async () => {
   let failAfter = true;
   const llm = await fakeLlm((req) => {

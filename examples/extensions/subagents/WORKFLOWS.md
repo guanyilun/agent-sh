@@ -51,6 +51,7 @@ export default async ({ run, map, args, log, budget }) => {
 - `map(items, fn)` — call `fn(item, index)` for every item concurrently (up to `subagents.maxConcurrency`) and resolve to the results in order; **an item whose `fn` fails becomes `null`**. `fn` is ordinary async code, so each item can run several steps (`async (x) => { const a = await run(...); return run(..., a); }`) without waiting for the others.
 - `pipeline(items, stage1, stage2, ...)` — each item goes through the stages on its own: an item that finishes stage 1 starts stage 2 without waiting for the others. Each stage gets `(previous result, item, index)`; a stage that throws makes that item `null` and skips its remaining stages. Prefer it to `map` followed by another `map` unless a later step needs all the earlier results together (to merge or dedupe them, say).
 - `all([spec, ...])` — like `map` over `run` specs.
+- `step(name, fn)` — the script's own work (a test suite, a build, a download), done once per run: the result is recorded like a run's answer, and a resumed run gets the recorded result instead of calling `fn` again. The result must be JSON data.
 - `race(items, fn, accept?)` — call `fn(item, index)` for every item concurrently and resolve to `{ value, index }` for the first result that `accept(value, item, index)` passes (any result, without `accept`); `null` if none does. The other items are cancelled: their subagents stop, and their next `run()` throws. Cancelled items leave behind whatever they already wrote, so give each one its own output directory.
   ```ts
   const won = await race(["induction", "contradiction", "direct"],
@@ -134,11 +135,12 @@ async def main(args):
 
 `agent-sh run review.py --target src --rounds 2`, with `--help`, `--dry-run` and `--resume` as for any run file. A `.py` file in a workflows folder is listed and run like the others.
 
-The whole API is four names, and everything else is plain Python:
+The whole API is five names, and everything else is plain Python:
 
 - **`run(task, agent=None, returns=None, ...)`** gives a task to an agent. It starts straight away and returns an awaitable, so `asyncio.gather(run(...), run(...))` runs both at once. Leave `agent` out for a plain one; `tools`, `system`, `model`, `thinking` and `label` are keywords too. A failed run raises `RunError`.
 - **`returns`** takes a dataclass (or `list[SomeDataclass]`) and the answer comes back as an instance. Fields may be `str`, `int`, `float`, `bool`, lists, nested dataclasses, `Literal[...]`, and `Optional[...]` for fields the agent may omit. The shorthand and JSON Schema work too, and give plain dicts.
 - **`Agent(name)`** is an agent you keep talking to: each `await worker.ask(...)` continues the same conversation.
+- **`step(function, *args)`** does a piece of your own work once per run, e.g. `passed, output = await step(run_tests, directory)`: the result is recorded, so a resumed run doesn't run the tests again. The result must be plain data; a tuple comes back as a list.
 - **`race(*attempts, accept=...)`** tries several things at once (each a `run(...)` or a call to your own async function), returns the first result `accept` approves, and stops the rest; `None` if none is accepted.
 - **`budget.remaining`**, `budget.spent` and `budget.total` are as of the latest finished call.
 
@@ -164,9 +166,9 @@ Every run gets an id and a folder in `~/.agent-sh/workflow-runs/<id>/`:
 - `journal.jsonl` — each completed `run()`: its inputs' hash and its result
 - `agents/<n>.jsonl` — the full transcript of subagent run *n* (task, every message and tool result)
 
-`/workflow runs` lists recent runs (a run still marked running after agent-sh exited shows as interrupted). To resume a failed or interrupted run, fix the cause (or edit the workflow), then `/workflow resume <id>`, or have the agent call `run_workflow { resume: "<id>" }`.
+`/workflow runs` lists recent runs (a run still marked running after agent-sh exited shows as interrupted). To resume a failed or interrupted run, fix the cause (or edit the workflow), then `/workflow resume <id>`, or have the agent call `run_workflow { resume: "<id>" }`. For a run file, `agent-sh run file --resume` continues that file's latest run, and `--resume <id>` a particular one; given no arguments, it repeats the earlier run's.
 
-Resuming reruns the script from the top. Each `run()` call is identified by where it sits: top-level calls in the order the script makes them, and calls inside a `map`, `pipeline` or `race` item in that item's own order, so it doesn't matter which item finishes first. A call reuses the old result if its inputs (agent, task, tools, returns, system, model, thinking) are unchanged. The first call whose inputs changed, and every later call in the same branch, runs live. Runs that failed or never finished run again. For this to work the script must make the same calls in the same order given the same results, so don't let `Date.now()`, `Math.random()` or other outside state decide what to run. Side effects the script performs itself (files, commands) are not replayed.
+Resuming reruns the script from the top. Each `run()` call is identified by where it sits: top-level calls in the order the script makes them, and calls inside a `map`, `pipeline` or `race` item in that item's own order, so it doesn't matter which item finishes first. A call reuses the old result if its inputs (agent, task, tools, returns, system, model, thinking) are unchanged. The first call whose inputs changed, and every later call in the same branch, runs live. Runs that failed or never finished run again. For this to work the script must make the same calls in the same order given the same results, so don't let `Date.now()`, `Math.random()` or other outside state decide what to run. Side effects the script performs itself (files, commands) are not replayed, and happen again, unless they are wrapped in `step`.
 
 A `race` records which item won; resuming runs only that item (and `accept` on its result), and the others race again only if it no longer passes. An `agent()` turn is reused only if it and every turn before it are unchanged, and the first live turn continues from the recorded conversation.
 
