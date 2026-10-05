@@ -1,7 +1,7 @@
 /** Python run files under `agent-sh run`: the built CLI against a local fake OpenAI-compatible server. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ const write = (home: string, rel: string, lines: string[]) => {
   mkdirSync(join(home, rel, ".."), { recursive: true });
   writeFileSync(join(home, rel), lines.join("\n") + "\n");
 };
+const SOLVE = fileURLToPath(new URL("../../examples/workflows/solve.py", import.meta.url));
 const typed = (req: ChatRequest) => req.tools?.some((t) => t.function.name === "submit_result");
 const runId = (stdout: string) => stdout.match(/\(workflow run (\S+);/)![1]!;
 
@@ -202,4 +203,27 @@ test("on macOS, a sandboxed run confines the Python script itself", { skip: skip
     llm.server.close();
     rmSync(ws, { recursive: true, force: true });
   }
+});
+
+test("the solve example: approaches race, a failed check goes back to the same agent, skeptics review what passed", { skip }, async () => {
+  const wants = (req: ChatRequest, field: string) =>
+    req.tools?.some((t) => t.function.name === "submit_result" && field in ((t.function as { parameters?: { properties?: object } }).parameters?.properties ?? {}));
+  const llm = await fakeLlm((req) => {
+    if (wants(req, "tasks")) return toolCall("submit_result", { tasks: [{ name: "alpha", goal: "do alpha" }, { name: "beta", goal: "do beta" }] });
+    if (wants(req, "summary")) return toolCall("submit_result", { summary: "did it", files: ["a.txt"] });
+    if (wants(req, "refuted")) return toolCall("submit_result", { refuted: lastUser(req).includes("hard-coded"), reason: "looks stubbed" });
+    return { content: "ok" };
+  });
+  try {
+    // Fails the first time it's run in a directory, passes after.
+    const check = "test -f {dir}/seen || { touch {dir}/seen; echo no seen file yet; false; }";
+    const r = await runCli(RUN("solve.py", "--goal", "two things", "--check", check, "--approaches", "2"), llm.url, {
+      prepare: (home) => writeFileSync(join(home, "solve.py"), readFileSync(SOLVE)),
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /^2\/2 task\(s\) solved and reviewed\.\n- alpha: solved in .*\/out\/alpha\/[12]\n- beta: solved in /);
+    assert.match(r.stderr, /· alpha: approach [12] passed after 1 repair\(s\)/);
+    const repair = llm.requests.find((q) => lastUser(q).startsWith("The check failed. Fix it.\n\nno seen file yet"))!;
+    assert.equal(repair.messages.filter((m) => m.role === "user").length, 2, "the repair turn continues the first conversation");
+  } finally { llm.server.close(); }
 });

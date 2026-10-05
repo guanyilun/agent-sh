@@ -236,4 +236,5 @@ Bundled, next to this file in `workflows/`:
 In the repo's `examples/workflows/` (copy into `~/.agent-sh/workflows/` to use):
 
 - `campaign.ts`: a run-file template with `config` and declared args; `campaign.py` is the same in Python.
+- `solve.py`: a goal is split into tasks, and each task moves through its own pipeline: several approaches race, each attempt is judged by a check command's exit code and sent back to the same agent (`agent().ask`) with the output when it fails, and skeptics then review what passed.
 - `verified-review.ts`: three finders looking different ways, grouped by file with a merge run for files with several claims, then three skeptics per finding attacking it from different angles; only findings most skeptics fail to refute are reported, and merges and caps are logged.
