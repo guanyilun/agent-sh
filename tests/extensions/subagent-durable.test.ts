@@ -377,15 +377,15 @@ test("agent() keeps one conversation across ask() turns, and resume restores it"
   } finally { s.cleanup(); }
 });
 
-test("step() records the script's own work, so resume doesn't do it again", async () => {
+test("checkpoint() saves the script's own work, so resume doesn't do it again", async () => {
   let failAfter = true;
   const counter = globalThis as { __steps?: number };
   counter.__steps = 0;
   const s = setup({ reply: (o) => { if (failAfter) throw new Error("boom"); return { content: `did ${lastUser(o)}` }; } });
   try {
     wf(s, "st.ts", [
-      "export default async ({ run, step }) => {",
-      '  const n = await step("count", () => ({ calls: ++globalThis.__steps }));',
+      "export default async ({ run, checkpoint }) => {",
+      '  const n = await checkpoint("count", () => ({ calls: ++globalThis.__steps }));',
       '  return `${n.calls} ${await run({ task: "after", tools: [] })}`;',
       "};",
     ].join("\n"));
@@ -397,6 +397,6 @@ test("step() records the script's own work, so resume doesn't do it again", asyn
     const second = await s.exec("run_workflow", { resume: runId(first) }, (c) => { progress += c; });
     assert.equal(body(second), "1 did after");
     assert.equal(counter.__steps, 1);
-    assert.match(progress, /\[step count\] reused from/);
+    assert.match(progress, /\[checkpoint count\] reused from/);
   } finally { s.cleanup(); }
 });

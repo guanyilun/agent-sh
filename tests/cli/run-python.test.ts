@@ -98,7 +98,7 @@ test("plain asyncio tasks number their own calls, so --resume reruns only what f
   } finally { llm.server.close(); }
 });
 
-test("step records the program's own work; a bare --resume continues the latest run with its arguments", { skip }, async () => {
+test("@checkpoint saves a function's result; a bare --resume continues the latest run with its arguments", { skip }, async () => {
   let fail = true;
   const llm = await fakeLlm((req) => (fail ? { status: 400 } : { content: `did ${lastUser(req)}` }));
   try {
@@ -106,17 +106,18 @@ test("step records the program's own work; a bare --resume continues the latest 
     const prepare = (h: string) => {
       home = h;
       write(h, "steps.py", [
-        "from agentsh import run, step",
+        "from agentsh import checkpoint, run",
         "",
         'args = dict(name="nobody")',
         "",
+        "@checkpoint",
         "def count(path):",
         '    with open(path, "a") as file:',
         '        file.write("called\\n")',
         "    return sum(1 for _ in open(path))",
         "",
         "async def main(args):",
-        '    times = await step(count, "calls.txt")',
+        '    times = await count("calls.txt")',
         '    answer = await run(f"greet {args.name}", tools=[])',
         '    return f"{answer}; counted {times}"',
       ]);
@@ -127,9 +128,9 @@ test("step records the program's own work; a bare --resume continues the latest 
     fail = false;
     const second = await run("steps.py", ["--resume"], llm.url, { home, keepHome: true });
     assert.equal(second.code, 0, second.stderr);
-    assert.match(second.stderr, new RegExp(`resuming ${runId(first.stdout)}\n\\[step count\\] reused from`));
+    assert.match(second.stderr, new RegExp(`resuming ${runId(first.stdout)}\n\\[checkpoint count\\] reused from`));
     assert.match(second.stdout, /^did greet two words; counted 1\n/);
-    assert.equal(readFileSync(join(home, "calls.txt"), "utf8"), "called\n", "the step was not run again");
+    assert.equal(readFileSync(join(home, "calls.txt"), "utf8"), "called\n", "the function was not run again");
     rmSync(home, { recursive: true, force: true });
 
     const none = await run("steps.py", ["--resume"], llm.url, { prepare });

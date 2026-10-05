@@ -20,7 +20,7 @@ import re
 import shlex
 from dataclasses import dataclass
 
-from agentsh import Agent, budget, race, run, step
+from agentsh import Agent, budget, checkpoint, race, run
 
 description = "Split a goal into tasks; for each, race two approaches against a check command, then have reviewers attack what passed"
 
@@ -133,8 +133,7 @@ async def attempt(task, approach, directory, args):
     """, returns=Summary)
 
     for repairs in range(args.repairs + 1):
-        # `step` records the result, so a resumed run doesn't repeat checks that already ran.
-        passed, output = await step(check, args.check, directory)
+        passed, output = await check(args.check, directory)
         out_of_room = repairs == args.repairs or budget.remaining < TOKENS_TO_KEEP
         if passed or out_of_room:
             return Try(directory, said.summary, passed, repairs)
@@ -142,6 +141,7 @@ async def attempt(task, approach, directory, args):
         said = await worker.ask(f"The check failed. Fix it.\n\n{output}", returns=Summary)
 
 
+@checkpoint   # a resumed run gets the saved result instead of running the check again
 async def check(command, directory):
     """Run the check command. Whether a try is good is its exit code, never an agent's word."""
     process = await asyncio.create_subprocess_shell(

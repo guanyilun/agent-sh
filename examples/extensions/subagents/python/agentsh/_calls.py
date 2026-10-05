@@ -1,5 +1,6 @@
-"""The calls a workflow makes: run, Agent, race and step."""
+"""The calls a workflow makes: run, Agent, race and checkpoint."""
 import asyncio
+import functools
 import hashlib
 import inspect
 import json
@@ -129,37 +130,50 @@ async def race(*attempts, accept=None):
     return result if winner is not None else None
 
 
-async def step(function, *args, **kwargs):
-    """Do a piece of the program's own work once per run.
+def checkpoint(function):
+    """Remember what this function returns, so a resumed run doesn't do the work again.
 
-        passed, output = await step(run_tests, directory)
+        @checkpoint
+        async def run_tests(directory):
+            ...
+            return passed, output
 
-    This calls `run_tests(directory)` and records the result next to the agents' answers. When an
-    interrupted run is resumed, the recorded result is handed back and the function is not called
-    again. Use it for work that is slow, or that would not give the same result a second time.
+        passed, output = await run_tests(directory)
 
-    `function` may be async or not. Its result must be plain data (numbers, text, lists, dicts);
-    a tuple comes back as a list.
+    The first time a call is reached its result is saved next to the agents' answers. When an
+    interrupted run is resumed and reaches the same call, the saved result comes back and the
+    function is not run. Use it for work of your own that is slow, or that would not give the
+    same result twice: a test suite, a build, a download.
+
+    Each call is remembered by where it happens in the program, not by its arguments: calling
+    the function again later runs it again and saves that result separately.
+
+    The function may be async or not; either way the call is awaited. Its result must be plain
+    data (numbers, text, lists, dicts), and a tuple comes back as a list.
     """
-    link = _host.link()
-    position = here()
-    step_id = position.next()
-    called_with = json.dumps([function.__qualname__, args, kwargs], default=str, sort_keys=True)
-    kind = "step:" + hashlib.sha256(called_with.encode()).hexdigest()[:16]
+    @functools.wraps(function)
+    async def remembered(*args, **kwargs):
+        link = _host.link()
+        position = here()
+        call_id = position.next()
+        called_with = json.dumps([function.__qualname__, args, kwargs], default=str, sort_keys=True)
+        kind = "checkpoint:" + hashlib.sha256(called_with.encode()).hexdigest()[:16]
 
-    recorded = await link.request("step_get", id=step_id, key=kind, scope=position.path, name=function.__name__)
-    if recorded["found"]:
-        return recorded["value"]
+        saved = await link.request("checkpoint_get", id=call_id, key=kind, scope=position.path, name=function.__name__)
+        if saved["found"]:
+            return saved["value"]
 
-    async def call():
-        result = function(*args, **kwargs)
-        return await result if inspect.isawaitable(result) else result
+        async def call():
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
 
-    # Below its own position, so whatever the function does can't shift the numbering of the calls after it.
-    result = await start(call(), Position(step_id + "/"))
-    result = json.loads(json.dumps(result, default=_shapes.plain))
-    await link.request("step_set", id=step_id, key=kind, value=result)
-    return result
+        # Below its own position, so whatever the function does can't shift the numbering of the calls after it.
+        result = await start(call(), Position(call_id + "/"))
+        result = json.loads(json.dumps(result, default=_shapes.plain))
+        await link.request("checkpoint_set", id=call_id, key=kind, value=result)
+        return result
+
+    return remembered
 
 
 async def _finish_race(link, race_id, kind, winner):

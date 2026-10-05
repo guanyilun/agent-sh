@@ -18,13 +18,13 @@ Start it with `agent-sh run file.py`. agent-sh runs the agents, records every
 finished call so an interrupted run can be resumed, and enforces the limits
 the file sets in `config`.
 
-    run     give one task to an agent
-    Agent   an agent you keep talking to, turn after turn
-    race    try several things at once and keep the first good result
-    step    do a piece of your own work once, even if the run is resumed
-    budget  how many tokens are left
+    run          give one task to an agent
+    Agent        an agent you keep talking to, turn after turn
+    race         try several things at once and keep the first good result
+    checkpoint   mark a function of your own whose results a resumed run should not redo
+    budget       how many tokens are left
 """
-from ._calls import Agent, race, run, step
+from ._calls import Agent, checkpoint, race, run
 from ._host import RunError, budget
 
-__all__ = ["run", "Agent", "race", "step", "budget", "RunError"]
+__all__ = ["run", "Agent", "race", "checkpoint", "budget", "RunError"]

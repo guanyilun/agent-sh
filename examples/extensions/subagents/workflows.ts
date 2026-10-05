@@ -240,31 +240,31 @@ export async function runWorkflow(
       }
     };
 
-    // A script's own step, recorded and replayed like a run's answer.
-    const stepResult = (at: Scope, id: string, key: string, name: string): { value: unknown } | undefined => {
+    // A script's own work, saved and replayed like a run's answer.
+    const checkpointResult = (at: Scope, id: string, key: string, name: string): { value: unknown } | undefined => {
       const cached = legacy || isDiverged(at) ? undefined : replay.get(id);
       if (cached && cached.key === key) {
         reused++;
         record.append({ ...cached, seq: runs });
-        progress(`[step ${name}] reused from ${record.record.resumedFrom}`);
+        progress(`[checkpoint ${name}] reused from ${record.record.resumedFrom}`);
         return { value: cached.output };
       }
       if (cached) at.diverged = true;
       return undefined;
     };
-    const stepRecord = (id: string, key: string, value: unknown) => record.append({ seq: runs, id, key, output: value, tokens: 0 });
+    const checkpointRecord = (id: string, key: string, value: unknown) => record.append({ seq: runs, id, key, output: value, tokens: 0 });
 
     const api: WorkflowApi = {
       run: run as WorkflowApi["run"],
-      step: async (name, fn) => {
+      checkpoint: async (name, fn) => {
         const at = scope();
         const id = `${at.path}${++at.next}`;
-        const done = stepResult(at, id, `step:${name}`, name);
+        const done = checkpointResult(at, id, `checkpoint:${name}`, name);
         if (done) return done.value as never;
         // Its own scope: what fn does must not shift the numbering of the calls after it.
         const value = await scopes.run({ path: `${id}/`, next: 0, diverged: false, parent: at, signal: at.signal }, fn);
         const data = JSON.parse(JSON.stringify(value ?? null));
-        stepRecord(id, `step:${name}`, data);
+        checkpointRecord(id, `checkpoint:${name}`, data);
         return data;
       },
       agent: (name, base) => {
@@ -394,8 +394,8 @@ export async function runWorkflow(
         return cached?.key === key ? cached.winner : undefined;
       },
       raceRecord: (id, key, winner) => record.append({ seq: runs, id, key, winner, output: null, tokens: 0 }),
-      stepResult: (id, key, at, name) => stepResult(scopeAt(at), id, key, name),
-      stepRecord,
+      checkpointResult: (id, key, at, name) => checkpointResult(scopeAt(at), id, key, name),
+      checkpointRecord,
       kind: (err) => err instanceof WorkflowStop ? "stop" : err instanceof Cancelled ? "cancelled" : "error",
       stop: (message) => new WorkflowStop(message),
     };

@@ -16,9 +16,9 @@ Releases before this file are recorded in the git tags and GitHub releases.
   the agents for it, so the journal, resume, budget, dry run and sandbox work
   as for JavaScript files. Concurrency is plain `asyncio.gather`, cancelling a
   task stops its agent, and `returns` takes a dataclass. Needs Python 3.9+.
-- Workflow scripts: `step(name, fn)` (Python: `step(function, *args)`) records
-  the script's own work, such as a test suite or a build, so a resumed run
-  gets the recorded result instead of doing it again.
+- Workflow scripts: `checkpoint(name, fn)` (Python: the `@checkpoint`
+  decorator) saves the result of the script's own work, such as a test suite
+  or a build, so a resumed run gets the saved result instead of doing it again.
 - `agent-sh run file --resume` without an id continues that file's latest run,
   and a resume given no arguments repeats the earlier run's.
 - `codex-provider` example extension: use a ChatGPT (Codex) subscription as an
