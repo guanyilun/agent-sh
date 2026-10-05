@@ -80,6 +80,13 @@ class Try:
     repairs: int
 
 
+@dataclass
+class Outcome:
+    """How one task ended, and its lines of the report."""
+    solved: bool
+    report: str
+
+
 async def main(args):
     plan = await run(f"""
         Split this goal into tasks that can each be done and checked on their own, in separate directories:
@@ -88,31 +95,31 @@ async def main(args):
     """, agent="plan", returns=Plan)
     print(f"{len(plan.tasks)} task(s): {', '.join(task.name for task in plan.tasks)}")
 
-    # All tasks at once. A task that raises shows up in `outcomes` as the exception.
+    # All tasks at once. If the work on a task raises, gather hands back the exception in its place.
     outcomes = await asyncio.gather(*[solve(task, args) for task in plan.tasks], return_exceptions=True)
+    outcomes = [outcome if isinstance(outcome, Outcome) else Outcome(False, f"- {task.name}: FAILED ({outcome})")
+                for task, outcome in zip(plan.tasks, outcomes)]
 
-    lines = [outcome if isinstance(outcome, str) else f"- {task.name}: FAILED ({outcome})"
-             for task, outcome in zip(plan.tasks, outcomes)]
-    solved = sum(": solved" in line for line in lines)
-    return f"{solved}/{len(plan.tasks)} task(s) solved.\n" + "\n".join(lines)
+    solved = sum(outcome.solved for outcome in outcomes)
+    return f"{solved}/{len(outcomes)} task(s) solved.\n" + "\n".join(outcome.report for outcome in outcomes)
 
 
 async def solve(task, args):
-    """One task from start to finish. Returns its line of the report."""
+    """One task from start to finish."""
     base = os.path.abspath(os.path.join(args.out, re.sub(r"[^\w.-]+", "-", task.name)))
     tries = [attempt(task, approach, os.path.join(base, str(number)), args)
              for number, approach in enumerate(APPROACHES, start=1)]
 
     winner = await race(*tries, accept=lambda this_try: this_try.passed)
     if winner is None:
-        return f"- {task.name}: NOT SOLVED (no try passed the check)"
+        return Outcome(False, f"- {task.name}: NOT SOLVED (no try passed the check)")
     print(f"{task.name}: passed after {winner.repairs} repair(s)")
 
     objections = await review(task, winner)
     if objections:
-        return f"- {task.name}: passes the check, but reviewers object ({winner.directory})\n" + \
-               "\n".join(f"    - {objection}" for objection in objections)
-    return f"- {task.name}: solved ({winner.directory})"
+        listed = "".join(f"\n    - {objection}" for objection in objections)
+        return Outcome(False, f"- {task.name}: passes the check, but reviewers object ({winner.directory}){listed}")
+    return Outcome(True, f"- {task.name}: solved ({winner.directory})")
 
 
 async def attempt(task, approach, directory, args):
@@ -150,19 +157,25 @@ async def check(command, directory):
 
 
 async def review(task, winner):
-    """Three reviewers each try to refute the winning try. Returns the objections, if most of them stuck."""
-    verdicts = await asyncio.gather(*[run(f"""
-        A check command passed for this work. That is not the same as the work being right: try to refute it.
-        Task: {task.goal}
-        Files: {winner.directory}
-        The author's summary: {winner.summary}
-        {question}
-        Answer refuted=true only for a concrete problem you can point to in the files.
-    """, agent="reviewer", returns=Verdict) for question in OBJECTIONS], return_exceptions=True)
+    """Three reviewers each try to refute the winning try. Returns their objections; none means the work stands."""
+    def ask_reviewer(question):
+        return run(f"""
+            A check command passed for this work. That is not the same as the work being right: try to refute it.
+            Task: {task.goal}
+            Files: {winner.directory}
+            The author's summary: {winner.summary}
+            {question}
+            Answer refuted=true only for a concrete problem you can point to in the files.
+        """, agent="reviewer", returns=Verdict)
 
-    # A reviewer that failed to answer doesn't count in the work's favour.
-    in_favour = sum(isinstance(verdict, Verdict) and not verdict.refuted for verdict in verdicts)
-    if in_favour * 2 > len(OBJECTIONS):
-        return []
-    return [verdict.reason if isinstance(verdict, Verdict) else f"a reviewer failed: {verdict}" for verdict in verdicts
-            if not isinstance(verdict, Verdict) or verdict.refuted]
+    def objection_in(answer):
+        if not isinstance(answer, Verdict):
+            return f"a reviewer failed: {answer}"   # no answer counts against the work
+        return answer.reason if answer.refuted else None
+
+    answers = await asyncio.gather(*[ask_reviewer(question) for question in OBJECTIONS], return_exceptions=True)
+    objections = [objection for objection in map(objection_in, answers) if objection]
+
+    # The work stands only if most of the reviewers could not fault it.
+    accepted = len(OBJECTIONS) - len(objections)
+    return [] if accepted > len(OBJECTIONS) / 2 else objections
