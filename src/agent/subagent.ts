@@ -61,7 +61,7 @@ export interface SubagentOptions {
    * The parent uses this to forward to its event bus so global budget
    * tracking stays accurate.
    */
-  onUsage?: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) => void;
+  onUsage?: (usage: SubagentUsage) => void;
   reasoningParams?: Record<string, unknown>;
   outMeta?: SubagentRunMeta;
   /** Each message as it joins the subagent's conversation, e.g. for a transcript. */
@@ -70,6 +70,14 @@ export interface SubagentOptions {
   shouldStop?: () => boolean;
   /** An earlier run's `outMeta.messages`; the task continues that conversation. */
   history?: ChatCompletionMessageParam[];
+}
+
+export interface SubagentUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  /** The part of prompt_tokens the provider served from its cache, when it says. */
+  cached_tokens?: number;
 }
 
 export interface SubagentMessage {
@@ -260,14 +268,14 @@ async function streamOnce(
   assistantContent: string | null;
   assistantToolCalls: { id: string; function: { name: string; arguments: string } }[] | undefined;
   extras?: Record<string, unknown>;
-  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
+  usage: SubagentUsage | null;
 }> {
   let text = "";
   let reasoning = "";
   let reasoningField: string | null = null;
   const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();
   const pendingToolCalls: PendingToolCall[] = [];
-  let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null = null;
+  let usage: SubagentUsage | null = null;
 
   const stream = await llmClient.stream({
     ...(reasoningParams ?? {}),
@@ -289,6 +297,7 @@ async function streamOnce(
         prompt_tokens: u.prompt_tokens ?? 0,
         completion_tokens: u.completion_tokens ?? 0,
         total_tokens: u.total_tokens ?? 0,
+        cached_tokens: u.prompt_tokens_details?.cached_tokens ?? 0,
       };
     }
 

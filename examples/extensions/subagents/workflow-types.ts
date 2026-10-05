@@ -46,7 +46,7 @@ export interface WorkflowApi {
   log(message: string): void;
   signal: AbortSignal;
   /** Subagent tokens (prompt + completion) this run; run() throws once `total` is spent. */
-  budget: { total: number | null; spent(): number; remaining(): number };
+  budget: { total: number | null; spent(): number; remaining(): number; /** The part of spent() served from the provider's prompt cache. */ cached(): number };
 }
 
 export type Workflow = (api: WorkflowApi) => unknown;

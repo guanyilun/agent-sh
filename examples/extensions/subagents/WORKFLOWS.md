@@ -43,7 +43,7 @@ export default async ({ run, map, args, log, budget }) => {
   ```
   The shape is shorthand (below) or JSON Schema. The agent gets a `submit_result` tool whose parameters are the shape; a submission that doesn't fit is refused with the reason, so the agent fixes it, and the run ends as soon as one is accepted. If the agent answers in text instead, a short LLM call converts the answer (with one retry). If nothing fits, `run` throws.
 - `run(null, task, { tools })` — an ad-hoc subagent limited to those tools (named agents keep their own). `run({ agent, task, returns, tools })` also works.
-- Per call: `model` and `thinking` override the agent's, `label` names it in progress lines, and for ad-hoc runs `system` sets the role and rules. So a script can define its agents inline, without agent files:
+- Per call: `model` and `thinking` override the agent's (an agent with no thinking level of its own uses yours), `label` names it in progress lines, and for ad-hoc runs `system` sets the role and rules. So a script can define its agents inline, without agent files:
   ```ts
   const proofreader = { system: "You proofread a LaTeX paper. Report only typos, grammar and LaTeX problems.", tools: [], label: "proofreader" };
   const found = await run({ ...proofreader, task: section, returns: ISSUES });

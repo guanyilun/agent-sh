@@ -16,6 +16,8 @@ export interface RunRecord {
   endedAt?: string;
   resumedFrom?: string;
   tokens: number;
+  /** The part of `tokens` that providers served from their prompt cache. */
+  cached?: number;
   error?: string;
 }
 
@@ -87,7 +89,7 @@ export class RunStore {
     if (!r) return id ? `No workflow run ${id}.` : "No workflow runs yet.";
     const dir = path.join(this.root, r.id, "agents");
     const state = r.interrupted ? "interrupted" : r.status === "running" ? "running" : r.status;
-    const lines = [`${r.id}  ${r.workflow}  ${state}, ${duration((r.endedAt ? Date.parse(r.endedAt) : now) - Date.parse(r.startedAt))}, ${r.tokens} tokens`];
+    const lines = [`${r.id}  ${r.workflow}  ${state}, ${duration((r.endedAt ? Date.parse(r.endedAt) : now) - Date.parse(r.startedAt))}, ${r.tokens} tokens${r.cached ? ` (${r.cached} cached)` : ""}`];
     let files: string[] = [];
     try { files = fs.readdirSync(dir).filter(f => f.endsWith(".jsonl")).sort((a, b) => parseInt(a) - parseInt(b)); } catch {}
     for (const f of files) {

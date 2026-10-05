@@ -80,7 +80,7 @@ export class TrustStore {
 export interface TaskControl {
   signal: AbortSignal;
   progress(line: string): void;
-  onUsage(totalTokens: number): void;
+  onUsage(totalTokens: number, cachedTokens?: number): void;
   onMessage(message: Record<string, unknown>): void;
   /** Once it has a concurrency slot. */
   onStart?(): void;
@@ -134,7 +134,7 @@ export async function runWorkflow(
   progress = (line) => { lastLine = Date.now(); say(line); };
   const quiet = opts.quietMs && setInterval(() => {
     if (Date.now() - lastLine < opts.quietMs! || !counts.queued && !counts.working) return;
-    progress(`· ${counts.working} working, ${counts.queued} queued, ${counts.done} finished; ${Math.round((Date.now() - started) / 60_000)} min, ${record.record.tokens} tokens`);
+    progress(`· ${counts.working} working, ${counts.queued} queued, ${counts.done} finished; ${Math.round((Date.now() - started) / 60_000)} min, ${record.record.tokens} tokens${record.record.cached ? ` (${record.record.cached} cached)` : ""}`);
   }, Math.min(opts.quietMs, 10_000));
   if (quiet) quiet.unref();
   let mod: Record<string, unknown> | undefined = opts.module;
@@ -162,7 +162,7 @@ export async function runWorkflow(
     let runs = 0;
     const total = opts.budgetTokens && opts.budgetTokens > 0 ? opts.budgetTokens : null;
     const spent = () => record.record.tokens;
-    const budget = { total, spent, remaining: () => (total === null ? Infinity : Math.max(0, total - spent())) };
+    const budget = { total, spent, cached: () => record.record.cached ?? 0, remaining: () => (total === null ? Infinity : Math.max(0, total - spent())) };
 
     // seq is taken synchronously on call, so the same script calls run() in the same order on replay.
     const run = async (a: RunSpec | string | null, task?: string, options?: RunOptions): Promise<any> => {
@@ -214,7 +214,7 @@ export async function runWorkflow(
             progress(`${label} started`);
           },
           progress: (line) => progress(`${label} ${line}`),
-          onUsage: (t) => { tokens += t; record.record.tokens += t; },
+          onUsage: (t, cached = 0) => { tokens += t; record.record.tokens += t; if (cached) record.record.cached = (record.record.cached ?? 0) + cached; },
           onMessage: (m) => write({ type: "message", ...m }),
         });
         // An aborted subagent returns its partial text; that's a stop, not a result.

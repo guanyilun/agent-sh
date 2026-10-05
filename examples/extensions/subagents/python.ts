@@ -76,7 +76,7 @@ export function pythonModule(file: string, python = defaultPython()): Promise<Py
   });
 
   function drive(api: WorkflowApi, host: ScriptHost): Promise<unknown> {
-    const usage = () => ({ total: api.budget.total, spent: api.budget.spent() });
+    const usage = () => ({ total: api.budget.total, spent: api.budget.spent(), cached: api.budget.cached() });
     const reply = (rid: number, work: () => unknown) => Promise.resolve().then(work).then(
       (value) => send({ rid, ok: true, value: value ?? null, budget: usage() }),
       (err) => {

@@ -2,6 +2,7 @@
 import type { AgentContext, ExtensionContext } from "agent-sh/types";
 import type { ToolDefinition } from "agent-sh/agent/types";
 import { runSubagent, type SubagentOptions, type SubagentRunMeta } from "agent-sh/agent/subagent";
+import { getSettings } from "agent-sh/settings";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,7 +64,7 @@ interface RunExtras {
   extraTools?: ToolDefinition[];
   systemNote?: string;
   shouldStop?: () => boolean;
-  onUsage?: (totalTokens: number) => void;
+  onUsage?: (totalTokens: number, cachedTokens?: number) => void;
   onMessage?: (message: Record<string, unknown>) => void;
   onStart?: () => void;
   history?: unknown[];
@@ -631,9 +632,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         model: spec.model ?? def?.model,
         signal,
         maxIterations: def?.maxIterations ?? settings.maxIterations,
-        reasoningParams: reasoningParams(spec.thinking ?? def?.thinking, spec.model ?? def?.model ?? llmClient.model),
+        reasoningParams: reasoningParams(spec.thinking ?? def?.thinking ?? defaultThinking(), spec.model ?? def?.model ?? llmClient.model),
         outMeta: meta,
-        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens) : undefined,
+        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens, u.cached_tokens) : undefined,
         onMessage: extra.onMessage as SubagentOptions["onMessage"],
         shouldStop: extra.shouldStop,
         history: extra.history as SubagentOptions["history"],
@@ -661,10 +662,18 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     };
   }
 
+  // The user's thinking level, for runs and agents that don't set one: the session's, or the saved setting
+  // when there is no session (agent-sh run).
+  function defaultThinking(): string | undefined {
+    return bus.emitPipe("config:get-thinking", { level: "", levels: [], supported: true }).level || getSettings().thinkingLevel || undefined;
+  }
+
+  // Sent unless the model is known not to take it, as the main agent does.
   function reasoningParams(level: string | undefined, modelId: string): Record<string, unknown> | undefined {
     if (!level || level === "off") return undefined;
-    const models = (ctx.call("agent:get-models") ?? []) as { id: string; supportsReasoningEffort?: boolean }[];
-    if (!models.find(m => m.id === modelId)?.supportsReasoningEffort) return undefined;
+    const models = (ctx.call("agent:get-models") ?? []) as { id: string; reasoning?: boolean; supportsReasoningEffort?: boolean }[];
+    const model = models.find(m => m.id === modelId);
+    if (model?.reasoning === false || model?.supportsReasoningEffort === false) return undefined;
     return { reasoning_effort: level === "xhigh" ? "high" : level };
   }
 

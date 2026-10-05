@@ -21,6 +21,13 @@ Releases before this file are recorded in the git tags and GitHub releases.
 - Workflow scripts: `checkpoint(name, fn)` (Python: the `@checkpoint`
   decorator) saves the result of the script's own work, such as a test suite
   or a build, so a resumed run gets the saved result instead of doing it again.
+- Workflow and `spawn_agent` subagents use your thinking level when the agent
+  or call doesn't set one, and a per-call `thinking` now reaches models whose
+  provider is defined in settings (it was dropped unless the provider declared
+  `supportsReasoningEffort`).
+- Workflow runs record how many of their tokens the provider served from its
+  prompt cache: `run.json`, `--status` and the progress line show
+  `N tokens (M cached)`, and scripts can read `budget.cached`.
 - `agent-sh run file --resume` without an id continues that file's latest run,
   and a resume given no arguments repeats the earlier run's.
 - `codex-provider` example extension: use a ChatGPT (Codex) subscription as an

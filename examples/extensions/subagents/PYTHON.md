@@ -68,7 +68,8 @@ plan = await run("Split this goal into tasks: ...", agent="plan", returns=Plan)
 | `returns` | a dataclass; the answer comes back as an instance instead of as text. |
 | `tools` | for a plain agent, the tools it may use; `[]` for none. Named agents keep their own. |
 | `system` | for a plain agent, its role and rules. Not allowed together with `agent`. |
-| `model`, `thinking` | override the model and the reasoning effort for this call. |
+| `model` | override the model for this call. |
+| `thinking` | how hard the model reasons: `"low"`, `"high"`, or `"off"`. Left out, the agent uses your agent-sh thinking level. |
 | `label` | the name shown for it in progress lines. |
 
 `run` starts the agent immediately and returns an awaitable. Start several and wait for them together:
@@ -115,12 +116,22 @@ Agent answers are saved automatically. Your own functions are not, and a resumed
 
 ### `budget`: tokens left
 
-`budget.remaining`, `budget.spent` and `budget.total`, as of the last call that finished. `total` is `None` and `remaining` is infinite unless `config` sets `budgetTokens`. Check it in open-ended loops:
+`budget.remaining`, `budget.spent`, `budget.cached` and `budget.total`, as of the last call that finished. `total` is `None` and `remaining` is infinite unless `config` sets `budgetTokens`. Check it in open-ended loops:
 
 ```python
 while budget.remaining > 200_000:
     ...
 ```
+
+### What a call costs
+
+An agent works in steps, and every step sends its whole conversation again: the tool descriptions, the task, and everything it has read so far. Three things keep that down:
+
+- **Give an agent only the tools it needs.** Each tool's description is resent on every step. `tools=["read_file", "bash"]` covers most read-only work; `tools=[]` is cheapest.
+- **Ask for few, large steps**: "read the whole file in one call", not page by page.
+- **Lower `thinking`** for roles that only sort or merge text.
+
+Most of a resent conversation is answered from the model server's cache, which is fast for it but still counted. `budget.cached` says how much of `budget.spent` that was.
 
 ## Answers with a shape
 

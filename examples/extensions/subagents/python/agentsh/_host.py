@@ -124,6 +124,11 @@ class Budget:
         return link().tokens.get("spent", 0)
 
     @property
+    def cached(self):
+        """The part of `spent` the model's server answered from its cache: cheap for it, but still counted."""
+        return link().tokens.get("cached", 0)
+
+    @property
     def remaining(self):
         return float("inf") if self.total is None else max(0, self.total - self.spent)
 
