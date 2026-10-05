@@ -170,7 +170,8 @@ export async function runWorkflow(
       return exec(toSpec(a, task, options), ++runs, at, `${at.path}${++at.next}`);
     };
 
-    const exec = async (spec: RunSpec, seq: number, at: Scope, id: string, chat?: Chat): Promise<any> => {
+    const exec = async (spec: RunSpec, seq: number, at: Scope, id: string, chat?: Chat, cancel?: AbortSignal): Promise<any> => {
+      const stopped = cancel ? AbortSignal.any([at.signal, cancel]) : at.signal;
       if (!spec.task) throw new Error("run() needs a task");
       if (seq > deps.maxRuns) throw new WorkflowStop(`workflow exceeded ${deps.maxRuns} subagent runs (subagents.maxRunsPerWorkflow)`);
       if (spec.system && spec.agent) throw new Error(`run(): "system" is for ad-hoc runs; ${spec.agent} has its own prompt`);
@@ -193,7 +194,7 @@ export async function runWorkflow(
       }
 
       if (signal.aborted) throw new WorkflowStop("cancelled");
-      if (at.signal.aborted) throw new Cancelled("cancelled");
+      if (stopped.aborted) throw new Cancelled("cancelled");
       if (budget.remaining() <= 0) throw new WorkflowStop(`token budget of ${total} exhausted`);
 
       const write = record.transcript(seq);
@@ -204,7 +205,7 @@ export async function runWorkflow(
       counts.queued++;
       try {
         const result = await deps.runTask(spec, {
-          signal: at.signal,
+          signal: stopped,
           ...(chat && { history: chat.history, onHistory: (m: unknown[]) => { history = m; } }),
           onStart: () => {
             if (state === "working") return;
@@ -218,7 +219,7 @@ export async function runWorkflow(
         });
         // An aborted subagent returns its partial text; that's a stop, not a result.
         if (signal.aborted) throw new WorkflowStop("cancelled");
-        if (at.signal.aborted) throw new Cancelled("cancelled");
+        if (stopped.aborted) throw new Cancelled("cancelled");
         const output = !spec.schema ? result.text
           : result.value !== undefined ? result.value
           : await extract(result.text, normalizeSchema(spec.schema), deps.complete);
@@ -230,7 +231,7 @@ export async function runWorkflow(
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         write({ type: "end", ok: false, error: message, tokens });
-        const lost = at.signal.aborted && !signal.aborted;
+        const lost = stopped.aborted && !signal.aborted;
         progress(lost ? `${label} cancelled` : `${label} failed: ${message}`);
         throw signal.aborted ? new WorkflowStop("cancelled") : lost ? new Cancelled("cancelled") : err;
       } finally {
@@ -337,37 +338,37 @@ export async function runWorkflow(
       budget,
     };
     // For scripts in another process, which number their own calls and scopes.
-    const held = new Map<string, Scope & { stop: AbortController }>();
+    const held = new Map<string, Scope>();
     const scopeAt = (p: string): Scope => {
       if (!p) return root;
       let s = held.get(p);
       if (!s) {
         const parent = scopeAt(p.replace(/[^/]+\/$/, ""));
-        const stop = new AbortController();
-        s = { path: p, next: 0, diverged: false, parent, signal: AbortSignal.any([parent.signal, stop.signal]), stop };
+        s = { path: p, next: 0, diverged: false, parent, signal: parent.signal };
         held.set(p, s);
       }
       return s;
     };
     const chats = new Map<string, Chat>();
-    const inflight = new Set<{ scope: string; done: Promise<unknown> }>();
+    const stopping = new Set<Promise<unknown>>();
     const host: ScriptHost = {
       run: (spec, id, at, session) => {
         if (session && !chats.has(session)) chats.set(session, { key: "", history: [] });
-        const entry = { scope: at, done: exec(toSpec(spec), ++runs, scopeAt(at), id, session ? chats.get(session) : undefined) };
-        inflight.add(entry);
-        entry.done.catch(() => {}).finally(() => inflight.delete(entry));
-        return entry.done;
+        const stop = new AbortController();
+        const done = exec(toSpec(spec), ++runs, scopeAt(at), id, session ? chats.get(session) : undefined, stop.signal);
+        const abort = () => {
+          stop.abort();
+          const settled = done.catch(() => {}).finally(() => stopping.delete(settled));
+          stopping.add(settled);
+        };
+        return { done, abort };
       },
+      quiet: async () => { await Promise.all(stopping); },
       raceWinner: (id, key, at) => {
         const cached = isDiverged(scopeAt(at)) ? undefined : replay.get(id);
         return cached?.key === key ? cached.winner : undefined;
       },
       raceRecord: (id, key, winner) => record.append({ seq: runs, id, key, winner, output: null, tokens: 0 }),
-      cancel: async (paths) => {
-        for (const p of paths) { scopeAt(p); held.get(p)!.stop.abort(); }
-        await Promise.allSettled([...inflight].filter(e => paths.some(p => e.scope.startsWith(p))).map(e => e.done));
-      },
       kind: (err) => err instanceof WorkflowStop ? "stop" : err instanceof Cancelled ? "cancelled" : "error",
       stop: (message) => new WorkflowStop(message),
     };

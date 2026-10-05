@@ -1,38 +1,49 @@
-# Split a goal into tasks and solve each against a check command the agents can't talk their way past:
-#   agent-sh run solve.py --goal "implement the functions listed in SPEC.md" --check "python -m pytest -q {dir}"
-# Each attempt gets its own directory, so add `sandbox=dict(write=["./out"])` (sandbox extension) to hold agents to it.
+"""Get a goal done as separate tasks, each proven by a command instead of by an agent's say-so.
+
+    agent-sh run solve.py --goal "implement the functions listed in SPEC.md" \\
+                          --check "python -m pytest -q {dir}"
+
+What happens:
+
+    1. A planner splits the goal into tasks.
+    2. Every task is worked on at the same time. For one task:
+         a. Two agents try it in different ways, each in its own directory.
+         b. After each try, this script runs the check command there. If it fails,
+            the output goes back to the same agent, which tries again.
+         c. The first try that passes wins, and the other agent is stopped.
+         d. Three reviewers then try to find something wrong with the winner.
+    3. The report says which tasks are solved, which pass but are disputed, and which failed.
+"""
 import asyncio
 import os
 import re
 import shlex
 from dataclasses import dataclass
 
-from agentsh import agent, budget, log, map, pipeline, race, run
+from agentsh import Agent, budget, race, run
 
-description = "Split a goal into tasks; per task, race approaches, repair against a check command, then let skeptics review what passed"
+description = "Split a goal into tasks; for each, race two approaches against a check command, then have reviewers attack what passed"
 
 args = dict(
     goal=dict(required=True, help="what to get done"),
-    check=dict(required=True, help="shell command that exits 0 when an attempt is good; {dir} is the attempt's directory"),
-    approaches=dict(default=2, help="approaches to race per task (up to 3)"),
-    repairs=dict(default=3, help="times an agent may fix a failed check"),
-    out=dict(default="./out", help="where attempts are written"),
+    check=dict(required=True, help="shell command that exits 0 when a try is good; {dir} is the try's directory"),
+    repairs=dict(default=3, help="how many times an agent may fix a failed check"),
+    out=dict(default="./out", help="where the work is written"),
 )
 
 config = dict(concurrency=6, maxRuns=300, budgetTokens=10_000_000, hours=4)
 
 APPROACHES = [
-    "the most direct way",
-    "start from the edge cases and work inwards",
-    "the simplest thing that could pass, then tighten it",
+    "Take the most direct route.",
+    "Start from the edge cases and work inwards.",
 ]
-ANGLES = [
+OBJECTIONS = [
     "Does it do what the task asks, or only what the check happens to test?",
     "What input or case would break it?",
     "Is anything hard-coded, stubbed or skipped to get past the check?",
 ]
-CHECK_SECONDS = 600
-RESERVE = 300_000  # tokens: below this, stop repairing and report what there is
+CHECK_TIMEOUT = 600        # seconds
+TOKENS_TO_KEEP = 300_000   # stop repairing below this, so the run can still finish and report
 
 
 @dataclass
@@ -47,106 +58,111 @@ class Plan:
 
 
 @dataclass
-class Solution:
+class Summary:
+    """What an agent says it did."""
     summary: str
     files: list[str]
 
 
 @dataclass
 class Verdict:
+    """One reviewer's opinion of a solution."""
     refuted: bool
     reason: str
 
 
 @dataclass
-class Attempt:
-    approach: str
-    dir: str
-    solution: Solution
+class Try:
+    """One agent's go at one task."""
+    directory: str
+    summary: str
     passed: bool
     repairs: int
 
 
-@dataclass
-class Result:
-    attempt: Attempt
-    sound: bool
-    objections: list[str]
+async def main(args):
+    plan = await run(f"""
+        Split this goal into tasks that can each be done and checked on their own, in separate directories:
+        {args.goal}
+        Give each task a short name that works as a directory name.
+    """, agent="plan", returns=Plan)
+    print(f"{len(plan.tasks)} task(s): {', '.join(task.name for task in plan.tasks)}")
+
+    # All tasks at once. A task that raises shows up in `outcomes` as the exception.
+    outcomes = await asyncio.gather(*[solve(task, args) for task in plan.tasks], return_exceptions=True)
+
+    lines = [outcome if isinstance(outcome, str) else f"- {task.name}: FAILED ({outcome})"
+             for task, outcome in zip(plan.tasks, outcomes)]
+    solved = sum(": solved" in line for line in lines)
+    return f"{solved}/{len(plan.tasks)} task(s) solved.\n" + "\n".join(lines)
+
+
+async def solve(task, args):
+    """One task from start to finish. Returns its line of the report."""
+    base = os.path.abspath(os.path.join(args.out, re.sub(r"[^\w.-]+", "-", task.name)))
+    tries = [attempt(task, approach, os.path.join(base, str(number)), args)
+             for number, approach in enumerate(APPROACHES, start=1)]
+
+    winner = await race(*tries, accept=lambda this_try: this_try.passed)
+    if winner is None:
+        return f"- {task.name}: NOT SOLVED (no try passed the check)"
+    print(f"{task.name}: passed after {winner.repairs} repair(s)")
+
+    objections = await review(task, winner)
+    if objections:
+        return f"- {task.name}: passes the check, but reviewers object ({winner.directory})\n" + \
+               "\n".join(f"    - {objection}" for objection in objections)
+    return f"- {task.name}: solved ({winner.directory})"
+
+
+async def attempt(task, approach, directory, args):
+    """One agent works on the task in its own directory until the check passes or it runs out of repairs."""
+    os.makedirs(directory, exist_ok=True)
+    worker = Agent("worker", label=task.name)
+    said = await worker.ask(f"""
+        {task.goal}
+        {approach}
+        Work only inside {directory}. You are done when this command passes: {args.check}
+    """, returns=Summary)
+
+    for repairs in range(args.repairs + 1):
+        passed, output = await check(args.check, directory)
+        out_of_room = repairs == args.repairs or budget.remaining < TOKENS_TO_KEEP
+        if passed or out_of_room:
+            return Try(directory, said.summary, passed, repairs)
+        # Ask the same agent, so it still remembers what it tried and why.
+        said = await worker.ask(f"The check failed. Fix it.\n\n{output}", returns=Summary)
 
 
 async def check(command, directory):
-    """Pass or fail is the command's exit code, never an agent's word."""
-    proc = await asyncio.create_subprocess_shell(
+    """Run the check command. Whether a try is good is its exit code, never an agent's word."""
+    process = await asyncio.create_subprocess_shell(
         command.replace("{dir}", shlex.quote(directory)),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     try:
-        output, _ = await asyncio.wait_for(proc.communicate(), CHECK_SECONDS)
-        return proc.returncode == 0, output.decode(errors="replace")[-4000:]
+        output, _ = await asyncio.wait_for(process.communicate(), CHECK_TIMEOUT)
+        return process.returncode == 0, output.decode(errors="replace")[-4000:]
     except asyncio.TimeoutError:
-        return False, f"the check did not finish within {CHECK_SECONDS}s"
+        return False, f"The check did not finish within {CHECK_TIMEOUT} seconds."
     finally:
-        if proc.returncode is None:  # timed out, or this attempt lost the race
-            proc.kill()
+        if process.returncode is None:   # timed out, or this try lost the race
+            process.kill()
 
 
-async def attempt(task, n, approach, args):
-    directory = os.path.abspath(os.path.join(args.out, re.sub(r"[^\w.-]+", "-", task.name), str(n + 1)))
-    os.makedirs(directory, exist_ok=True)
-    worker = agent("worker", label=f"{task.name}#{n + 1}")
-    solution = await worker.ask(f"""
-        {task.goal}
-        Approach: {approach}.
-        Work only inside {directory}. You are done when this command passes: {args.check}
-    """, returns=Solution)
-    for repairs in range(args.repairs + 1):
-        passed, output = await check(args.check, directory)
-        if passed or repairs == args.repairs or budget.remaining() < RESERVE:
-            return Attempt(approach, directory, solution, passed, repairs)
-        # The same agent again: it still knows what it tried and why.
-        solution = await worker.ask(f"The check failed. Fix it.\n\n{output}", returns=Solution)
+async def review(task, winner):
+    """Three reviewers each try to refute the winning try. Returns the objections, if most of them stuck."""
+    verdicts = await asyncio.gather(*[run(f"""
+        A check command passed for this work. That is not the same as the work being right: try to refute it.
+        Task: {task.goal}
+        Files: {winner.directory}
+        The author's summary: {winner.summary}
+        {question}
+        Answer refuted=true only for a concrete problem you can point to in the files.
+    """, agent="reviewer", returns=Verdict) for question in OBJECTIONS], return_exceptions=True)
 
-
-async def main(args):
-    plan = await run("plan", f"""
-        Split this goal into tasks that can each be done and checked on their own, in separate directories:
-        {args.goal}
-        Give each a short name that works as a directory name.
-    """, returns=Plan)
-    tasks = plan.tasks
-    log(f"{len(tasks)} task(s): {', '.join(t.name for t in tasks)}")
-
-    async def solve(task, _):
-        approaches = list(enumerate(APPROACHES[:args.approaches]))
-        won = await race(approaches, lambda a: attempt(task, a[0], a[1], args), accept=lambda found: found.passed)
-        if won is None:
-            raise RuntimeError("no approach passed the check")
-        log(f"{task.name}: approach {won.index + 1} passed after {won.value.repairs} repair(s)")
-        return won.value
-
-    async def review(found, task):
-        votes = [v for v in await map(ANGLES, lambda angle: run("reviewer", f"""
-            A check command passed for this work, which is not the same as the work being right. Try to refute it.
-            Task: {task.goal}
-            Files: {found.dir}
-            The author's summary: {found.solution.summary}
-            {angle}
-            Answer refuted=true only for a concrete problem you can point to in the files.
-        """, returns=Verdict)) if v]
-        objections = [v.reason for v in votes if v.refuted]
-        # A skeptic that failed doesn't count in the work's favour.
-        return Result(found, (len(votes) - len(objections)) * 2 > len(ANGLES), objections)
-
-    # Each task moves on to review as soon as it's solved, without waiting for the others.
-    results = await pipeline(tasks, solve, review)
-
-    lines = []
-    for task, result in zip(tasks, results):
-        if result is None:
-            lines.append(f"- {task.name}: NOT SOLVED (no approach passed the check, or the run failed)")
-        elif result.sound:
-            lines.append(f"- {task.name}: solved in {result.attempt.dir}")
-        else:
-            lines.append(f"- {task.name}: passes the check but reviewers object, see {result.attempt.dir}")
-            lines += [f"    - {o}" for o in result.objections]
-    solved = sum(1 for r in results if r and r.sound)
-    return f"{solved}/{len(tasks)} task(s) solved and reviewed.\n" + "\n".join(lines)
+    # A reviewer that failed to answer doesn't count in the work's favour.
+    in_favour = sum(isinstance(verdict, Verdict) and not verdict.refuted for verdict in verdicts)
+    if in_favour * 2 > len(OBJECTIONS):
+        return []
+    return [verdict.reason if isinstance(verdict, Verdict) else f"a reviewer failed: {verdict}" for verdict in verdicts
+            if not isinstance(verdict, Verdict) or verdict.refuted]

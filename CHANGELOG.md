@@ -11,10 +11,11 @@ Releases before this file are recorded in the git tags and GitHub releases.
 ### Added
 
 - Workflow files in Python: `agent-sh run campaign.py`, and `.py` files in the
-  workflows folders. The script is plain `asyncio` (`from agentsh import run,
-  map, pipeline, race, agent`) in its own process, driving the subagents
-  extension over a pipe, so the journal, resume, budget, dry run and sandbox
-  work as for JavaScript files. `returns` takes a dataclass. Needs `python3`.
+  workflows folders. The file is an ordinary `asyncio` program (`from agentsh
+  import run, Agent, race, budget`) in its own process, with agent-sh running
+  the agents for it, so the journal, resume, budget, dry run and sandbox work
+  as for JavaScript files. Concurrency is plain `asyncio.gather`, cancelling a
+  task stops its agent, and `returns` takes a dataclass. Needs Python 3.9+.
 - `codex-provider` example extension: use a ChatGPT (Codex) subscription as an
   `ash` provider. A loopback proxy translates Chat Completions to the Codex
   Responses API and signs requests with ChatGPT OAuth (`/codex-login`,

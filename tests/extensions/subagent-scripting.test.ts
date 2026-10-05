@@ -98,9 +98,10 @@ test("a .py file in the workflows folder is listed and runs through run_workflow
     wf(s, "greet.py", [
       'description = "Greets twice"',
       'args = dict(name="world")',
-      "from agentsh import map, run",
+      "import asyncio",
+      "from agentsh import run",
       "async def main(args):",
-      '    return " | ".join(await map(["hello", "bye"], lambda w: run(None, f"{w} {args.name}", tools=[])))',
+      '    return " | ".join(await asyncio.gather(*[run(f"{word} {args.name}", tools=[]) for word in ["hello", "bye"]]))',
     ].join("\n"));
     assert.match(s.description("run_workflow"), /- greet: Greets twice/);
     const r = await s.exec("run_workflow", { name: "greet", args: "--name there" });

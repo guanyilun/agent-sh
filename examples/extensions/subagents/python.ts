@@ -11,11 +11,11 @@ const HELLO_MS = 30_000;
 
 /** What a script in another process needs beyond WorkflowApi: it numbers its own calls. */
 export interface ScriptHost {
-  run(spec: RunSpec, id: string, scope: string, session?: string): Promise<unknown>;
+  run(spec: RunSpec, id: string, scope: string, session?: string): { done: Promise<unknown>; abort(): void };
+  /** Resolves once every aborted run has stopped. */
+  quiet(): Promise<void>;
   raceWinner(id: string, key: string, scope: string): number | undefined;
   raceRecord(id: string, key: string, winner: number): void;
-  /** Stops the runs under these scopes and resolves once they have. */
-  cancel(scopes: string[]): Promise<void>;
   kind(err: unknown): "stop" | "cancelled" | "error";
   stop(message: string): Error;
 }
@@ -73,15 +73,23 @@ export function pythonModule(file: string, python = defaultPython()): Promise<Py
         const kind = host.kind(err);
         send({ rid, ok: false, error: err instanceof Error ? err.message : String(err), stop: kind === "stop", cancelled: kind === "cancelled", budget: usage() });
       });
+    const aborts = new Map<number, () => void>();
     return new Promise<unknown>((resolve, reject) => {
       print = (line) => api.log(line);
       onExit = (why) => reject(api.signal.aborted ? host.stop("cancelled") : new Error(why));
       api.signal.addEventListener("abort", dispose, { once: true });
       onMessage = (m) => {
-        if (m.t === "run") reply(m.rid, () => host.run(m.spec, m.id, m.scope, m.session));
+        if (m.t === "run") {
+          // Started here, not in reply(): an "abandon" may be the very next line.
+          const run = host.run(m.spec, m.id, m.scope, m.session);
+          aborts.set(m.rid, run.abort);
+          reply(m.rid, () => run.done.finally(() => aborts.delete(m.rid)));
+        }
+        // The script stopped waiting for this reply (a cancelled task, a lost race, a timeout).
+        else if (m.t === "abandon") aborts.get(m.rid)?.();
+        else if (m.t === "quiet") reply(m.rid, () => host.quiet());
         else if (m.t === "race_get") reply(m.rid, () => host.raceWinner(m.id, m.key, m.scope));
         else if (m.t === "race_set") reply(m.rid, () => host.raceRecord(m.id, m.key, m.winner));
-        else if (m.t === "cancel") reply(m.rid, () => host.cancel(m.scopes));
         else if (m.t === "log") api.log(String(m.message));
         else if (m.t === "done") { onExit = () => {}; resolve(m.result ?? undefined); }
         else if (m.t === "fail") { onExit = () => {}; reject(m.stop ? host.stop(m.error) : new Error(m.traceback ? `${m.error}\n${String(m.traceback).trim()}` : m.error)); }

@@ -105,11 +105,12 @@ Budget exhaustion, the run cap, the deadline and Ctrl-C stop the whole workflow;
 
 ## Python
 
-A workflow can be a `.py` file instead. The script runs in its own Python process and drives agent-sh over a pipe, so subagents, tools, the journal, the budget and the sandbox are the same; only the control flow is yours, in `asyncio`.
+A workflow can be a `.py` file instead: an ordinary `asyncio` program in its own Python process, with agent-sh running the agents for it. Subagents, tools, the journal, the budget and the sandbox are the same as for a JavaScript file.
 
 ```python
+import asyncio
 from dataclasses import dataclass
-from agentsh import agent, log, map, race, run
+from agentsh import run
 
 description = "Review until clean"
 args = dict(target=dict(default="the uncommitted changes", help="what to review"), rounds=3)
@@ -121,29 +122,39 @@ class Review:
     findings: list[str]
 
 async def main(args):
-    for round in range(args.rounds):
-        reviews = await map(["correctness", "tests"], lambda focus:
-            run("reviewer", f"Review {args.target} for {focus}.", returns=Review))
-        findings = [f for r in reviews if r for f in r.findings]
+    for round in range(1, args.rounds + 1):
+        reviews = await asyncio.gather(*[
+            run(f"Review {args.target} for {focus}.", agent="reviewer", returns=Review)
+            for focus in ["correctness", "tests"]])
+        findings = [finding for review in reviews for finding in review.findings]
         if not findings:
-            return f"Clean after {round + 1} round(s)."
-        await run("worker", "Fix only these findings:\n" + "\n".join(findings))
+            return f"Clean after {round} round(s)."
+        await run("Fix only these findings:\n" + "\n".join(findings), agent="worker")
 ```
 
 `agent-sh run review.py --target src --rounds 2`, with `--help`, `--dry-run` and `--resume` as for any run file. A `.py` file in a workflows folder is listed and run like the others.
 
-What differs from the JavaScript API:
+The whole API is four names, and everything else is plain Python:
 
-- **The entry point is `async def main()`**, or `main(args)` to get the parsed arguments (`args.target`).
-- **`run()` starts the subagent immediately** and returns an awaitable, so `a = run(...); b = run(...); await a` runs both at once. Options are keywords: `returns`, `tools`, `system`, `model`, `thinking`, `label`.
-- **`returns` also takes a dataclass** (or `list[SomeDataclass]`); the run then resolves to an instance. Fields may be `str`, `int`, `float`, `bool`, lists, nested dataclasses, `Literal[...]`, and `Optional[...]` for fields the agent may omit. The shorthand and JSON Schema work too, and resolve to plain dicts.
-- **Callbacks take the item only**: `map(items, fn)` calls `fn(item)`, `pipeline` stages get `(previous, item)`, and `race(items, fn, accept)` calls `fn(item)` and `accept(value)`. `race` resolves to `Won(value, index)` or `None`.
-- **Failures are exceptions**: a failed run raises `RunError`; `WorkflowStop` means the whole workflow is ending (budget, run cap, deadline) and `map`, `pipeline` and `race` let it through.
-- **`budget.spent()` and `budget.remaining()`** are as of the latest finished run.
-- **`config` must be a literal** (plain values, lists, dicts or `dict(...)`): it is read without running the file. `python: ".venv/bin/python"` in it picks the interpreter, relative to the file; otherwise `AGENT_SH_PYTHON`, then `python3`.
-- `print()` and `log()` both become progress lines.
+- **`run(task, agent=None, returns=None, ...)`** gives a task to an agent. It starts straight away and returns an awaitable, so `asyncio.gather(run(...), run(...))` runs both at once. Leave `agent` out for a plain one; `tools`, `system`, `model`, `thinking` and `label` are keywords too. A failed run raises `RunError`.
+- **`returns`** takes a dataclass (or `list[SomeDataclass]`) and the answer comes back as an instance. Fields may be `str`, `int`, `float`, `bool`, lists, nested dataclasses, `Literal[...]`, and `Optional[...]` for fields the agent may omit. The shorthand and JSON Schema work too, and give plain dicts.
+- **`Agent(name)`** is an agent you keep talking to: each `await worker.ask(...)` continues the same conversation.
+- **`race(*attempts, accept=...)`** tries several things at once (each a `run(...)` or a call to your own async function), returns the first result `accept` approves, and stops the rest; `None` if none is accepted.
+- **`budget.remaining`**, `budget.spent` and `budget.total` are as of the latest finished call.
 
-Resuming follows the same rule as in JavaScript: the script must make the same calls in the same order given the same results. Needs Python 3.9+; not tried on Windows.
+How it fits with `asyncio`:
+
+- **Concurrency is asyncio's.** Use `asyncio.gather`, `create_task`, `wait_for` and the rest as usual. To keep going when some calls fail, pass `return_exceptions=True` and keep the results of the type you asked for.
+- **Cancelling stops the agent.** If the task waiting on a call is cancelled (a timeout, a lost race, a failed `TaskGroup`), agent-sh stops that agent.
+- **Hitting a limit cancels the program.** When the budget, run cap or deadline is reached, or you press Ctrl-C, `main()` is cancelled the way asyncio cancels any task, so `finally` blocks run and nothing can loop past the limit.
+- **`print()`** becomes a progress line.
+
+The file itself:
+
+- **`async def main()`**, or `main(args)` to get the parsed arguments (`args.target`).
+- **`config` must be a literal** (plain values, lists, dicts or `dict(...)`), because it is read without running the file. `python: ".venv/bin/python"` in it picks the interpreter, relative to the file; otherwise `AGENT_SH_PYTHON`, then `python3`.
+
+Resuming works as in JavaScript: the program runs again from the top and finished calls are answered from the journal. Each asyncio task numbers its own calls, so it doesn't matter which of several concurrent tasks finishes first; it does matter that the program makes the same calls given the same answers. Resume with the same Python version that started the run. Needs Python 3.9+; not tried on Windows.
 
 ## Runs, logs and resuming
 
@@ -236,5 +247,5 @@ Bundled, next to this file in `workflows/`:
 In the repo's `examples/workflows/` (copy into `~/.agent-sh/workflows/` to use):
 
 - `campaign.ts`: a run-file template with `config` and declared args; `campaign.py` is the same in Python.
-- `solve.py`: a goal is split into tasks, and each task moves through its own pipeline: several approaches race, each attempt is judged by a check command's exit code and sent back to the same agent (`agent().ask`) with the output when it fails, and skeptics then review what passed.
+- `solve.py`: a goal is split into tasks worked on at the same time. For each, two agents race in separate directories, every try is judged by a check command's exit code and sent back to the same agent with the output when it fails, and reviewers then try to refute the winner.
 - `verified-review.ts`: three finders looking different ways, grouped by file with a merge run for files with several claims, then three skeptics per finding attacking it from different angles; only findings most skeptics fail to refute are reported, and merges and caps are logged.
