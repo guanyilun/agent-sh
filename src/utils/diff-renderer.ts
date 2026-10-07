@@ -82,6 +82,39 @@ export function highlightLine(text: string, language?: string): string {
   }
 }
 
+// ── Tab expansion ────────────────────────────────────────────────
+
+const TAB_SIZE = 4;
+
+/**
+ * Expand tabs to spaces at TAB_SIZE stops. Tab width is otherwise ambiguous:
+ * visibleLen counts it as 0, pi-tui as 3, and the terminal jumps to its next
+ * stop. Padded rows then overflow the terminal and wrap.
+ */
+export function expandTabs(text: string): string {
+  if (!text.includes("\t")) return text;
+  let out = "";
+  let col = 0;
+  for (const ch of text) {
+    if (ch === "\t") {
+      const n = TAB_SIZE - (col % TAB_SIZE);
+      out += " ".repeat(n);
+      col += n;
+    } else {
+      out += ch;
+      col += charWidth(ch.codePointAt(0) ?? 0);
+    }
+  }
+  return out;
+}
+
+function expandHunkTabs(hunks: DiffHunk[]): DiffHunk[] {
+  return hunks.map((hunk) => ({
+    ...hunk,
+    lines: hunk.lines.map((line) => line.text.includes("\t") ? { ...line, text: expandTabs(line.text) } : line),
+  }));
+}
+
 // ── Token-level LCS for inline highlighting ──────────────────────
 
 interface Token {
@@ -784,7 +817,7 @@ export function renderDiff(diff: DiffResult, opts: DiffRenderOptions): string[] 
 
   // Trim context lines from hunks if the diff would exceed the budget,
   // so that actual changes are always visible.
-  const trimmed: DiffResult = { ...diff, hunks: trimHunksToFit(diff.hunks, maxLines) };
+  const trimmed: DiffResult = { ...diff, hunks: trimHunksToFit(expandHunkTabs(diff.hunks), maxLines) };
 
   let bodyLines: string[];
   switch (mode) {
@@ -835,7 +868,7 @@ export async function renderDiffAsync(
   }
 
   // Trim context lines from hunks if the diff would exceed the budget
-  const trimmed: DiffResult = { ...diff, hunks: trimHunksToFit(diff.hunks, maxLines) };
+  const trimmed: DiffResult = { ...diff, hunks: trimHunksToFit(expandHunkTabs(diff.hunks), maxLines) };
 
   const yieldFn: YieldFn = () => new Promise<void>(r => setImmediate(r));
 

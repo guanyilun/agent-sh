@@ -35,7 +35,7 @@ import { applyBranchMessages } from "./commands.js";
 import type { Capture, NestedDiff } from "./capture.js";
 import { execSync } from "node:child_process";
 import { readClipboardImage } from "./clipboard-image.js";
-import { renderDiff, detectLanguage, highlightLine } from "agent-sh/utils/diff-renderer.js";
+import { renderDiff, detectLanguage, highlightLine, expandTabs } from "agent-sh/utils/diff-renderer.js";
 import { computeDiff } from "agent-sh/utils/diff.js";
 import { renderBoxFrame } from "agent-sh/utils/box-frame.js";
 
@@ -102,7 +102,7 @@ function renderNewFilePreview(
   const lang = detectLanguage(filePath);
   const body = shown.map((l, i) => {
     const no = String(i + 1).padStart(noW);
-    const code = highlightLine(l.text, lang);
+    const code = highlightLine(expandTabs(l.text), lang);
     return gutterLine ? `${theme.fg("muted", `${no} │`)} ${code}` : `\x1b[2m${no}\x1b[22m  ${code}`;
   });
   if (overflow > 0) body.push(theme.fg("muted", `… ${overflow} more lines`));
