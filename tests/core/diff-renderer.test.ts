@@ -62,3 +62,16 @@ test("inline emphasis still applies on long lines (prefix/suffix-anchored)", () 
   assert.ok(lines.some((l) => l.includes(palette.errorBgEmph)), "removed line keeps inline emphasis");
   assert.ok(lines.some((l) => l.includes(palette.successBgEmph)), "added line keeps inline emphasis");
 });
+
+test("tab-indented changed rows are exactly width columns, with no raw tabs", () => {
+  const width = 60;
+  const lines = renderDiff(computeDiff("<script>\n\timport A from './A';\n</script>\n", "<script>\n\timport B from './B';\n</script>\n"), {
+    width, filePath: "x.svelte", mode: "unified", gutterLine: false, trueColor: true, maxLines: Number.MAX_SAFE_INTEGER,
+  }).map(strip);
+  const changed = lines.filter((l) => /import [AB]/.test(l));
+  assert.equal(changed.length, 2);
+  for (const l of changed) {
+    assert.ok(!l.includes("\t"), `raw tab left in row: ${JSON.stringify(l)}`);
+    assert.equal(l.length, width);
+  }
+});
