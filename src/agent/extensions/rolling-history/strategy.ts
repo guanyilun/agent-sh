@@ -10,6 +10,7 @@ import {
 } from "../../nuclear-form.js";
 import { formatEntryLine } from "../../entry-format.js";
 import { RECALL_CACHE_KIND } from "./constants.js";
+import { estimateMessagesTokens } from "../../../utils/token-estimate.js";
 
 interface ToolMeta {
   toolName: string;
@@ -327,7 +328,7 @@ function recencyWeight(idx: number, total: number): number {
 }
 
 function estimateTurnTokens(msgs: AgentShMessage[]): number {
-  return Math.ceil(JSON.stringify(msgs).length / 4);
+  return estimateMessagesTokens(msgs);
 }
 
 export function slimTurn(messages: AgentShMessage[]): AgentShMessage[] {

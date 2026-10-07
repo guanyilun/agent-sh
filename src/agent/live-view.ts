@@ -1,6 +1,7 @@
 import type { ChatCompletionMessageParam, AgentShMessage } from "./llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import type { ImageContent } from "./types.js";
+import { estimateMessagesTokens } from "../utils/token-estimate.js";
 
 export interface CompactResult {
   before: number;
@@ -12,13 +13,14 @@ export interface CompactResult {
 export class LiveView {
   private messages: ChatCompletionMessageParam[] = [];
   private messagesDirty = true;
-  private cachedMessagesJson: string | null = null;
+  private cachedTokenEstimate: number | null = null;
 
   readonly instanceId: string;
   private readonly handlers: HandlerFunctions | null;
 
   private lastApiTokenCount: number | null = null;
   private lastApiMessageCount: number = 0;
+  private promptOverhead = 0;
 
   // Mid-tool-pair user/system messages are buffered and flushed after
   // the trailing tool_result — splicing into the gap breaks
@@ -30,17 +32,17 @@ export class LiveView {
     this.instanceId = instanceId;
   }
 
-  private getMessagesJson(): string {
-    if (this.messagesDirty || this.cachedMessagesJson === null) {
-      this.cachedMessagesJson = JSON.stringify(this.messages);
+  private getTokenEstimate(): number {
+    if (this.messagesDirty || this.cachedTokenEstimate === null) {
+      this.cachedTokenEstimate = estimateMessagesTokens(this.messages);
       this.messagesDirty = false;
     }
-    return this.cachedMessagesJson;
+    return this.cachedTokenEstimate;
   }
 
   private invalidateMessagesCache(): void {
     this.messagesDirty = true;
-    this.cachedMessagesJson = null;
+    this.cachedTokenEstimate = null;
   }
 
   addUserMessage(text: string, images?: ImageContent[]): void {
@@ -263,17 +265,18 @@ export class LiveView {
   updateApiTokenCount(promptTokens: number): void {
     this.lastApiTokenCount = promptTokens;
     this.lastApiMessageCount = this.messages.length;
+    this.promptOverhead = Math.max(0, promptTokens - this.estimateTokens());
   }
 
   estimatePromptTokens(): number {
-    if (this.lastApiTokenCount === null) return this.estimateTokens();
+    if (this.lastApiTokenCount === null) return this.promptOverhead + this.estimateTokens();
     const trailing = this.messages.length - this.lastApiMessageCount;
     if (trailing <= 0) return this.lastApiTokenCount;
     const trailingMessages = this.messages.slice(this.lastApiMessageCount);
-    return this.lastApiTokenCount + Math.ceil(JSON.stringify(trailingMessages).length / 4);
+    return this.lastApiTokenCount + estimateMessagesTokens(trailingMessages);
   }
 
   estimateTokens(): number {
-    return Math.ceil(this.getMessagesJson().length / 4);
+    return this.getTokenEstimate();
   }
 }
