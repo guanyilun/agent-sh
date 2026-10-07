@@ -87,3 +87,15 @@ test("findCutPoint snaps forward past an unsafe cut (tool result)", () => {
   const cut = findCutPoint(msgs, 100);
   assert.equal(cut, 3, "must snap past the tool_call/tool_result pair");
 });
+
+test("estimateMessageTokens counts an image part flat, not by base64 length", () => {
+  const m = {
+    role: "tool",
+    tool_call_id: "c1",
+    content: [
+      { type: "text", text: "abcd" },
+      { type: "image_url", image_url: { url: "data:image/png;base64," + "A".repeat(250_000) } },
+    ],
+  } as unknown as AgentMessage;
+  assert.equal(estimateMessageTokens(m), Math.ceil(4 * 0.25) + 1600 + 20);
+});
