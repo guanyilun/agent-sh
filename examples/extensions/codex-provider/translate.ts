@@ -195,8 +195,10 @@ export class CodexStreamTranslator {
         return [];
       case "response.failed":
         throw new Error(event.response?.error?.message ?? "Codex response failed");
-      case "error":
-        throw new Error(event.message ?? event.code ?? "Codex stream error");
+      case "error": {
+        const err = event.error ?? event;
+        throw new Error(err.message ?? err.code ?? `Codex stream error: ${JSON.stringify(event)}`);
+      }
       default:
         return [];
     }
