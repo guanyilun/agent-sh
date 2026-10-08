@@ -158,6 +158,8 @@ test("translator: plain text ends with stop; upstream failures throw", () => {
   const t = new CodexStreamTranslator("m");
   assert.throws(() => t.push({ type: "response.failed", response: { error: { message: "boom" } } }), /boom/);
   assert.throws(() => t.push({ type: "error", message: "bad request" }), /bad request/);
+  assert.throws(() => t.push({ type: "error", error: { message: "usage limit" } }), /usage limit/);
+  assert.throws(() => t.push({ type: "error", sequence_number: 3 }), /sequence_number/);
 });
 
 test("aggregate: folds chunks into a chat.completion", () => {

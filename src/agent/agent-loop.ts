@@ -943,7 +943,7 @@ export class AgentLoop implements AgentBackend {
       responseText = await this.executeLoop(signal);
     } catch (e) {
       if (!signal.aborted) {
-        if (e instanceof Error) console.error("[agent-sh] query failed:\n" + e.stack);
+        if (process.env.DEBUG && e instanceof Error) console.error("[agent-sh] query failed:\n" + e.stack);
         const msg = this.formatError(e);
         this.bus.emit("agent:error", { message: msg });
       }
