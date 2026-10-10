@@ -2,6 +2,7 @@
 import type { AgentContext, ExtensionContext } from "agent-sh/types";
 import type { ToolDefinition } from "agent-sh/agent/types";
 import { runSubagent, type SubagentOptions, type SubagentRunMeta } from "agent-sh/agent/subagent";
+import { getSettings } from "agent-sh/settings";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +18,7 @@ import {
   type TaskControl, type TaskResult, type WorkflowDef,
 } from "./workflows.js";
 import type { RunSpec } from "./workflow-types.js";
+import { isPython, pythonModule } from "./python.js";
 
 export type { Workflow, WorkflowApi, RunSpec, JsonSchema } from "./workflow-types.js";
 export type { AgentRegistration } from "./agents.js";
@@ -35,7 +37,7 @@ const PARENT_CONTEXT_CHARS = 12_000;
 
 interface TaskSpec { agent?: string; task: string; tools?: string[]; system?: string; model?: string; thinking?: string }
 
-const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens"];
+const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "python"];
 
 interface RunFileConfig {
   base: string;
@@ -44,6 +46,7 @@ interface RunFileConfig {
   maxIterations?: number;
   maxRuns?: number;
   budgetTokens?: number;
+  python?: string;
 }
 
 interface RunFileRequest {
@@ -61,7 +64,7 @@ interface RunExtras {
   extraTools?: ToolDefinition[];
   systemNote?: string;
   shouldStop?: () => boolean;
-  onUsage?: (totalTokens: number) => void;
+  onUsage?: (totalTokens: number, cachedTokens?: number) => void;
   onMessage?: (message: Record<string, unknown>) => void;
   onStart?: () => void;
   history?: unknown[];
@@ -85,6 +88,8 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     }),
   };
   if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS] }));
+  // A path (e.g. a venv's interpreter) is relative to the run file; a bare name is looked up on PATH.
+  const python = runConfig?.python?.includes("/") ? path.resolve(runConfig.base, runConfig.python) : runConfig?.python;
   const runAgentDirs = [runConfig?.agents ?? []].flat().map(d => path.resolve(runConfig!.base, d));
   const extDir = path.dirname(fileURLToPath(import.meta.url));
   const bundledDir = path.join(extDir, "agents");
@@ -306,6 +311,11 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     path.join(extDir, "WORKFLOWS.md"),
   );
   ctx.agent.registerSkill(
+    "writing-python-workflows",
+    "How to write an agent-sh workflow as a Python asyncio program (run, Agent, race, checkpoint, typed answers, resume rules)",
+    path.join(extDir, "PYTHON.md"),
+  );
+  ctx.agent.registerSkill(
     "using-subagents",
     "Choosing between spawn_agent, parallel tasks, background runs and workflows; running, monitoring, resuming and debugging workflow runs",
     path.join(extDir, "USING.md"),
@@ -438,25 +448,36 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     bus.emit("ui:info", { message });
   });
 
-  ctx.define("workflow:help", (req: { file: string; module: Record<string, unknown> }) =>
-    helpText(path.basename(req.file), req.module.args as Record<string, unknown> | undefined, req.module.description as string | undefined));
+  ctx.define("workflow:help", async (req: { file: string; module: Record<string, unknown> }) => {
+    const mod = isPython(req.file) ? await pythonModule(req.file, python) : req.module;
+    (mod.dispose as (() => void) | undefined)?.();
+    return helpText(path.basename(req.file), mod.args as Record<string, unknown> | undefined, mod.description as string | undefined);
+  });
 
   ctx.define("workflow:run-file", async (req: RunFileRequest): Promise<JobOutcome & { refused?: boolean }> => {
-    const resumeId = req.resume;
-    const store = req.dryRun ? dryRuns : runs;
-    if (resumeId && !store.get(resumeId)) return { content: `No workflow run ${resumeId}.`, isError: true, refused: true };
+    // `--resume` without an id continues this file's latest run.
+    const resumeId = req.resume === "" ? runs.list(Infinity).find(r => r.file === req.file)?.id : req.resume;
+    const earlier = resumeId ? runs.get(resumeId) : undefined;
+    if (req.resume !== undefined && !earlier) {
+      return { content: resumeId ? `No workflow run ${resumeId}.` : `No earlier run of ${req.file} to resume.`, isError: true, refused: true };
+    }
+    if (earlier && req.resume === "") req.progress(`resuming ${earlier.id}`);
     const name = path.basename(req.file).replace(/\.[^.]+$/, "");
     const wf: WorkflowDef = { name, description: "", file: req.file, scope: "user" };
-    const args = req.tokens ?? req.args;
+    // A resume given no arguments repeats the earlier run's.
+    const args = !req.tokens?.length && earlier?.argv ? earlier.argv : req.tokens ?? req.args;
+    let mod = req.module;
     try {
-      workflowArgs(wf, req.module, args);
+      if (isPython(req.file)) mod = await pythonModule(req.file, python);
+      workflowArgs(wf, mod, args);
     } catch (err) {
-      if (err instanceof ArgsError) return { content: err.message, isError: true, refused: true };
+      (mod.dispose as (() => void) | undefined)?.();
+      if (err instanceof ArgsError || isPython(req.file)) return { content: err instanceof Error ? err.message : String(err), isError: true, refused: true };
       throw err;
     }
     return executeWorkflow(wf, args, {
       resumeId, budgetTokens: settings.workflowTokenBudget || undefined, signal: req.signal, progress: req.progress,
-      module: req.module, dryRun: req.dryRun, resumeHint: (id) => `agent-sh run ${req.file} --resume ${id}`,
+      module: mod, dryRun: req.dryRun, resumeHint: (id) => `agent-sh run ${req.file} --resume ${id}`,
       quietMs: 60_000,
     });
   });
@@ -473,7 +494,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     resumeHint: (runId: string) => string;
     quietMs?: number;
   }): Promise<JobOutcome> {
-    const run = (opts.dryRun ? dryRuns : runs).create(wf.name, wf.file, [wfArgs].flat().join(" "), opts.resumeId);
+    const run = (opts.dryRun ? dryRuns : runs).create(wf.name, wf.file, wfArgs, opts.resumeId);
     const footer = `(workflow run ${run.id}; log: ${run.dir})`;
     try {
       const result = await runWorkflow(wf, wfArgs, {
@@ -481,7 +502,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         complete: (messages) => ctx.call("llm:invoke", messages, { maxTokens: 4096 }) as Promise<string>,
         maxRuns: settings.maxRunsPerWorkflow,
       }, opts.signal, opts.progress, {
-        run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, module: opts.module, quietMs: opts.quietMs,
+        run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, module: opts.module, quietMs: opts.quietMs, python,
       });
       return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
     } catch (err) {
@@ -611,9 +632,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         model: spec.model ?? def?.model,
         signal,
         maxIterations: def?.maxIterations ?? settings.maxIterations,
-        reasoningParams: reasoningParams(spec.thinking ?? def?.thinking, spec.model ?? def?.model ?? llmClient.model),
+        reasoningParams: reasoningParams(spec.thinking ?? def?.thinking ?? defaultThinking(), spec.model ?? def?.model ?? llmClient.model),
         outMeta: meta,
-        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens) : undefined,
+        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens, u.cached_tokens) : undefined,
         onMessage: extra.onMessage as SubagentOptions["onMessage"],
         shouldStop: extra.shouldStop,
         history: extra.history as SubagentOptions["history"],
@@ -641,10 +662,18 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     };
   }
 
+  // The user's thinking level, for runs and agents that don't set one: the session's, or the saved setting
+  // when there is no session (agent-sh run).
+  function defaultThinking(): string | undefined {
+    return bus.emitPipe("config:get-thinking", { level: "", levels: [], supported: true }).level || getSettings().thinkingLevel || undefined;
+  }
+
+  // Sent unless the model is known not to take it, as the main agent does.
   function reasoningParams(level: string | undefined, modelId: string): Record<string, unknown> | undefined {
     if (!level || level === "off") return undefined;
-    const models = (ctx.call("agent:get-models") ?? []) as { id: string; supportsReasoningEffort?: boolean }[];
-    if (!models.find(m => m.id === modelId)?.supportsReasoningEffort) return undefined;
+    const models = (ctx.call("agent:get-models") ?? []) as { id: string; reasoning?: boolean; supportsReasoningEffort?: boolean }[];
+    const model = models.find(m => m.id === modelId);
+    if (model?.reasoning === false || model?.supportsReasoningEffort === false) return undefined;
     return { reasoning_effort: level === "xhigh" ? "high" : level };
   }
 

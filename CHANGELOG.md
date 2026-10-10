@@ -10,6 +10,26 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ### Added
 
+- Workflow files in Python: `agent-sh run campaign.py`, and `.py` files in the
+  workflows folders. The file is an ordinary `asyncio` program (`from agentsh
+  import run, Agent, race, budget`) in its own process, with agent-sh running
+  the agents for it, so the journal, resume, budget, dry run and sandbox work
+  as for JavaScript files. Concurrency is plain `asyncio.gather`, cancelling a
+  task stops its agent, and `returns` takes a dataclass. Needs Python 3.9+.
+  The file can use Ray, Dask or submitit for its own compute while the agents
+  stay in the agent-sh process.
+- Workflow scripts: `checkpoint(name, fn)` (Python: the `@checkpoint`
+  decorator) saves the result of the script's own work, such as a test suite
+  or a build, so a resumed run gets the saved result instead of doing it again.
+- Workflow and `spawn_agent` subagents use your thinking level when the agent
+  or call doesn't set one, and a per-call `thinking` now reaches models whose
+  provider is defined in settings (it was dropped unless the provider declared
+  `supportsReasoningEffort`).
+- Workflow runs record how many of their tokens the provider served from its
+  prompt cache: `run.json`, `--status` and the progress line show
+  `N tokens (M cached)`, and scripts can read `budget.cached`.
+- `agent-sh run file --resume` without an id continues that file's latest run,
+  and a resume given no arguments repeats the earlier run's.
 - `codex-provider` example extension: use a ChatGPT (Codex) subscription as an
   `ash` provider. A loopback proxy translates Chat Completions to the Codex
   Responses API and signs requests with ChatGPT OAuth (`/codex-login`,

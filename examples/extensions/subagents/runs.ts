@@ -9,11 +9,15 @@ export interface RunRecord {
   workflow: string;
   file: string;
   args: string;
+  /** The arguments as separate words, when they were given that way. */
+  argv?: string[];
   status: RunStatus;
   startedAt: string;
   endedAt?: string;
   resumedFrom?: string;
   tokens: number;
+  /** The part of `tokens` that providers served from their prompt cache. */
+  cached?: number;
   error?: string;
 }
 
@@ -40,13 +44,14 @@ export class RunStore {
 
   constructor(private readonly root: string) {}
 
-  create(workflow: string, file: string, args: string, resumedFrom?: string): RunDir {
+  create(workflow: string, file: string, args: string | string[], resumedFrom?: string): RunDir {
     const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
     const id = `${stamp}-${randomBytes(2).toString("hex")}`;
     const dir = path.join(this.root, id);
     fs.mkdirSync(path.join(dir, "agents"), { recursive: true });
     const record: RunRecord = {
-      id, workflow, file, args, status: "running", startedAt: new Date().toISOString(), resumedFrom, tokens: 0,
+      id, workflow, file, args: [args].flat().join(" "), ...(Array.isArray(args) && { argv: args }),
+      status: "running", startedAt: new Date().toISOString(), resumedFrom, tokens: 0,
     };
     this.active.add(id);
     const run = new RunDir(dir, record, () => this.active.delete(id));
@@ -84,7 +89,7 @@ export class RunStore {
     if (!r) return id ? `No workflow run ${id}.` : "No workflow runs yet.";
     const dir = path.join(this.root, r.id, "agents");
     const state = r.interrupted ? "interrupted" : r.status === "running" ? "running" : r.status;
-    const lines = [`${r.id}  ${r.workflow}  ${state}, ${duration((r.endedAt ? Date.parse(r.endedAt) : now) - Date.parse(r.startedAt))}, ${r.tokens} tokens`];
+    const lines = [`${r.id}  ${r.workflow}  ${state}, ${duration((r.endedAt ? Date.parse(r.endedAt) : now) - Date.parse(r.startedAt))}, ${r.tokens} tokens${r.cached ? ` (${r.cached} cached)` : ""}`];
     let files: string[] = [];
     try { files = fs.readdirSync(dir).filter(f => f.endsWith(".jsonl")).sort((a, b) => parseInt(a) - parseInt(b)); } catch {}
     for (const f of files) {

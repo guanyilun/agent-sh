@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { activateAgent } from "../agent/index.js";
@@ -11,6 +11,7 @@ export interface RunArgs {
   file: string;
   tokens: string[];
   cli: string[];
+  /** "" for the file's latest run. */
   resume?: string;
   dryRun: boolean;
   help: boolean;
@@ -29,7 +30,7 @@ export function parseRunArgs(argv: string[]): RunArgs | null {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--") { r.tokens.push(...argv.slice(i + 1)); break; }
-    if (a === "--resume") r.resume = argv[++i];
+    if (a === "--resume") r.resume = RUN_ID.test(argv[i + 1] ?? "") ? argv[++i] : "";
     else if (a === "--dry-run") r.dryRun = true;
     else if (a === "--status") r.status = RUN_ID.test(argv[i + 1] ?? "") ? argv[++i] : "";
     else if (a === "--help" || a === "-h") r.help = true;
@@ -50,8 +51,9 @@ export async function runFile(cli: CliConfig, run: RunArgs): Promise<never> {
 
   const file = path.resolve(run.file);
   if (!fs.existsSync(file)) exit(1, `no such file: ${run.file}`);
-  const mod = await importUserModule(file).catch((err) => exit(1, `could not load ${run.file}: ${err instanceof Error ? err.message : err}`));
-  if (typeof (mod.default ?? mod.run) !== "function") exit(1, `${run.file} must export a default function`);
+  const load = file.endsWith(".py") ? Promise.resolve().then(() => ({ config: pythonConfig(file) })) : importUserModule(file);
+  const mod: Record<string, unknown> = await load.catch((err) => exit(1, `could not load ${run.file}: ${err instanceof Error ? err.message : err}`));
+  if (!file.endsWith(".py") && typeof (mod.default ?? mod.run) !== "function") exit(1, `${run.file} must export a default function`);
   const config: RunConfig = { ...(mod.config as Record<string, unknown> | undefined), base: path.dirname(file) };
 
   const core = createCore({
@@ -71,9 +73,9 @@ export async function runFile(cli: CliConfig, run: RunArgs): Promise<never> {
   const has = (name: string) => core.handlers.list().includes(name);
 
   if (run.help) {
-    const text = has("workflow:help") ? core.handlers.call("workflow:help", { file, module: mod }) as string
+    const text = has("workflow:help") ? await core.handlers.call("workflow:help", { file, module: mod }) as string
       : `Usage: agent-sh run ${run.file} [args...]`;
-    process.stdout.write(`${text}\n\nagent-sh run options: --dry-run (no model calls), --resume <run id>, --model, --provider, -e <extension>\n`, () => exit(0));
+    process.stdout.write(`${text}\n\nagent-sh run options: --dry-run (no model calls), --resume [run id], --model, --provider, -e <extension>\n`, () => exit(0));
     return new Promise<never>(() => {});
   }
   if (!run.dryRun) requireBackends(core, cli.backend);
@@ -118,6 +120,35 @@ export async function runFile(cli: CliConfig, run: RunArgs): Promise<never> {
   const reason = controller.signal.aborted ? (controller.signal.reason as Error).message : undefined;
   process.stdout.write(`${result.content}\n`, () => exit(result.isError || reason ? 1 : 0, reason));
   return new Promise<never>(() => {});
+}
+
+// A Python file's `config` is read without running the file, so it must be a literal (dict(...) calls are fine).
+const PY_CONFIG = `
+import ast, json, sys
+def lit(n):
+    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "dict" and not n.args:
+        return {k.arg: lit(k.value) for k in n.keywords}
+    if isinstance(n, ast.Dict):
+        return {lit(k): lit(v) for k, v in zip(n.keys, n.values)}
+    if isinstance(n, (ast.List, ast.Tuple)):
+        return [lit(e) for e in n.elts]
+    return ast.literal_eval(n)
+out = {}
+for s in ast.parse(open(sys.argv[1], encoding="utf-8").read()).body:
+    if isinstance(s, ast.Assign) and len(s.targets) == 1 and getattr(s.targets[0], "id", None) == "config":
+        try:
+            out = lit(s.value)
+        except ValueError:
+            sys.exit("config must be a literal: plain values, lists and dicts")
+print(json.dumps(out))
+`;
+
+function pythonConfig(file: string): Record<string, unknown> {
+  const python = process.env.AGENT_SH_PYTHON || "python3";
+  const r = spawnSync(python, ["-B", "-c", PY_CONFIG, file], { encoding: "utf8" });
+  if (r.error) throw new Error(`${python} is needed to run a Python file (${r.error.message})`);
+  if (r.status !== 0) throw new Error((r.stderr || `python exited ${r.status}`).trim().split("\n").pop()!);
+  return JSON.parse(r.stdout);
 }
 
 async function printStatus(cli: CliConfig, id: string): Promise<never> {

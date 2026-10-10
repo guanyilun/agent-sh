@@ -235,7 +235,23 @@ test("--dry-run reports an unknown agent", async () => {
   } finally { llm.server.close(); }
 });
 
+test("workflow agents think at the saved thinking level unless a call sets its own", async () => {
+  const llm = await fakeLlm(() => ({ content: "ok" }));
+  try {
+    const r = await runCli(["run", "campaign.ts", "-e", SUBAGENTS], llm.url, {
+      prepare: (home) => {
+        write(home, ".agent-sh/settings.json", JSON.stringify({ thinkingLevel: "high" }));
+        write(home, "campaign.ts", 'export default async ({ run }) => { await run(null, "default", { tools: [] }); await run(null, "low", { tools: [], thinking: "low" }); await run(null, "off", { tools: [], thinking: "off" }); };\n');
+      },
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(llm.requests.map((q) => (q as { reasoning_effort?: string }).reasoning_effort), ["high", "low", undefined]);
+  } finally { llm.server.close(); }
+});
+
 test("run arguments: --status takes an optional run id and needs no file", () => {
+  assert.deepEqual([parseRunArgs(["f.ts", "--resume"])?.resume, parseRunArgs(["f.ts"])?.resume], ["", undefined]);
+  assert.deepEqual(parseRunArgs(["--resume", "20261003-002912-9397", "f.ts"]), { ...parseRunArgs(["f.ts"])!, resume: "20261003-002912-9397" });
   assert.deepEqual(parseRunArgs(["--status"])?.status, "");
   assert.deepEqual(parseRunArgs(["--status", "20261003-002912-9397"])?.status, "20261003-002912-9397");
   assert.equal(parseRunArgs(["--status", "f.ts"])?.file, "f.ts");

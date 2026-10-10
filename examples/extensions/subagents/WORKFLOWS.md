@@ -4,7 +4,7 @@ A workflow is a script that coordinates subagents: steps in sequence, steps in p
 
 ## Where it goes
 
-One `.ts` or `.js` file; the file name is the workflow name. Nothing to build or install.
+One `.ts`, `.js` or `.py` file (see "Python"); the file name is the workflow name. Nothing to build or install.
 
 | Directory | Scope |
 |---|---|
@@ -43,7 +43,7 @@ export default async ({ run, map, args, log, budget }) => {
   ```
   The shape is shorthand (below) or JSON Schema. The agent gets a `submit_result` tool whose parameters are the shape; a submission that doesn't fit is refused with the reason, so the agent fixes it, and the run ends as soon as one is accepted. If the agent answers in text instead, a short LLM call converts the answer (with one retry). If nothing fits, `run` throws.
 - `run(null, task, { tools })` — an ad-hoc subagent limited to those tools (named agents keep their own). `run({ agent, task, returns, tools })` also works.
-- Per call: `model` and `thinking` override the agent's, `label` names it in progress lines, and for ad-hoc runs `system` sets the role and rules. So a script can define its agents inline, without agent files:
+- Per call: `model` and `thinking` override the agent's (an agent with no thinking level of its own uses yours), `label` names it in progress lines, and for ad-hoc runs `system` sets the role and rules. So a script can define its agents inline, without agent files:
   ```ts
   const proofreader = { system: "You proofread a LaTeX paper. Report only typos, grammar and LaTeX problems.", tools: [], label: "proofreader" };
   const found = await run({ ...proofreader, task: section, returns: ISSUES });
@@ -51,6 +51,7 @@ export default async ({ run, map, args, log, budget }) => {
 - `map(items, fn)` — call `fn(item, index)` for every item concurrently (up to `subagents.maxConcurrency`) and resolve to the results in order; **an item whose `fn` fails becomes `null`**. `fn` is ordinary async code, so each item can run several steps (`async (x) => { const a = await run(...); return run(..., a); }`) without waiting for the others.
 - `pipeline(items, stage1, stage2, ...)` — each item goes through the stages on its own: an item that finishes stage 1 starts stage 2 without waiting for the others. Each stage gets `(previous result, item, index)`; a stage that throws makes that item `null` and skips its remaining stages. Prefer it to `map` followed by another `map` unless a later step needs all the earlier results together (to merge or dedupe them, say).
 - `all([spec, ...])` — like `map` over `run` specs.
+- `checkpoint(name, fn)` — the script's own work (a test suite, a build, a download), saved when done: the result goes into the journal like a run's answer, and a resumed run gets the saved result instead of calling `fn` again. The result must be JSON data.
 - `race(items, fn, accept?)` — call `fn(item, index)` for every item concurrently and resolve to `{ value, index }` for the first result that `accept(value, item, index)` passes (any result, without `accept`); `null` if none does. The other items are cancelled: their subagents stop, and their next `run()` throws. Cancelled items leave behind whatever they already wrote, so give each one its own output directory.
   ```ts
   const won = await race(["induction", "contradiction", "direct"],
@@ -103,6 +104,85 @@ export const args = {
 
 Budget exhaustion, the run cap, the deadline and Ctrl-C stop the whole workflow; `map()`, `pipeline()` and `all()` never turn them into `null`.
 
+## Python
+
+The full guide for Python is [PYTHON.md](PYTHON.md); this section is a summary. A workflow can be a `.py` file instead: an ordinary `asyncio` program in its own Python process, with agent-sh running the agents for it. Subagents, tools, the journal, the budget and the sandbox are the same as for a JavaScript file.
+
+```python
+import asyncio
+from dataclasses import dataclass
+from agentsh import run
+
+description = "Review until clean"
+args = dict(target=dict(default="the uncommitted changes", help="what to review"), rounds=3)
+config = dict(concurrency=6, budgetTokens=5_000_000, hours=3)
+
+@dataclass
+class Review:
+    verdict: str
+    findings: list[str]
+
+async def main(args):
+    for round in range(1, args.rounds + 1):
+        reviews = await asyncio.gather(*[
+            run(f"Review {args.target} for {focus}.", agent="reviewer", returns=Review)
+            for focus in ["correctness", "tests"]])
+        findings = [finding for review in reviews for finding in review.findings]
+        if not findings:
+            return f"Clean after {round} round(s)."
+        await run("Fix only these findings:\n" + "\n".join(findings), agent="worker")
+```
+
+`agent-sh run review.py --target src --rounds 2`, with `--help`, `--dry-run` and `--resume` as for any run file. A `.py` file in a workflows folder is listed and run like the others.
+
+The whole API is five names, and everything else is plain Python:
+
+- **`run(task, agent=None, returns=None, ...)`** gives a task to an agent. It starts straight away and returns an awaitable, so `asyncio.gather(run(...), run(...))` runs both at once. Leave `agent` out for a plain one; `tools`, `system`, `model`, `thinking` and `label` are keywords too. A failed run raises `RunError`.
+- **`returns`** takes a dataclass (or `list[SomeDataclass]`) and the answer comes back as an instance. Fields may be `str`, `int`, `float`, `bool`, lists, nested dataclasses, `Literal[...]`, and `Optional[...]` for fields the agent may omit. The shorthand and JSON Schema work too, and give plain dicts.
+- **`Agent(name)`** is an agent you keep talking to: each `await worker.ask(...)` continues the same conversation.
+- **`@checkpoint`** marks a function of your own (a test suite, a build) whose results should be saved: you call it as usual, `passed, output = await run_tests(directory)`, and a resumed run gets the saved result instead of running it again. Each call is remembered by where it happens in the program, not by its arguments. The result must be plain data; a tuple comes back as a list.
+- **`race(*attempts, accept=...)`** tries several things at once (each a `run(...)` or a call to your own async function), returns the first result `accept` approves, and stops the rest; `None` if none is accepted.
+- **`budget.remaining`**, `budget.spent` and `budget.total` are as of the latest finished call.
+
+How it fits with `asyncio`:
+
+- **Concurrency is asyncio's.** Use `asyncio.gather`, `create_task`, `wait_for` and the rest as usual. To keep going when some calls fail, pass `return_exceptions=True` and keep the results of the type you asked for.
+- **Cancelling stops the agent.** If the task waiting on a call is cancelled (a timeout, a lost race, a failed `TaskGroup`), agent-sh stops that agent.
+- **Hitting a limit cancels the program.** When the budget, run cap or deadline is reached, or you press Ctrl-C, `main()` is cancelled the way asyncio cancels any task, so `finally` blocks run and nothing can loop past the limit.
+- **`print()`** becomes a progress line.
+
+Heavy work on other machines:
+
+The agents all live in the one agent-sh process, where they mostly wait on the model. Work of your own that needs real compute (builds, test suites, simulations) can go to a cluster through whatever you already use, since the file is plain Python: Ray, Dask, submitit. Wrap it in `@checkpoint` so a resumed run doesn't send it again:
+
+```python
+import ray
+from agentsh import checkpoint, run
+
+@ray.remote(num_cpus=8)
+def build(directory):            # runs wherever Ray puts it
+    ...
+    return passed, output
+
+@checkpoint
+async def build_on_cluster(directory):
+    return await build.remote(directory)
+
+async def main():
+    ray.init(address="auto")     # a Ray cluster that is already up, e.g. inside your Slurm allocation
+    proof = await run("Prove the lemma in Lemma.lean.", agent="worker")
+    passed, output = await build_on_cluster("./out/lemma")
+```
+
+Only the main program can call `run`, `Agent` and `race`: a function running on a Ray or Dask worker has no connection to agent-sh. Start the cluster library inside `main()`, not at the top of the file, which is also loaded for `--help`. When the run ends the program gets ten seconds to exit on its own, so a cluster it started is shut down properly.
+
+The file itself:
+
+- **`async def main()`**, or `main(args)` to get the parsed arguments (`args.target`).
+- **`config` must be a literal** (plain values, lists, dicts or `dict(...)`), because it is read without running the file. `python: ".venv/bin/python"` in it picks the interpreter, relative to the file; otherwise `AGENT_SH_PYTHON`, then `python3`.
+
+Resuming works as in JavaScript: the program runs again from the top and finished calls are answered from the journal. Each asyncio task numbers its own calls, so it doesn't matter which of several concurrent tasks finishes first; it does matter that the program makes the same calls given the same answers. Resume with the same Python version that started the run. Needs Python 3.9+; not tried on Windows.
+
 ## Runs, logs and resuming
 
 Every run gets an id and a folder in `~/.agent-sh/workflow-runs/<id>/`:
@@ -111,9 +191,9 @@ Every run gets an id and a folder in `~/.agent-sh/workflow-runs/<id>/`:
 - `journal.jsonl` — each completed `run()`: its inputs' hash and its result
 - `agents/<n>.jsonl` — the full transcript of subagent run *n* (task, every message and tool result)
 
-`/workflow runs` lists recent runs (a run still marked running after agent-sh exited shows as interrupted). To resume a failed or interrupted run, fix the cause (or edit the workflow), then `/workflow resume <id>`, or have the agent call `run_workflow { resume: "<id>" }`.
+`/workflow runs` lists recent runs (a run still marked running after agent-sh exited shows as interrupted). To resume a failed or interrupted run, fix the cause (or edit the workflow), then `/workflow resume <id>`, or have the agent call `run_workflow { resume: "<id>" }`. For a run file, `agent-sh run file --resume` continues that file's latest run, and `--resume <id>` a particular one; given no arguments, it repeats the earlier run's.
 
-Resuming reruns the script from the top. Each `run()` call is identified by where it sits: top-level calls in the order the script makes them, and calls inside a `map`, `pipeline` or `race` item in that item's own order, so it doesn't matter which item finishes first. A call reuses the old result if its inputs (agent, task, tools, returns, system, model, thinking) are unchanged. The first call whose inputs changed, and every later call in the same branch, runs live. Runs that failed or never finished run again. For this to work the script must make the same calls in the same order given the same results, so don't let `Date.now()`, `Math.random()` or other outside state decide what to run. Side effects the script performs itself (files, commands) are not replayed.
+Resuming reruns the script from the top. Each `run()` call is identified by where it sits: top-level calls in the order the script makes them, and calls inside a `map`, `pipeline` or `race` item in that item's own order, so it doesn't matter which item finishes first. A call reuses the old result if its inputs (agent, task, tools, returns, system, model, thinking) are unchanged. The first call whose inputs changed, and every later call in the same branch, runs live. Runs that failed or never finished run again. For this to work the script must make the same calls in the same order given the same results, so don't let `Date.now()`, `Math.random()` or other outside state decide what to run. Side effects the script performs itself (files, commands) are not replayed, and happen again, unless they are wrapped in `checkpoint`.
 
 A `race` records which item won; resuming runs only that item (and `accept` on its result), and the others race again only if it no longer passes. An `agent()` turn is reused only if it and every turn before it are unchanged, and the first live turn continues from the recorded conversation.
 
@@ -193,5 +273,6 @@ Bundled, next to this file in `workflows/`:
 
 In the repo's `examples/workflows/` (copy into `~/.agent-sh/workflows/` to use):
 
-- `campaign.ts`: a run-file template with `config` and declared args.
+- `campaign.ts`: a run-file template with `config` and declared args; `campaign.py` is the same in Python.
+- `solve.py`: a goal is split into tasks worked on at the same time. For each, two agents race in separate directories, every try is judged by a check command's exit code and sent back to the same agent with the output when it fails, and reviewers then try to refute the winner.
 - `verified-review.ts`: three finders looking different ways, grouped by file with a merge run for files with several claims, then three skeptics per finding attacking it from different angles; only findings most skeptics fail to refute are reported, and merges and caps are logged.

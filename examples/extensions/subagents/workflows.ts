@@ -7,8 +7,9 @@ import { normalizeSchema, parseJsonReply, validate } from "./schema.js";
 import type { JournalEntry, RunDir } from "./runs.js";
 import type { JsonSchema, RunOptions, RunSpec, WorkflowApi } from "./workflow-types.js";
 import { ArgsError, helpText, parseArgs, tokenize, type ArgsSpec } from "./args.js";
+import { isPython, pythonModule, type ScriptHost } from "./python.js";
 
-const EXTS = [".ts", ".mts", ".js", ".mjs"];
+const EXTS = [".ts", ".mts", ".js", ".mjs", ".py"];
 
 export type WorkflowScope = "bundled" | "extension" | "user" | "project";
 
@@ -48,7 +49,7 @@ export function describeFile(file: string): string {
 
 // Read without importing: listing must never run an untrusted file.
 function staticDescription(source: string): string {
-  const m = source.match(/export\s+const\s+description\s*=\s*(["'`])([\s\S]*?)\1/);
+  const m = source.match(/(?:export\s+const\s+|^)description\s*=\s*(["'`])([\s\S]*?)\1/m);
   return m ? m[2]!.replace(/\s+/g, " ").trim() : "";
 }
 
@@ -79,7 +80,7 @@ export class TrustStore {
 export interface TaskControl {
   signal: AbortSignal;
   progress(line: string): void;
-  onUsage(totalTokens: number): void;
+  onUsage(totalTokens: number, cachedTokens?: number): void;
   onMessage(message: Record<string, unknown>): void;
   /** Once it has a concurrency slot. */
   onStart?(): void;
@@ -106,6 +107,8 @@ export interface WorkflowRunOpts {
   budgetTokens?: number;
   module?: Record<string, unknown>;
   quietMs?: number;
+  /** Interpreter for .py workflows. */
+  python?: string;
 }
 
 /** Ends the whole workflow; all() rethrows it instead of returning null. */
@@ -131,12 +134,13 @@ export async function runWorkflow(
   progress = (line) => { lastLine = Date.now(); say(line); };
   const quiet = opts.quietMs && setInterval(() => {
     if (Date.now() - lastLine < opts.quietMs! || !counts.queued && !counts.working) return;
-    progress(`· ${counts.working} working, ${counts.queued} queued, ${counts.done} finished; ${Math.round((Date.now() - started) / 60_000)} min, ${record.record.tokens} tokens`);
+    progress(`· ${counts.working} working, ${counts.queued} queued, ${counts.done} finished; ${Math.round((Date.now() - started) / 60_000)} min, ${record.record.tokens} tokens${record.record.cached ? ` (${record.record.cached} cached)` : ""}`);
   }, Math.min(opts.quietMs, 10_000));
   if (quiet) quiet.unref();
+  let mod: Record<string, unknown> | undefined = opts.module;
   try {
-    const mod = opts.module ?? await importFresh(def);
-    const fn = mod.default ?? mod.run;
+    mod ??= isPython(def.file) ? await pythonModule(def.file, opts.python) : await importFresh(def);
+    const fn = (mod.default ?? mod.run) as ((api: WorkflowApi, host: ScriptHost) => unknown) | undefined;
     if (typeof fn !== "function") throw new Error(`${def.file} must export a default function`);
     const apiArgs = workflowArgs(def, mod, args);
 
@@ -158,7 +162,7 @@ export async function runWorkflow(
     let runs = 0;
     const total = opts.budgetTokens && opts.budgetTokens > 0 ? opts.budgetTokens : null;
     const spent = () => record.record.tokens;
-    const budget = { total, spent, remaining: () => (total === null ? Infinity : Math.max(0, total - spent())) };
+    const budget = { total, spent, cached: () => record.record.cached ?? 0, remaining: () => (total === null ? Infinity : Math.max(0, total - spent())) };
 
     // seq is taken synchronously on call, so the same script calls run() in the same order on replay.
     const run = async (a: RunSpec | string | null, task?: string, options?: RunOptions): Promise<any> => {
@@ -166,7 +170,8 @@ export async function runWorkflow(
       return exec(toSpec(a, task, options), ++runs, at, `${at.path}${++at.next}`);
     };
 
-    const exec = async (spec: RunSpec, seq: number, at: Scope, id: string, chat?: Chat): Promise<any> => {
+    const exec = async (spec: RunSpec, seq: number, at: Scope, id: string, chat?: Chat, cancel?: AbortSignal): Promise<any> => {
+      const stopped = cancel ? AbortSignal.any([at.signal, cancel]) : at.signal;
       if (!spec.task) throw new Error("run() needs a task");
       if (seq > deps.maxRuns) throw new WorkflowStop(`workflow exceeded ${deps.maxRuns} subagent runs (subagents.maxRunsPerWorkflow)`);
       if (spec.system && spec.agent) throw new Error(`run(): "system" is for ad-hoc runs; ${spec.agent} has its own prompt`);
@@ -189,7 +194,7 @@ export async function runWorkflow(
       }
 
       if (signal.aborted) throw new WorkflowStop("cancelled");
-      if (at.signal.aborted) throw new Cancelled("cancelled");
+      if (stopped.aborted) throw new Cancelled("cancelled");
       if (budget.remaining() <= 0) throw new WorkflowStop(`token budget of ${total} exhausted`);
 
       const write = record.transcript(seq);
@@ -200,7 +205,7 @@ export async function runWorkflow(
       counts.queued++;
       try {
         const result = await deps.runTask(spec, {
-          signal: at.signal,
+          signal: stopped,
           ...(chat && { history: chat.history, onHistory: (m: unknown[]) => { history = m; } }),
           onStart: () => {
             if (state === "working") return;
@@ -209,12 +214,12 @@ export async function runWorkflow(
             progress(`${label} started`);
           },
           progress: (line) => progress(`${label} ${line}`),
-          onUsage: (t) => { tokens += t; record.record.tokens += t; },
+          onUsage: (t, cached = 0) => { tokens += t; record.record.tokens += t; if (cached) record.record.cached = (record.record.cached ?? 0) + cached; },
           onMessage: (m) => write({ type: "message", ...m }),
         });
         // An aborted subagent returns its partial text; that's a stop, not a result.
         if (signal.aborted) throw new WorkflowStop("cancelled");
-        if (at.signal.aborted) throw new Cancelled("cancelled");
+        if (stopped.aborted) throw new Cancelled("cancelled");
         const output = !spec.schema ? result.text
           : result.value !== undefined ? result.value
           : await extract(result.text, normalizeSchema(spec.schema), deps.complete);
@@ -226,7 +231,7 @@ export async function runWorkflow(
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         write({ type: "end", ok: false, error: message, tokens });
-        const lost = at.signal.aborted && !signal.aborted;
+        const lost = stopped.aborted && !signal.aborted;
         progress(lost ? `${label} cancelled` : `${label} failed: ${message}`);
         throw signal.aborted ? new WorkflowStop("cancelled") : lost ? new Cancelled("cancelled") : err;
       } finally {
@@ -235,8 +240,33 @@ export async function runWorkflow(
       }
     };
 
+    // A script's own work, saved and replayed like a run's answer.
+    const checkpointResult = (at: Scope, id: string, key: string, name: string): { value: unknown } | undefined => {
+      const cached = legacy || isDiverged(at) ? undefined : replay.get(id);
+      if (cached && cached.key === key) {
+        reused++;
+        record.append({ ...cached, seq: runs });
+        progress(`[checkpoint ${name}] reused from ${record.record.resumedFrom}`);
+        return { value: cached.output };
+      }
+      if (cached) at.diverged = true;
+      return undefined;
+    };
+    const checkpointRecord = (id: string, key: string, value: unknown) => record.append({ seq: runs, id, key, output: value, tokens: 0 });
+
     const api: WorkflowApi = {
       run: run as WorkflowApi["run"],
+      checkpoint: async (name, fn) => {
+        const at = scope();
+        const id = `${at.path}${++at.next}`;
+        const done = checkpointResult(at, id, `checkpoint:${name}`, name);
+        if (done) return done.value as never;
+        // Its own scope: what fn does must not shift the numbering of the calls after it.
+        const value = await scopes.run({ path: `${id}/`, next: 0, diverged: false, parent: at, signal: at.signal }, fn);
+        const data = JSON.parse(JSON.stringify(value ?? null));
+        checkpointRecord(id, `checkpoint:${name}`, data);
+        return data;
+      },
       agent: (name, base) => {
         const at = scope();
         const sid = `${at.path}${++at.next}`;
@@ -332,7 +362,45 @@ export async function runWorkflow(
       signal,
       budget,
     };
-    const result = await fn(api);
+    // For scripts in another process, which number their own calls and scopes.
+    const held = new Map<string, Scope>();
+    const scopeAt = (p: string): Scope => {
+      if (!p) return root;
+      let s = held.get(p);
+      if (!s) {
+        const parent = scopeAt(p.replace(/[^/]+\/$/, ""));
+        s = { path: p, next: 0, diverged: false, parent, signal: parent.signal };
+        held.set(p, s);
+      }
+      return s;
+    };
+    const chats = new Map<string, Chat>();
+    const stopping = new Set<Promise<unknown>>();
+    const host: ScriptHost = {
+      run: (spec, id, at, session) => {
+        if (session && !chats.has(session)) chats.set(session, { key: "", history: [] });
+        const stop = new AbortController();
+        const done = exec(toSpec(spec), ++runs, scopeAt(at), id, session ? chats.get(session) : undefined, stop.signal);
+        const abort = () => {
+          stop.abort();
+          const settled = done.catch(() => {}).finally(() => stopping.delete(settled));
+          stopping.add(settled);
+        };
+        return { done, abort };
+      },
+      quiet: async () => { await Promise.all(stopping); },
+      raceWinner: (id, key, at) => {
+        const cached = isDiverged(scopeAt(at)) ? undefined : replay.get(id);
+        return cached?.key === key ? cached.winner : undefined;
+      },
+      raceRecord: (id, key, winner) => record.append({ seq: runs, id, key, winner, output: null, tokens: 0 }),
+      checkpointResult: (id, key, at, name) => checkpointResult(scopeAt(at), id, key, name),
+      checkpointRecord,
+      kind: (err) => err instanceof WorkflowStop ? "stop" : err instanceof Cancelled ? "cancelled" : "error",
+      stop: (message) => new WorkflowStop(message),
+    };
+
+    const result = await fn(api, host);
     record.finish("done");
     return result;
   } catch (err) {
@@ -341,6 +409,7 @@ export async function runWorkflow(
     throw err;
   } finally {
     if (quiet) clearInterval(quiet);
+    (mod?.dispose as (() => void) | undefined)?.();
   }
 }
 
@@ -380,6 +449,7 @@ function toSpec(a: RunSpec | string | null, task?: string, options?: RunOptions)
   if (spec.returns !== undefined && spec.schema === undefined) spec.schema = spec.returns;
   delete spec.returns;
   spec.task = dedent(String(spec.task ?? ""));
+  if (spec.agent == null) delete spec.agent;
   return spec;
 }
 
