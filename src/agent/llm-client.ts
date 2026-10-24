@@ -15,6 +15,18 @@ import type {
 
 export type { ChatCompletionMessageParam, ChatCompletionTool };
 
+/** Codex may acknowledge SSE before the upstream HTTP status is available.
+ * The SDK preserves the later error envelope but leaves APIError.status empty.
+ */
+export function llmErrorStatus(error: unknown): number | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const e = error as Error & { status?: number; type?: string; error?: { status?: unknown } };
+  if (typeof e.status === "number") return e.status;
+  const status = e.error?.status;
+  return e.type === "codex_proxy_error" && typeof status === "number"
+    && Number.isInteger(status) && status >= 400 && status <= 599 ? status : undefined;
+}
+
 export type AgentShMessage = ChatCompletionMessageParam & {
   meta?: Record<string, unknown>;
 };

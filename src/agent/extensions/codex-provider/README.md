@@ -49,6 +49,17 @@ Under `"codex-provider"` in `~/.agent-sh/settings.json`, all optional:
 | `models` | from the Codex cache | Explicit model id list |
 | `upstreamURL` | `https://chatgpt.com/backend-api/codex/responses` | Codex endpoint |
 | `originator` | `"agent-sh"` | `originator` sent on sign-in and requests |
+| `credentialsTimeoutMs` | `120000` | Maximum time waiting for sign-in/token refresh |
+| `headersTimeoutMs` | `600000` | Maximum upstream upload and response-header wait, per attempt |
+| `idleTimeoutMs` | `1800000` | Maximum gap between upstream stream bytes |
+
+Streaming requests acknowledge the local SDK before uploading to Codex and send
+invisible keepalives while waiting. This matters for conversations with multiple
+images: the header wait includes uploading the whole request, which can exceed
+two minutes on a slow connection. Keepalives do not reset upstream deadlines.
+When a deadline expires, the caller receives an error without SDK-level retries
+that would silently re-upload the same images. User cancellation closes the
+upstream request immediately. The limits above must be positive milliseconds.
 
 ## Caveats
 

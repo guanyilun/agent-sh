@@ -5,9 +5,10 @@
  */
 import type { EventBus, BusEvents } from "../core/event-bus.js";
 import type { Model, ModelEndpoint } from "./host-types.js";
-import type { LlmClient } from "./llm-client.js";
+import { llmErrorStatus, type LlmClient } from "./llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
 import { setMaxListeners } from "node:events";
+import { setTimeout as waitForRetry } from "node:timers/promises";
 import * as path from "node:path";
 import { contentText, type AgentBackend, type ImageContent, type SkillView, type ToolDefinition, type ToolExecutionContext } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
@@ -562,6 +563,11 @@ export class AgentLoop implements AgentBackend {
   /** Check if an error is retryable (transient). */
   private isRetryable(e: unknown): boolean {
     if (!(e instanceof Error)) return false;
+    const proxyError = e as Error & { type?: string; error?: { retryable?: unknown } };
+    if (proxyError.type === "codex_proxy_error" && llmErrorStatus(e) !== undefined
+        && typeof proxyError.error?.retryable === "boolean") {
+      return proxyError.error.retryable;
+    }
     const msg = e.message.toLowerCase();
 
     // Network errors
@@ -572,7 +578,7 @@ export class AgentLoop implements AgentBackend {
     }
 
     // HTTP status-based (OpenAI SDK includes status in error)
-    const status = (e as any).status;
+    const status = llmErrorStatus(e);
     if (status === 429 || status === 500 || status === 502 || status === 503 || status === 529) {
       return true;
     }
@@ -583,12 +589,15 @@ export class AgentLoop implements AgentBackend {
   /** Extract retry delay from error headers or use exponential backoff. */
   private getRetryDelay(e: unknown, attempt: number): number {
     // Check for Retry-After header (OpenAI SDK exposes headers)
-    const headers = (e as any).headers;
+    const proxyRetryAfter = (e as any).type === "codex_proxy_error" ? (e as any).error?.retry_after : undefined;
+    const headers = (e as any).headers ?? {};
     if (headers) {
-      const retryAfter = headers["retry-after"] ?? headers.get?.("retry-after");
+      const retryAfter = headers["retry-after"] ?? headers.get?.("retry-after") ?? proxyRetryAfter;
       if (retryAfter) {
-        const seconds = parseInt(retryAfter, 10);
-        if (!isNaN(seconds)) return seconds * 1000;
+        const seconds = Number(retryAfter);
+        const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retryAfter) - Date.now();
+        // Invalid/overflowing timers fire immediately in Node, defeating backoff.
+        if (Number.isFinite(delay) && delay >= 0 && delay <= 2_147_483_647) return delay;
       }
     }
 
@@ -599,7 +608,7 @@ export class AgentLoop implements AgentBackend {
   /** Format an error with provider context for user-facing display. */
   private formatError(e: unknown): string {
     const raw = e instanceof Error ? e.message : String(e);
-    const status = (e as any).status;
+    const status = llmErrorStatus(e);
     const model = this.activeModel.id;
     const baseURL = (this.llmClient as any).config?.baseURL;
     const provider = this.activeModel.provider;
@@ -1419,15 +1428,14 @@ export class AgentLoop implements AgentBackend {
         // Retryable transient error — backoff
         if (this.isRetryable(e) && attempt < this.maxRetries) {
           const delay = this.getRetryDelay(e, attempt);
-          const status = (e as any).status;
+          const status = llmErrorStatus(e);
           const reason = status === 429 ? "rate limited" : `error ${status ?? "network"}`;
           this.bus.emit("ui:info", {
             message: `(${reason}, retrying in ${Math.ceil(delay / 1000)}s — attempt ${attempt + 2}/${this.maxRetries + 1})`,
           });
-          await new Promise<void>((resolve, reject) => {
-            const timer = setTimeout(resolve, delay);
-            signal.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("aborted")); }, { once: true });
-          });
+          // Also handles cancellation during the synchronous UI notification,
+          // and removes its abort listener when the wait completes normally.
+          await waitForRetry(delay, undefined, { signal });
           continue;
         }
 

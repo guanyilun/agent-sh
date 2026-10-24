@@ -18,6 +18,9 @@ export default async function activate(ctx: ExtensionContext): Promise<void> {
     models: [] as string[],
     upstreamURL: DEFAULT_UPSTREAM,
     originator: "agent-sh",
+    credentialsTimeoutMs: 120_000,
+    headersTimeoutMs: 10 * 60_000,
+    idleTimeoutMs: 30 * 60_000,
   });
   const store = new TokenStore(path.join(ctx.getStoragePath("codex-provider"), "auth.json"));
   const secret = crypto.randomBytes(24).toString("hex");
@@ -42,6 +45,9 @@ export default async function activate(ctx: ExtensionContext): Promise<void> {
       originator: config.originator,
       getCredentials: () => store.getValid(),
       refreshCredentials: (stale) => store.refresh(stale),
+      credentialsTimeoutMs: config.credentialsTimeoutMs,
+      headersTimeoutMs: config.headersTimeoutMs,
+      idleTimeoutMs: config.idleTimeoutMs,
     });
     ctx.onDispose(agent.providers.register({
       id,

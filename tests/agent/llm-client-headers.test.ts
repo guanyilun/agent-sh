@@ -2,7 +2,7 @@
  *  SDK request options, not into the request body. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LlmClient } from "../../src/agent/llm-client.js";
+import { LlmClient, llmErrorStatus } from "../../src/agent/llm-client.js";
 
 /** Replace the SDK call with a spy and return what stream() passed it. */
 function captureStream(client: LlmClient, opts: Record<string, unknown>): { body: any; reqOpts: any } {
@@ -35,4 +35,14 @@ test("stream() omits the headers option when none are supplied", () => {
 
   assert.equal(reqOpts.headers, undefined, "no headers passed → undefined, SDK uses defaults only");
   assert.ok(!("headers" in body));
+});
+
+test("SSE status recovery is limited to validated Codex proxy errors", () => {
+  const proxy = Object.assign(new Error("limited"), { type: "codex_proxy_error", error: { status: 429 } });
+  assert.equal(llmErrorStatus(proxy), 429);
+  assert.equal(llmErrorStatus(Object.assign(new Error("other provider"), { error: { status: 429 } })), undefined);
+  assert.equal(llmErrorStatus(Object.assign(new Error("HTTP takes priority"), { ...proxy, status: 403 })), 403);
+  for (const status of [200, 600, 429.5, "429", NaN]) {
+    assert.equal(llmErrorStatus(Object.assign(new Error("invalid"), { type: "codex_proxy_error", error: { status } })), undefined);
+  }
 });
