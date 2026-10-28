@@ -107,7 +107,10 @@ test("reasoningParams cannot override the core request fields", async () => {
   });
   assert.equal(calls[0].model, "real-model");
   assert.ok((calls[0].messages as unknown[]).length > 0, "messages must not be clobbered");
-  assert.equal(calls[0].signal, undefined);
+  // The full engine always supplies its own cancellation signal, even without
+  // opts.signal; reasoning parameters must not replace it with the sentinel.
+  assert.ok(calls[0].signal instanceof AbortSignal);
+  assert.notEqual(calls[0].signal, "nope");
   assert.equal(calls[0].reasoning_effort, "high", "genuine reasoning params still pass through");
 });
 

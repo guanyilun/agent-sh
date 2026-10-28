@@ -1,4 +1,5 @@
 import type { EventBus } from "./event-bus.js";
+import type { SettingsService } from "./settings.js";
 
 export type { ContentBlock } from "./event-bus.js";
 
@@ -21,7 +22,7 @@ export interface CoreContext {
   readonly instanceId: string;
   quit: () => void;
 
-  /** Read extension-namespaced settings from ~/.agent-sh/settings.json. */
+  /** Read extension-namespaced settings from this host's settings service. */
   getExtensionSettings: <T extends Record<string, unknown>>(namespace: string, defaults: T) => T;
 
   /**
@@ -36,7 +37,7 @@ export interface CoreContext {
   define: (name: string, fn: (...args: any[]) => any) => void;
   /** Wrap a named handler. Receives `next` (original) + args. Returns an unadvise function. */
   advise: (name: string, wrapper: (next: (...args: any[]) => any, ...args: any[]) => any) => () => void;
-  /** Call a named handler. */
+  /** Call a named handler. `config:settings` returns this host's SettingsService. */
   call: (name: string, ...args: any[]) => any;
   /** Names of all registered handlers — for diagnostic / introspection use. */
   list: () => string[];
@@ -54,6 +55,10 @@ export interface CoreContext {
  * ShellConfig in src/shell/host-types.ts).
  */
 export interface CoreConfig {
+  /** Instance settings; omitted uses the legacy process-global disk/env service. */
+  settingsService?: SettingsService;
+  /** Alias for settingsService. settingsService takes precedence when both are set. */
+  settings?: SettingsService;
   /** Extension specifiers (paths or package names) to load on startup. */
   extensions?: string[];
   /** Override settings.defaultBackend for this session only (does not persist). */

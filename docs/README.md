@@ -12,3 +12,7 @@ Start with **Usage** to get running, then **Architecture** for the mental model.
 6. [TUI Composition](tui-composition.md) — compositor, render surfaces, stream routing
 7. [Library Usage](library.md) — embedding agent-sh in your own apps
 8. [Troubleshooting](troubleshooting.md) — common errors and debug mode
+
+## Programmatic runtime
+
+- [Programmable agent host](programmable-agent-sketch.md) — callable full engine, extension composition, owned children, policy-preserving delegation, and process-backed tool execution

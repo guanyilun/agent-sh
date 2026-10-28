@@ -65,7 +65,7 @@ export const READ_ONLY_TOOLS = new Set([
   "read_file", "grep", "glob", "ls", "search",
 ]);
 
-/** Extensions opt their tools in via ToolRegistry.register when readOnly is set. */
+/** Legacy process-wide opt-ins. Runtime classification must not consult these. */
 const extraReadOnlyTools = new Set<string>();
 
 export function registerReadOnlyTool(name: string): void {
@@ -286,10 +286,19 @@ export function deserializeEntry(line: string): NuclearEntry | null {
 
 // ── Classification helpers ────────────────────────────────────────
 
-/** Check if a nuclear entry represents a read-only action (should be dropped). */
-export function isReadOnly(entry: NuclearEntry): boolean {
+/** Return undefined for unknown tools to fall back to the built-in classification. */
+export type ReadOnlyToolClassifier = (name: string) => boolean | undefined;
+
+/** Instance-local classification. Errors and non-tool entries are always retained. */
+export function isReadOnlyToolEntry(entry: NuclearEntry, classifier?: ReadOnlyToolClassifier): boolean {
   if (entry.kind !== "tool" || entry.tool == null) return false;
-  return READ_ONLY_TOOLS.has(entry.tool) || extraReadOnlyTools.has(entry.tool);
+  return classifier?.(entry.tool) ?? READ_ONLY_TOOLS.has(entry.tool);
+}
+
+/** Legacy classification, including process-wide opt-ins when no classifier is supplied. */
+export function isReadOnly(entry: NuclearEntry, classifier?: ReadOnlyToolClassifier): boolean {
+  if (classifier) return isReadOnlyToolEntry(entry, classifier);
+  return isReadOnlyToolEntry(entry, (name) => READ_ONLY_TOOLS.has(name) || extraReadOnlyTools.has(name));
 }
 
 /** Compile a search query, falling back to whitespace-split AND-of-words on invalid regex. */

@@ -6,7 +6,8 @@ import {
   nucleate,
   READ_ONLY_TOOLS,
   WRITE_TOOLS,
-  isReadOnly,
+  isReadOnlyToolEntry,
+  type ReadOnlyToolClassifier,
 } from "../../nuclear-form.js";
 import { formatEntryLine } from "../../entry-format.js";
 import { RECALL_CACHE_KIND } from "./constants.js";
@@ -29,6 +30,8 @@ export interface SummaryCtx {
   ): void;
   /** Process id — disambiguates cross-instance entries in `nucleate()`. */
   iid: string;
+  /** Instance-local tool metadata; unknown names fall back to built-ins. */
+  isReadOnlyTool?: ReadOnlyToolClassifier;
   getMessages(): AgentShMessage[];
   replaceMessages(msgs: AgentShMessage[]): void;
   estimateTokens(): number;
@@ -176,7 +179,7 @@ export function makeCompactAdvisor(ctx: SummaryCtx): CompactAdvisor {
       turns.length - 1,
       Math.max(1, event.force ? Math.min(maxPinned, turns.length - 2) : maxPinned),
     );
-    for (const t of turns) t.priority = inferPriority(t.messages);
+    for (const t of turns) t.priority = inferPriority(t.messages, ctx.isReadOnlyTool);
     const verbatimCount = 1;
     const slimmedCount = Math.max(0, recentKeep - verbatimCount);
     const slimStart = turns.length - recentKeep;
@@ -224,7 +227,7 @@ export function makeCompactAdvisor(ctx: SummaryCtx): CompactAdvisor {
         if (!ne) continue;
         const id = newEntryId();
         const entry = nuclearToEntry(ne, id);
-        if (!isReadOnly(ne)) {
+        if (!isReadOnlyToolEntry(ne, ctx.isReadOnlyTool)) {
           newSummaryEntries.push(entry);
         }
         newCacheEntries.push({
@@ -251,7 +254,7 @@ export function makeCompactAdvisor(ctx: SummaryCtx): CompactAdvisor {
         continue;
       }
       if (slimmedIndices.has(i)) {
-        rebuilt.push(...slimTurn(turns[i]!.messages));
+        rebuilt.push(...slimTurn(turns[i]!.messages, ctx.isReadOnlyTool));
       } else {
         rebuilt.push(...turns[i]!.messages);
       }
@@ -292,7 +295,7 @@ export function parseTurns(msgs: AgentShMessage[]): Turn[] {
   return turns;
 }
 
-export function inferPriority(msgs: AgentShMessage[]): Priority {
+export function inferPriority(msgs: AgentShMessage[], classifier?: ReadOnlyToolClassifier): Priority {
   let hasError = false;
   let hasWriteTool = false;
   let allReadOnly = true;
@@ -311,7 +314,7 @@ export function inferPriority(msgs: AgentShMessage[]): Priority {
         const fn = "function" in tc ? tc.function : undefined;
         if (!fn) continue;
         if (WRITE_TOOLS.has(fn.name)) hasWriteTool = true;
-        if (!READ_ONLY_TOOLS.has(fn.name)) allReadOnly = false;
+        if (!(classifier?.(fn.name) ?? READ_ONLY_TOOLS.has(fn.name))) allReadOnly = false;
       }
     }
   }
@@ -331,7 +334,7 @@ function estimateTurnTokens(msgs: AgentShMessage[]): number {
   return estimateMessagesTokens(msgs);
 }
 
-export function slimTurn(messages: AgentShMessage[]): AgentShMessage[] {
+export function slimTurn(messages: AgentShMessage[], classifier?: ReadOnlyToolClassifier): AgentShMessage[] {
   const MAX_RESULT_LEN = 1500;
   const MAX_ASSISTANT_LEN = 1500;
   const result: AgentShMessage[] = [];
@@ -341,7 +344,7 @@ export function slimTurn(messages: AgentShMessage[]): AgentShMessage[] {
     if (msg.role === "assistant" && "tool_calls" in msg && msg.tool_calls) {
       const kept = msg.tool_calls.filter((tc) => {
         if (!("function" in tc)) return true;
-        if (READ_ONLY_TOOLS.has(tc.function.name)) {
+        if (classifier?.(tc.function.name) ?? READ_ONLY_TOOLS.has(tc.function.name)) {
           droppedToolIds.add(tc.id);
           return false;
         }
