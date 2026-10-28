@@ -3,6 +3,7 @@ import type { AgentContext, ExtensionContext } from "agent-sh/types";
 import type { ToolDefinition } from "agent-sh/agent/types";
 import { runSubagent, type SubagentOptions, type SubagentRunMeta } from "agent-sh/agent/subagent";
 import { getSettings } from "agent-sh/settings";
+import { delegatedTools } from "agent-sh/runtime";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -605,9 +606,30 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
 
     const cwd = ctx.call("cwd") as string;
     const wanted = def ? def.tools : spec.tools;
-    const tools = ctx.agent.getTools()
+    const allowlist = ctx.agent.getTools()
       .filter(t => !CHILD_EXCLUDED.has(t.name) && (!wanted || wanted.includes(t.name)))
-      .map(t => throughHandlers(t, cwd, signal, progress))
+      .map(t => t.name);
+    // Pre-runtime test/embedding stubs have no instance identity or policy
+    // dispatcher. Only those legacy contexts may use named handlers; an actual
+    // runtime context must fail closed when its policy boundary is unavailable.
+    const parent = !("instanceId" in ctx) && !ctx.list().includes("tool:execute") ? {
+      ...ctx,
+      list: () => [...ctx.list(), "tool:execute"],
+      call: (name: string, ...args: unknown[]) => {
+        if (name !== "tool:execute" || ctx.list().includes("tool:execute")) return ctx.call(name, ...args);
+        const input = args[0] as { name: string; args: Record<string, unknown>; onChunk?: (chunk: string) => void; signal: AbortSignal };
+        return ctx.call(`tool:${input.name}`, input.args, input.onChunk, { signal: input.signal });
+      },
+    } : ctx;
+    const tools = delegatedTools(parent, allowlist)
+      .map(tool => ({
+        ...tool,
+        execute: (args, onChunk, execCtx) => {
+          const detail = describeCall(tool, args, cwd);
+          progress?.(detail ? `${tool.name}: ${detail}` : tool.name);
+          return tool.execute(args, onChunk, execCtx);
+        },
+      } satisfies ToolDefinition))
       .concat(extra.extraTools ?? []);
 
     const parentContext = def?.inheritContext ? parentTranscript() : "";
@@ -626,6 +648,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       extra.onStart?.();
       text = await runSubagent({
         llmClient,
+        cwd,
         tools,
         systemPrompt,
         task: spec.task,
@@ -650,22 +673,10 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     return text;
   }
 
-  // getTools() returns raw execute fns; go through tool:<name> so adviseTool wrappers apply.
-  function throughHandlers(tool: ToolDefinition, cwd: string, signal?: AbortSignal, progress?: (line: string) => void): ToolDefinition {
-    return {
-      ...tool,
-      execute: (args, onChunk) => {
-        const detail = describeCall(tool, args, cwd);
-        progress?.(detail ? `${tool.name}: ${detail}` : tool.name);
-        return ctx.call(`tool:${tool.name}`, args, onChunk, { signal });
-      },
-    };
-  }
-
   // The user's thinking level, for runs and agents that don't set one: the session's, or the saved setting
   // when there is no session (agent-sh run).
   function defaultThinking(): string | undefined {
-    return bus.emitPipe("config:get-thinking", { level: "", levels: [], supported: true }).level || getSettings().thinkingLevel || undefined;
+    return bus.emitPipe("config:get-thinking", { level: "", levels: [], supported: true }).level || (ctx.call("config:settings")?.get() ?? getSettings()).thinkingLevel || undefined;
   }
 
   // Sent unless the model is known not to take it, as the main agent does.

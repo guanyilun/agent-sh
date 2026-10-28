@@ -22,14 +22,20 @@
 type HandlerFn = (...args: any[]) => any;
 type Advisor = (next: HandlerFn, ...args: any[]) => any;
 
+interface HandlerBase {
+  fn: HandlerFn;
+  previous?: HandlerBase;
+  removed: boolean;
+}
+
 interface HandlerEntry {
-  base: HandlerFn;
+  base?: HandlerBase;
   advisors: Advisor[];
 }
 
 /** The subset of HandlerRegistry methods available to extensions. */
 export interface HandlerFunctions {
-  define(name: string, fn: (...args: any[]) => any): void;
+  define(name: string, fn: (...args: any[]) => any): void | (() => void);
   advise(name: string, advisor: (next: (...args: any[]) => any, ...args: any[]) => any): () => void;
   call(name: string, ...args: any[]): any;
   list(): string[];
@@ -40,15 +46,36 @@ export class HandlerRegistry {
 
   /**
    * Register a named handler. If one already exists, its base is replaced
-   * but existing advisors are preserved.
+   * but existing advisors are preserved. The returned disposer relinquishes
+   * this base only, restoring the previous live base without removing advice.
+   * Disposing an older definition never overwrites a newer one, nor can a
+   * later disposal resurrect a definition whose owner has already gone away.
    */
-  define(name: string, fn: HandlerFn): void {
-    const existing = this.entries.get(name);
-    if (existing) {
-      existing.base = fn;
-    } else {
-      this.entries.set(name, { base: fn, advisors: [] });
+  define(name: string, fn: HandlerFn): () => void {
+    let entry = this.entries.get(name);
+    if (!entry) {
+      entry = { advisors: [] };
+      this.entries.set(name, entry);
     }
+    const base: HandlerBase = { fn, previous: entry.base, removed: false };
+    entry.base = base;
+    return () => {
+      if (base.removed) return;
+      base.removed = true;
+      // Unlink even a buried definition, so a long-lived replacement does
+      // not retain disposed extensions and their closures.
+      if (entry.base === base) {
+        entry.base = base.previous;
+      } else {
+        let newer = entry.base;
+        while (newer && newer.previous !== base) newer = newer.previous;
+        if (newer) newer.previous = base.previous;
+      }
+      base.previous = undefined;
+      if (!entry.base && entry.advisors.length === 0 && this.entries.get(name) === entry) {
+        this.entries.delete(name);
+      }
+    };
   }
 
   /**
@@ -65,7 +92,7 @@ export class HandlerRegistry {
   advise(name: string, advisor: Advisor): () => void {
     let entry = this.entries.get(name);
     if (!entry) {
-      entry = { base: (() => undefined) as any, advisors: [] };
+      entry = { advisors: [] };
       this.entries.set(name, entry);
     }
     entry.advisors.push(advisor);
@@ -78,6 +105,7 @@ export class HandlerRegistry {
       if (!e) return;
       const idx = e.advisors.indexOf(advisor);
       if (idx !== -1) e.advisors.splice(idx, 1);
+      if (!e.base && e.advisors.length === 0) this.entries.delete(name);
     };
   }
 
@@ -91,7 +119,7 @@ export class HandlerRegistry {
     if (!entry) return undefined;
 
     // Build chain: base ← advisor[0] ← advisor[1] ← ... ← advisor[n-1]
-    let fn: HandlerFn = entry.base;
+    let fn: HandlerFn = entry.base?.fn ?? (() => undefined);
     for (const advisor of entry.advisors) {
       const next = fn;
       fn = (...a: any[]) => advisor(next, ...a);

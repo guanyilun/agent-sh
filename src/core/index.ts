@@ -20,6 +20,8 @@ import { CONFIG_DIR } from "./settings.js";
 export { EventBus } from "./event-bus.js";
 export type { BusEvents, ContentBlock, BackendRegistration, RunConfig } from "./event-bus.js";
 export type { CoreContext, CoreConfig } from "./types.js";
+export { createSettingsService, globalSettingsService } from "./settings.js";
+export type { SettingsService, Settings, SettingSource } from "./settings.js";
 export type { AgentContext, AgentConfig, AgentSurface, AgentConfigSurface, Model, LlmInterface, LlmMessage, LlmSession } from "../agent/host-types.js";
 export type { ShellContext, ShellConfig, ShellSurface, ShellConfigSurface, ExtensionContext, RemoteSession, RemoteSessionOptions, RenderSurface, InputModeConfig, TerminalSession, BlockTransformOptions, FencedBlockTransformOptions, AppConfig } from "../shell/host-types.js";
 export { palette, setPalette, resetPalette } from "../utils/palette.js";
@@ -33,6 +35,8 @@ export { compileSearchRegex, matchEntry, formatNuclearLine } from "../agent/nucl
 export interface AgentShellCore {
   bus: EventBus;
   handlers: HandlerRegistry;
+  /** Settings selected for this core, also available through `config:settings`. */
+  settings: settingsMod.SettingsService;
   /** Unique id for this agent process; used for shell-marker tagging and lineage tracking. */
   instanceId: string;
   /** Activates a registered backend by name (or persisted default / first registered). */
@@ -44,6 +48,7 @@ export interface AgentShellCore {
 export function createCore(config: AppConfig): AgentShellCore {
   const bus = new EventBus();
   const handlers = new HandlerRegistry();
+  const settings = config.settingsService ?? config.settings ?? settingsMod.globalSettingsService;
   // 3 bytes = 6 hex chars; legacy content may have 16-char iids so parsers
   // should accept ≥6 hex chars.
   const instanceId = crypto.randomBytes(3).toString("hex");
@@ -67,6 +72,7 @@ export function createCore(config: AppConfig): AgentShellCore {
   });
 
   handlers.define("config:get-app-config", () => config);
+  handlers.define("config:settings", () => settings);
   handlers.define("cwd", () => process.cwd());
 
   // Empty defaults so advisors can wrap these regardless of load order;
@@ -104,7 +110,7 @@ export function createCore(config: AppConfig): AgentShellCore {
   bus.on("config:switch-backend", ({ name }) => {
     activateByName(name).then((ok) => {
       if (!ok) return;
-      settingsMod.updateSettings({ defaultBackend: name });
+      settings.update({ defaultBackend: name });
       bus.emit("ui:info", { message: `Backend: ${name} (saved as default)` });
       bus.emit("config:changed", {});
     });
@@ -120,6 +126,7 @@ export function createCore(config: AppConfig): AgentShellCore {
   return {
     bus,
     handlers,
+    settings,
     instanceId,
 
     async activateBackend(override?: string) {
@@ -127,7 +134,7 @@ export function createCore(config: AppConfig): AgentShellCore {
         bus.emit("ui:info", { message: "No agent backend registered." });
         return;
       }
-      const preferred = override ?? settingsMod.getSettings().defaultBackend;
+      const preferred = override ?? settings.get().defaultBackend;
       const name = preferred && backends.has(preferred)
         ? preferred
         : backends.keys().next().value!;
@@ -144,7 +151,8 @@ export function createCore(config: AppConfig): AgentShellCore {
         call: (name: string, ...args: any[]) => handlers.call(name, ...args),
         list: () => handlers.list(),
         onDispose: () => {},
-        getExtensionSettings: settingsMod.getExtensionSettings,
+        getExtensionSettings: <T extends Record<string, unknown>>(namespace: string, defaults: T) =>
+          settings.getExtensionSettings(namespace, defaults),
         getStoragePath: (namespace: string) => {
           const dir = path.join(CONFIG_DIR, namespace);
           fs.mkdirSync(dir, { recursive: true });

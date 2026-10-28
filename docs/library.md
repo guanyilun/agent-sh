@@ -1,8 +1,24 @@
 # Using agent-sh as a Library
 
-## Library vs Extension
+## Choose an integration level
 
-agent-sh has two integration points. The difference: **extensions customize the existing TUI**, while **library mode lets you build your own frontend**.
+For a callable agent in a script, service or workflow, start with
+**`createAgentHost` + `ashEngine` from `agent-sh/runtime`**. It owns an extension
+host and the full ash engine without a terminal frontend. See the
+[programmable-agent architecture and API guide](programmable-agent-sketch.md)
+for the complete run contract, settings, snapshots, children, delegation and process
+executor boundary.
+
+For lower-level event-driven integration, **`createCore()`** provides the kernel;
+you attach a backend and wire your own I/O. The compatibility bootstrap example
+below uses `activateAgent`, including its existing provider/auth initialization and
+local-tool defaults. Neither integration level implies a migration of existing
+frontends.
+
+Extensions customize the host they are loaded into, not only the TUI. The same
+agent tool, instruction and advice surface is available with `ashEngine`; extensions
+requiring shell/UI capabilities still need a host supplying them. The following
+table describes the lower-level kernel integration:
 
 | | Extension | Library |
 |---|---|---|
@@ -15,7 +31,77 @@ If you're adding a Mermaid renderer or a custom slash command, write an extensio
 
 Two real frontends are built this way: [**ashi**](../examples/extensions/ashi/) (published as `@guanyilun/ashi`) drives `createCore()` into a standalone chat-style TUI with no shell underneath, and [**asHub**](https://github.com/firslov/asHub) wraps the same kernel in an Electron desktop app. Both reuse the ash backend, tools, and providers — only the frontend differs.
 
-## Quick Start
+## Callable runtime quick start
+
+Run the checked, deterministic source demo:
+
+```sh
+node --import tsx examples/programmatic-agent.ts
+```
+
+It uses `ashEngine` with a scripted OpenAI-shaped transport, **not a separate demo
+backend**: real model/tool rounds, tool advice, concurrent parent/child hosts,
+snapshot/restore, parent policy denial of delegated execution, and disposal are
+all asserted. No credentials or network are required.
+
+The runtime's explicit setup is:
+
+```typescript
+import { createAgentHost, ashEngine, localTools, LlmClient } from "agent-sh/runtime";
+
+const apiKey = process.env.OPENAI_API_KEY;
+if (!apiKey) throw new Error("Set OPENAI_API_KEY");
+const client = new LlmClient({ apiKey, model: "gpt-4.1-mini" });
+const host = await createAgentHost({
+  cwd: process.cwd(),
+  settings: { autoCompact: false, toolMode: "api" },
+  extensions: [
+    ashEngine({ client, ambientContext: false }),
+    // Optional; no local tools are implicit in ashEngine.
+    localTools({ names: ["read_file", "grep", "glob", "ls"] }),
+  ],
+});
+try {
+  const result = await host.run("Explain package.json", { maxIterations: 5 });
+  console.log(result.status, result.text);
+} finally {
+  await host.dispose();
+}
+```
+
+This snippet calls a real model and needs credentials. The client controls its
+endpoint (the OpenAI endpoint by default); the runtime does no implicit provider
+discovery. `ambientContext` defaults to **`false`**: global/project prompts and
+skills are not discovered unless explicitly enabled. Default host settings are
+isolated and in-memory, not loaded from global files or environment overlays.
+`settingsService` allows deliberate service injection.
+
+| Host operation | Contract |
+|---|---|
+| `run(query, options?)` | One active run per host; different hosts can run concurrently. Native ash calls `agent:run` directly and returns structured status/usage plus `details` |
+| `steer(text)`, `cancel()` | Steer an active run or request cooperative cancellation; `run` also accepts `signal` |
+| `snapshot()`, `restore(snapshot)` | Idle-only, versioned wire history; not settings, credentials or executor state |
+| `createChild(options)` | Owned child with explicit cwd/extensions, copied settings by default, no automatic tool/context inheritance or security boundary |
+| `dispose()` | Idempotent cancellation/awaiting and backend/scope cleanup, including owned children |
+
+Native runs support limits, history replacement and callbacks; event-only backends
+use an `agent:submit`/`agent:processing-done` compatibility adapter without native
+run details or automatic support for those options. See the
+[full contract](programmable-agent-sketch.md#native-run-vs-legacy-event-run).
+`runSubagent` is also a compatibility adapter over the same full ash engine, not a
+second reduced loop.
+
+For children, `delegatedTools(parent.context, names)` selects explicit parent
+capabilities and executes through **parent `tool:execute` policy**, not a raw tool
+body. Child composition itself is not a restriction on trusted extensions.
+`ashEngine({ executor })` can replace `tool:dispatch` with a process JSONL executor
+while keeping model transport/credentials in the controller and policy outside the
+executor. An OS sandbox command wrapper, environment filtering and process-tree
+containment remain the caller's responsibility; the process executor inherits the
+controller environment if `env` is omitted. See
+[execution and security details](programmable-agent-sketch.md#process-tool-executor-keep-the-model-in-the-controller).
+
+## Lower-level kernel quick start (compatibility bootstrap)
 
 ```typescript
 import { createCore } from "agent-sh";
@@ -43,11 +129,27 @@ await core.activateBackend();
 core.bus.emit("agent:submit", { query: "explain this codebase" });
 ```
 
-`createCore()` returns a headless kernel — the event bus and handler registry, with no terminal, shell, LLM, or agent attached. `activateAgent(ctx)` attaches the agent surface (tools, LLM client, providers) and registers the built-in `ash` backend; `loadBuiltinExtensions(ctx)` adds the abstract backend registry, slash commands, and file autocomplete. `core:extensions-loaded` triggers provider resolution; `activateBackend()` then starts ash (or whichever backend is configured). Send queries by emitting `agent:submit` and consume responses by listening to bus events.
+`createCore()` returns a headless kernel — the event bus, handler registry and
+backend registry, with no terminal, shell, LLM, or agent attached.
+`activateAgent(ctx)` attaches the agent surface (tools, LLM client, providers) and
+registers the built-in `ash` backend; `loadBuiltinExtensions(ctx)` loads optional
+built-in features such as slash commands and file autocomplete.
+`core:extensions-loaded` triggers provider resolution; `activateBackend(name?)`
+then starts the selected or settings-default backend. Send queries by emitting
+`agent:submit` and consume responses by listening to bus events.
 
-> **The LLM fields are backend config, not kernel config.** `createCore()` doesn't read `provider`/`apiKey`/`model`/`baseURL` — it stores the config object opaquely and re-exposes it through the `config:get-app-config` handler. The **ash** backend is the only consumer (`src/agent/index.ts`); it resolves the provider, key, and model from those fields. Under a different backend they're inert: `pi` reads `~/.pi/agent/settings.json`, `claude-code` uses its own SDK config — for those you pass `{ backend: "pi" }` (a real kernel field) and configure the model the backend's own way. The `AppConfig` type bundles kernel + agent + shell config into one object for convenience; the kernel only owns the `extensions` and `backend` keys (`CoreConfig`).
+> **The LLM fields are backend config, not kernel config.** `createCore()` doesn't read `provider`/`apiKey`/`model`/`baseURL` — it stores the config object opaquely and re-exposes it through the `config:get-app-config` handler. The **ash** backend is the only consumer (`src/agent/index.ts`); it resolves the provider, key, and model from those fields. Under a different backend they're inert: `pi` reads `~/.pi/agent/settings.json`, `claude-code` uses its own SDK config — for those you pass `{ backend: "pi" }` (a real kernel field) and configure the model the backend's own way. The `AppConfig` type bundles kernel + agent + shell config into one object for convenience; `CoreConfig` includes `extensions`, `backend`, and the injectable `settingsService` (`settings` is its alias). Without injection, `createCore()` uses the compatibility process-global settings service, unlike `createAgentHost()`'s isolated default. In this lower-level API, pass an explicit backend name to `activateBackend(name)` when selecting it directly.
 
-Tools run without confirmation by default; to gate them, register tool advisors via `ctx.agent.adviseTool` (see examples/extensions/interactive-prompts.ts).
+This compatibility path retains existing global bootstrap/provider and auth-home
+defaults; `activateAgent` is not the hermetic explicit-client path. Host-local
+settings alone do not relocate provider SDK/auth stores or eliminate every global
+compatibility service. Use the runtime setup above when you need explicit
+composition with no implicit provider discovery.
+
+Tools run without confirmation by default; to gate them, register tool advisors via
+`ctx.agent.adviseTool` (see examples/extensions/interactive-prompts.ts). For policy
+that must surround custom execution adapters as well, advise `tool:execute`;
+`adviseTool` wraps the local named tool handler, not an arbitrary remote executor.
 
 ## AgentShellCore API
 
@@ -63,7 +165,11 @@ Send queries with `bus.emit("agent:submit", { query })`; cancel with `bus.emit("
 
 ## Loading Extensions in Library Mode
 
-Extensions aren't loaded automatically in library mode — you get a bare kernel with no agent. You must call `activateAgent` (for the ash agent surface) and load built-ins (for the backend registry):
+With the lower-level `createCore()` API, extensions aren't loaded automatically —
+you get a bare kernel with no agent. This compatibility recipe calls `activateAgent`
+(for the ash agent surface/bootstrap) and loads built-ins. This is not required by
+`createAgentHost`, which composes its explicitly supplied extensions and manages
+backend activation itself:
 
 ```typescript
 import { createCore } from "agent-sh";

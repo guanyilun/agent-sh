@@ -1,30 +1,15 @@
-/**
- * Subagent runner — executes a focused agent loop with its own context.
- *
- * Unlike the main AgentLoop, a subagent:
- *   - Has its own conversation (starts fresh, stays focused)
- *   - Has its own system prompt (specialized for the task)
- *   - Runs to completion and returns the final text
- *   - Optionally emits tool events to the bus for TUI rendering
- *
- * Used by the subagent extension to delegate tasks from the main agent.
- */
-import type { EventBus } from "../core/event-bus.js";
+/** Compatibility API for focused runs on the shared ash engine. */
+import type { BusEvents, EventBus } from "../core/event-bus.js";
 import type { ChatCompletionMessageParam, LlmClient } from "./llm-client.js";
-import { contentText, type ToolDefinition } from "./types.js";
-import { LiveView } from "./live-view.js";
-import { normalizeToolArgs } from "./normalize-args.js";
-import { wrapTrailingWithDynamicContext } from "../utils/message-utils.js";
-
-interface PendingToolCall {
-  id: string;
-  name: string;
-  argumentsJson: string;
-}
+import type { ToolDefinition } from "./types.js";
+import type { AgentRunOptions } from "./run-contract.js";
+import { createAgentHost, ashEngine } from "../runtime/index.js";
 
 export interface SubagentOptions {
   /** LLM client to use. */
   llmClient: LlmClient;
+  /** Working directory (defaults to process.cwd() for standalone callers). */
+  cwd?: string;
   /** Tools available to the subagent. */
   tools: ToolDefinition[];
   /** System prompt for this subagent. */
@@ -96,276 +81,96 @@ export interface SubagentRunMeta {
   messages?: ChatCompletionMessageParam[];
 }
 
-/**
- * Run a subagent to completion.
- * Returns the final response text.
- */
+/** Run a focused, append-only conversation using the full agent engine. */
 export async function runSubagent(opts: SubagentOptions): Promise<string> {
-  const {
-    llmClient,
-    tools,
-    systemPrompt,
-    task,
-    model,
-    bus,
-    signal,
-    maxIterations = 20,
-    dynamicContext,
-    budgetTokens,
-    onUsage,
-    reasoningParams,
-    outMeta,
-    onMessage,
-    shouldStop,
-    history,
-  } = opts;
+  const { llmClient, model, outMeta, bus, maxIterations = 20 } = opts;
   if (outMeta) {
     outMeta.degraded = null;
     outMeta.tokensUsed = 0;
     outMeta.mutatingToolExecuted = false;
   }
-
-  const toolMap = new Map(tools.map(t => [t.name, t]));
-  const apiTools = tools.map(t => ({
-    type: "function" as const,
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.input_schema,
-    },
-  }));
-
-  const conversation = new LiveView();
-  if (history) conversation.replaceMessages([...history]);
-  conversation.addUserMessage(task);
-  onMessage?.({ role: "user", content: task });
-  const addToolResult = (tc: PendingToolCall, content: Parameters<LiveView["addToolResult"]>[1], isError: boolean) => {
-    conversation.addToolResult(tc.id, content, isError);
-    onMessage?.({ role: "tool", toolName: tc.name, content: contentText(content), isError });
-  };
-
-  let lastResponseText = "";
-  let iterations = 0;
-  let tokensConsumed = 0;
-  let budgetExhausted = false;
-
-  while (iterations++ < maxIterations) {
-    if (signal?.aborted) break;
-    if (budgetTokens != null && tokensConsumed >= budgetTokens) {
-      budgetExhausted = true;
-      break;
-    }
-
-    // Stream LLM response
-    const { text, toolCalls, assistantContent, assistantToolCalls, extras, usage } =
-      await streamOnce(llmClient, systemPrompt, conversation, apiTools, model, signal, dynamicContext, reasoningParams);
-
-    if (usage) {
-      tokensConsumed += usage.completion_tokens || 0;
-      if (outMeta) outMeta.tokensUsed = tokensConsumed;
-      onUsage?.(usage);
-    }
-
-    if (text) lastResponseText = text;
-
-    conversation.addAssistantMessage(assistantContent, assistantToolCalls, extras);
-    onMessage?.({
-      role: "assistant",
-      content: text,
-      toolCalls: toolCalls.length ? toolCalls.map(tc => ({ name: tc.name, arguments: tc.argumentsJson })) : undefined,
-    });
-
-    // No tool calls → done
-    if (toolCalls.length === 0) break;
-
-    // Execute tools
-    for (const tc of toolCalls) {
-      if (signal?.aborted) break;
-
-      const tool = toolMap.get(tc.name);
-      if (!tool) {
-        addToolResult(tc, `Error: Unknown tool "${tc.name}"`, true);
-        continue;
-      }
-
-      let args: Record<string, unknown>;
-      try {
-        args = JSON.parse(tc.argumentsJson);
-      } catch {
-        addToolResult(tc, `Error: Invalid JSON arguments for ${tc.name}`, true);
-        continue;
-      }
-      args = normalizeToolArgs(args, tool.input_schema);
-
-      // Emit tool events for TUI (if bus provided)
-      if (bus) {
-        const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" };
-        bus.emit("agent:tool-started", {
-          title: tc.name,
-          name: tc.name,
-          toolCallId: tc.id,
-          kind: display.kind,
-          locations: display.locations,
-          rawInput: args,
-        });
-      }
-
-      const onChunk = bus && tool.showOutput !== false
-        ? (chunk: string) => { bus.emit("agent:tool-output-chunk", { chunk, toolCallId: tc.id }); }
-        : undefined;
-
-      if (outMeta && tool.modifiesFiles === true) outMeta.mutatingToolExecuted = true;
-      const result = await tool.execute(args, onChunk);
-
-      if (bus) {
-        const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" };
-        const resultDisplay = tool.formatResult?.(args, result);
-        bus.emitTransform("agent:tool-completed", {
-          toolCallId: tc.id,
-          exitCode: result.exitCode,
-          rawOutput: result.content,
-          kind: display.kind,
-          resultDisplay,
-        });
-      }
-
-      const content = result.isError
-        ? `Error: ${contentText(result.content)}`
-        : result.content;
-      addToolResult(tc, content, !!result.isError);
-    }
-    if (shouldStop?.()) break;
-  }
-  if (outMeta) outMeta.messages = conversation.forLLM();
-
-  if (budgetExhausted) {
-    if (outMeta) outMeta.degraded = "budget";
-    const note = `\n\n[Subagent terminated: completion-token budget (${budgetTokens}) exhausted after ${tokensConsumed} completion tokens. Returning partial progress.]`;
-    return lastResponseText + note;
-  }
-  if (iterations > maxIterations && !signal?.aborted) {
-    if (outMeta) outMeta.degraded = "iterations";
-    const note = `\n\n[Subagent terminated: max iterations (${maxIterations}) reached. Returning partial progress.]`;
-    return lastResponseText + note;
-  }
-
-  return lastResponseText;
-}
-
-/** Stream a single LLM response. */
-async function streamOnce(
-  llmClient: LlmClient,
-  systemPrompt: string,
-  conversation: LiveView,
-  apiTools: any[],
-  model: string | undefined,
-  signal: AbortSignal | undefined,
-  dynamicContext?: string,
-  reasoningParams?: Record<string, unknown>,
-): Promise<{
-  text: string;
-  toolCalls: PendingToolCall[];
-  assistantContent: string | null;
-  assistantToolCalls: { id: string; function: { name: string; arguments: string } }[] | undefined;
-  extras?: Record<string, unknown>;
-  usage: SubagentUsage | null;
-}> {
-  let text = "";
-  let reasoning = "";
-  let reasoningField: string | null = null;
-  const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();
-  const pendingToolCalls: PendingToolCall[] = [];
-  let usage: SubagentUsage | null = null;
-
-  const stream = await llmClient.stream({
-    ...(reasoningParams ?? {}),
-    messages: [
-      { role: "system", content: systemPrompt },
-      ...wrapTrailingWithDynamicContext(conversation.forLLM(), dynamicContext ?? ""),
-    ],
-    tools: apiTools.length > 0 ? apiTools : undefined,
-    model,
-    signal,
+  // Real clients own their configuration; lightweight test clients need not fork.
+  const client = typeof llmClient.fork === "function"
+    ? llmClient.fork(model ? { model } : {})
+    : llmClient;
+  const host = await createAgentHost({
+    cwd: opts.cwd ?? process.cwd(),
+    settings: { autoCompact: false, toolMode: "api" },
+    extensions: [ashEngine({
+      client,
+      model: { id: model ?? client.model, provider: "custom", echoReasoning: true },
+      // The client already owns credentials; this endpoint only supplies the
+      // legacy OpenAI-shaped usage decoder, including cache accounting.
+      endpoint: {
+        apiKey: "",
+        extractCachedTokens: usage => (usage.prompt_tokens_details as { cached_tokens?: number } | undefined)?.cached_tokens ?? 0,
+      },
+      tools: opts.tools,
+    })],
   });
-
-  for await (const chunk of stream) {
-    if (signal?.aborted) break;
-
-    if ((chunk as any).usage) {
-      const u = (chunk as any).usage;
-      usage = {
-        prompt_tokens: u.prompt_tokens ?? 0,
-        completion_tokens: u.completion_tokens ?? 0,
-        total_tokens: u.total_tokens ?? 0,
-        cached_tokens: u.prompt_tokens_details?.cached_tokens ?? 0,
+  const childBus = host.context.bus;
+  const unsubscribers: (() => void)[] = [];
+  let lastText = "";
+  try {
+    // Never share the parent's bus: lifecycle, usage and steering belong to the
+    // child. Only the legacy rendering events cross this optional boundary.
+    if (bus) {
+      const forward = <K extends "agent:tool-started" | "agent:tool-output-chunk" | "agent:tool-completed">(name: K) => {
+        const listener = (payload: BusEvents[K]) => {
+          if (name === "agent:tool-completed") bus.emitTransform(name, payload);
+          else bus.emit(name, payload);
+        };
+        childBus.on(name, listener);
+        unsubscribers.push(() => childBus.off(name, listener));
       };
+      forward("agent:tool-started");
+      forward("agent:tool-output-chunk");
+      forward("agent:tool-completed");
     }
-
-    const choice = chunk.choices[0];
-    if (!choice) continue;
-    const delta = choice.delta;
-
-    if (delta?.content) {
-      text += delta.content;
+    const runOptions: AgentRunOptions = {
+      systemPrompt: opts.systemPrompt,
+      history: opts.history,
+      signal: opts.signal,
+      maxIterations,
+      budgetTokens: opts.budgetTokens,
+      reasoningParams: opts.reasoningParams,
+      dynamicContext: opts.dynamicContext,
+      onUsage: opts.onUsage,
+      onMessage: (message: SubagentMessage) => {
+        if (message.role === "assistant" && message.content) lastText = message.content;
+        opts.onMessage?.(message.role === "assistant"
+          ? { ...message, toolCalls: message.toolCalls }
+          : message);
+      },
+      shouldStop: opts.shouldStop,
+      toolScheduling: "sequential" as const,
+      // Compatibility callers expect thrown tools to fail the run and provider
+      // errors without the interactive engine's provider/model decoration.
+      throwToolErrors: true,
+      rawErrors: true,
+    };
+    const result = await host.run(opts.task, runOptions);
+    const details = result.details;
+    if (!details) throw new Error("Subagent engine returned no run details");
+    const degraded = details.stopReason === "limited" && (details.limit === "budget" || details.limit === "iterations")
+      ? details.limit : null;
+    if (outMeta) {
+      outMeta.degraded = degraded;
+      outMeta.tokensUsed = details.usage.completion_tokens;
+      outMeta.mutatingToolExecuted = details.mutatingToolExecuted;
+      outMeta.messages = details.messages;
     }
-
-    const d = delta as any;
-    for (const name of ["reasoning", "reasoning_content"] as const) {
-      if (typeof d?.[name] === "string" && d[name].length > 0) {
-        reasoning += d[name];
-        reasoningField ??= name;
-      }
+    if (details.stopReason === "failed") throw new Error(details.error ?? result.error ?? "Subagent run failed");
+    const text = details.finalText || lastText;
+    if (degraded === "budget") {
+      return text + `\n\n[Subagent terminated: completion-token budget (${opts.budgetTokens}) exhausted after ${details.usage.completion_tokens} completion tokens. Returning partial progress.]`;
     }
-    if (Array.isArray(d?.reasoning_details)) {
-      for (const x of d.reasoning_details) {
-        const idx = typeof x?.index === "number" ? x.index : reasoningDetailsByIndex.size;
-        const prev = reasoningDetailsByIndex.get(idx);
-        if (!prev) {
-          reasoningDetailsByIndex.set(idx, { ...x });
-        } else {
-          if (typeof x.text === "string") prev.text = (prev.text ?? "") + x.text;
-          for (const [k, v] of Object.entries(x)) if (k !== "text" && prev[k] === undefined) prev[k] = v;
-        }
-      }
+    if (degraded === "iterations") {
+      return text + `\n\n[Subagent terminated: max iterations (${maxIterations}) reached. Returning partial progress.]`;
     }
-
-    if (delta?.tool_calls) {
-      for (const tc of delta.tool_calls) {
-        const idx = tc.index;
-        if (!pendingToolCalls[idx]) {
-          pendingToolCalls[idx] = { id: tc.id!, name: tc.function!.name!, argumentsJson: "" };
-        }
-        if (tc.function?.arguments) {
-          pendingToolCalls[idx].argumentsJson += tc.function.arguments;
-        }
-      }
-    }
+    return text;
+  } finally {
+    for (const unsubscribe of unsubscribers) unsubscribe();
+    await host.dispose();
   }
-
-  // Normalize arguments JSON (same fix as agent-loop): strict providers
-  // reject empty "" on replay next turn even though OpenAI is lenient.
-  for (const tc of pendingToolCalls) {
-    const s = tc.argumentsJson.trim();
-    if (s === "") { tc.argumentsJson = "{}"; continue; }
-    try { JSON.parse(s); } catch { tc.argumentsJson = "{}"; }
-  }
-
-  const assistantToolCalls = pendingToolCalls.length
-    ? pendingToolCalls.map(tc => ({ id: tc.id, function: { name: tc.name, arguments: tc.argumentsJson } }))
-    : undefined;
-
-  const extras: Record<string, unknown> = {};
-  if (reasoning && reasoningField) extras[reasoningField] = reasoning;
-  if (reasoningDetailsByIndex.size > 0) {
-    extras.reasoning_details = [...reasoningDetailsByIndex.entries()]
-      .sort((a, b) => a[0] - b[0]).map(([, v]) => v);
-  }
-  return {
-    text,
-    toolCalls: pendingToolCalls,
-    assistantContent: text || null,
-    assistantToolCalls,
-    extras: Object.keys(extras).length > 0 ? extras : undefined,
-    usage,
-  };
 }

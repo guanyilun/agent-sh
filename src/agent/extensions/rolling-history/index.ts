@@ -5,7 +5,7 @@ import type { AgentShMessage } from "../../llm-client.js";
 import { contentText, type ToolDefinition } from "../../types.js";
 import { SharedFileStore, newEntryId, type Store, type Entry } from "../../store.js";
 import { CONFIG_DIR, getSettings } from "../../../core/settings.js";
-import { deserializeEntry, isReadOnly } from "../../nuclear-form.js";
+import { deserializeEntry, isReadOnlyToolEntry } from "../../nuclear-form.js";
 import {
   activate as activateSummaryStrategy,
   nuclearToEntry,
@@ -27,7 +27,7 @@ const INSTRUCTION_TEXT =
 export function migrateFromLegacy(
   storeDir: string,
   legacyPath: string,
-  ctx: Pick<ExtensionContext, "bus">,
+  ctx: Pick<ExtensionContext, "bus"> & Partial<Pick<ExtensionContext, "call">>,
 ): void {
   const sentinel = path.join(storeDir, ".migrated");
   if (fs.existsSync(sentinel)) return;
@@ -50,7 +50,7 @@ export function migrateFromLegacy(
     for (const line of lines) {
       const ne = deserializeEntry(line);
       if (!ne) continue;
-      if (isReadOnly(ne)) continue;
+      if (isReadOnlyToolEntry(ne, (name) => ctx.call?.("agent:is-read-only-tool", name))) continue;
       entries.push(nuclearToEntry(ne, newEntryId()));
     }
     if (entries.length > 0) {
@@ -99,6 +99,7 @@ export default function activate(ctx: ExtensionContext): void {
     bus: { on: (e, f) => ctx.bus.on(e, f) },
     advise: (op, f) => { ctx.advise(op, f as Parameters<typeof ctx.advise>[1]); },
     iid: ctx.instanceId,
+    isReadOnlyTool: (name) => ctx.call("agent:is-read-only-tool", name),
     getMessages: () => (ctx.call("conversation:get-messages") as AgentShMessage[] | undefined) ?? [],
     replaceMessages: (msgs) => { ctx.call("conversation:replace-messages", msgs); },
     estimateTokens: () => (ctx.call("conversation:estimate-tokens") as number | undefined) ?? 0,

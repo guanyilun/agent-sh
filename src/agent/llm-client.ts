@@ -68,6 +68,12 @@ export class LlmClient {
     this.model = config.model;
   }
 
+  /** Independent client configuration for a child/session. Does not mutate this
+   * client; credentials remain private and are never placed on the event bus. */
+  fork(overrides: Partial<LlmClientConfig> = {}): LlmClient {
+    return new LlmClient({ ...this.config, model: this.model, ...overrides });
+  }
+
   /** Swap the underlying client config at runtime (e.g. provider switch). */
   reconfigure(newConfig: LlmClientConfig): void {
     this.config = newConfig;

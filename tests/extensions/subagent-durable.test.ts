@@ -284,6 +284,23 @@ test("run() takes an inline system prompt, model, thinking and label; system wit
   } finally { s.cleanup(); }
 });
 
+test("each workflow subagent uses the parent's current cwd rather than the process cwd", async () => {
+  let nextCwd = "";
+  const s = setup({ reply: () => {
+    s.h.define("cwd", () => nextCwd);
+    return { content: "ok" };
+  } });
+  try {
+    nextCwd = join(s.root, "other-project");
+    mkdirSync(nextCwd);
+    wf(s, "cwd.ts", 'export default async ({ run }) => { await run({ task: "first", tools: [] }); return run({ task: "second", tools: [] }); };\n');
+    const r = await s.exec("run_workflow", { name: "cwd" });
+    assert.equal(r.isError, false, String(r.content));
+    assert.ok(s.calls[0]!.messages[0]!.content.includes(`Working directory: ${s.project}`));
+    assert.ok(s.calls[1]!.messages[0]!.content.includes(`Working directory: ${nextCwd}`));
+  } finally { s.cleanup(); }
+});
+
 test("a journal from before call ids still resumes by call order", async () => {
   let failC = true;
   const s = setup({ reply: (o) => {
