@@ -656,6 +656,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         signal,
         maxIterations: def?.maxIterations ?? settings.maxIterations,
         reasoningParams: reasoningParams(spec.thinking ?? def?.thinking ?? defaultThinking(), spec.model ?? def?.model ?? llmClient.model),
+        contextWindow: contextWindow(spec.model ?? def?.model ?? llmClient.model),
         outMeta: meta,
         onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens, u.cached_tokens) : undefined,
         onMessage: extra.onMessage as SubagentOptions["onMessage"],
@@ -677,6 +678,12 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   // when there is no session (agent-sh run).
   function defaultThinking(): string | undefined {
     return bus.emitPipe("config:get-thinking", { level: "", levels: [], supported: true }).level || (ctx.call("config:settings")?.get() ?? getSettings()).thinkingLevel || undefined;
+  }
+
+  // The model's window as its provider reports it, so long runs compact before they overflow.
+  function contextWindow(modelId: string): number | undefined {
+    const models = (ctx.call("agent:get-models") ?? []) as { id: string; contextWindow?: number }[];
+    return models.find(m => m.id === modelId)?.contextWindow;
   }
 
   // Sent unless the model is known not to take it, as the main agent does.
