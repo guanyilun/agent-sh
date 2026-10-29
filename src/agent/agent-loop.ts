@@ -73,6 +73,9 @@ export interface AgentLoopConfig {
   ambientContext?: boolean;
 }
 
+/** Re-sends of a request whose reply had neither text nor tool calls. */
+const MAX_EMPTY_RETRIES = 2;
+
 export class AgentLoop implements AgentBackend {
   private abortController: AbortController | null = null;
   private toolRegistry: ToolRegistry;
@@ -1555,9 +1558,24 @@ export class AgentLoop implements AgentBackend {
     dynamicContext: string,
     signal: AbortSignal,
   ): ReturnType<typeof this.streamResponse> {
+    let empties = 0;
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
-        return await this.streamResponse(systemPrompt, dynamicContext, signal);
+        const response = await this.streamResponse(systemPrompt, dynamicContext, signal);
+        // A reply with neither text nor tool calls is no answer: gateways return one
+        // when the backend stalls or times out (seen after 13-25 min of silence on a
+        // vLLM/LiteLLM endpoint).  Nothing was recorded, so re-send, at most twice.
+        if (!signal.aborted && response?.text?.trim() === "" && response.toolCalls?.length === 0
+            && empties < MAX_EMPTY_RETRIES) {
+          empties++;
+          this.bus.emit("ui:info", {
+            message: `(empty reply, retrying — ${empties}/${MAX_EMPTY_RETRIES})`,
+          });
+          await waitForRetry(2000, undefined, { signal });
+          attempt--;
+          continue;
+        }
+        return response;
       } catch (e) {
         if (signal.aborted) throw e;
 

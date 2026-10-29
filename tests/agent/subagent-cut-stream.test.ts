@@ -56,3 +56,41 @@ test("a non-transient error is still fatal and not retried", async () => {
   await assert.rejects(runSubagent({ systemPrompt: "s", task: "t", llmClient, tools: [] }), /bad tool schema/);
   assert.equal(n, 1);
 });
+
+// A gateway that stalls can end the stream cleanly with nothing in it; that is no answer.
+function emptyThen(empties: number, requests: unknown[][]) {
+  let n = 0;
+  return {
+    model: "stub",
+    stream: async (request: { messages: unknown[] }) => {
+      requests.push(structuredClone(request.messages));
+      const call = ++n;
+      return (async function* () {
+        if (call === 1) {
+          yield { choices: [{ delta: { tool_calls: [{ index: 0, id: "c1", function: { name: "touch", arguments: "{}" } }] } }] };
+        } else if (call <= 1 + empties) {
+          yield { choices: [{ delta: { reasoning_content: "thinking" } }] };
+        } else {
+          yield { choices: [{ delta: { content: "done." } }] };
+        }
+        yield { choices: [], usage };
+      })();
+    },
+  } as unknown as LlmClient;
+}
+
+test("an empty reply is re-sent with the same conversation, at most twice", async () => {
+  for (const [empties, answer] of [[1, "done."], [2, "done."], [3, ""]] as const) {
+    const requests: unknown[][] = [];
+    let touched = 0;
+    const touch: ToolDefinition = {
+      name: "touch", description: "side effect", input_schema: { type: "object", properties: {} }, modifiesFiles: true,
+      execute: async () => { touched++; return { content: "ok", exitCode: 0, isError: false }; },
+    };
+    const text = await runSubagent({ systemPrompt: "sys", task: "t", llmClient: emptyThen(empties, requests), tools: [touch] });
+    assert.equal(text, answer, `${empties} empty replies`);
+    assert.equal(touched, 1, "the tool step is not repeated");
+    assert.equal(requests.length, 1 + Math.min(empties, 2) + 1);
+    assert.deepEqual(requests[requests.length - 1], requests[1], "re-sends the same conversation");
+  }
+});
