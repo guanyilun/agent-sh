@@ -48,6 +48,13 @@ export interface SubagentOptions {
    */
   onUsage?: (usage: SubagentUsage) => void;
   reasoningParams?: Record<string, unknown>;
+  /** The model's context window in tokens.  When known, the conversation is
+   *  compacted once it fills `autoCompactThreshold` of it; when unknown, only a
+   *  provider's context-overflow error compacts it (a guessed window would
+   *  compact long tool runs far too early). */
+  contextWindow?: number;
+  /** Fraction of the context window that triggers compaction (default 0.8). */
+  autoCompactThreshold?: number;
   outMeta?: SubagentRunMeta;
   /** Each message as it joins the subagent's conversation, e.g. for a transcript. */
   onMessage?: (message: SubagentMessage) => void;
@@ -95,10 +102,13 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     : llmClient;
   const host = await createAgentHost({
     cwd: opts.cwd ?? process.cwd(),
-    settings: { autoCompact: false, toolMode: "api" },
+    settings: opts.contextWindow
+      ? { autoCompact: true, autoCompactThreshold: opts.autoCompactThreshold ?? 0.8, toolMode: "api" }
+      : { autoCompact: false, toolMode: "api" },
     extensions: [ashEngine({
       client,
-      model: { id: model ?? client.model, provider: "custom", echoReasoning: true },
+      model: { id: model ?? client.model, provider: "custom", echoReasoning: true,
+               ...(opts.contextWindow ? { contextWindow: opts.contextWindow } : {}) },
       // The client already owns credentials; this endpoint only supplies the
       // legacy OpenAI-shaped usage decoder, including cache accounting.
       endpoint: {
