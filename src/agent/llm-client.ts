@@ -13,6 +13,7 @@ import type {
   ChatCompletionCreateParamsNonStreaming,
 } from "openai/resources/chat/completions.js";
 
+import { getSettings } from "../core/settings.js";
 export type { ChatCompletionMessageParam, ChatCompletionTool };
 
 /** Codex may acknowledge SSE before the upstream HTTP status is available.
@@ -45,6 +46,8 @@ export interface LlmClientConfig {
   appName?: string;
   /** Sent as OpenRouter HTTP-Referer; ignored by other providers. */
   appUrl?: string;
+  /** Provider id: its settings' `requestBody` is merged into every request. */
+  provider?: string;
 }
 
 function attributionHeaders(config: LlmClientConfig): Record<string, string> {
@@ -85,9 +88,16 @@ export class LlmClient {
     this.model = newConfig.model;
   }
 
+  /** The provider's configured extra request fields (e.g. OpenRouter routing
+   *  preferences); read per request, so forks and settings edits see them. */
+  private requestBody(): Record<string, unknown> {
+    return (this.config.provider && getSettings().providers?.[this.config.provider]?.requestBody) || {};
+  }
+
   stream(opts: StreamOpts) {
     const { signal, headers, messages, tools, model, max_tokens, ...rest } = opts;
     const body = {
+      ...this.requestBody(),
       ...rest,
       model: model ?? this.model,
       messages: messages.map(stripMeta),
@@ -102,6 +112,7 @@ export class LlmClient {
   async complete(opts: CompleteOpts): Promise<string> {
     const { messages, model, max_tokens, ...rest } = opts;
     const body = {
+      ...this.requestBody(),
       ...rest,
       model: model ?? this.model,
       messages: messages.map(stripMeta),
