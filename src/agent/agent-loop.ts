@@ -1565,8 +1565,13 @@ export class AgentLoop implements AgentBackend {
         // A reply with neither text nor tool calls is no answer: gateways return one
         // when the backend stalls or times out (seen after 13-25 min of silence on a
         // vLLM/LiteLLM endpoint).  Nothing was recorded, so re-send, at most twice.
-        if (!signal.aborted && response?.text?.trim() === "" && response.toolCalls?.length === 0
-            && empties < MAX_EMPTY_RETRIES) {
+        const empty = !signal.aborted && response?.text?.trim() === "" && response.toolCalls?.length === 0;
+        // Unless the reasoning used the whole max_tokens: the same request would do it again.
+        if (empty && response.finishReason === "length") {
+          throw new Error(`the reply reached max_tokens before any text or tool call (the reasoning `
+            + `used the whole budget); lower the thinking level or raise the model's maxTokens`);
+        }
+        if (empty && empties < MAX_EMPTY_RETRIES) {
           empties++;
           this.bus.emit("ui:info", {
             message: `(empty reply, retrying — ${empties}/${MAX_EMPTY_RETRIES})`,
@@ -1634,6 +1639,8 @@ export class AgentLoop implements AgentBackend {
     /** Provider-specific fields (reasoning, reasoning_details, …) to
      *  echo back verbatim on the next turn. */
     extras?: Record<string, unknown>;
+    /** The stream's finish_reason, when the provider sent one. */
+    finishReason?: string;
   }> {
     let text = "";
     // reasoning_details streams as per-chunk fragments keyed by index;
@@ -1643,6 +1650,7 @@ export class AgentLoop implements AgentBackend {
     const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();
     const pendingToolCalls: PendingToolCall[] = [];
     let responseUsage: AgentRunResult["usage"] | undefined;
+    let finishReason: string | undefined;
 
     // Tool protocol controls what goes in the API tools param vs dynamic context.
     // agent:tools:visible is a filter point on the assembled list — distinct from
@@ -1716,6 +1724,7 @@ export class AgentLoop implements AgentBackend {
 
       const choice = chunk.choices[0];
       if (!choice) continue;
+      if (choice.finish_reason) finishReason = choice.finish_reason;
 
       const delta = choice.delta;
 
@@ -1823,6 +1832,7 @@ export class AgentLoop implements AgentBackend {
       text,
       toolCalls: pendingToolCalls,
       extras: Object.keys(extras).length > 0 ? extras : undefined,
+      finishReason,
     };
   }
 }

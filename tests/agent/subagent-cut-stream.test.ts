@@ -94,3 +94,20 @@ test("an empty reply is re-sent with the same conversation, at most twice", asyn
     assert.deepEqual(requests[requests.length - 1], requests[1], "re-sends the same conversation");
   }
 });
+
+test("an empty reply that reached max_tokens is not re-sent: it fails with the reason", async () => {
+  let n = 0;
+  const llmClient = {
+    model: "stub",
+    stream: async () => {
+      n++;
+      return (async function* () {
+        yield { choices: [{ delta: { reasoning_content: "thinking" } }] };
+        yield { choices: [{ delta: {}, finish_reason: "length" }] };
+        yield { choices: [], usage };
+      })();
+    },
+  } as unknown as LlmClient;
+  await assert.rejects(runSubagent({ systemPrompt: "s", task: "t", llmClient, tools: [] }), /max_tokens/);
+  assert.equal(n, 1);
+});
