@@ -320,7 +320,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       supportsReasoningEffort: activeProvider?.supportsReasoningEffort,
     };
 
-    llmClient.reconfigure({ apiKey: effectiveApiKey, baseURL: effectiveBaseURL, model: effectiveModel });
+    llmClient.reconfigure({ apiKey: effectiveApiKey, baseURL: effectiveBaseURL, model: effectiveModel, provider: initialModel.provider });
     resolved = true;
 
     bus.emit("agent:register-backend", {
@@ -430,7 +430,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       bus.emit("ui:error", { message: `Provider "${name}" has no models configured` });
       return;
     }
-    llmClient.reconfigure({ apiKey: p.apiKey, baseURL: p.baseURL, model: switchModel });
+    llmClient.reconfigure({ apiKey: p.apiKey, baseURL: p.baseURL, model: switchModel, provider: p.id });
     bus.emit("agent:models-changed", {});
     bus.emit("config:switch-model", { id: switchModel, provider: name });
     bus.emit("ui:info", { message: `Switched to ${name} (${switchModel})` });

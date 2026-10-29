@@ -49,6 +49,11 @@ export interface ProviderConfig {
   /** Borrow another registered provider's reasoning request shape by id
    *  (e.g. "openrouter"). Defaults to OpenAI-compat. */
   reasoningShape?: string;
+  /** Extra fields merged into every request body sent to this provider, e.g. for
+   *  OpenRouter `{ "provider": { "zdr": true, "data_collection": "deny" } }` to route
+   *  only to endpoints that neither retain nor train on prompts.  Cannot override
+   *  messages, tools, model or max_tokens. */
+  requestBody?: Record<string, unknown>;
 }
 
 export interface Settings {

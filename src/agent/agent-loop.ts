@@ -260,7 +260,7 @@ export class AgentLoop implements AgentBackend {
       this.activeModel = found;
       this.activeEndpoint = this.resolveEndpoint(found);
       if (this.activeEndpoint) {
-        this.llmClient.reconfigure({ apiKey: this.activeEndpoint.apiKey, baseURL: this.activeEndpoint.baseURL, model: found.id });
+        this.llmClient.reconfigure({ apiKey: this.activeEndpoint.apiKey, baseURL: this.activeEndpoint.baseURL, model: found.id, provider: found.provider });
       } else {
         this.llmClient.model = found.id;
       }
@@ -286,7 +286,7 @@ export class AgentLoop implements AgentBackend {
         this.activeModel = fresh;
         const ep = this.resolveEndpoint(fresh);
         if (ep && (ep.apiKey !== this.activeEndpoint?.apiKey || ep.baseURL !== this.activeEndpoint?.baseURL)) {
-          this.llmClient.reconfigure({ apiKey: ep.apiKey, baseURL: ep.baseURL, model: fresh.id });
+          this.llmClient.reconfigure({ apiKey: ep.apiKey, baseURL: ep.baseURL, model: fresh.id, provider: fresh.provider });
         }
         this.activeEndpoint = ep;
         identityChanged = fresh.contextWindow !== prev.contextWindow;
