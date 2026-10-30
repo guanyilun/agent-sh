@@ -107,7 +107,10 @@ test("reasoningParams cannot override the core request fields", async () => {
   });
   assert.equal(calls[0].model, "real-model");
   assert.ok((calls[0].messages as unknown[]).length > 0, "messages must not be clobbered");
-  assert.equal(calls[0].signal, undefined);
+  // The full engine always supplies its own cancellation signal, even without
+  // opts.signal; reasoning parameters must not replace it with the sentinel.
+  assert.ok(calls[0].signal instanceof AbortSignal);
+  assert.notEqual(calls[0].signal, "nope");
   assert.equal(calls[0].reasoning_effort, "high", "genuine reasoning params still pass through");
 });
 
@@ -201,4 +204,18 @@ test("shouldStop ends the run after the current round of tool calls", async () =
     shouldStop: () => stop,
   });
   assert.equal(calls.length, 1);
+});
+
+test("outMeta.tokensUsed tracks live across streamed responses, not just at the end", async () => {
+  const meta: SubagentRunMeta = {};
+  const snapshots: number[] = [];
+  let turn = 0;
+  await runSubagent({
+    ...base,
+    llmClient: fakeClient([], () => (turn++ === 0 ? toolReply() : textReply())),
+    tools: [{ ...noopTool, execute: async () => { snapshots.push(meta.tokensUsed ?? -1); return { content: "ok", exitCode: 0, isError: false }; } }],
+    outMeta: meta,
+  });
+  assert.deepEqual(snapshots, [7]);
+  assert.equal(meta.tokensUsed, 14);
 });

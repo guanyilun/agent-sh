@@ -3,6 +3,9 @@
  * agent:submit (run the LLM tool loop) and agent:cancel-request (abort it),
  * and the loop emits the agent:* progress/response/tool event stream.
  */
+import { randomUUID } from "node:crypto";
+import type { AgentRunInput, AgentRunOptions, AgentRunResult, AgentSnapshot, AgentToolDispatchInput } from "./run-contract.js";
+export type { AgentRunInput, AgentRunOptions, AgentRunResult, AgentSnapshot, AgentRunMessage, AgentRunUsage, AgentToolDispatchInput, AgentToolDispatcher } from "./run-contract.js";
 import type { EventBus, BusEvents } from "../core/event-bus.js";
 import type { Model, ModelEndpoint } from "./host-types.js";
 import { llmErrorStatus, type LlmClient } from "./llm-client.js";
@@ -29,8 +32,13 @@ import type { FileReadCache } from "./tools/read-file.js";
 type PendingToolCall = ProtocolPendingToolCall;
 
 /** Reject on abort; orphaned `p` keeps running but its result is dropped. */
-function raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+function raceAbort<T>(start: () => Promise<T> | T, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(new Error("cancelled"));
+  // Attach rejection handlers even if starting the operation itself aborts.
+  const p = Promise.resolve().then(() => {
+    if (signal.aborted) throw new Error("cancelled");
+    return start();
+  });
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(new Error("cancelled"));
     signal.addEventListener("abort", onAbort, { once: true });
@@ -61,6 +69,8 @@ export interface AgentLoopConfig {
   compositor?: Compositor;
   /** Instance ID from core — ensures history entries match the ID in prompts. */
   instanceId?: string;
+  /** Discover global/project instructions and skills. Enabled by default. */
+  ambientContext?: boolean;
 }
 
 export class AgentLoop implements AgentBackend {
@@ -98,19 +108,38 @@ export class AgentLoop implements AgentBackend {
   private bus: EventBus;
   private llmClient: LlmClient;
   private handlers: HandlerFunctions;
-  private thinkingLevel: string = getSettings().thinkingLevel ?? "off";
+  private thinkingLevel = "off";
+  private activeRun: Promise<AgentRunResult> | null = null;
+  private runState: { options: AgentRunOptions; result: AgentRunResult } | null = null;
+  private disposed = false;
+  private ambientContext: boolean;
+  private boundHandlers: Array<() => void> = [];
+  private legacySubmission = 0;
+  private acceptingSteer = false;
+
+  private settings(): ReturnType<typeof getSettings> {
+    return this.handlers.call("config:settings")?.get() ?? getSettings();
+  }
+
+  private updateSettings(patch: Parameters<typeof updateSettings>[0]): void {
+    const service = this.handlers.call("config:settings");
+    if (service) service.update(patch);
+    else updateSettings(patch);
+  }
   private compositor: Compositor | null = null;
   private toolProtocol: ToolProtocol;
   private instanceId: string;
 
   constructor(config: AgentLoopConfig) {
+    this.ambientContext = config.ambientContext ?? true;
     this.bus = config.bus;
     this.llmClient = config.llmClient;
     this.handlers = config.handlers;
+    this.thinkingLevel = this.settings().thinkingLevel ?? "off";
     this.compositor = config.compositor ?? null;
     this.instanceId = config.instanceId ?? "unknown";
     this.toolRegistry = new ToolRegistry(this.handlers);
-    this.fileReadCache = this.handlers.call("agent:file-read-cache") as FileReadCache;
+    this.fileReadCache = (this.handlers.call("agent:file-read-cache") as FileReadCache | undefined) ?? new Map();
 
     this.conversation = new LiveView(this.handlers, this.instanceId);
 
@@ -119,9 +148,9 @@ export class AgentLoop implements AgentBackend {
 
     // Tool protocol — controls how tools are presented to the LLM
     const { names: fromExtensions } = this.bus.emitPipe("agent:core-tools:collect", { names: [] });
-    const coreTools = Array.from(new Set([...(getSettings().coreTools ?? []), ...fromExtensions]));
+    const coreTools = Array.from(new Set([...(this.settings().coreTools ?? []), ...fromExtensions]));
     this.toolProtocol = createToolProtocol(
-      getSettings().toolMode ?? "api",
+      this.settings().toolMode ?? "api",
       coreTools,
     );
 
@@ -136,6 +165,23 @@ export class AgentLoop implements AgentBackend {
 
   /** Subscribe to bus events — activates this backend. */
   wire(): void {
+    if (this.disposed) throw new Error("AgentLoop is disposed");
+    if (this.boundListeners.length) return;
+    const define = (name: string, fn: (...args: any[]) => any) => {
+      const dispose = this.handlers.define(name, fn);
+      if (dispose) this.boundHandlers.push(dispose);
+    };
+    define("agent:run", ({ query, ...options }: AgentRunInput) => this.run(query, options));
+    // Unlike the legacy bus event, this callable must never start an idle turn.
+    define("agent:steer-active", (text: string): boolean => {
+      if (!this.activeRun || !this.abortController || this.abortController.signal.aborted || !this.acceptingSteer) return false;
+      this.steerQueue.push({ text });
+      this.bus.emit("agent:steer-queued", { text, depth: this.steerQueue.length });
+      return true;
+    });
+    define("agent:dispose", () => this.dispose());
+    define("agent:snapshot", () => this.snapshot());
+    define("agent:restore", (snapshot: AgentSnapshot) => this.restore(snapshot));
     const on = <K extends keyof BusEvents>(
       event: K,
       fn: (payload: BusEvents[K]) => void,
@@ -181,14 +227,14 @@ export class AgentLoop implements AgentBackend {
 
 
     on("agent:submit", ({ query, images }) => {
-      this.handleQuery(query, images).catch(() => {});
+      this.submitLegacy(query, images).catch(() => {});
     });
     on("agent:cancel-request", (e) => {
       this.abortController?.abort(e.silent ? "silent" : undefined);
     });
     on("agent:steer", ({ text, images }) => {
       if (!this.abortController) {
-        this.handleQuery(text, images).catch(() => {});
+        this.startRun(text, { images }, true).catch(() => {});
         return;
       }
       this.steerQueue.push({ text, images });
@@ -221,7 +267,7 @@ export class AgentLoop implements AgentBackend {
       // dynamic providers: agent-backend defers model resolution to
       // core:extensions-loaded, so the extension re-registers before the
       // persisted default is looked up.
-      updateSettings({
+      this.updateSettings({
         defaultProvider: found.provider,
         providers: { [found.provider]: { defaultModel: found.id } },
       });
@@ -274,13 +320,13 @@ export class AgentLoop implements AgentBackend {
         return;
       }
       this.thinkingLevel = level;
-      updateSettings({ thinkingLevel: level });
+      this.updateSettings({ thinkingLevel: level });
       this.bus.emit("config:changed", {});
     });
     onPipe("config:get-thinking", () => {
       const mode = this.activeModel;
       const supported = mode.reasoning !== false && mode.supportsReasoningEffort !== false;
-      return { level: this.thinkingLevel, levels: AgentLoop.THINKING_LEVELS, supported };
+      return { level: this.settings().thinkingLevel ?? this.thinkingLevel, levels: AgentLoop.THINKING_LEVELS, supported };
     });
     on("agent:reset-session", () => {
       this.cancel();
@@ -330,6 +376,7 @@ export class AgentLoop implements AgentBackend {
     });
 
     on("shell:cwd-change", ({ cwd }) => {
+      if (!this.ambientContext) return;
       const projectSkills = discoverProjectSkills(cwd);
       const newNames = new Set(projectSkills.map(s => s.name));
 
@@ -351,6 +398,7 @@ export class AgentLoop implements AgentBackend {
 
   /** Unsubscribe from bus events — deactivates this backend. */
   unwire(): void {
+    for (const dispose of this.boundHandlers.splice(0)) dispose();
     for (const { event, fn } of this.boundListeners) {
       this.bus.off(event as any, fn);
     }
@@ -374,7 +422,8 @@ export class AgentLoop implements AgentBackend {
 
   /** Get all registered tools (union of builtins + extension contributions). */
   getTools(): ToolDefinition[] {
-    return this.bus.emitPipe("agent:tools", { tools: [] }).tools;
+    const tools = this.bus.emitPipe("agent:tools", { tools: [] }).tools;
+    return [...new Map([...this.toolRegistry.allView(), ...tools].map(t => [t.name, t])).values()];
   }
 
   /** Find a tool by name across the full pipe union. */
@@ -455,9 +504,79 @@ export class AgentLoop implements AgentBackend {
     return [`## Extensions\n${parts.join("\n\n")}`];
   }
 
-  kill(): void {
+  /** Rejects concurrent calls; the returned promise is the engine's own run. */
+  run(query: string, options: AgentRunOptions = {}): Promise<AgentRunResult> {
+    return this.startRun(query, options);
+  }
+
+  private startRun(query: string, options: AgentRunOptions, immediate = false): Promise<AgentRunResult> {
+    if (this.disposed) return Promise.reject(new Error("AgentLoop is disposed"));
+    if (this.activeRun) return Promise.reject(new Error("AgentLoop is busy"));
+    for (const [name, value] of [["maxIterations", options.maxIterations], ["budgetTokens", options.budgetTokens]] as const) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+        return Promise.reject(new Error(`${name} must be a non-negative safe integer`));
+      }
+    }
+    // Reserve synchronously, before any event or callback can re-enter run().
+    const controller = new AbortController();
+    this.abortController = controller;
+    this.acceptingSteer = true;
+    let start!: () => void;
+    const pending = new Promise<AgentRunResult>((resolve, reject) => {
+      start = () => { this.handleQuery(query, options, controller).then(resolve, reject); };
+    });
+    const promise = pending.finally(() => {
+      if (this.activeRun === promise) this.activeRun = null;
+    });
+    this.activeRun = promise;
+    // Legacy submit must announce processing-start before idle observers run.
+    if (immediate) start();
+    else queueMicrotask(start);
+    return promise;
+  }
+
+  private async submitLegacy(query: string, images?: ImageContent[]): Promise<void> {
+    const submission = ++this.legacySubmission;
+    const previous = this.activeRun;
+    if (previous) {
+      this.cancel();
+      await previous;
+      if (submission !== this.legacySubmission || this.disposed) return;
+    }
+    await this.startRun(query, { images }, true);
+  }
+
+  private wireHistory(): AgentSnapshot["messages"] {
+    return structuredClone(this.conversation.forLLM().map(message => {
+      const { meta: _meta, ...wire } = message as typeof message & { meta?: unknown };
+      return wire;
+    }));
+  }
+
+  snapshot(): AgentSnapshot {
+    if (this.activeRun) throw new Error("AgentLoop is busy");
+    return { version: 1, messages: this.wireHistory() };
+  }
+
+  restore(snapshot: AgentSnapshot): void {
+    if (this.disposed) throw new Error("AgentLoop is disposed");
+    if (this.activeRun) throw new Error("AgentLoop is busy");
+    if (snapshot.version !== 1 || !Array.isArray(snapshot.messages)) throw new Error("Unsupported AgentLoop snapshot");
+    this.conversation = new LiveView(this.handlers, this.instanceId);
+    this.conversation.replaceMessages(structuredClone(snapshot.messages));
+    this.fileReadCache.clear();
+    this.lastProjectSkillNames.clear();
+  }
+
+  async dispose(): Promise<void> {
+    this.disposed = true;
     this.cancel();
     this.unwire();
+    await this.activeRun;
+  }
+
+  kill(): void {
+    void this.dispose();
   }
 
   private cancel(): void {
@@ -469,9 +588,10 @@ export class AgentLoop implements AgentBackend {
     if (model.reasoning === false) return {};
     if (model.supportsReasoningEffort === false) return {};
     const build = this.activeEndpoint?.buildReasoningParams;
-    if (build) return build(this.thinkingLevel);
-    if (this.thinkingLevel === "off") return {};
-    const effort = this.thinkingLevel === "xhigh" ? "high" : this.thinkingLevel;
+    const level = this.settings().thinkingLevel ?? this.thinkingLevel;
+    if (build) return build(level);
+    if (level === "off") return {};
+    const effort = level === "xhigh" ? "high" : level;
     return { reasoning_effort: effort };
   }
 
@@ -668,21 +788,23 @@ export class AgentLoop implements AgentBackend {
       if (frontend) parts.push(frontend);
       parts.push(STATIC_GUIDE);
 
-      // Global behavioral rules (~/.agent-sh/AGENTS.md) — persistent agent memory
-      const agentsMd = loadGlobalAgentsMd();
-      if (agentsMd) parts.push(agentsMd);
+      if (this.ambientContext) {
+        // Global behavioral rules (~/.agent-sh/AGENTS.md) — persistent agent memory
+        const agentsMd = loadGlobalAgentsMd();
+        if (agentsMd) parts.push(agentsMd);
 
-      // Global skills — stable across cwd changes, cacheable with the system prompt
-      const globalSkills = discoverGlobalSkills();
-      const skillsBlock = formatSkillsBlock(globalSkills);
-      if (skillsBlock) parts.push(skillsBlock);
+        // Global skills — stable across cwd changes, cacheable with the system prompt
+        const globalSkills = discoverGlobalSkills();
+        const skillsBlock = formatSkillsBlock(globalSkills);
+        if (skillsBlock) parts.push(skillsBlock);
 
-      // Project conventions + project skills — stable within a cwd.
-      // Placed here so they enter the provider's prompt cache with the
-      // system prompt, and only re-materialize when cwd changes invalidate
-      // cachedSystemPrompt in executeLoop.
-      const projectStatic = buildStaticByCwd(this.handlers.call("cwd") as string);
-      if (projectStatic) parts.push(projectStatic);
+        // Project conventions + project skills — stable within a cwd.
+        // Placed here so they enter the provider's prompt cache with the
+        // system prompt, and only re-materialize when cwd changes invalidate
+        // cachedSystemPrompt in executeLoop.
+        const projectStatic = buildStaticByCwd(this.handlers.call("cwd") as string);
+        if (projectStatic) parts.push(projectStatic);
+      }
 
       const extensionSections = this.buildExtensionSections();
       if (extensionSections.length > 0) {
@@ -712,7 +834,7 @@ export class AgentLoop implements AgentBackend {
     h.define("agent:get-model", () => ({
       model: this.activeModel.id,
       provider: this.activeModel.provider,
-      thinkingLevel: this.thinkingLevel,
+      thinkingLevel: this.settings().thinkingLevel ?? this.thinkingLevel,
       contextWindow: this.activeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     }));
 
@@ -769,7 +891,7 @@ export class AgentLoop implements AgentBackend {
 
     h.define("agent:get-compaction-state", () => {
       const contextWindow = this.activeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-      const ratio = getSettings().autoCompactThreshold ?? 0.5;
+      const ratio = this.settings().autoCompactThreshold ?? 0.5;
       return {
         count: this.compactionCount,
         autoCompactThreshold: ratio,
@@ -836,6 +958,14 @@ export class AgentLoop implements AgentBackend {
       reason: "user-aborted";
     }) => {});
 
+    // Hosts may inject a dispatcher before constructing the loop.
+    if (!h.hasBase?.("tool:dispatch")) {
+      h.define("tool:dispatch", ({ name, args, tool, onChunk, context }: AgentToolDispatchInput) =>
+        h.hasBase?.(`tool:${name}`)
+          ? this.toolRegistry.call(name, args, onChunk, context)
+          : tool.execute(args, onChunk, context));
+    }
+
     // Wraps each tool call: permission → execute → emit events.
     h.define("tool:execute", async (ctx: {
       name: string; id: string;
@@ -845,8 +975,11 @@ export class AgentLoop implements AgentBackend {
       batchIndex?: number;
       batchTotal?: number;
       signal: AbortSignal;
+      telemetry?: boolean;
+      attribution?: boolean;
     }) => {
       const { name, id, args, tool, signal } = ctx;
+      const telemetry = ctx.telemetry !== false;
 
       // Validate required input fields before display/permission/execute.
       // Some models emit wrong arg names (e.g. `file_path` instead of `path`),
@@ -856,67 +989,86 @@ export class AgentLoop implements AgentBackend {
       const missing = required.filter((k) => args[k] === undefined || args[k] === null);
       if (missing.length > 0) {
         const msg = `Missing required argument(s): ${missing.join(", ")}. Expected: ${required.join(", ")}. Received: ${Object.keys(args).join(", ") || "(none)"}`;
-        this.bus.emit("agent:tool-call", { tool: name, args });
+        if (telemetry) this.bus.emit("agent:tool-call", { tool: name, args });
         return { content: msg, exitCode: 1, isError: true };
       }
 
       const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" as const };
+      let onChunk: ((chunk: string) => void) | undefined;
+      let toolCtx: ToolExecutionContext = { signal };
+      if (telemetry) {
+        const label = tool.displayName ?? name;
+        this.bus.emit("agent:tool-started", {
+          title: typeof args.description === "string" ? `${label}: ${args.description}` : label,
+          name,
+          toolCallId: id,
+          kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
+          displayDetail: tool.formatCall?.(args),
+          sourceLanguage: display.sourceLanguage,
+          batchIndex: ctx.batchIndex, batchTotal: ctx.batchTotal,
+        });
+        this.bus.emit("agent:tool-call", { tool: name, args });
 
-      const label = tool.displayName ?? name;
-      this.bus.emit("agent:tool-started", {
-        title: typeof args.description === "string" ? `${label}: ${args.description}` : label,
-        name,
-        toolCallId: id,
-        kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
-        displayDetail: tool.formatCall?.(args),
-        sourceLanguage: display.sourceLanguage,
-        batchIndex: ctx.batchIndex, batchTotal: ctx.batchTotal,
-      });
-      this.bus.emit("agent:tool-call", { tool: name, args });
-
-      // Execute — use ctx.onChunk so advisors can wrap the streaming callback.
-      const onChunk = tool.showOutput !== false ? ctx.onChunk : undefined;
-      const toolCtx: ToolExecutionContext = { signal };
-      if (this.compositor) {
-        toolCtx.ui = createToolUI(this.bus, this.compositor.surface("agent"));
+        // Use ctx.onChunk so advisors can wrap the streaming callback.
+        onChunk = tool.showOutput !== false ? ctx.onChunk : undefined;
+        if (this.compositor) {
+          toolCtx = { signal, ui: createToolUI(this.bus, this.compositor.surface("agent")) };
+        }
       }
       let result: Awaited<ReturnType<typeof tool.execute>>;
       try {
-        result = await raceAbort(this.toolRegistry.call(name, args, onChunk, toolCtx), signal);
+        result = await raceAbort(() => {
+          if (ctx.attribution !== false && tool.modifiesFiles && this.runState) {
+            this.runState.result.mutatingToolExecuted = true;
+          }
+          return this.handlers.call("tool:dispatch", {
+            name, args, tool, onChunk, context: toolCtx,
+          } satisfies AgentToolDispatchInput);
+        }, signal);
+        if (!result) throw new Error(`Tool "${name}" returned no result`);
       } catch (err) {
         if (signal.aborted) {
           try { this.handlers.call("tool:cancel", { name, args, reason: "user-aborted" }); } catch {}
         }
+        if (!signal.aborted && this.runState?.options.throwToolErrors) throw err;
         const message = err instanceof Error ? err.message : String(err);
         result = { content: message, exitCode: 1, isError: true };
       }
 
       if (tool.modifiesFiles && typeof args.path === "string" && !result.isError) {
-        const absPath = path.resolve(process.cwd(), args.path);
+        const absPath = path.resolve((this.handlers.call("cwd") as string) ?? process.cwd(), args.path);
         this.fileReadCache.delete(absPath);
       }
 
-      const resultDisplay = result.display ?? tool.formatResult?.(args, result);
+      if (telemetry) {
+        const resultDisplay = result.display ?? tool.formatResult?.(args, result);
 
-      // Emit completion events (via transform pipe so extensions can override)
-      this.bus.emitTransform("agent:tool-completed", {
-        toolCallId: id, exitCode: result.exitCode,
-        rawOutput: result.content, kind: display.kind,
-        resultDisplay,
-      });
-      this.bus.emit("agent:tool-output", {
-        tool: name, output: contentText(result.content), exitCode: result.exitCode,
-      });
+        // Emit completion events (via transform pipe so extensions can override)
+        this.bus.emitTransform("agent:tool-completed", {
+          toolCallId: id, exitCode: result.exitCode,
+          rawOutput: result.content, kind: display.kind,
+          resultDisplay,
+        });
+        this.bus.emit("agent:tool-output", {
+          tool: name, output: contentText(result.content), exitCode: result.exitCode,
+        });
+      }
 
       return result;
     });
   }
 
-  private async handleQuery(query: string, images?: ImageContent[]): Promise<void> {
-    if (this.abortController) {
-      this.abortController.abort();
-    }
-    const controller = new AbortController();
+  private async handleQuery(query: string, options: AgentRunOptions, controller: AbortController): Promise<AgentRunResult> {
+    const { images } = options;
+    const result: AgentRunResult = {
+      runId: options.runId ?? randomUUID(), stopReason: "completed", text: "", finalText: "",
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      iterations: 0, messages: [], mutatingToolExecuted: false,
+    };
+    this.runState = { options, result };
+    const onAbort = () => controller.abort(options.signal?.reason);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted || this.disposed) onAbort();
     this.abortController = controller;
     const signal = controller.signal;
     // Each loop iteration adds an abort listener (via OpenAI SDK stream);
@@ -924,11 +1076,17 @@ export class AgentLoop implements AgentBackend {
     setMaxListeners(0, signal);
 
     this.queryCount++;
-    this.bus.emit("agent:query", { query });
-    this.bus.emit("agent:processing-start", {});
     let responseText = "";
 
     try {
+      this.bus.emit("agent:query", { query });
+      this.bus.emit("agent:processing-start", {});
+      if (signal.aborted) return result;
+      if (options.history) {
+        this.conversation = new LiveView(this.handlers, this.instanceId);
+        this.conversation.replaceMessages(structuredClone(options.history));
+        this.fileReadCache.clear();
+      }
       // Per-query producers (shell events + any extension-registered
       // per-query signals) produce content that gets frozen into this
       // user message inside <query_context>, distinguishing it from the
@@ -947,6 +1105,7 @@ export class AgentLoop implements AgentBackend {
       }
 
       this.conversation.addUserMessage(userContent, userImages);
+      options.onMessage?.({ role: "user", content: query });
       this.bus.emit("conversation:message-appended", { role: "user", content: query });
 
       responseText = await this.executeLoop(signal);
@@ -954,13 +1113,17 @@ export class AgentLoop implements AgentBackend {
       if (!signal.aborted) {
         if (process.env.DEBUG && e instanceof Error) console.error("[agent-sh] query failed:\n" + e.stack);
         const msg = this.formatError(e);
+        result.stopReason = "failed";
+        result.error = options.rawErrors ? (e instanceof Error ? e.message : String(e)) : msg;
         this.bus.emit("agent:error", { message: msg });
       }
     } finally {
-      // Listeners below can submit the next query synchronously (ashi drains its
-      // queue on processing-done), installing their own controller — only clear ours.
-      if (this.abortController === controller) this.abortController = null;
-
+      this.acceptingSteer = false;
+      options.signal?.removeEventListener("abort", onAbort);
+      if (signal.aborted) result.stopReason = "cancelled";
+      result.messages = this.wireHistory();
+      responseText = result.text;
+      this.runState = null;
       if (this.steerQueue.length > 0) {
         const texts = this.steerQueue.map((m) => m.text);
         this.steerQueue = [];
@@ -980,8 +1143,14 @@ export class AgentLoop implements AgentBackend {
       this.bus.emitTransform("agent:response-done", {
         response: responseText,
       });
+      // Release only after all old-turn notifications, but before listeners
+      // synchronously submit/steer the next turn. The promise finalizer uses
+      // identity so it cannot clear a reentrant run's reservation.
+      this.activeRun = null;
+      if (this.abortController === controller) this.abortController = null;
       this.bus.emit("agent:processing-done", {});
     }
+    return result;
   }
 
   private drainSteerQueue(): void {
@@ -996,6 +1165,7 @@ export class AgentLoop implements AgentBackend {
         steerImages = undefined;
       }
       this.conversation.addUserMessage(text, steerImages);
+      this.runState?.options.onMessage?.({ role: "user", content: text });
       this.bus.emit("agent:query", { query: text });
       this.bus.emit("conversation:message-appended", { role: "user", content: text });
       this.bus.emit("agent:steer-consumed", { text, depth: queued.length - i - 1 });
@@ -1018,13 +1188,23 @@ export class AgentLoop implements AgentBackend {
     let cachedSystemPrompt: string | undefined;
     let lastCwd = this.handlers.call("cwd") as string;
 
+    const state = this.runState!;
+    const { options, result: runResult } = state;
     while (!signal.aborted) {
+      const limit = options.budgetTokens !== undefined && runResult.usage.completion_tokens >= options.budgetTokens
+        ? "budget" : options.maxIterations !== undefined && runResult.iterations >= options.maxIterations ? "iterations" : undefined;
+      if (limit) {
+        runResult.stopReason = "limited";
+        runResult.limit = limit;
+        break;
+      }
+      runResult.iterations++;
       this.drainSteerQueue();
 
       // Auto-compact when total context approaches the window limit.
       const totalEstimate = this.conversation.estimatePromptTokens();
       const contextWindow = this.activeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-      const s = getSettings();
+      const s = this.settings();
       const threshold = Math.floor(
         (contextWindow - RESPONSE_RESERVE) * s.autoCompactThreshold,
       );
@@ -1047,8 +1227,8 @@ export class AgentLoop implements AgentBackend {
         lastCwd = currentCwd;
       }
 
-      const systemPrompt = cachedSystemPrompt ?? (cachedSystemPrompt = this.handlers.call("system-prompt:build") as string);
-      const dynamicContext = this.handlers.call("dynamic-context:build") as string;
+      const systemPrompt = options.systemPrompt ?? (cachedSystemPrompt ?? (cachedSystemPrompt = this.handlers.call("system-prompt:build") as string));
+      const dynamicContext = options.dynamicContext ?? this.handlers.call("dynamic-context:build") as string;
 
       // Shell events are injected once per user query (see handleQuery),
       // not per loop iteration. Mid-loop injection would break the
@@ -1063,9 +1243,14 @@ export class AgentLoop implements AgentBackend {
       }) as ProtocolPendingToolCall[];
 
       fullResponseText += text;
+      runResult.text = fullResponseText;
+      if (text) runResult.finalText = text;
 
       if (text || toolCalls.length > 0) {
         this.toolProtocol.recordAssistant(this.conversation, text, toolCalls, extras);
+        options.onMessage?.({ role: "assistant", content: text,
+          toolCalls: toolCalls.length ? toolCalls.map(tc => ({ name: tc.name, arguments: tc.argumentsJson })) : undefined,
+        });
         this.bus.emit("conversation:message-appended", {
           role: "assistant",
           content: text,
@@ -1099,9 +1284,6 @@ export class AgentLoop implements AgentBackend {
       // requiring tools sequentially (to avoid overlapping permission prompts).
       const batchTotal = toolCalls.length;
       const collectedResults: ProtocolToolResult[] = [];
-
-      // Round-scoped cache for pure, read-only tool calls
-      const roundCache = new Map<string, ProtocolToolResult>();
 
       const executeSingle = async (tc: PendingToolCall, batchIndex?: number) => {
         // Rewrite meta-tool calls (e.g., use_extension → actual tool)
@@ -1145,42 +1327,6 @@ export class AgentLoop implements AgentBackend {
         // normalize-args.ts for the diagnostic that uncovered this.
         args = normalizeToolArgs(args, tool.input_schema);
 
-        // ── Round-scoped cache for cacheable read-only tools ──
-        const cacheable = !tool.modifiesFiles && tool.showOutput !== true;
-        const cacheKey = cacheable ? `${tc.name}:${JSON.stringify(args)}` : null;
-        if (cacheKey) {
-          const cached = roundCache.get(cacheKey);
-          if (cached) {
-            const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" as const };
-            this.bus.emit("agent:tool-started", {
-              title: tool.displayName ?? tc.name,
-              name: tc.name,
-              toolCallId: tc.id,
-              kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
-              displayDetail: tool.formatCall?.(args),
-              sourceLanguage: display.sourceLanguage,
-              batchIndex, batchTotal: batchTotal > 1 ? batchTotal : undefined,
-            });
-            this.bus.emit("agent:tool-call", { tool: tc.name, args });
-            // Reconstruct a ToolResult for formatResult; ProtocolToolResult has no exitCode
-            const cachedToolResult = { content: cached.content, exitCode: 0, isError: cached.isError };
-            const resultDisplay = tool.formatResult?.(args, cachedToolResult);
-            this.bus.emitTransform("agent:tool-completed", {
-              toolCallId: tc.id, exitCode: 0,
-              rawOutput: cached.content, kind: display.kind,
-              resultDisplay,
-            });
-            this.bus.emit("agent:tool-output", {
-              tool: tc.name, output: contentText(cached.content), exitCode: 0,
-            });
-            collectedResults.push({
-              callId: tc.id, toolName: tc.name,
-              content: cached.content, isError: cached.isError,
-            });
-            return;
-          }
-        }
-
         // Execute via handler — extensions can advise to add safe-mode,
         // logging, metrics, custom permission policies, etc.
         const defaultOnChunk = (chunk: string) => {
@@ -1223,9 +1369,6 @@ export class AgentLoop implements AgentBackend {
           callId: tc.id, toolName: tc.name,
           content, isError: result.isError,
         };
-        if (cacheKey) {
-          roundCache.set(cacheKey, finalResult);
-        }
         collectedResults.push(finalResult);
       };
 
@@ -1233,7 +1376,7 @@ export class AgentLoop implements AgentBackend {
       const sequential: PendingToolCall[] = [];
       for (const tc of toolCalls) {
         const tool = this.findTool(tc.name);
-        if (tool && !tool.modifiesFiles) {
+        if (options.toolScheduling !== "sequential" && tool && !tool.modifiesFiles) {
           parallel.push(tc);
         } else {
           sequential.push(tc);
@@ -1354,7 +1497,12 @@ export class AgentLoop implements AgentBackend {
         })),
       });
 
+      // Keep wire results in call order even when execution finished out of order.
+      collectedResults.sort((a, b) => toolCalls.findIndex(tc => tc.id === a.callId) - toolCalls.findIndex(tc => tc.id === b.callId));
       this.toolProtocol.recordResults(this.conversation, collectedResults);
+      for (const r of collectedResults) options.onMessage?.({
+        role: "tool", content: contentText(r.content), toolName: r.toolName, isError: !!r.isError,
+      });
 
       // Emit enriched message-appended events so derived-log extensions
       // can summarize each tool result without re-parsing the message
@@ -1371,6 +1519,11 @@ export class AgentLoop implements AgentBackend {
           toolArgs: args,
           isError: !!r.isError,
         });
+      }
+      if (!signal.aborted && await options.shouldStop?.()) {
+        runResult.stopReason = "limited";
+        runResult.limit = "shouldStop";
+        break;
       }
     }
 
@@ -1469,6 +1622,7 @@ export class AgentLoop implements AgentBackend {
     let reasoning = "";
     const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();
     const pendingToolCalls: PendingToolCall[] = [];
+    let responseUsage: AgentRunResult["usage"] | undefined;
 
     // Tool protocol controls what goes in the API tools param vs dynamic context.
     // agent:tools:visible is a filter point on the assembled list — distinct from
@@ -1493,23 +1647,29 @@ export class AgentLoop implements AgentBackend {
     );
 
     const requestParams = {
+      ...(this.runState?.options.reasoningParams ?? this.reasoningParams()),
       messages,
       tools: apiTools,
       model: this.activeModel.id,
-      max_tokens: this.activeModel.maxTokens ?? 65536,
-      ...this.reasoningParams(),
+      max_tokens: Math.min(this.activeModel.maxTokens ?? 65536,
+        this.runState?.options.budgetTokens === undefined ? Infinity
+          : this.runState.options.budgetTokens - this.runState.result.usage.completion_tokens),
     };
     this.bus.emit("llm:request", requestParams);
 
     const headers = this.activeEndpoint?.buildRequestHeaders?.({ sessionId: this.currentSessionId() });
-    const stream = await this.llmClient.stream({
+    const stream = await raceAbort(() => this.llmClient.stream({
       ...requestParams,
       signal,
       ...(headers && Object.keys(headers).length ? { headers } : {}),
-    });
+    }), signal);
+    const iterator = stream[Symbol.asyncIterator]();
 
     try {
-    for await (const chunk of stream) {
+    while (!signal.aborted) {
+      const next = await raceAbort(() => iterator.next(), signal);
+      if (next.done) break;
+      const chunk = next.value;
       if (signal.aborted) break;
       this.bus.emit("llm:chunk", { chunk });
 
@@ -1518,6 +1678,11 @@ export class AgentLoop implements AgentBackend {
         const u = (chunk as any).usage;
         const promptTokens = u.prompt_tokens ?? 0;
         const cachedPromptTokens = this.activeEndpoint?.extractCachedTokens?.(u);
+        responseUsage = {
+          prompt_tokens: promptTokens, completion_tokens: u.completion_tokens ?? 0,
+          total_tokens: u.total_tokens ?? promptTokens + (u.completion_tokens ?? 0),
+          ...(typeof cachedPromptTokens === "number" ? { cached_tokens: cachedPromptTokens } : {}),
+        };
         this.bus.emit("agent:usage", {
           prompt_tokens: promptTokens,
           completion_tokens: u.completion_tokens ?? 0,
@@ -1590,6 +1755,19 @@ export class AgentLoop implements AgentBackend {
     } catch (e) {
       // On abort, fall through with whatever was accumulated so far.
       if (!signal.aborted) throw e;
+    } finally {
+      // Preserve for-await's iterator cleanup without letting an uncooperative
+      // iterator prevent cancellation from settling the run.
+      if (signal.aborted) void Promise.resolve(iterator.return?.()).catch(() => {});
+    }
+
+    if (responseUsage && this.runState) {
+      const total = this.runState.result.usage;
+      total.prompt_tokens += responseUsage.prompt_tokens;
+      total.completion_tokens += responseUsage.completion_tokens;
+      total.total_tokens += responseUsage.total_tokens;
+      if (responseUsage.cached_tokens !== undefined) total.cached_tokens = (total.cached_tokens ?? 0) + responseUsage.cached_tokens;
+      this.runState.options.onUsage?.({ ...responseUsage });
     }
 
     if (streamFilter) {
