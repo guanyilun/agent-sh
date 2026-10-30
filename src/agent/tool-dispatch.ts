@@ -11,13 +11,13 @@ export function ensureToolDispatcher(ctx: ExtensionContext): void {
 
   const currentTool = (name: string): ToolDefinition => {
     const tool = ctx.agent?.getTools().find(tool => tool.name === name);
-    if (!tool || !ctx.list().includes(`tool:${name}`)) {
+    if (!tool || !ctx.hasBase(`tool:${name}`)) {
       throw new Error(`Tool "${name}" is unavailable`);
     }
     return tool;
   };
 
-  if (!ctx.list().includes("tool:dispatch")) {
+  if (!ctx.hasBase("tool:dispatch")) {
     ctx.define("tool:dispatch", async ({ name, args, onChunk, context }: AgentToolDispatchInput): Promise<ToolResult> => {
       currentTool(name);
       context.signal?.throwIfAborted();
@@ -26,8 +26,6 @@ export function ensureToolDispatcher(ctx: ExtensionContext): void {
     });
   }
 
-  // Do not use list() as a base-presence check: policy advice alone creates an
-  // entry. define() installs the base without removing any existing advisors.
   ctx.define("tool:execute", async (input: {
     name: string;
     args: Record<string, unknown>;

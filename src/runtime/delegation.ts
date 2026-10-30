@@ -31,7 +31,7 @@ export function delegatedTools(
       ...tool,
       input_schema: structuredClone(tool.input_schema),
       async execute(args, onChunk, context) {
-        if (!parent.list().includes("tool:execute")) {
+        if (!parent.hasBase("tool:execute")) {
           throw new Error(`Cannot execute delegated tool "${name}": parent tool:execute dispatcher is unavailable; activate the parent's agent backend first`);
         }
         const progress = options.onProgress;
@@ -47,6 +47,8 @@ export function delegatedTools(
           onChunk: forwardChunk,
           // Direct callers may omit a context; never capture a parent run signal.
           signal: context?.signal ?? new AbortController().signal,
+          telemetry: false,
+          attribution: false,
         }) as ToolResult;
       },
     };

@@ -205,3 +205,17 @@ test("shouldStop ends the run after the current round of tool calls", async () =
   });
   assert.equal(calls.length, 1);
 });
+
+test("outMeta.tokensUsed tracks live across streamed responses, not just at the end", async () => {
+  const meta: SubagentRunMeta = {};
+  const snapshots: number[] = [];
+  let turn = 0;
+  await runSubagent({
+    ...base,
+    llmClient: fakeClient([], () => (turn++ === 0 ? toolReply() : textReply())),
+    tools: [{ ...noopTool, execute: async () => { snapshots.push(meta.tokensUsed ?? -1); return { content: "ok", exitCode: 0, isError: false }; } }],
+    outMeta: meta,
+  });
+  assert.deepEqual(snapshots, [7]);
+  assert.equal(meta.tokensUsed, 14);
+});

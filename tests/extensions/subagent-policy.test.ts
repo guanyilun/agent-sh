@@ -36,10 +36,10 @@ test("a real context without a policy dispatcher never uses the legacy named-han
   const core = createCore({});
   const ctx = core.extensionContext({ quit() {} });
   const agent = attachAgentSurface(ctx);
-  // Model an alternate host that intentionally exposes no dispatcher. Ash
-  // surfaces now install a valid bootstrap base even before backend startup.
   const visibleHandlers = ctx.list;
+  const realHasBase = ctx.hasBase;
   ctx.list = () => visibleHandlers().filter(name => name !== "tool:execute");
+  ctx.hasBase = (name: string) => name !== "tool:execute" && realHasBase(name);
   let rawExecuted = false;
   core.handlers.define("cwd", () => root);
   core.handlers.define("llm:get-client", () => ({

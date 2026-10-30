@@ -174,3 +174,78 @@ for (const toolsFirst of [true, false]) {
     } finally { await host.dispose(); rmSync(dir, { recursive: true, force: true }); }
   });
 }
+
+test("advice-only agent:run entries never take the native path", async () => {
+  const host = await createAgentHost({ cwd: process.cwd(), extensions: [{
+    name: "legacy-with-policy",
+    activate(ctx) {
+      ctx.advise("agent:snapshot", (next) => next());
+      ctx.advise("agent:restore", (next, s) => next(s));
+      ctx.bus.emit("agent:register-backend", { name: "legacy", kill() {}, async start() {
+        ctx.bus.on("agent:submit", () => {
+          ctx.bus.emit("agent:response-done", { response: "legacy reply" });
+          ctx.bus.emit("agent:processing-done", {});
+        });
+      } });
+    },
+  }] });
+  try {
+    host.context.bus.emit("config:switch-backend", { name: "legacy" });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal((await host.run("hi")).text, "legacy reply");
+    await assert.rejects(host.snapshot(), /does not support snapshots/);
+    await assert.rejects(host.restore({ version: 1, messages: [] }), /does not support restore/);
+  } finally { await host.dispose(); }
+});
+
+test("steer reports engine acceptance for active, completed and idle runs", async () => {
+  const { fake, requests } = client();
+  const host = await createAgentHost({ cwd: process.cwd(), extensions: [ashEngine({ client: fake })] });
+  try {
+    await host.run("warmup");
+    assert.throws(() => host.steer("idle"), /requires an active run/);
+    const pending = host.run("first");
+    assert.equal(host.steer("too late"), false);
+    await pending;
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests.length, 2);
+  } finally { await host.dispose(); }
+});
+
+test("steer survives a throwing steer advisor", async () => {
+  const { fake } = client();
+  const host = await createAgentHost({ cwd: process.cwd(), extensions: [ashEngine({ client: fake }), {
+    name: "bad-advisor", activate(ctx) { ctx.advise("agent:steer-active", () => { throw new Error("advisor fault"); }); },
+  }] });
+  try {
+    const pending = host.run("first");
+    host.steer("during run");
+    await pending;
+    await new Promise(resolve => setImmediate(resolve));
+  } finally { await host.dispose(); }
+});
+
+test("tool:execute telemetry and attribution flags control events and run state", async () => {
+  const { fake } = client();
+  const host = await createAgentHost({ cwd: process.cwd(), extensions: [ashEngine({ client: fake, tools: [
+    { name: "mutate", description: "mutates", modifiesFiles: true, input_schema: {}, execute: async () => ({ content: "done", exitCode: 0, isError: false }) },
+  ] })] });
+  const events: string[] = [];
+  for (const name of ["agent:tool-started", "agent:tool-call", "agent:tool-completed", "agent:tool-output"] as const) {
+    host.context.bus.on(name, () => events.push(name));
+  }
+  try {
+    const tool = host.context.agent!.getTools()[0];
+    const invoke = (extra: Record<string, unknown>) => host.context.call("tool:execute", {
+      name: "mutate", id: "direct", args: {}, tool, signal: new AbortController().signal, ...extra,
+    });
+    const running = host.run("active run");
+    assert.equal((await invoke({ telemetry: false, attribution: false })).content, "done");
+    assert.deepEqual(events, []);
+    const details = (await running).details!;
+    assert.equal(details.mutatingToolExecuted, false);
+    const warned = await invoke({});
+    assert.equal(warned.content, "done");
+    assert.equal(events.length, 4);
+  } finally { await host.dispose(); }
+});

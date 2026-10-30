@@ -36,6 +36,7 @@ export function ashEngine(options: AshEngineOptions): HostExtension {
       for (const tool of options.tools ?? []) surface.registerTool(tool);
       if (options.instructions) surface.registerInstruction("host", options.instructions);
       let loop: AgentLoop | undefined;
+      let releaseExecutor: (() => void) | undefined;
       ctx.bus.emit("agent:register-backend", {
         name: "ash",
         start: async () => {
@@ -46,12 +47,16 @@ export function ashEngine(options: AshEngineOptions): HostExtension {
             initialModel: model,
             ambientContext: options.ambientContext ?? false,
             instanceId: ctx.instanceId,
-            handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list },
+            handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list, hasBase: ctx.hasBase },
           });
-          if (options.executor) ctx.define("tool:dispatch", options.executor);
+          if (options.executor) {
+            releaseExecutor?.();
+            const release = ctx.define("tool:dispatch", options.executor);
+            releaseExecutor = typeof release === "function" ? release : undefined;
+          }
           loop.wire();
         },
-        kill: () => { loop?.kill(); loop = undefined; },
+        kill: () => { loop?.kill(); loop = undefined; releaseExecutor?.(); releaseExecutor = undefined; },
       });
     },
   };

@@ -41,6 +41,8 @@ export interface CoreContext {
   call: (name: string, ...args: any[]) => any;
   /** Names of all registered handlers — for diagnostic / introspection use. */
   list: () => string[];
+  /** True when a base handler is registered (advice alone does not count). */
+  hasBase: (name: string) => boolean;
 
   /** Teardown callback fired on /reload. For resources the scoped context
    *  can't track: process listeners, timers, watchers, sockets. */

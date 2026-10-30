@@ -959,9 +959,9 @@ export class AgentLoop implements AgentBackend {
     }) => {});
 
     // Hosts may inject a dispatcher before constructing the loop.
-    if (!h.list().includes("tool:dispatch")) {
+    if (!h.hasBase?.("tool:dispatch")) {
       h.define("tool:dispatch", ({ name, args, tool, onChunk, context }: AgentToolDispatchInput) =>
-        h.list().includes(`tool:${name}`)
+        h.hasBase?.(`tool:${name}`)
           ? this.toolRegistry.call(name, args, onChunk, context)
           : tool.execute(args, onChunk, context));
     }
@@ -975,8 +975,11 @@ export class AgentLoop implements AgentBackend {
       batchIndex?: number;
       batchTotal?: number;
       signal: AbortSignal;
+      telemetry?: boolean;
+      attribution?: boolean;
     }) => {
       const { name, id, args, tool, signal } = ctx;
+      const telemetry = ctx.telemetry !== false;
 
       // Validate required input fields before display/permission/execute.
       // Some models emit wrong arg names (e.g. `file_path` instead of `path`),
@@ -986,34 +989,38 @@ export class AgentLoop implements AgentBackend {
       const missing = required.filter((k) => args[k] === undefined || args[k] === null);
       if (missing.length > 0) {
         const msg = `Missing required argument(s): ${missing.join(", ")}. Expected: ${required.join(", ")}. Received: ${Object.keys(args).join(", ") || "(none)"}`;
-        this.bus.emit("agent:tool-call", { tool: name, args });
+        if (telemetry) this.bus.emit("agent:tool-call", { tool: name, args });
         return { content: msg, exitCode: 1, isError: true };
       }
 
       const display = tool.getDisplayInfo?.(args) ?? { kind: "execute" as const };
+      let onChunk: ((chunk: string) => void) | undefined;
+      let toolCtx: ToolExecutionContext = { signal };
+      if (telemetry) {
+        const label = tool.displayName ?? name;
+        this.bus.emit("agent:tool-started", {
+          title: typeof args.description === "string" ? `${label}: ${args.description}` : label,
+          name,
+          toolCallId: id,
+          kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
+          displayDetail: tool.formatCall?.(args),
+          sourceLanguage: display.sourceLanguage,
+          batchIndex: ctx.batchIndex, batchTotal: ctx.batchTotal,
+        });
+        this.bus.emit("agent:tool-call", { tool: name, args });
 
-      const label = tool.displayName ?? name;
-      this.bus.emit("agent:tool-started", {
-        title: typeof args.description === "string" ? `${label}: ${args.description}` : label,
-        name,
-        toolCallId: id,
-        kind: display.kind, icon: display.icon, locations: display.locations, rawInput: args,
-        displayDetail: tool.formatCall?.(args),
-        sourceLanguage: display.sourceLanguage,
-        batchIndex: ctx.batchIndex, batchTotal: ctx.batchTotal,
-      });
-      this.bus.emit("agent:tool-call", { tool: name, args });
-
-      // Execute — use ctx.onChunk so advisors can wrap the streaming callback.
-      const onChunk = tool.showOutput !== false ? ctx.onChunk : undefined;
-      const toolCtx: ToolExecutionContext = { signal };
-      if (this.compositor) {
-        toolCtx.ui = createToolUI(this.bus, this.compositor.surface("agent"));
+        // Use ctx.onChunk so advisors can wrap the streaming callback.
+        onChunk = tool.showOutput !== false ? ctx.onChunk : undefined;
+        if (this.compositor) {
+          toolCtx = { signal, ui: createToolUI(this.bus, this.compositor.surface("agent")) };
+        }
       }
       let result: Awaited<ReturnType<typeof tool.execute>>;
       try {
         result = await raceAbort(() => {
-          if (tool.modifiesFiles && this.runState) this.runState.result.mutatingToolExecuted = true;
+          if (ctx.attribution !== false && tool.modifiesFiles && this.runState) {
+            this.runState.result.mutatingToolExecuted = true;
+          }
           return this.handlers.call("tool:dispatch", {
             name, args, tool, onChunk, context: toolCtx,
           } satisfies AgentToolDispatchInput);
@@ -1033,17 +1040,19 @@ export class AgentLoop implements AgentBackend {
         this.fileReadCache.delete(absPath);
       }
 
-      const resultDisplay = result.display ?? tool.formatResult?.(args, result);
+      if (telemetry) {
+        const resultDisplay = result.display ?? tool.formatResult?.(args, result);
 
-      // Emit completion events (via transform pipe so extensions can override)
-      this.bus.emitTransform("agent:tool-completed", {
-        toolCallId: id, exitCode: result.exitCode,
-        rawOutput: result.content, kind: display.kind,
-        resultDisplay,
-      });
-      this.bus.emit("agent:tool-output", {
-        tool: name, output: contentText(result.content), exitCode: result.exitCode,
-      });
+        // Emit completion events (via transform pipe so extensions can override)
+        this.bus.emitTransform("agent:tool-completed", {
+          toolCallId: id, exitCode: result.exitCode,
+          rawOutput: result.content, kind: display.kind,
+          resultDisplay,
+        });
+        this.bus.emit("agent:tool-output", {
+          tool: name, output: contentText(result.content), exitCode: result.exitCode,
+        });
+      }
 
       return result;
     });
@@ -1240,7 +1249,7 @@ export class AgentLoop implements AgentBackend {
       if (text || toolCalls.length > 0) {
         this.toolProtocol.recordAssistant(this.conversation, text, toolCalls, extras);
         options.onMessage?.({ role: "assistant", content: text,
-          ...(toolCalls.length ? { toolCalls: toolCalls.map(tc => ({ name: tc.name, arguments: tc.argumentsJson })) } : {}),
+          toolCalls: toolCalls.length ? toolCalls.map(tc => ({ name: tc.name, arguments: tc.argumentsJson })) : undefined,
         });
         this.bus.emit("conversation:message-appended", {
           role: "assistant",

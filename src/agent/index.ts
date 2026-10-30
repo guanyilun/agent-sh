@@ -336,7 +336,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
         agentLoop = new AgentLoop({
           bus,
           llmClient,
-          handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list },
+          handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list, hasBase: ctx.hasBase },
           initialModel,
           compositor: ctx.shell?.compositor,
           instanceId: ctx.instanceId,

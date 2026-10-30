@@ -48,7 +48,8 @@ export interface AgentHost {
   readonly context: ExtensionContext;
   readonly settings: SettingsService;
   run(query: string, options?: AgentRunOptions): Promise<RunResult>;
-  steer(text: string): void;
+  /** Returns whether the steer was queued for the active run. */
+  steer(text: string): boolean;
   cancel(): void;
   snapshot(): Promise<AgentSnapshot>;
   restore(snapshot: AgentSnapshot): Promise<void>;
@@ -138,7 +139,7 @@ export async function createAgentHost(options: AgentHostOptions): Promise<AgentH
     run(query, runOptions = {}) {
       if (disposed) return Promise.reject(new Error("Agent host is disposed"));
       if (active) return Promise.reject(new Error("Agent host is busy"));
-      if (!ctx.list().includes("agent:run")) return runLegacy(query, runOptions);
+      if (!ctx.hasBase("agent:run")) return runLegacy(query, runOptions);
       // Publish ownership before invoking any extension callbacks. The controller
       // also captures cancel() called before the engine's first microtask starts.
       const controller = new AbortController();
@@ -168,10 +169,15 @@ export async function createAgentHost(options: AgentHostOptions): Promise<AgentH
         // run() reserves the host before its engine microtask begins. Queue a
         // synchronous steer behind that invocation, never start a legacy turn.
         const target = active;
+        let accepted = false;
         queueMicrotask(() => {
-          if (active === target && !disposed) ctx.call("agent:steer-active", text);
+          try { if (active === target && !disposed) accepted = ctx.call("agent:steer-active", text) === true; }
+          catch { /* advisor faults drop the steer */ }
         });
-      } else core.bus.emit("agent:steer", { text });
+        return accepted;
+      }
+      core.bus.emit("agent:steer", { text });
+      return true;
     },
     cancel() {
       if (active) {
@@ -182,12 +188,12 @@ export async function createAgentHost(options: AgentHostOptions): Promise<AgentH
     },
     async snapshot() {
       if (disposed || active) throw new Error("Snapshot requires an idle host");
-      if (!ctx.list().includes("agent:snapshot")) throw new Error("Backend does not support snapshots");
+      if (!ctx.hasBase("agent:snapshot")) throw new Error("Backend does not support snapshots");
       return ctx.call("agent:snapshot");
     },
     async restore(snapshot) {
       if (disposed || active) throw new Error("Restore requires an idle host");
-      if (!ctx.list().includes("agent:restore")) throw new Error("Backend does not support restore");
+      if (!ctx.hasBase("agent:restore")) throw new Error("Backend does not support restore");
       await ctx.call("agent:restore", snapshot);
     },
     async createChild(childOptions) {
@@ -223,7 +229,7 @@ export async function createAgentHost(options: AgentHostOptions): Promise<AgentH
           await Promise.all([...children].map(child => attempted(() => child.dispose())));
           children.clear();
           await attempted(() => pending);
-          if (ctx.list().includes("agent:dispose")) await attempted(() => ctx.call("agent:dispose"));
+          if (ctx.hasBase("agent:dispose")) await attempted(() => ctx.call("agent:dispose"));
           await attempted(() => core.kill());
           for (const dispose of disposers.reverse()) await attempted(dispose);
           if (errors.length === 1) throw errors[0];
@@ -239,8 +245,6 @@ export async function createAgentHost(options: AgentHostOptions): Promise<AgentH
       const { scoped, disposeAsync } = createScopedContext(ctx, extension.name);
       disposers.push(disposeAsync);
       await extension.activate(scoped);
-      if (!ctx.agent && scoped.agent) ctx.agent = scoped.agent;
-      if (!ctx.shell && scoped.shell) ctx.shell = scoped.shell;
       if (quitRequested) throw new Error("Agent host quit during initialization");
     }
     core.bus.emit("core:extensions-loaded", { names: options.extensions.map((e) => e.name) });

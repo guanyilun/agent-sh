@@ -150,6 +150,7 @@ export function createCore(config: AppConfig): AgentShellCore {
         advise: (name: string, wrapper: (next: (...args: any[]) => any, ...args: any[]) => any) => handlers.advise(name, wrapper),
         call: (name: string, ...args: any[]) => handlers.call(name, ...args),
         list: () => handlers.list(),
+        hasBase: (name: string) => handlers.hasBase(name),
         onDispose: () => {},
         getExtensionSettings: <T extends Record<string, unknown>>(namespace: string, defaults: T) =>
           settings.getExtensionSettings(namespace, defaults),

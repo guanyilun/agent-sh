@@ -62,7 +62,7 @@ export function extensionHostContext(ctx: ExtensionContext): ExtensionContext {
  * Host surfaces must be constructed with the raw host context, not this scope:
  * otherwise their closures capture the installing extension's lifetime.
  */
-export function createScopedContext(ctx: ExtensionContext, extensionName: string): { scoped: ExtensionContext; dispose: () => void; disposeAsync: () => Promise<void> } {
+export function createScopedContext(ctx: ExtensionContext, _extensionName: string): { scoped: ExtensionContext; dispose: () => void; disposeAsync: () => Promise<void> } {
   return createScope(ctx, false);
 }
 
@@ -253,7 +253,7 @@ function createScope(ctx: ExtensionContext, legacyTeardown: boolean): { scoped: 
   return { scoped, dispose, disposeAsync };
 }
 
-const extensionDisposers = new WeakMap<ExtensionContext, Map<string, () => void>>();
+const extensionDisposers = new WeakMap<ExtensionContext, Map<string, { dispose: () => void; disposeAsync: () => Promise<void> }>>();
 
 
 /**
@@ -378,16 +378,24 @@ async function loadSpecifiers(
         // on; a 10s outer timeout in index.ts guards against hangs.
         let disposers = extensionDisposers.get(ctx);
         if (!disposers) extensionDisposers.set(ctx, disposers = new Map());
-        disposers.get(name)?.();
+        const previous = disposers.get(name);
+        if (previous) {
+          previous.dispose();
+          await previous.disposeAsync().catch((err) => {
+            ctx.bus.emit("ui:error", {
+              message: `Async cleanup failed for extension ${name}: ${err instanceof Error ? err.message : String(err)}`,
+            });
+          });
+        }
         disposers.delete(name);
-        const { scoped, dispose } = createScope(ctx, true);
+        const { scoped, dispose, disposeAsync } = createScope(ctx, true);
         try {
           await activate(scoped);
         } catch (err) {
           dispose();
           throw err;
         }
-        disposers.set(name, dispose);
+        disposers.set(name, { dispose, disposeAsync });
         loaded.push(name);
       }
     } catch (err) {

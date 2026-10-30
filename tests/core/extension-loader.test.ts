@@ -168,3 +168,30 @@ test("a package.json the user keeps in the extensions dir is left alone", async 
   assert.equal(readFileSync(join(EXT_DIR, "package.json"), "utf8"), own);
   assert.deepEqual(uiErrors, []);
 });
+
+test("re-activation awaits the previous extension's async onDispose", async () => {
+  resetExtDir();
+  clearSettings();
+  writeFileSync(join(EXT_DIR, "package.json"), '{ "type": "module" }\n');
+  const name = uniq("async-dispose");
+  const file = join(EXT_DIR, `${name}.ts`);
+  writeFileSync(file, `
+export default function activate(ctx){
+  if (globalThis.__calls) globalThis.__calls.push(Date.now());
+  ctx.onDispose(async () => {
+    await new Promise(r => setTimeout(r, 80));
+    if (globalThis.__calls) globalThis.__calls.push(-Date.now());
+  });
+}
+`);
+  const { ctx } = makeStubCtx();
+  (globalThis as any).__calls = [];
+  const loaded = await loadExtensions(ctx);
+  assert.ok(loaded.includes(name));
+  await reloadExtensions(ctx);
+  const calls = (globalThis as any).__calls as number[];
+  const activations = calls.filter(t => t > 0);
+  const disposeDone = calls.filter(t => t < 0).map(t => -t);
+  assert.ok(disposeDone.length >= 1);
+  assert.ok(activations[1] >= disposeDone[0]);
+});

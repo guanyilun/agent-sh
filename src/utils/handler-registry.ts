@@ -39,7 +39,8 @@ export interface HandlerFunctions {
   advise(name: string, advisor: (next: (...args: any[]) => any, ...args: any[]) => any): () => void;
   call(name: string, ...args: any[]): any;
   list(): string[];
-}
+  /** Base-presence check: advise() alone also creates a list() entry. */
+  hasBase?(name: string): boolean;}
 
 export class HandlerRegistry {
   private entries = new Map<string, HandlerEntry>();
@@ -129,6 +130,12 @@ export class HandlerRegistry {
 
   has(name: string): boolean {
     return this.entries.has(name);
+  }
+
+  /** True only when a base handler is present. advise() alone also creates an entry
+   *  with advisors but no base, so has()/list() wrongly pass as capability checks. */
+  hasBase(name: string): boolean {
+    return this.entries.get(name)?.base !== undefined;
   }
 
   /** Names of all registered handlers — for diagnostics/introspection. */

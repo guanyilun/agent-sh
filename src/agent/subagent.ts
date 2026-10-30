@@ -135,12 +135,13 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       budgetTokens: opts.budgetTokens,
       reasoningParams: opts.reasoningParams,
       dynamicContext: opts.dynamicContext,
-      onUsage: opts.onUsage,
+      onUsage: (usage) => {
+        if (outMeta) outMeta.tokensUsed = (outMeta.tokensUsed ?? 0) + usage.completion_tokens;
+        opts.onUsage?.(usage);
+      },
       onMessage: (message: SubagentMessage) => {
         if (message.role === "assistant" && message.content) lastText = message.content;
-        opts.onMessage?.(message.role === "assistant"
-          ? { ...message, toolCalls: message.toolCalls }
-          : message);
+        opts.onMessage?.(message);
       },
       shouldStop: opts.shouldStop,
       toolScheduling: "sequential" as const,

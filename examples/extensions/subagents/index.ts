@@ -615,6 +615,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     const parent = !("instanceId" in ctx) && !ctx.list().includes("tool:execute") ? {
       ...ctx,
       list: () => [...ctx.list(), "tool:execute"],
+      hasBase: (name: string) => name === "tool:execute" || ctx.list().includes(name),
       call: (name: string, ...args: unknown[]) => {
         if (name !== "tool:execute" || ctx.list().includes("tool:execute")) return ctx.call(name, ...args);
         const input = args[0] as { name: string; args: Record<string, unknown>; onChunk?: (chunk: string) => void; signal: AbortSignal };

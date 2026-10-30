@@ -148,3 +148,15 @@ test("missing policy dispatcher rejects rather than falling back to dispatch or 
   await assert.rejects(delegated.execute({}), /parent tool:execute dispatcher is unavailable/);
   assert.equal(executions, 0);
 });
+
+test("delegated calls request no parent telemetry or run attribution", async t => {
+  const p = parent();
+  t.after(() => p.core.kill());
+  p.agent.registerTool(tool("read"));
+  const [delegated] = delegatedTools(p.ctx, ["read"]);
+  await delegated.execute({ path: "f" });
+  assert.equal(p.calls.length, 1);
+  const input = p.calls[0] as Record<string, unknown>;
+  assert.equal(input.telemetry, false);
+  assert.equal(input.attribution, false);
+});
