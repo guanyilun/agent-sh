@@ -9,7 +9,8 @@ from . import _host, _shapes
 from ._positions import Position, here, start
 
 
-def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, thinking=None, label=None, write=None):
+def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, thinking=None, label=None, write=None,
+        max_steps=None):
     """Give `task` to an agent and get its answer.
 
     The agent starts working straight away, and the call returns an awaitable for the answer, so
@@ -25,12 +26,13 @@ def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, 
     write     paths the agent may write (files under them); [] makes it read-only.  Inside the run's sandbox, which
               stays the boundary: this catches an agent writing into the wrong tree (a reviewer saving scratch
               files into the code it reviews), not a determined escape.
+    max_steps the most tool-using steps this run may take (default: config maxIterations)
 
     A run that fails raises RunError.
     """
     position = here()
     spec = _spec(task, agent, returns, tools=tools, system=system, model=model, thinking=thinking, label=label,
-                 write=_paths(write))
+                 write=_paths(write), maxSteps=max_steps)
     return _answer(spec, position.next(), position, returns)
 
 
@@ -51,10 +53,11 @@ class Agent:
         self._turns = 0
         self._last_turn = None
 
-    def ask(self, task, *, returns=None, model=None, thinking=None, label=None):
+    def ask(self, task, *, returns=None, model=None, thinking=None, label=None, max_steps=None):
         """Say `task` to the agent and get its answer. Turns happen one at a time, in the order asked."""
         position = here()
-        overrides = {name: value for name, value in dict(model=model, thinking=thinking, label=label).items() if value is not None}
+        overrides = {name: value for name, value in dict(model=model, thinking=thinking, label=label,
+                                                         maxSteps=max_steps).items() if value is not None}
         spec = _spec(task, self._name, returns, **{**self._options, **overrides})
         self._turns += 1
         turn_id, previous = f"{self._id}:{self._turns}", self._last_turn

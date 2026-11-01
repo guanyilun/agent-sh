@@ -105,6 +105,8 @@ export interface WorkflowRunOpts {
   run: RunDir;
   replay?: JournalEntry[];
   budgetTokens?: number;
+  /** Stop starting runs once this many uncached tokens (spent - cached) are used. */
+  budgetUncached?: number;
   module?: Record<string, unknown>;
   quietMs?: number;
   /** Interpreter for .py workflows. */
@@ -196,6 +198,8 @@ export async function runWorkflow(
       if (signal.aborted) throw new WorkflowStop("cancelled");
       if (stopped.aborted) throw new Cancelled("cancelled");
       if (budget.remaining() <= 0) throw new WorkflowStop(`token budget of ${total} exhausted`);
+      if (opts.budgetUncached && spent() - budget.cached() >= opts.budgetUncached)
+        throw new WorkflowStop(`uncached-token budget of ${opts.budgetUncached} exhausted`);
 
       const write = record.transcript(seq);
       write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema });

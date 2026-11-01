@@ -107,6 +107,14 @@ export async function runFile(cli: CliConfig, run: RunArgs): Promise<never> {
     if (++interrupts > 1) exit(130);
     controller.abort(new Error("interrupted"));
   });
+  // SIGTERM (a supervisor stopping the run) also cancels main() first, so the workflow's finally blocks run
+  // (state saved, totals recorded); a second one exits at once.
+  let terms = 0;
+  process.on("SIGTERM", () => {
+    if (++terms > 1) exit(143);
+    interrupts++;
+    controller.abort(new Error("terminated by SIGTERM"));
+  });
   const hours = Number(config.hours);
   if (hours > 0) setTimeout(() => controller.abort(new Error(`deadline of ${hours} h reached`)), hours * 3600_000).unref();
 

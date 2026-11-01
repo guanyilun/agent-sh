@@ -37,9 +37,9 @@ const BACKGROUND_PARAM = {
 };
 const PARENT_CONTEXT_CHARS = 12_000;
 
-interface TaskSpec { agent?: string; task: string; tools?: string[]; system?: string; model?: string; thinking?: string; write?: string[] }
+interface TaskSpec { agent?: string; task: string; tools?: string[]; system?: string; model?: string; thinking?: string; write?: string[]; maxSteps?: number }
 
-const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "python"];
+const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python"];
 
 interface RunFileConfig {
   base: string;
@@ -48,6 +48,9 @@ interface RunFileConfig {
   maxIterations?: number;
   maxRuns?: number;
   budgetTokens?: number;
+  /** Cap on uncached tokens (new prompt + completion): what a provider bills, unlike a total that counts every
+   *  resent conversation again. */
+  budgetUncached?: number;
   python?: string;
 }
 
@@ -478,7 +481,8 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       throw err;
     }
     return executeWorkflow(wf, args, {
-      resumeId, budgetTokens: settings.workflowTokenBudget || undefined, signal: req.signal, progress: req.progress,
+      resumeId, budgetTokens: settings.workflowTokenBudget || undefined, budgetUncached: runConfig?.budgetUncached,
+      signal: req.signal, progress: req.progress,
       module: mod, dryRun: req.dryRun, resumeHint: (id) => `agent-sh run ${req.file} --resume ${id}`,
       quietMs: 60_000,
     });
@@ -489,6 +493,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   async function executeWorkflow(wf: WorkflowDef, wfArgs: string | string[], opts: {
     resumeId?: string;
     budgetTokens?: number;
+    budgetUncached?: number;
     signal: AbortSignal;
     progress: (line: string) => void;
     module?: Record<string, unknown>;
@@ -504,7 +509,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         complete: (messages) => ctx.call("llm:invoke", messages, { maxTokens: 4096 }) as Promise<string>,
         maxRuns: settings.maxRunsPerWorkflow,
       }, opts.signal, opts.progress, {
-        run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, module: opts.module, quietMs: opts.quietMs, python,
+        run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, budgetUncached: opts.budgetUncached, module: opts.module, quietMs: opts.quietMs, python,
       });
       return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
     } catch (err) {
@@ -659,7 +664,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         task: spec.task,
         model: spec.model ?? def?.model,
         signal,
-        maxIterations: def?.maxIterations ?? settings.maxIterations,
+        maxIterations: spec.maxSteps ?? def?.maxIterations ?? settings.maxIterations,
         reasoningParams: reasoningParams(spec.thinking ?? def?.thinking ?? defaultThinking(), spec.model ?? def?.model ?? llmClient.model),
         contextWindow: contextWindow(spec.model ?? def?.model ?? llmClient.model),
         outMeta: meta,

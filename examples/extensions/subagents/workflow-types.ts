@@ -17,6 +17,8 @@ export interface RunOptions {
   /** Paths this agent may write (files under them); [] makes it read-only.  A tripwire on its write_file/edit_file
    *  and visible shell writes, inside the run's sandbox (which stays the boundary). */
   write?: string[];
+  /** Cap on this run's tool-using steps (default: the run's maxIterations). */
+  maxSteps?: number;
 }
 
 export interface RunSpec extends RunOptions {
