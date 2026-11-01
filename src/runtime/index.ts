@@ -147,15 +147,19 @@ export async function createAgentHost(options: AgentHostOptions): Promise<AgentH
       const forwardAbort = () => controller.abort(runOptions.signal?.reason);
       if (runOptions.signal?.aborted) forwardAbort();
       else runOptions.signal?.addEventListener("abort", forwardAbort, { once: true });
-      const result = Promise.resolve().then(async (): Promise<RunResult> => {
+      // Publish `active` before calling the engine (callbacks may re-enter the
+      // host), then call it synchronously so steer() sees the reserved run.
+      let settle!: (outcome: Promise<RunResult>) => void;
+      const result = new Promise<RunResult>((resolve) => { settle = resolve; });
+      active = result;
+      settle((async (): Promise<RunResult> => {
         const details = await ctx.call("agent:run", { query, ...runOptions, signal: controller.signal }) as AgentRunResult;
         return {
           text: details.text, status: details.stopReason,
           usage: { ...details.usage, cached_prompt_tokens: details.usage.cached_tokens },
           details, ...(details.error ? { error: details.error } : {}),
         };
-      });
-      active = result;
+      })());
       void result.finally(() => {
         runOptions.signal?.removeEventListener("abort", forwardAbort);
         if (nativeController === controller) nativeController = undefined;
@@ -166,15 +170,9 @@ export async function createAgentHost(options: AgentHostOptions): Promise<AgentH
     steer(text) {
       if (disposed || !active) throw new Error("Steering requires an active run");
       if (nativeController) {
-        // run() reserves the host before its engine microtask begins. Queue a
-        // synchronous steer behind that invocation, never start a legacy turn.
-        const target = active;
-        let accepted = false;
-        queueMicrotask(() => {
-          try { if (active === target && !disposed) accepted = ctx.call("agent:steer-active", text) === true; }
-          catch { /* advisor faults drop the steer */ }
-        });
-        return accepted;
+        // The engine reserved the run synchronously in run(); never start a legacy turn.
+        try { return ctx.call("agent:steer-active", text) === true; }
+        catch { return false; /* advisor faults drop the steer */ }
       }
       core.bus.emit("agent:steer", { text });
       return true;

@@ -205,8 +205,10 @@ test("steer reports engine acceptance for active, completed and idle runs", asyn
     await host.run("warmup");
     assert.throws(() => host.steer("idle"), /requires an active run/);
     const pending = host.run("first");
-    assert.equal(host.steer("too late"), false);
+    assert.equal(host.steer("change course"), true);
     await pending;
+    assert.ok(JSON.stringify(requests[1]!.messages).includes("change course"), "steer reaches the active run");
+    assert.throws(() => host.steer("too late"), /requires an active run/);
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(requests.length, 2);
   } finally { await host.dispose(); }
