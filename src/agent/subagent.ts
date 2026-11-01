@@ -4,6 +4,7 @@ import type { ChatCompletionMessageParam, LlmClient } from "./llm-client.js";
 import type { ToolDefinition } from "./types.js";
 import type { AgentRunOptions } from "./run-contract.js";
 import { createAgentHost, ashEngine } from "../runtime/index.js";
+import { subagentCompaction } from "./subagent-compaction.js";
 
 export interface SubagentOptions {
   /** LLM client to use. */
@@ -48,6 +49,13 @@ export interface SubagentOptions {
    */
   onUsage?: (usage: SubagentUsage) => void;
   reasoningParams?: Record<string, unknown>;
+  /** The model's context window in tokens.  When known, the conversation is
+   *  compacted once it fills `autoCompactThreshold` of it; when unknown, only a
+   *  provider's context-overflow error compacts it (a guessed window would
+   *  compact long tool runs far too early). */
+  contextWindow?: number;
+  /** Fraction of the context window that triggers compaction (default 0.8). */
+  autoCompactThreshold?: number;
   outMeta?: SubagentRunMeta;
   /** Each message as it joins the subagent's conversation, e.g. for a transcript. */
   onMessage?: (message: SubagentMessage) => void;
@@ -63,6 +71,10 @@ export interface SubagentUsage {
   total_tokens: number;
   /** The part of prompt_tokens the provider served from its cache, when it says. */
   cached_tokens?: number;
+  /** Why the response ended ("stop", "tool_calls", "length", ...) and its timing. */
+  finish_reason?: string;
+  duration_ms?: number;
+  first_token_ms?: number;
 }
 
 export interface SubagentMessage {
@@ -95,10 +107,13 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
     : llmClient;
   const host = await createAgentHost({
     cwd: opts.cwd ?? process.cwd(),
-    settings: { autoCompact: false, toolMode: "api" },
+    settings: opts.contextWindow
+      ? { autoCompact: true, autoCompactThreshold: opts.autoCompactThreshold ?? 0.8, toolMode: "api" }
+      : { autoCompact: false, toolMode: "api" },
     extensions: [ashEngine({
       client,
-      model: { id: model ?? client.model, provider: "custom", echoReasoning: true },
+      model: { id: model ?? client.model, provider: "custom", echoReasoning: true,
+               ...(opts.contextWindow ? { contextWindow: opts.contextWindow } : {}) },
       // The client already owns credentials; this endpoint only supplies the
       // legacy OpenAI-shaped usage decoder, including cache accounting.
       endpoint: {
@@ -106,7 +121,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
         extractCachedTokens: usage => (usage.prompt_tokens_details as { cached_tokens?: number } | undefined)?.cached_tokens ?? 0,
       },
       tools: opts.tools,
-    })],
+    }), subagentCompaction({ historyLength: opts.history?.length })],
   });
   const childBus = host.context.bus;
   const unsubscribers: (() => void)[] = [];

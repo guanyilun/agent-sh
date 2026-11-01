@@ -21,6 +21,10 @@ export interface AgentRunUsage {
   completion_tokens: number;
   total_tokens: number;
   cached_tokens?: number;
+  /** Per-response only (onUsage): why the stream ended, and its timing. */
+  finish_reason?: string;
+  duration_ms?: number;
+  first_token_ms?: number;
 }
 
 export interface AgentRunOptions {

@@ -128,7 +128,7 @@ test("each run writes a transcript; /workflow runs lists runs and flags interrup
     const r = await s.exec("run_workflow", { name: "one" });
     const id = runId(r);
     const lines = readFileSync(join(s.root, "workflow-runs", id, "agents", "1.jsonl"), "utf8").trim().split("\n").map(l => JSON.parse(l));
-    assert.deepEqual(lines.map(l => l.type === "message" ? `${l.type}:${l.role}` : l.type), ["start", "running", "message:user", "message:assistant", "end"]);
+    assert.deepEqual(lines.map(l => l.type === "message" ? `${l.type}:${l.role}` : l.type), ["start", "running", "message:user", "request", "message:assistant", "end"]);
     assert.ok(lines.every(l => typeof l.at === "number"));
 
     // A run another process left marked "running" with no heartbeat since (e.g. it crashed).

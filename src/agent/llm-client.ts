@@ -45,6 +45,8 @@ export interface LlmClientConfig {
   appName?: string;
   /** Sent as OpenRouter HTTP-Referer; ignored by other providers. */
   appUrl?: string;
+  /** Extra fields merged into every request body (provider `requestBody` setting). */
+  requestBody?: Record<string, unknown>;
 }
 
 function attributionHeaders(config: LlmClientConfig): Record<string, string> {
@@ -88,6 +90,7 @@ export class LlmClient {
   stream(opts: StreamOpts) {
     const { signal, headers, messages, tools, model, max_tokens, ...rest } = opts;
     const body = {
+      ...this.config.requestBody,
       ...rest,
       model: model ?? this.model,
       messages: messages.map(stripMeta),
@@ -102,6 +105,7 @@ export class LlmClient {
   async complete(opts: CompleteOpts): Promise<string> {
     const { messages, model, max_tokens, ...rest } = opts;
     const body = {
+      ...this.config.requestBody,
       ...rest,
       model: model ?? this.model,
       messages: messages.map(stripMeta),

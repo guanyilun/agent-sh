@@ -37,6 +37,15 @@ test("stream() omits the headers option when none are supplied", () => {
   assert.ok(!("headers" in body));
 });
 
+test("requestBody is merged into requests, survives fork, and cannot override core fields", () => {
+  const client = new LlmClient({ apiKey: "x", model: "m", requestBody: { provider: { zdr: true }, model: "evil", stream: false } });
+  const { body } = captureStream(client.fork({ model: "m2" }), { messages: [] });
+  assert.deepEqual(body.provider, { zdr: true });
+  assert.equal(body.model, "m2");
+  assert.equal(body.stream, true);
+  assert.ok(!("provider" in captureStream(new LlmClient({ apiKey: "x", model: "m" }), { messages: [] }).body));
+});
+
 test("SSE status recovery is limited to validated Codex proxy errors", () => {
   const proxy = Object.assign(new Error("limited"), { type: "codex_proxy_error", error: { status: 429 } });
   assert.equal(llmErrorStatus(proxy), 429);

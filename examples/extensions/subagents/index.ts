@@ -20,6 +20,7 @@ import {
 } from "./workflows.js";
 import type { RunSpec } from "./workflow-types.js";
 import { isPython, pythonModule } from "./python.js";
+import { writeRootsVerdict } from "./write-roots.js";
 
 export type { Workflow, WorkflowApi, RunSpec, JsonSchema } from "./workflow-types.js";
 export type { AgentRegistration } from "./agents.js";
@@ -36,9 +37,9 @@ const BACKGROUND_PARAM = {
 };
 const PARENT_CONTEXT_CHARS = 12_000;
 
-interface TaskSpec { agent?: string; task: string; tools?: string[]; system?: string; model?: string; thinking?: string }
+interface TaskSpec { agent?: string; task: string; tools?: string[]; system?: string; model?: string; thinking?: string; write?: string[]; maxSteps?: number }
 
-const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "python"];
+const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python"];
 
 interface RunFileConfig {
   base: string;
@@ -47,6 +48,9 @@ interface RunFileConfig {
   maxIterations?: number;
   maxRuns?: number;
   budgetTokens?: number;
+  /** Cap on uncached tokens (new prompt + completion): what a provider bills, unlike a total that counts every
+   *  resent conversation again. */
+  budgetUncached?: number;
   python?: string;
 }
 
@@ -65,7 +69,7 @@ interface RunExtras {
   extraTools?: ToolDefinition[];
   systemNote?: string;
   shouldStop?: () => boolean;
-  onUsage?: (totalTokens: number, cachedTokens?: number) => void;
+  onUsage?: (totalTokens: number, cachedTokens?: number, detail?: Record<string, unknown>) => void;
   onMessage?: (message: Record<string, unknown>) => void;
   onStart?: () => void;
   history?: unknown[];
@@ -477,7 +481,8 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       throw err;
     }
     return executeWorkflow(wf, args, {
-      resumeId, budgetTokens: settings.workflowTokenBudget || undefined, signal: req.signal, progress: req.progress,
+      resumeId, budgetTokens: settings.workflowTokenBudget || undefined, budgetUncached: runConfig?.budgetUncached,
+      signal: req.signal, progress: req.progress,
       module: mod, dryRun: req.dryRun, resumeHint: (id) => `agent-sh run ${req.file} --resume ${id}`,
       quietMs: 60_000,
     });
@@ -488,6 +493,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   async function executeWorkflow(wf: WorkflowDef, wfArgs: string | string[], opts: {
     resumeId?: string;
     budgetTokens?: number;
+    budgetUncached?: number;
     signal: AbortSignal;
     progress: (line: string) => void;
     module?: Record<string, unknown>;
@@ -503,7 +509,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         complete: (messages) => ctx.call("llm:invoke", messages, { maxTokens: 4096 }) as Promise<string>,
         maxRuns: settings.maxRunsPerWorkflow,
       }, opts.signal, opts.progress, {
-        run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, module: opts.module, quietMs: opts.quietMs, python,
+        run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, budgetUncached: opts.budgetUncached, module: opts.module, quietMs: opts.quietMs, python,
       });
       return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
     } catch (err) {
@@ -622,12 +628,15 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         return ctx.call(`tool:${input.name}`, input.args, input.onChunk, { signal: input.signal });
       },
     } : ctx;
+    const writeCheck = Array.isArray(spec.write) ? writeRootsVerdict(spec.write, cwd) : undefined;
     const tools = delegatedTools(parent, allowlist)
       .map(tool => ({
         ...tool,
-        execute: (args, onChunk, execCtx) => {
+        execute: async (args, onChunk, execCtx) => {
           const detail = describeCall(tool, args, cwd);
           progress?.(detail ? `${tool.name}: ${detail}` : tool.name);
+          const refusal = writeCheck?.(tool.name, args as Record<string, unknown>);
+          if (refusal) return refusal;
           return tool.execute(args, onChunk, execCtx);
         },
       } satisfies ToolDefinition))
@@ -655,10 +664,11 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         task: spec.task,
         model: spec.model ?? def?.model,
         signal,
-        maxIterations: def?.maxIterations ?? settings.maxIterations,
+        maxIterations: spec.maxSteps ?? def?.maxIterations ?? settings.maxIterations,
         reasoningParams: reasoningParams(spec.thinking ?? def?.thinking ?? defaultThinking(), spec.model ?? def?.model ?? llmClient.model),
+        contextWindow: contextWindow(spec.model ?? def?.model ?? llmClient.model),
         outMeta: meta,
-        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens, u.cached_tokens) : undefined,
+        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens, u.cached_tokens, { ...u }) : undefined,
         onMessage: extra.onMessage as SubagentOptions["onMessage"],
         shouldStop: extra.shouldStop,
         history: extra.history as SubagentOptions["history"],
@@ -678,6 +688,12 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   // when there is no session (agent-sh run).
   function defaultThinking(): string | undefined {
     return bus.emitPipe("config:get-thinking", { level: "", levels: [], supported: true }).level || (ctx.call("config:settings")?.get() ?? getSettings()).thinkingLevel || undefined;
+  }
+
+  // The model's window as its provider reports it, so long runs compact before they overflow.
+  function contextWindow(modelId: string): number | undefined {
+    const models = (ctx.call("agent:get-models") ?? []) as { id: string; contextWindow?: number }[];
+    return models.find(m => m.id === modelId)?.contextWindow;
   }
 
   // Sent unless the model is known not to take it, as the main agent does.

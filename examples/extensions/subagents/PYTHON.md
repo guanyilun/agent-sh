@@ -71,6 +71,8 @@ plan = await run("Split this goal into tasks: ...", agent="plan", returns=Plan)
 | `model` | override the model for this call. |
 | `thinking` | how hard the model reasons: `"low"`, `"high"`, or `"off"`. Left out, the agent uses your agent-sh thinking level. |
 | `label` | the name shown for it in progress lines. |
+| `write` | paths the agent may write (files under them); `[]` makes it read-only. A tripwire on its `write_file`/`edit_file` and the visible writes of its shell commands, inside the run's sandbox: it stops a reviewer saving scratch files into the code it reviews, not a determined escape. |
+| `max_steps` | the most tool-using steps this call may take (default: `config` `maxIterations`). |
 
 `run` starts the agent immediately and returns an awaitable. Start several and wait for them together:
 
@@ -90,7 +92,7 @@ draft = await worker.ask("Write the function described in SPEC.md.")
 fixed = await worker.ask(f"The tests fail:\n{output}\nFix it.")      # it remembers the first turn
 ```
 
-`Agent(name, ...)` takes `tools`, `system`, `model`, `thinking` and `label`, which apply to every turn; `ask(task, ...)` takes `returns`, `model`, `thinking` and `label`. Turns run one at a time. Use it for repair loops, where restating the history to a fresh agent would cost more and lose detail.
+`Agent(name, ...)` takes `tools`, `system`, `model`, `thinking`, `label` and `write`, which apply to every turn; `ask(task, ...)` takes `returns`, `model`, `thinking`, `label` and `max_steps`. Turns run one at a time. Use it for repair loops, where restating the history to a fresh agent would cost more and lose detail.
 
 ### `race(*attempts, accept=...)`: first good result wins
 
@@ -116,7 +118,7 @@ Agent answers are saved automatically. Your own functions are not, and a resumed
 
 ### `budget`: tokens left
 
-`budget.remaining`, `budget.spent`, `budget.cached` and `budget.total`, as of the last call that finished. `total` is `None` and `remaining` is infinite unless `config` sets `budgetTokens`. Check it in open-ended loops:
+`budget.remaining`, `budget.spent`, `budget.cached` and `budget.total`, as of the last call that finished (`spent - cached` is what a provider bills; `budgetUncached` in `config` caps it). `total` is `None` and `remaining` is infinite unless `config` sets `budgetTokens`. Check it in open-ended loops:
 
 ```python
 while budget.remaining > 200_000:
@@ -196,6 +198,7 @@ config = dict(
     maxRuns=200,              # agent runs in total (default 50)
     maxIterations=60,         # steps one agent may take
     budgetTokens=5_000_000,   # stop when the agents have used this many tokens
+    budgetUncached=1_000_000, # ... or this many uncached ones (what a provider bills; long runs are mostly cache hits)
     hours=3,                  # stop at this deadline
     agents="./agents",        # a folder of extra agent definitions, next to this file
     python=".venv/bin/python",   # the interpreter for this file, relative to it

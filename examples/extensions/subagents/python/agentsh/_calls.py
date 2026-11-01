@@ -9,7 +9,8 @@ from . import _host, _shapes
 from ._positions import Position, here, start
 
 
-def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, thinking=None, label=None):
+def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, thinking=None, label=None, write=None,
+        max_steps=None):
     """Give `task` to an agent and get its answer.
 
     The agent starts working straight away, and the call returns an awaitable for the answer, so
@@ -22,11 +23,16 @@ def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, 
     tools     the tools a plain agent may use ([] for none)
     system    a plain agent's role and rules
     model, thinking, label   override the agent's model, its reasoning effort, and its name in progress lines
+    write     paths the agent may write (files under them); [] makes it read-only.  Inside the run's sandbox, which
+              stays the boundary: this catches an agent writing into the wrong tree (a reviewer saving scratch
+              files into the code it reviews), not a determined escape.
+    max_steps the most tool-using steps this run may take (default: config maxIterations)
 
     A run that fails raises RunError.
     """
     position = here()
-    spec = _spec(task, agent, returns, tools=tools, system=system, model=model, thinking=thinking, label=label)
+    spec = _spec(task, agent, returns, tools=tools, system=system, model=model, thinking=thinking, label=label,
+                 write=_paths(write), maxSteps=max_steps)
     return _answer(spec, position.next(), position, returns)
 
 
@@ -40,17 +46,18 @@ class Agent:
     The options are the same as for `run` and apply to every turn.
     """
 
-    def __init__(self, name=None, *, tools=None, system=None, model=None, thinking=None, label=None):
+    def __init__(self, name=None, *, tools=None, system=None, model=None, thinking=None, label=None, write=None):
         self._name = name
-        self._options = dict(tools=tools, system=system, model=model, thinking=thinking, label=label)
+        self._options = dict(tools=tools, system=system, model=model, thinking=thinking, label=label, write=_paths(write))
         self._id = here().next()
         self._turns = 0
         self._last_turn = None
 
-    def ask(self, task, *, returns=None, model=None, thinking=None, label=None):
+    def ask(self, task, *, returns=None, model=None, thinking=None, label=None, max_steps=None):
         """Say `task` to the agent and get its answer. Turns happen one at a time, in the order asked."""
         position = here()
-        overrides = {name: value for name, value in dict(model=model, thinking=thinking, label=label).items() if value is not None}
+        overrides = {name: value for name, value in dict(model=model, thinking=thinking, label=label,
+                                                         maxSteps=max_steps).items() if value is not None}
         spec = _spec(task, self._name, returns, **{**self._options, **overrides})
         self._turns += 1
         turn_id, previous = f"{self._id}:{self._turns}", self._last_turn
@@ -189,6 +196,14 @@ def _discard(attempt):
         attempt.close()
     elif hasattr(attempt, "cancel"):
         attempt.cancel()
+
+
+def _paths(write):
+    """Write roots as absolute path strings (None: no limit beyond the run's sandbox)."""
+    if write is None:
+        return None
+    import os
+    return [os.path.abspath(os.fspath(p)) for p in ([write] if isinstance(write, (str, os.PathLike)) else write)]
 
 
 def _spec(task, agent, returns, **options):

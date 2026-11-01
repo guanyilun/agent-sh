@@ -80,7 +80,7 @@ export class TrustStore {
 export interface TaskControl {
   signal: AbortSignal;
   progress(line: string): void;
-  onUsage(totalTokens: number, cachedTokens?: number): void;
+  onUsage(totalTokens: number, cachedTokens?: number, detail?: Record<string, unknown>): void;
   onMessage(message: Record<string, unknown>): void;
   /** Once it has a concurrency slot. */
   onStart?(): void;
@@ -105,6 +105,8 @@ export interface WorkflowRunOpts {
   run: RunDir;
   replay?: JournalEntry[];
   budgetTokens?: number;
+  /** Stop starting runs once this many uncached tokens (spent - cached) are used. */
+  budgetUncached?: number;
   module?: Record<string, unknown>;
   quietMs?: number;
   /** Interpreter for .py workflows. */
@@ -196,6 +198,8 @@ export async function runWorkflow(
       if (signal.aborted) throw new WorkflowStop("cancelled");
       if (stopped.aborted) throw new Cancelled("cancelled");
       if (budget.remaining() <= 0) throw new WorkflowStop(`token budget of ${total} exhausted`);
+      if (opts.budgetUncached && spent() - budget.cached() >= opts.budgetUncached)
+        throw new WorkflowStop(`uncached-token budget of ${opts.budgetUncached} exhausted`);
 
       const write = record.transcript(seq);
       write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema });
@@ -214,7 +218,11 @@ export async function runWorkflow(
             progress(`${label} started`);
           },
           progress: (line) => progress(`${label} ${line}`),
-          onUsage: (t, cached = 0) => { tokens += t; record.record.tokens += t; if (cached) record.record.cached = (record.record.cached ?? 0) + cached; },
+          onUsage: (t, cached = 0, detail) => {
+            tokens += t; record.record.tokens += t; if (cached) record.record.cached = (record.record.cached ?? 0) + cached;
+            // One line per model response: tokens, cache hits, finish_reason and timing (diagnoses stalls and empty replies).
+            if (detail) write({ type: "request", ...detail });
+          },
           onMessage: (m) => write({ type: "message", ...m }),
         });
         // An aborted subagent returns its partial text; that's a stop, not a result.
@@ -467,6 +475,7 @@ function specKey(spec: RunSpec): string {
   const inputs = [spec.agent ?? null, spec.task, spec.tools ?? null, spec.schema ?? null];
   // Added later; only included when set, so older journals still match.
   for (const k of ["system", "model", "thinking"] as const) if (spec[k] !== undefined) inputs.push(`${k}:${spec[k]}`);
+  if (spec.write !== undefined) inputs.push(`write:${JSON.stringify(spec.write)}`);
   return createHash("sha256").update(JSON.stringify(inputs)).digest("hex").slice(0, 16);
 }
 

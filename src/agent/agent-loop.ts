@@ -73,6 +73,9 @@ export interface AgentLoopConfig {
   ambientContext?: boolean;
 }
 
+/** Re-sends of a request whose reply had neither text nor tool calls. */
+const MAX_EMPTY_RETRIES = 2;
+
 export class AgentLoop implements AgentBackend {
   private abortController: AbortController | null = null;
   private toolRegistry: ToolRegistry;
@@ -257,7 +260,7 @@ export class AgentLoop implements AgentBackend {
       this.activeModel = found;
       this.activeEndpoint = this.resolveEndpoint(found);
       if (this.activeEndpoint) {
-        this.llmClient.reconfigure({ apiKey: this.activeEndpoint.apiKey, baseURL: this.activeEndpoint.baseURL, model: found.id });
+        this.llmClient.reconfigure({ apiKey: this.activeEndpoint.apiKey, baseURL: this.activeEndpoint.baseURL, model: found.id, requestBody: this.settings().providers?.[found.provider]?.requestBody });
       } else {
         this.llmClient.model = found.id;
       }
@@ -283,7 +286,7 @@ export class AgentLoop implements AgentBackend {
         this.activeModel = fresh;
         const ep = this.resolveEndpoint(fresh);
         if (ep && (ep.apiKey !== this.activeEndpoint?.apiKey || ep.baseURL !== this.activeEndpoint?.baseURL)) {
-          this.llmClient.reconfigure({ apiKey: ep.apiKey, baseURL: ep.baseURL, model: fresh.id });
+          this.llmClient.reconfigure({ apiKey: ep.apiKey, baseURL: ep.baseURL, model: fresh.id, requestBody: this.settings().providers?.[fresh.provider]?.requestBody });
         }
         this.activeEndpoint = ep;
         identityChanged = fresh.contextWindow !== prev.contextWindow;
@@ -694,6 +697,17 @@ export class AgentLoop implements AgentBackend {
     if (msg.includes("econnreset") || msg.includes("econnrefused") ||
         msg.includes("etimedout") || msg.includes("fetch failed") ||
         msg.includes("network") || msg.includes("socket hang up")) {
+      return true;
+    }
+
+    // A stream cut mid-response: undici raises TypeError("terminated") when the
+    // server or a proxy closes the connection; LiteLLM gateways report the same as
+    // "APIConnectionError ... Connection closed".  Nothing from a cut stream has
+    // been recorded or executed (the assistant message and its tool calls are
+    // recorded after the stream completes), so re-sending the request is safe
+    // and keeps the run's earlier steps.
+    if (msg === "terminated" || msg.includes("other side closed") ||
+        msg.includes("connection closed") || msg.includes("apiconnectionerror")) {
       return true;
     }
 
@@ -1553,9 +1567,29 @@ export class AgentLoop implements AgentBackend {
     dynamicContext: string,
     signal: AbortSignal,
   ): ReturnType<typeof this.streamResponse> {
+    let empties = 0;
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
-        return await this.streamResponse(systemPrompt, dynamicContext, signal);
+        const response = await this.streamResponse(systemPrompt, dynamicContext, signal);
+        // A reply with neither text nor tool calls is no answer: gateways return one
+        // when the backend stalls or times out (seen after 13-25 min of silence on a
+        // vLLM/LiteLLM endpoint).  Nothing was recorded, so re-send, at most twice.
+        const empty = !signal.aborted && response?.text?.trim() === "" && response.toolCalls?.length === 0;
+        // Unless the reasoning used the whole max_tokens: the same request would do it again.
+        if (empty && response.finishReason === "length") {
+          throw new Error(`the reply reached max_tokens before any text or tool call (the reasoning `
+            + `used the whole budget); lower the thinking level or raise the model's maxTokens`);
+        }
+        if (empty && empties < MAX_EMPTY_RETRIES) {
+          empties++;
+          this.bus.emit("ui:info", {
+            message: `(empty reply, retrying — ${empties}/${MAX_EMPTY_RETRIES})`,
+          });
+          await waitForRetry(2000, undefined, { signal });
+          attempt--;
+          continue;
+        }
+        return response;
       } catch (e) {
         if (signal.aborted) throw e;
 
@@ -1614,6 +1648,8 @@ export class AgentLoop implements AgentBackend {
     /** Provider-specific fields (reasoning, reasoning_details, …) to
      *  echo back verbatim on the next turn. */
     extras?: Record<string, unknown>;
+    /** The stream's finish_reason, when the provider sent one. */
+    finishReason?: string;
   }> {
     let text = "";
     // reasoning_details streams as per-chunk fragments keyed by index;
@@ -1623,6 +1659,9 @@ export class AgentLoop implements AgentBackend {
     const reasoningDetailsByIndex = new Map<number, Record<string, unknown>>();
     const pendingToolCalls: PendingToolCall[] = [];
     let responseUsage: AgentRunResult["usage"] | undefined;
+    let finishReason: string | undefined;
+    const startedAt = Date.now();
+    let firstTokenAt: number | undefined;
 
     // Tool protocol controls what goes in the API tools param vs dynamic context.
     // agent:tools:visible is a filter point on the assembled list — distinct from
@@ -1696,6 +1735,8 @@ export class AgentLoop implements AgentBackend {
 
       const choice = chunk.choices[0];
       if (!choice) continue;
+      firstTokenAt ??= Date.now();
+      if (choice.finish_reason) finishReason = choice.finish_reason;
 
       const delta = choice.delta;
 
@@ -1767,7 +1808,15 @@ export class AgentLoop implements AgentBackend {
       total.completion_tokens += responseUsage.completion_tokens;
       total.total_tokens += responseUsage.total_tokens;
       if (responseUsage.cached_tokens !== undefined) total.cached_tokens = (total.cached_tokens ?? 0) + responseUsage.cached_tokens;
-      this.runState.options.onUsage?.({ ...responseUsage });
+    }
+    // Every response is reported, with or without a usage chunk: a stream that ends without one is itself a symptom.
+    if (this.runState && !signal.aborted) {
+      this.runState.options.onUsage?.({
+        ...(responseUsage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }),
+        ...(finishReason ? { finish_reason: finishReason } : {}),
+        duration_ms: Date.now() - startedAt,
+        ...(firstTokenAt ? { first_token_ms: firstTokenAt - startedAt } : {}),
+      });
     }
 
     if (streamFilter) {
@@ -1803,6 +1852,7 @@ export class AgentLoop implements AgentBackend {
       text,
       toolCalls: pendingToolCalls,
       extras: Object.keys(extras).length > 0 ? extras : undefined,
+      finishReason,
     };
   }
 }
