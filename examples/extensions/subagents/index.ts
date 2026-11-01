@@ -20,6 +20,7 @@ import {
 } from "./workflows.js";
 import type { RunSpec } from "./workflow-types.js";
 import { isPython, pythonModule } from "./python.js";
+import { writeRootsVerdict } from "./write-roots.js";
 
 export type { Workflow, WorkflowApi, RunSpec, JsonSchema } from "./workflow-types.js";
 export type { AgentRegistration } from "./agents.js";
@@ -36,7 +37,7 @@ const BACKGROUND_PARAM = {
 };
 const PARENT_CONTEXT_CHARS = 12_000;
 
-interface TaskSpec { agent?: string; task: string; tools?: string[]; system?: string; model?: string; thinking?: string }
+interface TaskSpec { agent?: string; task: string; tools?: string[]; system?: string; model?: string; thinking?: string; write?: string[] }
 
 const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "python"];
 
@@ -622,12 +623,15 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         return ctx.call(`tool:${input.name}`, input.args, input.onChunk, { signal: input.signal });
       },
     } : ctx;
+    const writeCheck = Array.isArray(spec.write) ? writeRootsVerdict(spec.write, cwd) : undefined;
     const tools = delegatedTools(parent, allowlist)
       .map(tool => ({
         ...tool,
-        execute: (args, onChunk, execCtx) => {
+        execute: async (args, onChunk, execCtx) => {
           const detail = describeCall(tool, args, cwd);
           progress?.(detail ? `${tool.name}: ${detail}` : tool.name);
+          const refusal = writeCheck?.(tool.name, args as Record<string, unknown>);
+          if (refusal) return refusal;
           return tool.execute(args, onChunk, execCtx);
         },
       } satisfies ToolDefinition))
