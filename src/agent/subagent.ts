@@ -3,49 +3,8 @@ import type { BusEvents, EventBus } from "../core/event-bus.js";
 import type { ChatCompletionMessageParam, LlmClient } from "./llm-client.js";
 import type { ToolDefinition } from "./types.js";
 import type { AgentRunOptions } from "./run-contract.js";
-import { createAgentHost, ashEngine, type HostExtension } from "../runtime/index.js";
-import { estimateMessagesTokens } from "../utils/token-estimate.js";
-import type { ExtensionContext } from "../shell/host-types.js";
-
-const CLEARED = "[earlier tool output cleared to fit the context window";
-const KEEP_RECENT_RESULTS = 4;
-
-/** Compaction for one long run: rolling-history compacts whole user turns, and a
- *  subagent run is a single turn. Clears the oldest tool results (keeping the
- *  latest few) until under target; tool-call pairing stays intact. */
-export function toolResultClearing(keepRecent = KEEP_RECENT_RESULTS): HostExtension {
-  return {
-    name: "subagent-compaction",
-    activate(ctx: ExtensionContext) {
-      ctx.advise("conversation:compact", async (next: (o: unknown) => unknown, opts: {
-        target?: number; force?: boolean; strategy?: { kind: string };
-      } = {}) => {
-        if (opts.strategy) return next(opts);
-        const before = ctx.call("conversation:estimate-prompt-tokens") as number;
-        const target = opts.target ?? 0;
-        if (!opts.force && before <= target) return null;
-        const msgs = ctx.call("conversation:get-messages") as ChatCompletionMessageParam[];
-        const toolIdx = msgs.flatMap((m, i) => m.role === "tool" ? [i] : []);
-        const out = [...msgs];
-        let tokens = before;
-        let cleared = 0;
-        for (const i of toolIdx.slice(0, Math.max(0, toolIdx.length - keepRecent))) {
-          if (tokens <= target) break;
-          const m = msgs[i]!;
-          const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-          if (text.startsWith(CLEARED) || text.length < 400) continue;
-          const stub = { ...m, content: `${CLEARED} (${text.length} chars); re-run the tool if you need it]` } as ChatCompletionMessageParam;
-          tokens -= estimateMessagesTokens([m]) - estimateMessagesTokens([stub]);
-          out[i] = stub;
-          cleared++;
-        }
-        if (cleared === 0) return null;
-        ctx.call("conversation:replace-messages", out);
-        return { before, after: ctx.call("conversation:estimate-prompt-tokens") as number, evictedCount: cleared };
-      });
-    },
-  };
-}
+import { createAgentHost, ashEngine } from "../runtime/index.js";
+import { subagentCompaction } from "./subagent-compaction.js";
 
 export interface SubagentOptions {
   /** LLM client to use. */
@@ -162,7 +121,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
         extractCachedTokens: usage => (usage.prompt_tokens_details as { cached_tokens?: number } | undefined)?.cached_tokens ?? 0,
       },
       tools: opts.tools,
-    }), toolResultClearing()],
+    }), subagentCompaction({ historyLength: opts.history?.length })],
   });
   const childBus = host.context.bus;
   const unsubscribers: (() => void)[] = [];
