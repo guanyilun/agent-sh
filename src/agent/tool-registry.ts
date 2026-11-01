@@ -1,7 +1,6 @@
 import type { ToolDefinition, ToolResult, ToolSchemaView } from "./types.js";
 import type { ChatCompletionTool } from "./llm-client.js";
 import type { HandlerFunctions } from "../utils/handler-registry.js";
-import { registerReadOnlyTool, unregisterReadOnlyTool } from "./nuclear-form.js";
 
 /**
  * Registry for agent tools. Execution is routed through the named-handler
@@ -23,13 +22,10 @@ export class ToolRegistry {
       description: tool.description,
       parameters: tool.input_schema,
     }));
-    if (tool.readOnly) registerReadOnlyTool(tool.name);
-    else unregisterReadOnlyTool(tool.name);
   }
 
   unregister(name: string): void {
     this.tools.delete(name);
-    unregisterReadOnlyTool(name);
     // Handler entry intentionally retained so external advisors survive a
     // reload of the tool's owner and reattach when the name re-registers.
   }

@@ -8,16 +8,11 @@ import type { AgentContext, Model, ModelEndpoint, AgentSurface, ProviderRegistra
 import type { AppConfig } from "../shell/host-types.js";
 import { AgentLoop } from "./agent-loop.js";
 import { LlmClient } from "./llm-client.js";
-import { createLlmFacade } from "./llm-facade.js";
-import type { ToolDefinition, ToolSchemaView } from "./types.js";
-import { registerReadOnlyTool, unregisterReadOnlyTool } from "./nuclear-form.js";
+import { attachAgentSurface } from "./surface.js";
+import { bindLlmClient } from "./llm-binding.js";
 import {
-  resolveProvider,
-  getProviderNames,
-  getSettings,
-  setSessionOverlay,
-  clearSessionOverlay,
-  getSettingSource,
+  globalSettingsService,
+  type SettingsService,
   type ResolvedProvider,
 } from "../core/settings.js";
 import { resolveApiKey } from "../cli/auth/keys.js";
@@ -39,11 +34,6 @@ import { createGrepTool } from "./tools/grep.js";
 import { createGlobTool } from "./tools/glob.js";
 import { createLsTool } from "./tools/ls.js";
 import { createListSkillsTool } from "./tools/list-skills.js";
-
-function persistedModelFor(providerName: string | undefined): string | undefined {
-  if (!providerName) return undefined;
-  return getSettings().providers?.[providerName]?.defaultModel;
-}
 
 /** The OpenAI SDK silently defaults an empty baseURL to api.openai.com, so a
  *  provider with a key but no endpoint would misroute its key there. `openai`
@@ -104,23 +94,16 @@ function splitRegistration(p: ProviderRegistration): { ids: string[]; caps: Map<
 export default function agentBackend(ctx: ExtensionContext): void {
   const { bus } = ctx;
   const config: AppConfig = ctx.call("config:get-app-config") ?? {};
-
-  type ToolContributor = (acc: { tools: ToolDefinition[] }) => { tools: ToolDefinition[] };
-  type InstructionContributor = (acc: { instructions: Array<{ name: string; text: string }> }) => { instructions: Array<{ name: string; text: string }> };
-  type SkillContributor = (acc: { skills: Array<{ name: string; description: string; filePath: string }> }) => { skills: Array<{ name: string; description: string; filePath: string }> };
-  type ProviderContributor = (acc: { providers: ProviderRegistration[] }) => { providers: ProviderRegistration[] };
-
-  const toolContribs = new Map<string, ToolContributor>();
-  const instructionContribs = new Map<string, InstructionContributor>();
-  const skillContribs = new Map<string, SkillContributor>();
-  const providerContribs = new Map<string, ProviderContributor>();
+  const settingsService: SettingsService = ctx.call("config:settings") ?? config.settingsService ?? config.settings ?? globalSettingsService;
+  const persistedModelFor = (providerName: string | undefined): string | undefined =>
+    providerName ? settingsService.get().providers?.[providerName]?.defaultModel : undefined;
 
   // Settings overlay — fields here win over contributing extensions' payloads.
   const settingsProviders = new Map<string, ResolvedProvider>();
   const refreshSettingsProviders = () => {
     settingsProviders.clear();
-    for (const name of getProviderNames()) {
-      const p = resolveProvider(name);
+    for (const name of settingsService.getProviderNames()) {
+      const p = settingsService.resolveProvider(name);
       if (p) settingsProviders.set(name, p);
     }
   };
@@ -144,114 +127,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
   const bindRequestHeaders = (shapeId: string) =>
     providerHooks.get(shapeId)?.requestHeaders;
 
-  const agentSurface: AgentSurface = {
-    llm: createLlmFacade({ list: ctx.list, call: ctx.call }),
-    providers: {
-      register: (reg) => {
-        const existing = providerContribs.get(reg.id);
-        if (existing) bus.offPipe("agent:providers", existing);
-        const contrib: ProviderContributor = (acc) => {
-          acc.providers.push(reg);
-          return acc;
-        };
-        providerContribs.set(reg.id, contrib);
-        bus.onPipe("agent:providers", contrib);
-        bus.emit("agent:providers:changed", {});
-        return () => agentSurface.providers.unregister(reg.id);
-      },
-      unregister: (id) => {
-        const contrib = providerContribs.get(id);
-        if (!contrib) return;
-        bus.offPipe("agent:providers", contrib);
-        providerContribs.delete(id);
-        bus.emit("agent:providers:changed", {});
-      },
-      configure: (id, configureOpts) => bus.emit("provider:configure", { id, ...configureOpts }),
-    },
-    registerTool: (tool) => {
-      if (toolContribs.has(tool.name)) {
-        throw new Error(`Tool "${tool.name}" already registered. Use ctx.agent.adviseTool() to wrap it.`);
-      }
-      ctx.define(`tool:${tool.name}`, tool.execute.bind(tool));
-      ctx.define(`tool:${tool.name}:schema`, (): ToolSchemaView => ({
-        description: tool.description,
-        parameters: tool.input_schema,
-      }));
-      if (tool.readOnly) registerReadOnlyTool(tool.name);
-      else unregisterReadOnlyTool(tool.name);
-      const contrib: ToolContributor = (acc) => {
-        // Pull through schema so adviseToolSchema reflects.
-        const view = ctx.call(`tool:${tool.name}:schema`) as ToolSchemaView;
-        acc.tools.push({ ...tool, description: view.description, input_schema: view.parameters });
-        return acc;
-      };
-      toolContribs.set(tool.name, contrib);
-      bus.onPipe("agent:tools", contrib);
-    },
-    unregisterTool: (name) => {
-      const contrib = toolContribs.get(name);
-      if (!contrib) return;
-      bus.offPipe("agent:tools", contrib);
-      toolContribs.delete(name);
-      unregisterReadOnlyTool(name);
-      // Handlers retained so external advisors survive a reload.
-    },
-    adviseTool: (name, advisor) => ctx.advise(`tool:${name}`, advisor as Parameters<typeof ctx.advise>[1]),
-    adviseToolSchema: (name, advisor) => ctx.advise(`tool:${name}:schema`, advisor as Parameters<typeof ctx.advise>[1]),
-    getTools: () => bus.emitPipe("agent:tools", { tools: [] }).tools,
-    registerInstruction: (name, text) => {
-      const existing = instructionContribs.get(name);
-      if (existing) bus.offPipe("agent:instructions", existing);
-      ctx.define(`instruction:${name}`, () => text);
-      const contrib: InstructionContributor = (acc) => {
-        const current = ctx.call(`instruction:${name}`) as string;
-        acc.instructions.push({ name, text: current });
-        return acc;
-      };
-      instructionContribs.set(name, contrib);
-      bus.onPipe("agent:instructions", contrib);
-    },
-    removeInstruction: (name) => {
-      const contrib = instructionContribs.get(name);
-      if (!contrib) return;
-      bus.offPipe("agent:instructions", contrib);
-      instructionContribs.delete(name);
-    },
-    adviseInstruction: (name, advisor) => ctx.advise(`instruction:${name}`, advisor as Parameters<typeof ctx.advise>[1]),
-    registerSkill: (name, description, filePath) => {
-      const existing = skillContribs.get(name);
-      if (existing) bus.offPipe("agent:skills", existing);
-      ctx.define(`skill:${name}:view`, () => ({ description, filePath }));
-      const contrib: SkillContributor = (acc) => {
-        const view = ctx.call(`skill:${name}:view`) as { description: string; filePath: string };
-        acc.skills.push({ name, description: view.description, filePath: view.filePath });
-        return acc;
-      };
-      skillContribs.set(name, contrib);
-      bus.onPipe("agent:skills", contrib);
-    },
-    removeSkill: (name) => {
-      const contrib = skillContribs.get(name);
-      if (!contrib) return;
-      bus.offPipe("agent:skills", contrib);
-      skillContribs.delete(name);
-    },
-    adviseSkill: (name, advisor) => ctx.advise(`skill:${name}:view`, advisor as Parameters<typeof ctx.advise>[1]),
-    registerContextProducer: (_name, producer, producerOpts) => {
-      const handlerName = producerOpts?.mode === "per-query"
-        ? "query-context:build"
-        : "dynamic-context:build";
-      return ctx.advise(handlerName, (next) => {
-        const base = next() as string;
-        const part = producer();
-        if (!part) return base;
-        const trimmed = part.trim();
-        if (!trimmed) return base;
-        return base ? `${base}\n\n${trimmed}` : trimmed;
-      });
-    },
-  };
-  (ctx as { agent?: AgentSurface }).agent = agentSurface;
+  const agentSurface = attachAgentSurface(ctx);
 
   ctx.define("provider:resolve-api-key", (id: string) => resolveApiKey(id));
 
@@ -360,17 +236,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
 
   // Reconfigured at core:extensions-loaded; start() gates on `resolved`.
   const llmClient = new LlmClient({ apiKey: "not-configured", model: "not-configured" });
-  ctx.define("llm:get-client", () => llmClient);
-  ctx.define("llm:invoke", (messages: { role: string; content: string }[], opts?: { maxTokens?: number; model?: string; reasoningEffort?: string }) => {
-    const effort = opts?.reasoningEffort;
-    const clampedEffort = effort === "xhigh" ? "high" : effort;
-    return llmClient.complete({
-      messages: messages as Parameters<typeof llmClient.complete>[0]["messages"],
-      max_tokens: opts?.maxTokens,
-      model: opts?.model,
-      ...(clampedEffort && clampedEffort !== "off" ? { reasoning_effort: clampedEffort } : {}),
-    });
-  });
+  bindLlmClient(ctx, llmClient);
 
   let resolved = false;
   // Gates late-reconcile so config:switch-model doesn't misroute under a non-ash backend.
@@ -385,7 +251,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     bus.emit("agent:models-changed", {});
     if (!ashActive) return;
     if (buildModels().some((m) => m.id === llmClient.model)) return;
-    const pendingProvider = getSettings().defaultProvider;
+    const pendingProvider = settingsService.get().defaultProvider;
     if (!pendingProvider) return;
     const p = resolvedProviders.get(pendingProvider);
     if (!p) return;
@@ -407,7 +273,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     loadedExtensionNames = names;
     resolvedProviders = computeResolvedProviders();
 
-    const settings = getSettings();
+    const settings = settingsService.get();
 
     let providerName: string | undefined = config.provider ?? settings.defaultProvider;
     let activeProvider = providerName ? resolvedProviders.get(providerName) ?? null : null;
@@ -470,7 +336,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
         agentLoop = new AgentLoop({
           bus,
           llmClient,
-          handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list },
+          handlers: { define: ctx.define, advise: ctx.advise, call: ctx.call, list: ctx.list, hasBase: ctx.hasBase },
           initialModel,
           compositor: ctx.shell?.compositor,
           instanceId: ctx.instanceId,
@@ -488,7 +354,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
             }
             const [sub, ...rest] = trimmed.split(/\s+/);
             if (sub === "off" || sub === "on") {
-              setSessionOverlay({ autoCompact: sub === "on" });
+              settingsService.setSessionOverlay({ autoCompact: sub === "on" });
               bus.emit("ui:info", { message: `auto-compact: ${sub} (session)` });
               return;
             }
@@ -499,19 +365,19 @@ export default function agentBackend(ctx: ExtensionContext): void {
                 bus.emit("ui:error", { message: "usage: /compact threshold <0.0..1.0>" });
                 return;
               }
-              setSessionOverlay({ autoCompactThreshold: n });
+              settingsService.setSessionOverlay({ autoCompactThreshold: n });
               bus.emit("ui:info", { message: `auto-compact threshold: ${n} (session)` });
               return;
             }
             if (sub === "reset") {
-              clearSessionOverlay("autoCompact", "autoCompactThreshold");
+              settingsService.clearSessionOverlay("autoCompact", "autoCompactThreshold");
               bus.emit("ui:info", { message: "auto-compact: session overrides cleared" });
               return;
             }
             if (sub === "status") {
-              const s = getSettings();
-              const enabledSrc = getSettingSource("autoCompact");
-              const thSrc = getSettingSource("autoCompactThreshold");
+              const s = settingsService.get();
+              const enabledSrc = settingsService.getSettingSource("autoCompact");
+              const thSrc = settingsService.getSettingSource("autoCompactThreshold");
               bus.emit("ui:info", {
                 message:
                   `auto-compact: ${s.autoCompact ? "on" : "off"} (${enabledSrc}), ` +

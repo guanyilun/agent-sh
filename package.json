@@ -65,6 +65,10 @@
       "types": "./dist/utils/terminal-buffer.d.ts",
       "default": "./dist/utils/terminal-buffer.js"
     },
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "default": "./dist/runtime/index.js"
+    },
     "./agent": {
       "types": "./dist/agent/index.d.ts",
       "default": "./dist/agent/index.js"

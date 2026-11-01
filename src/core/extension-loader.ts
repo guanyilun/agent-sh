@@ -42,108 +42,218 @@ export async function ensureTsSupport(force = false): Promise<void> {
 // ── Scoped context for reloadable extensions ────────────────────
 
 type Cleanup = () => void;
+const noop = () => {};
+
+// Void-returning surface registrars have no ownership handle. Coordinate
+// scoped writers by raw surface identity, never by extension display name.
+// Raw writers still need ownership-aware disposers from the host API.
+const surfaceOwners = new WeakMap<object, Map<string, object>>();
+const scopeHosts = new WeakMap<ExtensionContext, ExtensionContext>();
+
+/** Surface factories must close over the host lifetime, not an installing scope. */
+export function extensionHostContext(ctx: ExtensionContext): ExtensionContext {
+  return scopeHosts.get(ctx) ?? ctx;
+}
 
 /**
- * Wrap an ExtensionContext to track all registrations (bus.on, advise,
- * command:register, plus all agent/shell surface registrars). Returns
- * the wrapped context and a dispose() that tears down everything
- * registered through it.
+ * Own registrations made by one activation. dispose() starts fault-isolated
+ * cleanup synchronously; disposeAsync() awaits reverse-order cleanup and reports
+ * failures. Both are idempotent and share pending cleanup work.
+ * Host surfaces must be constructed with the raw host context, not this scope:
+ * otherwise their closures capture the installing extension's lifetime.
  */
-function createScopedContext(ctx: ExtensionContext, extensionName: string): { scoped: ExtensionContext; dispose: () => void } {
-  const cleanups: Cleanup[] = [];
-  const bus = ctx.bus;
+export function createScopedContext(ctx: ExtensionContext, _extensionName: string): { scoped: ExtensionContext; dispose: () => void; disposeAsync: () => Promise<void> } {
+  return createScope(ctx, false);
+}
 
+// File-loader compatibility: historically synchronous teardown callbacks can
+// restore registrations outside the departing extension's ownership. Reusable
+// programmable scopes deliberately do not inherit that escape hatch.
+function createScope(ctx: ExtensionContext, legacyTeardown: boolean): { scoped: ExtensionContext; dispose: () => void; disposeAsync: () => Promise<void> } {
+  const cleanups = new Set<() => Promise<void> | void>();
+  const pendingCleanups = new Set<Promise<void>>();
+  const errors: unknown[] = [];
+  let disposed = false;
+  let disposing = false;
+  let disposal: Promise<void> | undefined;
+  const closed = () => disposed && !(disposing && legacyTeardown);
+  const run = (fn: Cleanup): Promise<void> | void => {
+    try {
+      // onDispose accepts void callbacks, but async callbacks are legal TS.
+      // Observe failures immediately, even when only synchronous disposal is used.
+      const result = fn() as unknown;
+      if (result && typeof (result as PromiseLike<unknown>).then === "function") {
+        const pending = Promise.resolve(result).then(() => {}, error => { errors.push(error); });
+        pendingCleanups.add(pending);
+        void pending.then(() => pendingCleanups.delete(pending));
+        return pending;
+      }
+    } catch (error) { errors.push(error); }
+  };
+  const track = (fn: Cleanup): Cleanup => {
+    let active = true;
+    const once = () => {
+      if (!active) return;
+      active = false;
+      cleanups.delete(once);
+      return run(fn);
+    };
+    if (disposing && legacyTeardown) return once;
+    if (disposed) once();
+    else cleanups.add(once);
+    return once;
+  };
+  const trackUnsub = <A extends unknown[]>(fn: (...args: A) => Cleanup) => (...args: A): Cleanup => {
+    if (closed()) return noop;
+    return track(fn(...args));
+  };
+  const own = (surface: object, key: string, register: () => void, remove: Cleanup) => {
+    if (closed()) return;
+    register();
+    let owners = surfaceOwners.get(surface);
+    if (!owners) surfaceOwners.set(surface, owners = new Map());
+    const token = {};
+    owners.set(key, token);
+    track(() => {
+      if (owners.get(key) !== token) return;
+      owners.delete(key);
+      remove();
+    });
+  };
+  const forget = (surface: object, key: string, remove: Cleanup) => {
+    if (closed()) return;
+    surfaceOwners.get(surface)?.delete(key);
+    remove();
+  };
+
+  const bus = ctx.bus;
   const scopedBus: EventBus = Object.create(bus);
   scopedBus.on = ((event: any, fn: any) => {
+    if (closed()) return;
     bus.on(event, fn);
-    cleanups.push(() => bus.off(event, fn));
+    track(() => bus.off(event, fn));
   }) as typeof bus.on;
   scopedBus.onPipe = ((event: any, fn: any) => {
+    if (closed()) return;
     bus.onPipe(event, fn);
-    cleanups.push(() => bus.offPipe(event, fn));
+    track(() => bus.offPipe(event, fn));
   }) as typeof bus.onPipe;
+  scopedBus.onPipeAsync = ((event: any, fn: any) => {
+    if (closed()) return;
+    bus.onPipeAsync(event, fn);
+    track(() => bus.offPipeAsync(event, fn));
+  }) as typeof bus.onPipeAsync;
+  scopedBus.onAny = trackUnsub((fn) => bus.onAny(fn));
 
-  // Wrap any (name, fn) → unsubscribe registrar so its disposer runs on teardown.
-  const trackUnsub = <A, B>(fn: (a: A, b: B) => () => void) => (a: A, b: B) => {
-    const unsub = fn(a, b);
-    cleanups.push(unsub);
-    return unsub;
-  };
-
-  // ── substrate / sugar ──────────────────────────────────────
-  const scopedAdvise: typeof ctx.advise = trackUnsub(ctx.advise);
-  // Without this, reloading an extension stacks its commands (old + new)
-  // in the slash-commands registry.
-  const scopedRegisterCommand: typeof ctx.registerCommand = (name, description, handler) => {
-    ctx.registerCommand(name, description, handler);
-    cleanups.push(() => bus.emit("command:unregister", { name }));
-  };
-  const scopedAdviseCommand: typeof ctx.adviseCommand = trackUnsub(ctx.adviseCommand);
-
-  // ── agent surface (optional — bridge backends omit it) ───
-  const agent = ctx.agent;
-  let scopedAgent: typeof agent;
-  if (agent) {
-    scopedAgent = {
+  // Construct wrappers lazily: programmable hosts may attach surfaces after
+  // creating scopes. Never publish a scoped wrapper back onto the raw host.
+  const agents = new WeakMap<NonNullable<ExtensionContext["agent"]>, NonNullable<ExtensionContext["agent"]>>();
+  const wrapAgent = (agent: NonNullable<ExtensionContext["agent"]>) => {
+    const cached = agents.get(agent);
+    if (cached) return cached;
+    const providers = new Map<string, Cleanup>();
+    const wrapped: typeof agent = {
       ...agent,
-      registerTool: (tool) => {
-        agent.registerTool(tool);
-        cleanups.push(() => agent.unregisterTool(tool.name));
-      },
-      adviseTool: trackUnsub(agent.adviseTool),
-      adviseToolSchema: trackUnsub(agent.adviseToolSchema),
-      registerInstruction: (name, text) => {
-        agent.registerInstruction(name, text);
-        cleanups.push(() => agent.removeInstruction(name));
-      },
-      adviseInstruction: trackUnsub(agent.adviseInstruction),
-      registerSkill: (name, description, filePath) => {
-        agent.registerSkill(name, description, filePath);
-        cleanups.push(() => agent.removeSkill(name));
-      },
-      adviseSkill: trackUnsub(agent.adviseSkill),
-      registerContextProducer: (name, producer, opts) => {
-        const dispose = agent.registerContextProducer(name, producer, opts);
-        cleanups.push(dispose);
-        return dispose;
-      },
+      ...(agent.providers && { providers: {
+        ...agent.providers,
+        register: (reg) => {
+          if (closed()) return noop;
+          const previous = providers.get(reg.id);
+          // Let the surface replace atomically before releasing the old scope's
+          // ownership handle; owned provider disposers are identity-aware.
+          const unregister = agent.providers.register(reg);
+          previous?.();
+          const release = track(() => {
+            providers.delete(reg.id);
+            unregister();
+          });
+          if (!closed()) providers.set(reg.id, release);
+          return release;
+        },
+        unregister: (id) => {
+          if (closed()) return;
+          const release = providers.get(id);
+          if (release) release();
+          else agent.providers.unregister(id);
+        },
+      } }),
+      registerTool: (tool) => own(agent, `tool:${tool.name}`, () => agent.registerTool(tool), () => agent.unregisterTool(tool.name)),
+      unregisterTool: (name) => forget(agent, `tool:${name}`, () => agent.unregisterTool(name)),
+      adviseTool: trackUnsub((...args) => agent.adviseTool(...args)),
+      adviseToolSchema: trackUnsub((...args) => agent.adviseToolSchema(...args)),
+      registerInstruction: (name, text) => own(agent, `instruction:${name}`, () => agent.registerInstruction(name, text), () => agent.removeInstruction(name)),
+      removeInstruction: (name) => forget(agent, `instruction:${name}`, () => agent.removeInstruction(name)),
+      adviseInstruction: trackUnsub((...args) => agent.adviseInstruction(...args)),
+      registerSkill: (name, description, filePath) => own(agent, `skill:${name}`, () => agent.registerSkill(name, description, filePath), () => agent.removeSkill(name)),
+      removeSkill: (name) => forget(agent, `skill:${name}`, () => agent.removeSkill(name)),
+      adviseSkill: trackUnsub((...args) => agent.adviseSkill(...args)),
+      registerContextProducer: trackUnsub((...args) => agent.registerContextProducer(...args)),
     };
-  }
-
-  // ── shell surface (optional — headless backends omit it) ──
-  const shell = ctx.shell;
-  let scopedShell: typeof shell;
-  if (shell) {
-    scopedShell = {
-      ...shell,
-      adviseInputMode: trackUnsub(shell.adviseInputMode),
-    };
-  }
-
+    agents.set(agent, wrapped);
+    return wrapped;
+  };
+  const shells = new WeakMap<NonNullable<ExtensionContext["shell"]>, NonNullable<ExtensionContext["shell"]>>();
   const scoped: ExtensionContext = {
     ...ctx,
     bus: scopedBus,
-    advise: scopedAdvise,
-    registerCommand: scopedRegisterCommand,
-    adviseCommand: scopedAdviseCommand,
-    agent: scopedAgent,
-    shell: scopedShell,
-    onDispose: (fn: () => void) => { cleanups.push(fn); },
+    define: (name, fn) => {
+      if (closed()) return;
+      // CoreContext's historical void signature remains compatible. Hosts
+      // forwarding HandlerRegistry.define's return value opt into ownership.
+      const release = ctx.define(name, fn) as unknown;
+      if (typeof release === "function") return track(release as Cleanup);
+    },
+    advise: trackUnsub((...args) => ctx.advise(...args)),
+    registerCommand: (name, description, handler) => own(ctx, `command:${name.replace(/^\//, "")}`, () => ctx.registerCommand(name, description, handler), () => bus.emit("command:unregister", { name })),
+    adviseCommand: trackUnsub((...args) => ctx.adviseCommand(...args)),
+    get agent() { return ctx.agent && wrapAgent(ctx.agent); },
+    set agent(value) { ctx.agent = value; },
+    get shell() {
+      const shell = ctx.shell;
+      if (!shell) return undefined;
+      let wrapped = shells.get(shell);
+      if (!wrapped) {
+        wrapped = { ...shell, adviseInputMode: trackUnsub((...args) => shell.adviseInputMode(...args)) };
+        shells.set(shell, wrapped);
+      }
+      return wrapped;
+    },
+    set shell(value) { ctx.shell = value; },
+    onDispose: (fn) => { track(fn); },
   };
 
   const dispose = () => {
-    // Snapshot: a re-registering cleanup appends a new cleanup, and iterating
-    // the live array would run it and undo the restore in the same pass.
-    for (const fn of cleanups.slice()) {
-      try { fn(); } catch { /* ignore */ }
-    }
-    cleanups.length = 0;
+    if (disposed) return;
+    disposed = true;
+    disposing = true;
+    // Reusable scopes release dependants first; keep the loader's historical
+    // FIFO teardown (including explicit restoration callbacks) unchanged.
+    const pending = [...cleanups];
+    for (const fn of legacyTeardown ? pending : pending.reverse()) fn();
+    cleanups.clear();
+    disposing = false;
   };
-
-  return { scoped, dispose };
+  const disposeAsync = (): Promise<void> => {
+    if (disposal) return disposal;
+    disposed = true;
+    // Defer execution so reentrant callers see the same promise before any
+    // user cleanup runs (including calls made during synchronous disposal).
+    disposal = Promise.resolve().then(async () => {
+      const remaining = [...cleanups].reverse();
+      for (const fn of remaining) await fn();
+      cleanups.clear();
+      // Include work already started by dispose(), manual releases, or late
+      // onDispose registrations, including registrations made across awaits.
+      while (pendingCleanups.size) await Promise.all([...pendingCleanups]);
+      if (errors.length) throw new AggregateError(errors, "Scope cleanup failed");
+    });
+    return disposal;
+  };
+  scopeHosts.set(scoped, extensionHostContext(ctx));
+  return { scoped, dispose, disposeAsync };
 }
 
-const extensionDisposers = new Map<string, () => void>();
+const extensionDisposers = new WeakMap<ExtensionContext, Map<string, { dispose: () => void; disposeAsync: () => Promise<void> }>>();
 
 
 /**
@@ -266,10 +376,26 @@ async function loadSpecifiers(
         // Awaiting activate() lets extensions with async setup (e.g.
         // openrouter fetching its model catalog) finish before we move
         // on; a 10s outer timeout in index.ts guards against hangs.
-        extensionDisposers.get(name)?.();
-        const { scoped, dispose } = createScopedContext(ctx, name);
-        await activate(scoped);
-        extensionDisposers.set(name, dispose);
+        let disposers = extensionDisposers.get(ctx);
+        if (!disposers) extensionDisposers.set(ctx, disposers = new Map());
+        const previous = disposers.get(name);
+        if (previous) {
+          previous.dispose();
+          await previous.disposeAsync().catch((err) => {
+            ctx.bus.emit("ui:error", {
+              message: `Async cleanup failed for extension ${name}: ${err instanceof Error ? err.message : String(err)}`,
+            });
+          });
+        }
+        disposers.delete(name);
+        const { scoped, dispose, disposeAsync } = createScope(ctx, true);
+        try {
+          await activate(scoped);
+        } catch (err) {
+          dispose();
+          throw err;
+        }
+        disposers.set(name, { dispose, disposeAsync });
         loaded.push(name);
       }
     } catch (err) {

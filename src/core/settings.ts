@@ -182,6 +182,70 @@ let sessionOverlay: Partial<Settings> = {};
 
 export type SettingSource = "session" | "env" | "file" | "default";
 
+/** Settings owned by a host. The global adapter retains the CLI's disk/env behavior. */
+export interface SettingsService {
+  get(): Required<Settings>;
+  setSessionOverlay(patch: Partial<Settings>): void;
+  clearSessionOverlay(...keys: (keyof Settings)[]): void;
+  getSettingSource(key: keyof Settings): SettingSource;
+  update(patch: Record<string, unknown>): void;
+  getExtensionSettings<T extends Record<string, unknown>>(namespace: string, defaults: T): T;
+  getProviderNames(): string[];
+  resolveProvider(name: string): ResolvedProvider | null;
+}
+
+/**
+ * Create an isolated, in-memory service from a snapshot (not from global
+ * settings, disk, or environment overrides). Snapshot keys use the "file"
+ * source label; updates deep-merge into that baseline without writing to disk.
+ * Session overlays are shallow, just like the legacy settings API. Inputs and
+ * returned values are cloned so nested arrays/provider/extension settings
+ * cannot leak between services or mutate their baselines.
+ */
+export function createSettingsService(snapshot: Settings | Record<string, unknown> = {}): SettingsService {
+  const defaults = structuredClone(DEFAULTS);
+  let baseline = structuredClone(snapshot) as Record<string, unknown>;
+  let overlay: Partial<Settings> = {};
+  const get = (): Required<Settings> => structuredClone({ ...defaults, ...baseline, ...overlay });
+  return {
+    get,
+    setSessionOverlay(patch) {
+      overlay = { ...overlay, ...structuredClone(patch) };
+    },
+    clearSessionOverlay(...keys) {
+      if (keys.length === 0) overlay = {};
+      else for (const key of keys) delete overlay[key];
+    },
+    getSettingSource(key) {
+      if (key in overlay) return "session";
+      return key in baseline ? "file" : "default";
+    },
+    update(patch) {
+      baseline = deepMerge(baseline, structuredClone(patch));
+    },
+    getExtensionSettings(namespace, defaults) {
+      const ext = (get() as unknown as Record<string, unknown>)[namespace];
+      return structuredClone(ext && typeof ext === "object" && !Array.isArray(ext)
+        ? { ...defaults, ...ext }
+        : defaults);
+    },
+    getProviderNames: () => Object.keys(get().providers ?? {}),
+    resolveProvider: (name) => resolveProviderFromSettings(name, get()),
+  };
+}
+
+/** Default service: deliberately delegates to the legacy process-global API. */
+export const globalSettingsService: SettingsService = {
+  get: getSettings,
+  setSessionOverlay,
+  clearSessionOverlay,
+  getSettingSource,
+  update: updateSettings,
+  getExtensionSettings,
+  getProviderNames,
+  resolveProvider,
+};
+
 function parseBoolEnv(raw: string | undefined, key: string): boolean | undefined {
   if (raw === undefined) return undefined;
   const v = raw.trim().toLowerCase();
@@ -358,7 +422,10 @@ export interface ResolvedProvider {
  * Returns null if provider not found.
  */
 export function resolveProvider(name: string): ResolvedProvider | null {
-  const settings = getSettings();
+  return resolveProviderFromSettings(name, getSettings());
+}
+
+function resolveProviderFromSettings(name: string, settings: Settings): ResolvedProvider | null {
   const provider = settings.providers?.[name];
   if (!provider) return null;
 
