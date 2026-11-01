@@ -697,6 +697,17 @@ export class AgentLoop implements AgentBackend {
       return true;
     }
 
+    // A stream cut mid-response: undici raises TypeError("terminated") when the
+    // server or a proxy closes the connection; LiteLLM gateways report the same as
+    // "APIConnectionError ... Connection closed".  Nothing from a cut stream has
+    // been recorded or executed (the assistant message and its tool calls are
+    // recorded after the stream completes), so re-sending the request is safe
+    // and keeps the run's earlier steps.
+    if (msg === "terminated" || msg.includes("other side closed") ||
+        msg.includes("connection closed") || msg.includes("apiconnectionerror")) {
+      return true;
+    }
+
     // HTTP status-based (OpenAI SDK includes status in error)
     const status = llmErrorStatus(e);
     if (status === 429 || status === 500 || status === 502 || status === 503 || status === 529) {
