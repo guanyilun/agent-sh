@@ -111,3 +111,20 @@ test("an empty reply that reached max_tokens is not re-sent: it fails with the r
   await assert.rejects(runSubagent({ systemPrompt: "s", task: "t", llmClient, tools: [] }), /max_tokens/);
   assert.equal(n, 1);
 });
+
+test("every response reports its usage, finish reason and timing", async () => {
+  const seen: Record<string, unknown>[] = [];
+  const llmClient = {
+    model: "stub",
+    stream: async () => (async function* () {
+      yield { choices: [{ delta: { content: "ok" } }] };
+      yield { choices: [{ delta: {}, finish_reason: "stop" }] };
+      yield { choices: [], usage: { prompt_tokens: 7, completion_tokens: 1, total_tokens: 8 } };
+    })(),
+  } as unknown as LlmClient;
+  await runSubagent({ systemPrompt: "s", task: "t", llmClient, tools: [], onUsage: (u) => seen.push({ ...u }) });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].finish_reason, "stop");
+  assert.equal(seen[0].prompt_tokens, 7);
+  assert.equal(typeof seen[0].duration_ms, "number");
+});

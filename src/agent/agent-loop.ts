@@ -1651,6 +1651,8 @@ export class AgentLoop implements AgentBackend {
     const pendingToolCalls: PendingToolCall[] = [];
     let responseUsage: AgentRunResult["usage"] | undefined;
     let finishReason: string | undefined;
+    const startedAt = Date.now();
+    let firstTokenAt: number | undefined;
 
     // Tool protocol controls what goes in the API tools param vs dynamic context.
     // agent:tools:visible is a filter point on the assembled list — distinct from
@@ -1724,6 +1726,7 @@ export class AgentLoop implements AgentBackend {
 
       const choice = chunk.choices[0];
       if (!choice) continue;
+      firstTokenAt ??= Date.now();
       if (choice.finish_reason) finishReason = choice.finish_reason;
 
       const delta = choice.delta;
@@ -1796,7 +1799,15 @@ export class AgentLoop implements AgentBackend {
       total.completion_tokens += responseUsage.completion_tokens;
       total.total_tokens += responseUsage.total_tokens;
       if (responseUsage.cached_tokens !== undefined) total.cached_tokens = (total.cached_tokens ?? 0) + responseUsage.cached_tokens;
-      this.runState.options.onUsage?.({ ...responseUsage });
+    }
+    // Every response is reported, with or without a usage chunk: a stream that ends without one is itself a symptom.
+    if (this.runState && !signal.aborted) {
+      this.runState.options.onUsage?.({
+        ...(responseUsage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }),
+        ...(finishReason ? { finish_reason: finishReason } : {}),
+        duration_ms: Date.now() - startedAt,
+        ...(firstTokenAt ? { first_token_ms: firstTokenAt - startedAt } : {}),
+      });
     }
 
     if (streamFilter) {

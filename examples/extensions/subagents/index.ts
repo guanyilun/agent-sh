@@ -65,7 +65,7 @@ interface RunExtras {
   extraTools?: ToolDefinition[];
   systemNote?: string;
   shouldStop?: () => boolean;
-  onUsage?: (totalTokens: number, cachedTokens?: number) => void;
+  onUsage?: (totalTokens: number, cachedTokens?: number, detail?: Record<string, unknown>) => void;
   onMessage?: (message: Record<string, unknown>) => void;
   onStart?: () => void;
   history?: unknown[];
@@ -658,7 +658,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         reasoningParams: reasoningParams(spec.thinking ?? def?.thinking ?? defaultThinking(), spec.model ?? def?.model ?? llmClient.model),
         contextWindow: contextWindow(spec.model ?? def?.model ?? llmClient.model),
         outMeta: meta,
-        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens, u.cached_tokens) : undefined,
+        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens, u.cached_tokens, { ...u }) : undefined,
         onMessage: extra.onMessage as SubagentOptions["onMessage"],
         shouldStop: extra.shouldStop,
         history: extra.history as SubagentOptions["history"],
