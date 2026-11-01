@@ -80,7 +80,7 @@ export class TrustStore {
 export interface TaskControl {
   signal: AbortSignal;
   progress(line: string): void;
-  onUsage(totalTokens: number, cachedTokens?: number): void;
+  onUsage(totalTokens: number, cachedTokens?: number, detail?: Record<string, unknown>): void;
   onMessage(message: Record<string, unknown>): void;
   /** Once it has a concurrency slot. */
   onStart?(): void;
@@ -214,7 +214,11 @@ export async function runWorkflow(
             progress(`${label} started`);
           },
           progress: (line) => progress(`${label} ${line}`),
-          onUsage: (t, cached = 0) => { tokens += t; record.record.tokens += t; if (cached) record.record.cached = (record.record.cached ?? 0) + cached; },
+          onUsage: (t, cached = 0, detail) => {
+            tokens += t; record.record.tokens += t; if (cached) record.record.cached = (record.record.cached ?? 0) + cached;
+            // One line per model response: tokens, cache hits, finish_reason and timing (diagnoses stalls and empty replies).
+            if (detail) write({ type: "request", ...detail });
+          },
           onMessage: (m) => write({ type: "message", ...m }),
         });
         // An aborted subagent returns its partial text; that's a stop, not a result.

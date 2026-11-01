@@ -70,6 +70,10 @@ export interface SubagentUsage {
   total_tokens: number;
   /** The part of prompt_tokens the provider served from its cache, when it says. */
   cached_tokens?: number;
+  /** Why the response ended ("stop", "tool_calls", "length", ...) and its timing. */
+  finish_reason?: string;
+  duration_ms?: number;
+  first_token_ms?: number;
 }
 
 export interface SubagentMessage {
