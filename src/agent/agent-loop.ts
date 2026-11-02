@@ -1266,7 +1266,8 @@ export class AgentLoop implements AgentBackend {
       }
 
       const systemPrompt = options.systemPrompt ?? (cachedSystemPrompt ?? (cachedSystemPrompt = this.handlers.call("system-prompt:build") as string));
-      const dynamicContext = options.dynamicContext ?? this.handlers.call("dynamic-context:build") as string;
+      const dc = options.dynamicContext;
+      const dynamicContext = (typeof dc === "function" ? dc() : dc) ?? this.handlers.call("dynamic-context:build") as string;
 
       // Shell events are injected once per user query (see handleQuery),
       // not per loop iteration. Mid-loop injection would break the

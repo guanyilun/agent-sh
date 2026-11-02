@@ -19,6 +19,8 @@ export interface RunOptions {
   write?: string[];
   /** Cap on this run's tool-using steps (default: the run's maxIterations). */
   maxSteps?: number;
+  /** A file the workflow rewrites while the agent works; re-read before every model call (dynamic context). */
+  live?: string;
 }
 
 export interface RunSpec extends RunOptions {

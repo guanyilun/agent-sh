@@ -73,6 +73,7 @@ plan = await run("Split this goal into tasks: ...", agent="plan", returns=Plan)
 | `label` | the name shown for it in progress lines. |
 | `write` | paths the agent may write (files under them); `[]` makes it read-only. A tripwire on its `write_file`/`edit_file` and the visible writes of its shell commands, inside the run's sandbox: it stops a reviewer saving scratch files into the code it reviews, not a determined escape. |
 | `max_steps` | the most tool-using steps this call may take (default: `config` `maxIterations`). |
+| `live` | a file the workflow rewrites while the agent works: re-read before every model call and shown to the agent as `<dynamic_context>` (outside the cached prompt).  Use it for the time, new instructions, new facts.  Missing or empty adds nothing. |
 
 `run` starts the agent immediately and returns an awaitable. Start several and wait for them together:
 

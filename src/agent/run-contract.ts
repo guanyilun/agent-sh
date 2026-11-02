@@ -31,7 +31,8 @@ export interface AgentRunOptions {
   runId?: string;
   images?: ImageContent[];
   systemPrompt?: string;
-  dynamicContext?: string;
+  /** A string, or a function re-evaluated before every model call (a live signal for long runs). */
+  dynamicContext?: string | (() => string);
   /** Replaces this engine's history before appending query; defensively copied. */
   history?: ChatCompletionMessageParam[];
   /** Maximum LLM rounds (retries do not count). Unlimited by default. */

@@ -28,6 +28,7 @@ export type { AgentRegistration } from "./agents.js";
 export type { WorkflowRegistration } from "./workflows.js";
 
 const TOOL_NAME = "spawn_agent";
+const LIVE_CHARS = 6000;                   // the most of a live file shown per model call
 const WORKFLOW_TOOL = "run_workflow";
 const JOBS_TOOL = "subagent_jobs";
 const SUBMIT_TOOL = "submit_result";
@@ -40,7 +41,7 @@ const PARENT_CONTEXT_CHARS = 12_000;
 /** Above this, fan-out answers are clipped to a share each; `resume` re-reads one in full. */
 const FANOUT_RESULT_CHARS = 24_000;
 
-interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; thinking?: string; write?: string[]; maxSteps?: number }
+interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string }
 
 const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python"];
 
@@ -648,6 +649,15 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     return { text, value: submitted?.value };
   }
 
+  function readLive(file: string): string {
+    try {
+      const text = fs.readFileSync(file, "utf8").trim();
+      return text.length > LIVE_CHARS ? text.slice(0, LIVE_CHARS) + "\n[…]" : text;
+    } catch {
+      return "";
+    }
+  }
+
   async function runOne(
     spec: TaskSpec,
     def: AgentDef | undefined,
@@ -713,6 +723,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         model: spec.model ?? def?.model,
         signal,
         maxIterations: spec.maxSteps ?? def?.maxIterations ?? settings.maxIterations,
+        // live: a file the workflow rewrites; read before every model call, shown as dynamic context (outside the
+        // cached prefix).  Empty or missing adds nothing.
+        dynamicContext: spec.live ? () => readLive(path.resolve(cwd, spec.live!)) : undefined,
         reasoningParams: reasoningParams(spec.thinking ?? def?.thinking ?? defaultThinking(), spec.model ?? def?.model ?? llmClient.model),
         contextWindow: contextWindow(spec.model ?? def?.model ?? llmClient.model),
         outMeta: meta,

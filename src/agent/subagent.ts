@@ -30,7 +30,7 @@ export interface SubagentOptions {
    * streamResponse uses. If provided, the subagent sees budget,
    * metacognitive signals, in-flight siblings, etc.
    */
-  dynamicContext?: string;
+  dynamicContext?: string | (() => string);
   /**
    * Per-subagent completion-token budget. When the cumulative
    * completion_tokens across iterations exceeds this, the subagent
