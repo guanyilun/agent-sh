@@ -10,7 +10,7 @@ from ._positions import Position, here, start
 
 
 def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, thinking=None, label=None, write=None,
-        max_steps=None, live=None):
+        max_steps=None, live=None, provider=None):
     """Give `task` to an agent and get its answer.
 
     The agent starts working straight away, and the call returns an awaitable for the answer, so
@@ -23,6 +23,7 @@ def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, 
     tools     the tools a plain agent may use ([] for none)
     system    a plain agent's role and rules
     model, thinking, label   override the agent's model, its reasoning effort, and its name in progress lines
+    provider  another configured provider for this agent (e.g. "codex"; needs model): one workflow can mix providers
     write     paths the agent may write (files under them); [] makes it read-only.  Inside the run's sandbox, which
               stays the boundary: this catches an agent writing into the wrong tree (a reviewer saving scratch
               files into the code it reviews), not a determined escape.
@@ -34,7 +35,7 @@ def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, 
     """
     position = here()
     spec = _spec(task, agent, returns, tools=tools, system=system, model=model, thinking=thinking, label=label,
-                 write=_paths(write), maxSteps=max_steps, live=live)
+                 write=_paths(write), maxSteps=max_steps, live=live, provider=provider)
     return _answer(spec, position.next(), position, returns)
 
 
@@ -48,19 +49,20 @@ class Agent:
     The options are the same as for `run` and apply to every turn.
     """
 
-    def __init__(self, name=None, *, tools=None, system=None, model=None, thinking=None, label=None, write=None, live=None):
+    def __init__(self, name=None, *, tools=None, system=None, model=None, thinking=None, label=None, write=None, live=None,
+                 provider=None):
         self._name = name
         self._options = dict(tools=tools, system=system, model=model, thinking=thinking, label=label, write=_paths(write),
-                             live=live)
+                             live=live, provider=provider)
         self._id = here().next()
         self._turns = 0
         self._last_turn = None
 
-    def ask(self, task, *, returns=None, model=None, thinking=None, label=None, max_steps=None):
+    def ask(self, task, *, returns=None, model=None, thinking=None, label=None, max_steps=None, provider=None):
         """Say `task` to the agent and get its answer. Turns happen one at a time, in the order asked."""
         position = here()
         overrides = {name: value for name, value in dict(model=model, thinking=thinking, label=label,
-                                                         maxSteps=max_steps).items() if value is not None}
+                                                         maxSteps=max_steps, provider=provider).items() if value is not None}
         spec = _spec(task, self._name, returns, **{**self._options, **overrides})
         self._turns += 1
         turn_id, previous = f"{self._id}:{self._turns}", self._last_turn

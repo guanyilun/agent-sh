@@ -474,7 +474,7 @@ const isDiverged = (s: Scope | undefined): boolean => !!s && (s.diverged || isDi
 function specKey(spec: RunSpec): string {
   const inputs = [spec.agent ?? null, spec.task, spec.tools ?? null, spec.schema ?? null];
   // Added later; only included when set, so older journals still match.
-  for (const k of ["system", "model", "thinking"] as const) if (spec[k] !== undefined) inputs.push(`${k}:${spec[k]}`);
+  for (const k of ["system", "model", "thinking", "provider"] as const) if (spec[k] !== undefined) inputs.push(`${k}:${spec[k]}`);
   if (spec.write !== undefined) inputs.push(`write:${JSON.stringify(spec.write)}`);
   return createHash("sha256").update(JSON.stringify(inputs)).digest("hex").slice(0, 16);
 }

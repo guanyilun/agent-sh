@@ -12,6 +12,8 @@ export interface RunOptions {
   /** Ad-hoc subagents only: the system prompt. */
   system?: string;
   model?: string;
+  /** Another configured provider for this agent (e.g. "codex"); needs `model`.  Default: the run's. */
+  provider?: string;
   thinking?: string;
   label?: string;
   /** Paths this agent may write (files under them); [] makes it read-only.  A tripwire on its write_file/edit_file

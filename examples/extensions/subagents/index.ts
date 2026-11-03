@@ -41,7 +41,7 @@ const PARENT_CONTEXT_CHARS = 12_000;
 /** Above this, fan-out answers are clipped to a share each; `resume` re-reads one in full. */
 const FANOUT_RESULT_CHARS = 24_000;
 
-interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string }
+interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string }
 
 const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python"];
 
@@ -665,8 +665,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     progress?: (line: string) => void,
     extra: RunExtras = {},
   ): Promise<string> {
-    const llmClient = ctx.call("llm:get-client") as SubagentOptions["llmClient"] | undefined;
-    if (!llmClient) throw new Error("no LLM client available");
+    const llmClient = clientFor(spec, def);
 
     const cwd = ctx.call("cwd") as string;
     const wanted = def ? def.tools : spec.tools;
@@ -744,6 +743,27 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       : meta.degraded === "budget" ? "stopped: token budget reached"
       : "done");
     return text;
+  }
+
+  // provider: this agent's own client on another configured provider (its endpoint and key resolved by the agent
+  // backend; the key never leaves it), so one workflow can mix providers.  Kept per provider and model.
+  const providerClients = new Map<string, SubagentOptions["llmClient"]>();
+  function clientFor(spec: TaskSpec, def: AgentDef | undefined): SubagentOptions["llmClient"] {
+    const base = ctx.call("llm:get-client") as SubagentOptions["llmClient"] | undefined;
+    if (!base) throw new Error("no LLM client available");
+    if (!spec.provider) return base;
+    const model = spec.model ?? def?.model;
+    if (!model) throw new Error(`provider "${spec.provider}" needs a model`);
+    const key = `${spec.provider}\u0000${model}`;
+    let client = providerClients.get(key);
+    if (!client) {
+      const ep = ctx.call("agent:resolve-endpoint", { provider: spec.provider, id: model }) as
+        { apiKey: string; baseURL?: string } | undefined;
+      if (!ep) throw new Error(`provider "${spec.provider}" is not available (not registered, or no key or sign-in)`);
+      client = base.fork({ apiKey: ep.apiKey, baseURL: ep.baseURL, provider: spec.provider, model });
+      providerClients.set(key, client);
+    }
+    return client;
   }
 
   // The user's thinking level, for runs and agents that don't set one: the session's, or the saved setting
