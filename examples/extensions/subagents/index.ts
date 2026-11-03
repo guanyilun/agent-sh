@@ -734,6 +734,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         shouldStop: extra.shouldStop,
         history: extra.history as SubagentOptions["history"],
         requestHeaders: requestHeadersFor(spec, def, systemPrompt, extra.history),
+        // a workflow's agents run unattended for hours: ride out an endpoint outage inside the run (its steps are in
+        // memory) rather than fail it and lose them (a 104-min critic turn lost to a cut stream, 2026-11-03)
+        retryWindowMs: 45 * 60_000,
       });
       if (meta.messages) extra.onHistory?.(meta.messages);
       extra.onMeta?.(meta);

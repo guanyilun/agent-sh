@@ -66,6 +66,8 @@ export interface SubagentOptions {
   /** Transport headers for every request of this run, e.g. the provider's cache-routing key (the codex provider
    *  turns its session header into `prompt_cache_key`).  A child host has no session, so the caller supplies them. */
   requestHeaders?: Record<string, string>;
+  /** See AgentRunOptions.retryWindowMs (the caller's choice; unset keeps the fixed few attempts). */
+  retryWindowMs?: number;
 }
 
 export interface SubagentUsage {
@@ -168,6 +170,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       // errors without the interactive engine's provider/model decoration.
       throwToolErrors: true,
       rawErrors: true,
+      retryWindowMs: opts.retryWindowMs,
     };
     const result = await host.run(opts.task, runOptions);
     const details = result.details;

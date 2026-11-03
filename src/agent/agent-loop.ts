@@ -1593,7 +1593,9 @@ export class AgentLoop implements AgentBackend {
     signal: AbortSignal,
   ): ReturnType<typeof this.streamResponse> {
     let empties = 0;
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+    const window = this.runState?.options.retryWindowMs ?? 0;
+    let firstFailure: number | undefined;
+    for (let attempt = 0; ; attempt++) {
       try {
         const response = await this.streamResponse(systemPrompt, dynamicContext, signal);
         // A reply with neither text nor tool calls is no answer: gateways return one
@@ -1637,13 +1639,15 @@ export class AgentLoop implements AgentBackend {
           continue;
         }
 
-        // Retryable transient error — backoff
-        if (this.isRetryable(e) && attempt < this.maxRetries) {
-          const delay = this.getRetryDelay(e, attempt);
+        // Retryable transient error — backoff (the fixed attempts, or the run's retry window)
+        firstFailure ??= Date.now();
+        const inWindow = window > 0 && Date.now() - firstFailure < window;
+        if (this.isRetryable(e) && (attempt < this.maxRetries || inWindow)) {
+          const delay = Math.min(this.getRetryDelay(e, attempt), window > 0 ? 60_000 : Infinity);
           const status = llmErrorStatus(e);
           const reason = status === 429 ? "rate limited" : `error ${status ?? "network"}`;
           this.bus.emit("ui:info", {
-            message: `(${reason}, retrying in ${Math.ceil(delay / 1000)}s — attempt ${attempt + 2}/${this.maxRetries + 1})`,
+            message: `(${reason}, retrying in ${Math.ceil(delay / 1000)}s — attempt ${attempt + 2}${window > 0 ? "" : `/${this.maxRetries + 1}`})`,
           });
           // Also handles cancellation during the synchronous UI notification,
           // and removes its abort listener when the wait completes normally.
@@ -1655,8 +1659,6 @@ export class AgentLoop implements AgentBackend {
         throw e;
       }
     }
-    // Should not reach here, but TypeScript needs it
-    throw new Error("Retry loop exhausted");
   }
 
   /**
