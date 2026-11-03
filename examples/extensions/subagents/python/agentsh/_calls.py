@@ -75,6 +75,14 @@ class Agent:
         self._last_turn = start(turn(), position)
         return self._last_turn
 
+    async def context(self):
+        """The conversation's size at its latest model call: {"prompt": tokens sent, "cached": the part the provider
+        served from cache}; zeros before the first turn.  For deciding whether to keep talking (a cached prefix is
+        cheap to extend) or start a fresh agent (a long one is slow and costly to re-send)."""
+        if self._last_turn is not None:
+            await asyncio.wait([self._last_turn])
+        return await _host.link().request("chat_size", session=self._id)
+
 
 async def race(*attempts, accept=None):
     """Try several things at once; return the first result that is good enough and cancel the rest.

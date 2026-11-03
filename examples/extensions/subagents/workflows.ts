@@ -222,6 +222,9 @@ export async function runWorkflow(
             tokens += t; record.record.tokens += t; if (cached) record.record.cached = (record.record.cached ?? 0) + cached;
             // One line per model response: tokens, cache hits, finish_reason and timing (diagnoses stalls and empty replies).
             if (detail) write({ type: "request", ...detail });
+            if (chat && detail && typeof detail.prompt_tokens === "number") {
+              chat.prompt = detail.prompt_tokens; chat.cached = typeof detail.cached_tokens === "number" ? detail.cached_tokens : 0;
+            }
           },
           onMessage: (m) => write({ type: "message", ...m }),
         });
@@ -397,6 +400,7 @@ export async function runWorkflow(
         return { done, abort };
       },
       quiet: async () => { await Promise.all(stopping); },
+      chatSize: (session) => ({ prompt: chats.get(session)?.prompt ?? 0, cached: chats.get(session)?.cached ?? 0 }),
       raceWinner: (id, key, at) => {
         const cached = isDiverged(scopeAt(at)) ? undefined : replay.get(id);
         return cached?.key === key ? cached.winner : undefined;
@@ -468,7 +472,7 @@ export function dedent(text: string): string {
 }
 
 interface Scope { path: string; next: number; diverged: boolean; parent?: Scope; signal: AbortSignal }
-interface Chat { key: string; history: unknown[] }
+interface Chat { key: string; history: unknown[]; prompt?: number; cached?: number }   // prompt/cached: the latest call's
 const isDiverged = (s: Scope | undefined): boolean => !!s && (s.diverged || isDiverged(s.parent));
 
 function specKey(spec: RunSpec): string {
