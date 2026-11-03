@@ -4,6 +4,7 @@ import type { ToolDefinition } from "agent-sh/agent/types";
 import { runSubagent, type SubagentOptions, type SubagentRunMeta } from "agent-sh/agent/subagent";
 import { effectiveReasoningLevel, getSettings } from "agent-sh/settings";
 import { delegatedTools } from "agent-sh/runtime";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -732,6 +733,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         onMessage: extra.onMessage as SubagentOptions["onMessage"],
         shouldStop: extra.shouldStop,
         history: extra.history as SubagentOptions["history"],
+        requestHeaders: requestHeadersFor(spec, def, systemPrompt, extra.history),
       });
       if (meta.messages) extra.onHistory?.(meta.messages);
       extra.onMeta?.(meta);
@@ -748,6 +750,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   // provider: this agent's own client on another configured provider (its endpoint and key resolved by the agent
   // backend; the key never leaves it), so one workflow can mix providers.  Kept per provider and model.
   const providerClients = new Map<string, SubagentOptions["llmClient"]>();
+  const providerHeaders = new Map<string, ((info: { sessionId?: string }) => Record<string, string>) | undefined>();
   function clientFor(spec: TaskSpec, def: AgentDef | undefined): SubagentOptions["llmClient"] {
     const base = ctx.call("llm:get-client") as SubagentOptions["llmClient"] | undefined;
     if (!base) throw new Error("no LLM client available");
@@ -762,8 +765,26 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       if (!ep) throw new Error(`provider "${spec.provider}" is not available (not registered, or no key or sign-in)`);
       client = base.fork({ apiKey: ep.apiKey, baseURL: ep.baseURL, provider: spec.provider, model });
       providerClients.set(key, client);
+      providerHeaders.set(key, (ep as { buildRequestHeaders?: (info: { sessionId?: string }) => Record<string, string> }).buildRequestHeaders);
     }
     return client;
+  }
+
+  // A cache-routing key for providers that take one (the codex provider: prompt_cache_key).  Without it a child run
+  // sent none and the ChatGPT backend served almost nothing from cache, even within one conversation (2026-11-03).
+  // Keyed on the conversation's start (system prompt and first task), so every turn of one conversation, and
+  // conversations that open alike, share it.
+  function requestHeadersFor(spec: TaskSpec, def: AgentDef | undefined, systemPrompt: string,
+                             history: unknown): Record<string, string> | undefined {
+    if (!spec.provider) return undefined;
+    const build = providerHeaders.get(`${spec.provider}\u0000${spec.model ?? def?.model}`);
+    if (!build) return undefined;
+    const first = Array.isArray(history) ? history.find((m: { role?: string }) => m?.role === "user") : undefined;
+    const opening = first ? (typeof first.content === "string" ? first.content : JSON.stringify(first.content)) : spec.task;
+    const id = crypto.createHash("sha256").update(systemPrompt).update("\u0000").update(String(opening).slice(0, 4000))
+      .digest("hex").slice(0, 32);
+    const h = build({ sessionId: `subagent-${id}` });
+    return h && Object.keys(h).length ? h : undefined;
   }
 
   // The user's thinking level, for runs and agents that don't set one: the session's, or the saved setting
