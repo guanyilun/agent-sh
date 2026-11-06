@@ -122,7 +122,7 @@ test("subagents extension fans out parallel scouts under -p", async () => {
     assert.match(progress, /\[1 scout\] done/);
     assert.match(progress, /\[2 scout\] done/);
     const out = String(ev.find((e) => e.type === "tool_end")?.output);
-    assert.match(out, /## \[1\] scout\n\nscouted: area A[\s\S]*## \[2\] scout\n\nscouted: area B/);
+    assert.match(out, /## \[1\] scout · s1\n\nscouted: area A[\s\S]*## \[2\] scout · s2\n\nscouted: area B/);
     assert.equal(ev.at(-1)?.response, "summary");
   } finally { llm.server.close(); }
 });

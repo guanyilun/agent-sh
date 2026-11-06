@@ -26,7 +26,7 @@ test("subagents cross parent tool:execute policy before named-tool advice", asyn
   });
   try {
     const result = await s.run({ task: "search", tools: ["grep"] });
-    assert.equal(result.content, "done");
+    assert.equal(result.content, "done\n\n[subagent s1]");
     assert.deepEqual(seen, ["policy", "named advice"]);
   } finally { s.cleanup(); }
 });

@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { normalizeReasoningLevels } from "./reasoning-levels.js";
+export { effectiveReasoningLevel, REASONING_LEVELS } from "./reasoning-levels.js";
 
 /** Root config directory. Override via AGENT_SH_HOME for isolated instances
  *  (testing, multi-agent setups). Path is resolved at module load. */

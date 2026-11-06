@@ -2,7 +2,7 @@
 import type { AgentContext, ExtensionContext } from "agent-sh/types";
 import type { ToolDefinition } from "agent-sh/agent/types";
 import { runSubagent, type SubagentOptions, type SubagentRunMeta } from "agent-sh/agent/subagent";
-import { getSettings } from "agent-sh/settings";
+import { effectiveReasoningLevel, getSettings } from "agent-sh/settings";
 import { delegatedTools } from "agent-sh/runtime";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -21,6 +21,7 @@ import {
 import type { RunSpec } from "./workflow-types.js";
 import { isPython, pythonModule } from "./python.js";
 import { writeRootsVerdict } from "./write-roots.js";
+import { clipMiddle, FinishedSubagents } from "./finished.js";
 
 export type { Workflow, WorkflowApi, RunSpec, JsonSchema } from "./workflow-types.js";
 export type { AgentRegistration } from "./agents.js";
@@ -36,8 +37,10 @@ const BACKGROUND_PARAM = {
   description: `Return at once and run in the background. Its status shows in your context each turn; read the result with ${JOBS_TOOL}.`,
 };
 const PARENT_CONTEXT_CHARS = 12_000;
+/** Above this, fan-out answers are clipped to a share each; `resume` re-reads one in full. */
+const FANOUT_RESULT_CHARS = 24_000;
 
-interface TaskSpec { agent?: string; task: string; tools?: string[]; system?: string; model?: string; thinking?: string; write?: string[]; maxSteps?: number }
+interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; thinking?: string; write?: string[]; maxSteps?: number }
 
 const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python"];
 
@@ -74,6 +77,7 @@ interface RunExtras {
   onStart?: () => void;
   history?: unknown[];
   onHistory?: (messages: unknown[]) => void;
+  onMeta?: (meta: SubagentRunMeta) => void;
 }
 
 export default function activate(ctx: ExtensionContext & AgentContext): void {
@@ -105,6 +109,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   const dryRuns = new RunStore(path.join(os.tmpdir(), `agent-sh-dry-runs-${process.pid}`));
   // Shared by foreground and background runs so background work can't flood the provider.
   const slots = new Semaphore(Math.max(1, settings.maxConcurrency));
+  const finished = new FinishedSubagents<TaskSpec>();
 
   // Status goes in dynamic context, results come back as tool results, and a
   // short note wakes the agent only when it's idle with unread results.
@@ -194,12 +199,16 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     name: TOOL_NAME,
     description:
       "Delegate a focused task to a subagent with its own fresh context. Returns the subagent's final answer. " +
-      "Give `agent` + `task` for one subagent, or `tasks` to run several in parallel.",
+      "Give `agent` + `task` for one subagent, or `tasks` to run several in parallel. " +
+      "Each answer is tagged with a subagent id (e.g. s3): pass it as `resume` with a `task` to continue that " +
+      "subagent's conversation (follow-up questions, fixing what it reported, or finishing after a step limit), " +
+      "or `resume` alone to read its full answer when a parallel result was clipped.",
     input_schema: {
       type: "object",
       properties: {
         agent: { type: "string", description: "Named agent to use (see list below). Omit for an ad-hoc subagent." },
         task: { type: "string", description: "What the subagent should do" },
+        resume: { type: "string", description: "Id of a finished subagent (e.g. s3) to continue with `task`; without `task`, returns its full last answer" },
         tools: {
           type: "array",
           items: { type: "string" },
@@ -213,9 +222,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
             properties: {
               agent: { type: "string" },
               task: { type: "string" },
+              resume: { type: "string" },
               tools: { type: "array", items: { type: "string" } },
             },
-            required: ["task"],
           },
         },
         background: BACKGROUND_PARAM,
@@ -226,28 +235,45 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
 
     formatCall: (args) => {
       const tasks = args.tasks as TaskSpec[] | undefined;
-      if (tasks?.length) return `${tasks.length} parallel: ${tasks.map(t => t.agent ?? "ad-hoc").join(", ")}`;
+      if (tasks?.length) return `${tasks.length} parallel: ${tasks.map(specName).join(", ")}`;
       const task = String(args.task ?? "");
-      const label = args.agent ? `${args.agent}: ${task}` : task;
+      const label = args.resume ? `resume ${args.resume}${task ? `: ${task}` : ""}` : args.agent ? `${args.agent}: ${task}` : task;
       return label.length > 80 ? label.slice(0, 79) + "…" : label;
     },
 
     async execute(args, onChunk, execCtx) {
       const specs: TaskSpec[] = (args.tasks as TaskSpec[] | undefined)?.length
         ? (args.tasks as TaskSpec[])
-        : args.task ? [{ agent: args.agent as string | undefined, task: String(args.task), tools: args.tools as string[] | undefined }]
+        : args.task || args.resume ? [{
+          agent: args.agent as string | undefined, task: args.task ? String(args.task) : "",
+          tools: args.tools as string[] | undefined, resume: args.resume as string | undefined,
+        }]
         : [];
       if (specs.length === 0) return error("Provide `task` or `tasks`.");
+      const empty = specs.findIndex(s => !s.task && !s.resume);
+      if (empty >= 0) return error(`tasks[${empty}] needs a \`task\` (or a \`resume\` id).`);
 
       const agents = loadAgents();
-      const unknown = specs.filter(s => s.agent && !findAgent(agents, s.agent)).map(s => s.agent);
+      const unknown = specs.filter(s => !s.resume && s.agent && !findAgent(agents, s.agent)).map(s => s.agent);
       if (unknown.length) {
         return error(`Unknown agent: ${unknown.join(", ")}. Available: ${[...agents.keys()].join(", ") || "(none)"}`);
+      }
+      const gone = specs.filter(s => s.resume && !finished.get(s.resume)).map(s => s.resume);
+      if (gone.length) {
+        return error(`Unknown subagent id: ${gone.join(", ")}. Resumable: ${finished.ids().join(", ") || "(none)"}`);
+      }
+      // Identical entries would only repeat the same work in another slot.
+      const seen = new Map<string, number>();
+      for (const [i, s] of specs.entries()) {
+        const key = JSON.stringify([s.resume ?? s.agent ?? null, s.task, s.tools ?? null]);
+        const first = seen.get(key);
+        if (first !== undefined) return error(`tasks[${i}] repeats tasks[${first}]; give each parallel task its own scope.`);
+        seen.set(key, i);
       }
 
       const work = (signal?: AbortSignal, progress?: (line: string) => void) => runSpecs(specs, agents, signal, progress);
       if (args.background) {
-        const label = specs.length > 1 ? `${specs.length} parallel: ${specs.map(s => s.agent ?? "ad-hoc").join(", ")}` : specs[0]!.agent ?? "ad-hoc";
+        const label = specs.length > 1 ? `${specs.length} parallel: ${specs.map(specName).join(", ")}` : specName(specs[0]!);
         return startBackground(label, work);
       }
       return toolResult(await work(execCtx?.signal, onChunk ? (line) => onChunk(`${line}\n`) : undefined));
@@ -535,28 +561,50 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     signal?: AbortSignal,
     progress?: (line: string) => void,
   ): Promise<JobOutcome> {
-    const results = await Promise.all(specs.map(async (spec, i) => {
+    type Outcome = { ok: boolean; text: string; name: string; id?: string; stopped?: string };
+    const results = await Promise.all(specs.map(async (given, i): Promise<Outcome> => {
+      // A resumed subagent keeps its agent, tools and conversation; only the task is new.
+      const prior = given.resume ? finished.get(given.resume) : undefined;
+      const spec = prior ? { ...prior.spec, task: given.task } : given;
       const name = spec.agent ?? "ad-hoc";
+      if (prior && !given.task) return { ok: true, text: prior.text, name, id: prior.id };
+      const id = prior?.id ?? finished.nextId();
       const label = specs.length > 1 ? `[${i + 1} ${name}]` : `[${name}]`;
       const line = progress ? (l: string) => progress(`${label} ${l}`) : undefined;
+      let meta: SubagentRunMeta = {};
       try {
-        return { ok: true, text: await runOne(spec, spec.agent ? findAgent(agents, spec.agent) : undefined, signal, line) };
+        const text = await runOne(spec, spec.agent ? findAgent(agents, spec.agent) : undefined, signal, line,
+          { history: prior?.history, onMeta: (m) => { meta = m; } });
+        if (meta.messages) finished.add({ id, spec, history: meta.messages, text });
+        const stopped = meta.degraded === "iterations" ? "stopped: step limit" : meta.degraded === "budget" ? "stopped: token budget" : undefined;
+        return { ok: true, text, name, id: meta.messages ? id : undefined, stopped };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         line?.(`failed: ${message}`);
-        return { ok: false, text: `Subagent error: ${message}` };
+        return { ok: false, text: `Subagent error: ${message}`, name };
       }
     }));
 
     if (specs.length === 1) {
       const r = results[0]!;
-      return { content: r.text || "(no response)", isError: !r.ok };
+      const text = r.text || "(no response)";
+      return { content: r.id ? `${text}\n\n[subagent ${r.id}]` : text, isError: !r.ok };
     }
+    // Many long answers would flood the context: clip each to a share and point at `resume`.
+    const total = results.reduce((n, r) => n + r.text.length, 0);
+    const share = total > FANOUT_RESULT_CHARS ? Math.max(2_000, Math.floor(FANOUT_RESULT_CHARS / results.length)) : Infinity;
     const content = results.map((r, i) => {
-      const s = specs[i]!;
-      return `## [${i + 1}] ${s.agent ?? "ad-hoc"}${r.ok ? "" : " (failed)"}\n\n${r.text || "(no response)"}`;
+      const tag = [r.name, r.id].filter(Boolean).join(" · ");
+      const state = r.ok ? (r.stopped ? ` (${r.stopped})` : "") : " (failed)";
+      const text = r.text || "(no response)";
+      const body = r.id ? clipMiddle(text, share, `spawn_agent { resume: "${r.id}" } shows the full answer`) : text;
+      return `## [${i + 1}] ${tag}${state}\n\n${body}`;
     }).join("\n\n");
-    return { content, isError: results.every(r => !r.ok) };
+    const done = results.filter(r => r.ok && !r.stopped).length;
+    const partial = results.filter(r => r.stopped).length;
+    const failed = results.filter(r => !r.ok).length;
+    const header = `${results.length} subagents: ${done} done${partial ? `, ${partial} stopped early` : ""}${failed ? `, ${failed} failed` : ""}.`;
+    return { content: `${header}\n\n${content}`, isError: results.every(r => !r.ok) };
   }
 
   async function dryRunTask(spec: RunSpec, ctl: TaskControl): Promise<TaskResult> {
@@ -674,6 +722,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         history: extra.history as SubagentOptions["history"],
       });
       if (meta.messages) extra.onHistory?.(meta.messages);
+      extra.onMeta?.(meta);
     } finally {
       slots.release();
     }
@@ -696,13 +745,23 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     return models.find(m => m.id === modelId)?.contextWindow;
   }
 
-  // Sent unless the model is known not to take it, as the main agent does.
+  // As the main agent does: the model's nearest declared level, encoded by its provider's reasoning hook.
   function reasoningParams(level: string | undefined, modelId: string): Record<string, unknown> | undefined {
-    if (!level || level === "off") return undefined;
-    const models = (ctx.call("agent:get-models") ?? []) as { id: string; reasoning?: boolean; supportsReasoningEffort?: boolean }[];
+    if (!level) return undefined;
+    const models = (ctx.call("agent:get-models") ?? []) as { id: string; provider: string; reasoning?: boolean; supportsReasoningEffort?: boolean; reasoningLevels?: string[] }[];
     const model = models.find(m => m.id === modelId);
     if (model?.reasoning === false || model?.supportsReasoningEffort === false) return undefined;
-    return { reasoning_effort: level === "xhigh" ? "high" : level };
+    const effective = effectiveReasoningLevel(level, model?.reasoningLevels);
+    let build: ((level: string) => Record<string, unknown>) | undefined;
+    try {
+      build = model && (ctx.call("agent:resolve-endpoint", { provider: model.provider, id: model.id }) as { buildReasoningParams?: typeof build } | undefined)?.buildReasoningParams;
+    } catch { /* no endpoint resolver (e.g. a bare runtime) */ }
+    if (build) {
+      const params = build(effective);
+      return Object.keys(params).length ? params : undefined;
+    }
+    if (effective === "off") return undefined;
+    return { reasoning_effort: effective === "xhigh" && !model?.reasoningLevels ? "high" : effective };
   }
 
   function parentTranscript(): string {
@@ -748,6 +807,10 @@ function error(content: string) {
 
 function definedOnly<T extends Record<string, unknown>>(o: T): Partial<T> {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+function specName(s: TaskSpec): string {
+  return s.resume ? `resume ${s.resume}` : s.agent ?? "ad-hoc";
 }
 
 function toolResult(o: JobOutcome) {
