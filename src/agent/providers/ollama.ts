@@ -12,6 +12,9 @@ import { resolveApiKey } from "../../cli/auth/keys.js";
 
 const ECHO_REASONING_PATTERNS: RegExp[] = [/deepseek/i];
 
+// The generic reasoning_effort shape tops out at "high"; settings can declare more.
+const REASONING_LEVELS = ["off", "low", "medium", "high"];
+
 export default function activate(ctx: AgentContext): void {
   const cloudKey = resolveApiKey("ollama-cloud").key ?? process.env.OLLAMA_API_KEY;
   const host = cloudKey
@@ -29,11 +32,11 @@ export default function activate(ctx: AgentContext): void {
   ctx.agent.providers.configure(id, {
     reasoningParams: (level) => {
       if (level === "off") return { reasoning_effort: "none" };
-      return { reasoning_effort: level === "xhigh" ? "high" : level };
+      return { reasoning_effort: level };
     },
   });
 
-  ctx.agent.providers.register({ id, get apiKey() { return currentKey(); }, baseURL, models: [], noAuth });
+  ctx.agent.providers.register({ id, get apiKey() { return currentKey(); }, baseURL, models: [], noAuth, reasoningLevels: REASONING_LEVELS });
 
   fetchCatalog(host, headers).then((models) => {
     if (models.length === 0) return;
@@ -44,6 +47,7 @@ export default function activate(ctx: AgentContext): void {
       defaultModel: models[0]!.id,
       models,
       noAuth,
+      reasoningLevels: REASONING_LEVELS,
     });
   }).catch(() => {});
 }

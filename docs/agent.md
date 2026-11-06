@@ -242,9 +242,13 @@ The agent retries transient failures with exponential backoff:
 
 The agent supports configurable thinking/reasoning levels for models that support `reasoning_effort`:
 
-- Levels: `off` (default), `low`, `medium`, `high`, `xhigh` (`xhigh` falls back to `high` on providers that don't support it)
+- Levels: `off` (default), `minimal`, `low`, `medium`, `high`, `xhigh`, `max`
+- A model can declare the levels it accepts (`reasoningLevels` on the model or provider, from a provider extension or `settings.json`). `/thinking`, its completions and shift+tab then offer only those
+- The chosen level is one global preference. Each model uses the nearest level it declares, ties going up (DeepSeek's `off, high, max` turns `xhigh` into `max`). `off` on a model that can't disable reasoning leaves the provider default
+- Models that declare nothing offer `off, low, medium, high, xhigh`, and `xhigh` falls back to `high` on providers that don't support it
+- Built in: Codex reads each model's levels from `~/.codex/models_cache.json`; native DeepSeek is `off, high, max`; OpenAI's `gpt-5` and `o3` family are declared; Ollama, opencode and `OPENAI_BASE_URL` servers are `off, low, medium, high`
 - Set via the `config:set-thinking` event (wired to `/thinking` slash command)
-- Query current state via `config:get-thinking` pipe
+- Query current state via `config:get-thinking` pipe; `level` is the level the active model uses
 - The agent validates that the current model/provider supports reasoning before enabling
 
 ### Echoing reasoning back to the model
@@ -377,6 +381,7 @@ interface Model {
   supportsReasoningEffort?: boolean;
   echoReasoning?: boolean;
   modalities?: ("text" | "image")[];
+  reasoningLevels?: string[]; // thinking levels this model accepts
 }
 ```
 

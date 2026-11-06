@@ -277,6 +277,7 @@ Entries in a provider's `models` list can be plain strings (just the id) or obje
 | `maxTokens` | `number` | 40% of this model's `contextWindow` capped at `65536`, else `65536` | Max output (completion) tokens requested per turn. |
 | `reasoning` | `boolean` | `false` | Marks the model as thinking-capable, so `/thinking` levels apply to it. |
 | `modalities` | `("text" \| "image")[]` | `["text"]` | Input modalities. Include `"image"` to let the agent read image files (PNG/JPEG/GIF/WebP) with `read_file`; without it, attached images are dropped before the request. |
+| `reasoningLevels` | `string[]` | provider-level `reasoningLevels`, else `off, low, medium, high, xhigh` | Thinking levels the model accepts, from `off, minimal, low, medium, high, xhigh, max`. `/thinking` offers only these, other choices map to the nearest, and declared levels are sent as is (no `xhigh` → `high` fallback). |
 | `echoReasoning` | `boolean` | `false` | Echo `reasoning_content` back on assistant turns. Required by DeepSeek's reasoner; leave off otherwise (leaky proxies may forward it to the model as malformed input). |
 
 A plain-string entry inherits the provider-level values and the defaults above. These provider-level fields apply to every model unless a per-model entry overrides them:
@@ -284,6 +285,7 @@ A plain-string entry inherits the provider-level values and the defaults above. 
 | Provider field | Effect |
 |---|---|
 | `contextWindow` | Fallback context window for models that don't declare their own. |
+| `reasoningLevels` | Thinking levels for every model of this provider, e.g. `["off", "low", "medium", "high", "xhigh"]` for a gateway that accepts `xhigh`. |
 | `reasoningShape` | Borrow another registered provider's reasoning-request shape by id (e.g. `"openrouter"`). Defaults to the OpenAI-compatible shape. |
 | `echoReasoningPatterns` | Case-insensitive regex sources matched against model ids; a match defaults that model to `echoReasoning: true` (a per-model `echoReasoning` still wins). |
 

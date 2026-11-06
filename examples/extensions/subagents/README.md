@@ -37,6 +37,22 @@ While subagents run, `spawn_agent` streams one progress line per step as its too
 [1 reviewer] stopped: step limit reached
 ```
 
+## Results and `resume`
+
+Each answer ends with its subagent id (`[subagent s3]`); in a parallel result the id is in each section's heading, below a count line (`3 subagents: 2 done, 1 stopped early.`), and a subagent cut off by its step or token limit is marked `(stopped: step limit)`.
+
+```jsonc
+// continue s3's conversation: same agent, tools and history, new task
+{ "resume": "s3", "task": "Fix the two issues you reported" }
+
+// re-read s3's full answer (nothing runs)
+{ "resume": "s3" }
+```
+
+A resumed subagent keeps its id, so it can be continued again; this also lets one that hit its step limit finish. `resume` works in `tasks` entries too. The last 20 finished subagents can be resumed; they don't survive `/reload` or quitting.
+
+When parallel answers add up to more than 24,000 characters, each is clipped to its share, keeping its start and end (where a stop note sits), with a pointer to `{ "resume": "<id>" }` for the full text. Parallel `tasks` that repeat each other are refused before anything runs.
+
 ## Background runs
 
 Add `background: true` to `spawn_agent` or `run_workflow` and the call returns at once (`Started background run #3 (reviewer)`), so the main agent can keep working or talking with you.

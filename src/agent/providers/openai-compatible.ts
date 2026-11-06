@@ -7,6 +7,9 @@
  */
 import type { AgentContext } from "../host-types.js";
 
+// The generic reasoning_effort shape tops out at "high"; settings can declare more.
+const REASONING_LEVELS = ["off", "low", "medium", "high"];
+
 export default function activate(ctx: AgentContext): void {
   const baseURL = process.env.OPENAI_BASE_URL;
   if (!baseURL) return;
@@ -19,15 +22,16 @@ export default function activate(ctx: AgentContext): void {
     reasoningParams: (level) =>
       level === "off"
         ? { reasoning_effort: "none" }
-        : { reasoning_effort: level === "xhigh" ? "high" : level },
+        : { reasoning_effort: level },
   });
-  ctx.agent.providers.register({ id, apiKey, baseURL, models: [] });
+  ctx.agent.providers.register({ id, apiKey, baseURL, models: [], reasoningLevels: REASONING_LEVELS });
   fetchModels(baseURL, apiKey).then((models) => {
     if (models.length === 0) return;
     ctx.agent.providers.register({
       id,
       apiKey,
       baseURL,
+      reasoningLevels: REASONING_LEVELS,
       defaultModel: models[0]!.id,
       models,
     });

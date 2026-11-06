@@ -9,12 +9,13 @@ import type { AgentContext } from "../host-types.js";
 import { resolveApiKey } from "../../cli/auth/keys.js";
 
 const CLOUD_MODELS = [
-  { id: "gpt-5", reasoning: true },
+  // off sends "minimal" on gpt-5; o-series can't turn reasoning off.
+  { id: "gpt-5", reasoning: true, reasoningLevels: ["off", "low", "medium", "high"] },
   { id: "gpt-4.1", reasoning: false },
   { id: "gpt-4o", reasoning: false },
   { id: "gpt-4o-mini", reasoning: false },
-  { id: "o3", reasoning: true },
-  { id: "o3-mini", reasoning: true },
+  { id: "o3", reasoning: true, reasoningLevels: ["low", "medium", "high"] },
+  { id: "o3-mini", reasoning: true, reasoningLevels: ["low", "medium", "high"] },
 ];
 
 function offEffortFor(model: string): string | null {

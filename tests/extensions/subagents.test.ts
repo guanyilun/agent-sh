@@ -89,7 +89,7 @@ test("parallel tasks return one section per task in order", async () => {
   try {
     const r = await s.run({ tasks: [{ agent: "reviewer", task: "A" }, { task: "B", tools: ["grep"] }] });
     assert.equal(r.isError, false);
-    assert.match(String(r.content), /## \[1\] reviewer\n\nanswer to A[\s\S]*## \[2\] ad-hoc\n\nanswer to B/);
+    assert.match(String(r.content), /^2 subagents: 2 done\.\n\n## \[1\] reviewer · s1\n\nanswer to A[\s\S]*## \[2\] ad-hoc · s2\n\nanswer to B/);
     assert.ok(s.calls.every(c => !c.tools?.some(t => t.function.name === "spawn_agent")));
   } finally { s.cleanup(); }
 });
@@ -106,7 +106,7 @@ test("subagent tool calls go through adviseTool wrappers", async () => {
       return next(...a);
     });
     const r = await s.run({ task: "search", tools: ["grep"] });
-    assert.equal(r.content, "done");
+    assert.equal(r.content, "done\n\n[subagent s1]");
     assert.deepEqual(seen, ["advised"]);
   } finally { s.cleanup(); }
 });
@@ -157,5 +157,90 @@ test("registers the authoring and usage skills, each backed by a real guide", ()
     assert.match(readFileSync(s.skills.get("writing-python-workflows")!, "utf8"), /^# Writing agent-sh workflows in Python/);
     assert.match(readFileSync(s.skills.get("using-subagents")!, "utf8"), /^# Using subagents and workflows/);
     assert.match(readFileSync(s.skills.get("writing-workflows")!, "utf8"), /^# Writing workflows/);
+  } finally { s.cleanup(); }
+});
+
+test("resume continues a finished subagent's conversation with its agent and tools", async () => {
+  const s = setup({ reply: (o) => ({ content: `turn ${o.messages.filter((m) => m.role === "user").length}: ${lastUser(o)}` }) });
+  try {
+    const first = await s.run({ agent: "reviewer", task: "review the diff" });
+    assert.equal(first.content, "turn 1: review the diff\n\n[subagent s1]");
+    const next = await s.run({ resume: "s1", task: "now check the tests" });
+    assert.equal(next.content, "turn 2: now check the tests\n\n[subagent s1]", "same id, same conversation");
+    const resent = s.calls.at(-1)!.messages.map((m) => `${m.role}:${m.content}`);
+    assert.ok(resent.includes("user:review the diff") && resent.includes("assistant:turn 1: review the diff"), JSON.stringify(resent));
+    assert.equal(s.calls.at(-1)!.messages[0]!.content, s.calls[0]!.messages[0]!.content, "keeps the reviewer's system prompt");
+  } finally { s.cleanup(); }
+});
+
+test("resume without a task returns the full answer without running anything", async () => {
+  const s = setup({ reply: () => ({ content: "the answer" }) });
+  try {
+    await s.run({ task: "q" });
+    const before = s.calls.length;
+    const r = await s.run({ resume: "s1" });
+    assert.equal(r.content, "the answer\n\n[subagent s1]");
+    assert.equal(s.calls.length, before);
+  } finally { s.cleanup(); }
+});
+
+test("unknown resume ids and repeated parallel tasks are refused before anything runs", async () => {
+  const s = setup({ reply: () => ({ content: "x" }) });
+  try {
+    const gone = await s.run({ resume: "s9", task: "more" });
+    assert.equal(gone.isError, true);
+    assert.match(String(gone.content), /Unknown subagent id: s9\. Resumable: \(none\)/);
+    const dup = await s.run({ tasks: [{ agent: "reviewer", task: "A" }, { task: "B" }, { agent: "reviewer", task: "A" }] });
+    assert.equal(dup.isError, true);
+    assert.match(String(dup.content), /tasks\[2\] repeats tasks\[0\]/);
+    assert.equal(s.calls.length, 0);
+  } finally { s.cleanup(); }
+});
+
+test("large fan-outs clip each answer, keep its tail, and point at resume for the rest", async () => {
+  const long = (tag: string) => `${tag}-start ${"x".repeat(12_000)} ${tag}-end`;
+  const s = setup({ reply: (o) => ({ content: long(lastUser(o)) }) });
+  try {
+    const r = await s.run({ tasks: [{ task: "a" }, { task: "b" }, { task: "c" }] });
+    const text = String(r.content);
+    assert.ok(text.length < 30_000, `clipped to about the budget, got ${text.length}`);
+    for (const [tag, id] of [["a", "s1"], ["b", "s2"], ["c", "s3"]]) {
+      assert.ok(text.includes(`${tag}-start`) && text.includes(`${tag}-end`), `${tag}: head and tail kept`);
+      assert.ok(text.includes(`spawn_agent { resume: "${id}" } shows the full answer`));
+    }
+    const full = await s.run({ resume: "s2" });
+    assert.equal(full.content, `${long("b")}\n\n[subagent s2]`);
+  } finally { s.cleanup(); }
+});
+
+test("a fan-out marks subagents that stopped early, and they can be resumed", async () => {
+  const s = setup({ reply: (o) => lastUser(o) === "loop" || o.messages.some((m) => m.role === "tool" && lastUser(o) === "loop")
+    ? { tool_calls: [{ index: 0, id: "c1", function: { name: "grep", arguments: "{}" } }] }
+    : { content: `ok ${lastUser(o)}` } });
+  try {
+    writeFileSync(join(s.project, ".agent-sh", "agents", "looper.md"), "---\ntools: grep\nmaxIterations: 2\n---\nloop");
+    const r = await s.run({ tasks: [{ agent: "looper", task: "loop" }, { task: "fine" }] });
+    const text = String(r.content);
+    assert.match(text, /^2 subagents: 1 done, 1 stopped early\./);
+    assert.match(text, /## \[1\] looper · s1 \(stopped: step limit\)/);
+    const more = await s.run({ resume: "s1", task: "wrap up" });
+    assert.equal(more.content, "ok wrap up\n\n[subagent s1]");
+  } finally { s.cleanup(); }
+});
+
+test("subagent thinking uses the model's declared levels and its provider's reasoning hook", async () => {
+  const s = setup({
+    reply: () => ({ content: "ok" }),
+    before: (h) => {
+      h.define("agent:get-models", () => [{ id: "stub", provider: "deep", reasoningLevels: ["off", "high", "max"] }]);
+      h.define("agent:resolve-endpoint", () => ({ buildReasoningParams: (l: string) => ({ thinking: { type: "enabled" }, reasoning_effort: l }) }));
+    },
+  });
+  try {
+    writeFileSync(join(s.project, ".agent-sh", "agents", "thinker.md"), "---\nthinking: xhigh\n---\nthink");
+    await s.run({ agent: "thinker", task: "go" });
+    const sent = s.calls[0] as unknown as Record<string, unknown>;
+    assert.equal(sent.reasoning_effort, "max", "xhigh maps to the nearest declared level, not high");
+    assert.deepEqual(sent.thinking, { type: "enabled" });
   } finally { s.cleanup(); }
 });

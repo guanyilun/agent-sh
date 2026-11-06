@@ -14,6 +14,22 @@ Releases before this file are recorded in the git tags and GitHub releases.
   pending `id` edits that message in place, `agent:steer-cancel { id }` removes
   that message rather than the last one, and queued, consumed and dropped
   events carry the ids. Ported from asHub's kernel patches (thanks @firslov).
+- Models and providers can declare the thinking levels they accept
+  (`reasoningLevels`, from a provider extension or `settings.json`). `/thinking`,
+  its completions and shift+tab offer only those, the one global preference maps
+  to the nearest declared level, and declared levels are sent as is. Codex reads
+  each model's levels from `~/.codex/models_cache.json`; native DeepSeek is
+  `off, high, max`, so `xhigh` now sends `max`; Ollama, opencode and
+  `OPENAI_BASE_URL` servers declare `off`–`high` instead of silently clamping
+  `xhigh`. `/thinking` also accepts `minimal` and `max`. Subagents apply the same
+  levels through their provider's reasoning hook. Idea from asHub (thanks
+  @firslov).
+- subagents: `spawn_agent { resume: "s3", task }` continues a finished
+  subagent's conversation, and `{ resume: "s3" }` re-reads its full answer.
+  Answers are tagged with their id, parallel results get a count line and mark
+  subagents that stopped early, large fan-outs are clipped to a share each, and
+  repeated parallel tasks are refused. Ideas from asHub's `subagent_resume` and
+  `agentswarm`.
 
 ### Fixed
 

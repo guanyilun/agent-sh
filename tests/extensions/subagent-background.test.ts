@@ -33,7 +33,7 @@ test("a background run returns at once, shows status in context, and hands its r
     assert.match(s.context("background-subagents")!, /#1 scout: done, unread/);
 
     const r = await s.exec("subagent_jobs", { action: "result", id: 1 });
-    assert.match(String(r.content), /^Run #1 \(scout\) done after \d+s:\n\nresult for map it$/);
+    assert.match(String(r.content), /^Run #1 \(scout\) done after \d+s:\n\nresult for map it\n\n\[subagent s1\]$/);
     assert.equal(s.context("background-subagents"), null);
   } finally { s.cleanup(); }
 });
@@ -95,7 +95,7 @@ test("wait blocks until a run finishes, and times out with what's still running"
     const waiting = s.exec("subagent_jobs", { action: "wait" });
     g.open();
     r = await waiting;
-    assert.match(String(r.content), /^Run #1 \(scout\) done after \d+s:\n\nlate$/);
+    assert.match(String(r.content), /^Run #1 \(scout\) done after \d+s:\n\nlate\n\n\[subagent s1\]$/);
   } finally { s.cleanup(); }
 });
 

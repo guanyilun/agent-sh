@@ -37,5 +37,7 @@ export default function activate(ctx: AgentContext): void {
     baseURL: BASE_URL,
     defaultModel: DEFAULT_MODELS[0].id,
     models: DEFAULT_MODELS,
+    // V4 has two effort tiers (low/medium map to high, xhigh to max).
+    reasoningLevels: ["off", "high", "max"],
   });
 }

@@ -57,8 +57,11 @@ export interface ProviderRegistration {
     maxTokens?: number;
     echoReasoning?: boolean;
     modalities?: ("text" | "image")[];
+    reasoningLevels?: string[];
   })[];
   supportsReasoningEffort?: boolean;
+  /** Thinking levels for every model of this provider (a model's own list wins). */
+  reasoningLevels?: string[];
   /** Local daemons etc. — `auth list/login` shows "no auth required". */
   noAuth?: boolean;
 }
@@ -83,6 +86,9 @@ export interface Model {
   echoReasoning?: boolean;
   /** Input modalities the model supports. Defaults to ["text"]. */
   modalities?: ("text" | "image")[];
+  /** Thinking levels this model accepts, from off/minimal/low/medium/high/xhigh/max.
+   *  Other preferences map to the nearest one. Omit for the default ladder. */
+  reasoningLevels?: string[];
 }
 
 /** Credentials + provider-shape transforms for invoking a Model, resolved by

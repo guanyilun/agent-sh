@@ -143,3 +143,16 @@ test("resolveModels: settings list > Codex cache (listed only) > fallback", () =
   assert.deepEqual(resolveModels(["custom"], cache).map((m) => m.id), ["custom"]);
   assert.deepEqual(resolveModels([], path.join(dir, "nope.json")).map((m) => m.id), ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]);
 });
+
+test("resolveModels: per-model reasoning levels come from the cache, without client-only modes", () => {
+  const cache = path.join(dir, "models_levels.json");
+  fs.writeFileSync(cache, JSON.stringify({ models: [
+    { slug: "sol", visibility: "list", supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"].map((effort) => ({ effort })) },
+    { slug: "luna", visibility: "list", supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }] },
+    { slug: "plain", visibility: "list" },
+  ] }));
+  const [sol, luna, plain] = resolveModels([], cache);
+  assert.deepEqual(sol!.reasoningLevels, ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(luna!.reasoningLevels, ["low", "high"]);
+  assert.equal(plain!.reasoningLevels, undefined);
+});

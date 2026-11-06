@@ -69,8 +69,11 @@ function resolveModel(id: string, meta: ModelsDevEntry | undefined): ModelDef {
 
 function reasoningParams(level: string): Record<string, unknown> {
   if (level === "off") return { reasoning_effort: "none" };
-  return { reasoning_effort: level === "xhigh" ? "high" : level };
+  return { reasoning_effort: level };
 }
+
+// The generic reasoning_effort shape tops out at "high"; settings can declare more.
+const REASONING_LEVELS = ["off", "low", "medium", "high"];
 
 // ── Activation ───────────────────────────────────────────────────
 
@@ -83,14 +86,14 @@ export default function activate(ctx: AgentContext): void {
   ctx.agent.providers.register({
     id: "opencode", get apiKey() { return currentKey(); }, baseURL: ZEN_BASE_URL,
     defaultModel: ZEN_FALLBACK[0], models: ZEN_FALLBACK,
-    supportsReasoningEffort: true,
+    supportsReasoningEffort: true, reasoningLevels: REASONING_LEVELS,
   });
 
   ctx.agent.providers.configure("opencode-go", { reasoningParams });
   ctx.agent.providers.register({
     id: "opencode-go", get apiKey() { return currentKey(); }, baseURL: GO_BASE_URL,
     defaultModel: GO_FALLBACK[0], models: GO_FALLBACK,
-    supportsReasoningEffort: true,
+    supportsReasoningEffort: true, reasoningLevels: REASONING_LEVELS,
   });
 
   if (!apiKey) return;
@@ -109,12 +112,12 @@ export default function activate(ctx: AgentContext): void {
       ctx.agent.providers.register({
         id: "opencode", get apiKey() { return currentKey(); }, baseURL: ZEN_BASE_URL,
         defaultModel: zen[0]?.id ?? ZEN_FALLBACK[0], models: zen,
-        supportsReasoningEffort: true,
+        supportsReasoningEffort: true, reasoningLevels: REASONING_LEVELS,
       });
       ctx.agent.providers.register({
         id: "opencode-go", get apiKey() { return currentKey(); }, baseURL: GO_BASE_URL,
         defaultModel: go[0]?.id ?? GO_FALLBACK[0], models: go,
-        supportsReasoningEffort: true,
+        supportsReasoningEffort: true, reasoningLevels: REASONING_LEVELS,
       });
     })
     .catch(() => {});

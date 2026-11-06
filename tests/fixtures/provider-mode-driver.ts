@@ -13,6 +13,7 @@ interface Scenario {
   probeCacheTokens?: Array<{ model: string; usage: Record<string, unknown> }>;
   probeRequestHeaders?: Array<{ model: string; sessionId?: string }>;
   probeLlmClient?: boolean;
+  probeThinking?: boolean;
   steps: Array<
     | { kind: "providers.register"; payload: ProviderRegistration }
     | { kind: "providers.unregister"; id: string }
@@ -22,6 +23,8 @@ interface Scenario {
     | { kind: "wait" }
     | { kind: "save-keys"; keys: Record<string, string> }
     | { kind: "providers-changed" }
+    | { kind: "set-thinking"; level: string }
+    | { kind: "switch-model"; id: string; provider: string }
   >;
 }
 
@@ -70,6 +73,10 @@ async function main() {
       saveKeysFile(step.keys);
     } else if (step.kind === "providers-changed") {
       core.bus.emit("agent:providers:changed", {});
+    } else if (step.kind === "set-thinking") {
+      core.bus.emit("config:set-thinking", { level: step.level });
+    } else if (step.kind === "switch-model") {
+      core.bus.emit("config:switch-model", { id: step.id, provider: step.provider });
     }
   }
 
@@ -112,6 +119,13 @@ async function main() {
   // Shared client state: whether an SDK client exists and which key it holds.
   const llm = ctx.call("llm:get-client") as { client?: unknown; config: { apiKey: string } };
   const llmClient = scenario.probeLlmClient ? { enabled: !!llm.client, apiKey: llm.config.apiKey } : undefined;
+  // What the UI sees for the active model, and the params that level produces.
+  let thinking: unknown;
+  if (scenario.probeThinking) {
+    const t = core.bus.emitPipe("config:get-thinking", { level: "off", levels: [], supported: true });
+    const { active } = core.bus.emitPipe("config:get-models", { models: [], active: null as unknown as Model }) as { active: Model };
+    thinking = { ...t, model: active?.id, params: endpointFor(active)?.buildReasoningParams?.(t.level) };
+  }
 
   const dumped = models?.map((m) => ({ ...m, endpoint: endpointFor(m) }));
 
@@ -121,6 +135,7 @@ async function main() {
     cacheProbes,
     headerProbes,
     llmClient,
+    thinking,
   }) + "\n");
   process.exit(0);
 }
