@@ -424,3 +424,36 @@ test("checkpoint() saves the script's own work, so resume doesn't do it again", 
     assert.match(progress, /\[checkpoint count\] reused from/);
   } finally { s.cleanup(); }
 });
+
+// gpt is listed by two providers with different reasoning hooks; the run must use its own provider's.
+function twoProviders(h: { define: (name: string, fn: (...a: any[]) => unknown) => void }) {
+  h.define("agent:get-models", () => [
+    { id: "gpt", provider: "codex", reasoningLevels: ["low", "medium", "high"] },
+    { id: "gpt", provider: "gate" },
+  ]);
+  h.define("agent:resolve-endpoint", ({ provider }: { provider: string }) => ({
+    apiKey: "k", buildReasoningParams: (l: string) => ({ reasoning_effort: `${provider}-${l}` }),
+  }));
+}
+
+test("provider= runs use their own provider's model entry when another lists the same id", async () => {
+  const s = setup({ reply: () => ({ content: "ok" }), before: twoProviders });
+  try {
+    wf(s, "pv.ts", 'export default async ({ run }) => run({ task: "go", provider: "gate", model: "gpt", thinking: "max", tools: [] });');
+    const r = await s.exec("run_workflow", { name: "pv" });
+    assert.equal(r.isError, false, String(r.content));
+    assert.equal((s.calls[0] as unknown as Record<string, unknown>).reasoning_effort, "gate-max",
+      "gate's hook, and gate declares no levels so max is not mapped to codex's high");
+  } finally { s.cleanup(); }
+});
+
+test("without provider=, a shared model id resolves to the session's active provider", async () => {
+  const s = setup({ reply: () => ({ content: "ok" }), before: twoProviders });
+  try {
+    s.bus.onPipe("config:get-models", (p) => ({ ...p, active: { id: "gpt", provider: "gate" } }));
+    wf(s, "pa.ts", 'export default async ({ run }) => run({ task: "go", model: "gpt", thinking: "max", tools: [] });');
+    const r = await s.exec("run_workflow", { name: "pa" });
+    assert.equal(r.isError, false, String(r.content));
+    assert.equal((s.calls[0] as unknown as Record<string, unknown>).reasoning_effort, "gate-max");
+  } finally { s.cleanup(); }
+});

@@ -726,8 +726,8 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         // live: a file the workflow rewrites; read before every model call, shown as dynamic context (outside the
         // cached prefix).  Empty or missing adds nothing.
         dynamicContext: spec.live ? () => readLive(path.resolve(cwd, spec.live!)) : undefined,
-        reasoningParams: reasoningParams(spec.thinking ?? def?.thinking ?? defaultThinking(), spec.model ?? def?.model ?? llmClient.model),
-        contextWindow: contextWindow(spec.model ?? def?.model ?? llmClient.model),
+        reasoningParams: reasoningParams(spec.thinking ?? def?.thinking ?? defaultThinking(), spec.model ?? def?.model ?? llmClient.model, spec.provider),
+        contextWindow: contextWindow(spec.model ?? def?.model ?? llmClient.model, spec.provider),
         outMeta: meta,
         onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens, u.cached_tokens, { ...u }) : undefined,
         onMessage: extra.onMessage as SubagentOptions["onMessage"],
@@ -796,17 +796,25 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     return bus.emitPipe("config:get-thinking", { level: "", levels: [], supported: true }).level || (ctx.call("config:settings")?.get() ?? getSettings()).thinkingLevel || undefined;
   }
 
+  type CatalogModel = { id: string; provider: string; contextWindow?: number; reasoning?: boolean; supportsReasoningEffort?: boolean; reasoningLevels?: string[] };
+  // The same id can be listed by several providers (gpt-5.5 on codex and on a gateway): match the run's provider,
+  // else the session's active one, and never borrow another provider's entry when the run names its own.
+  function findModel(modelId: string, provider?: string): CatalogModel | undefined {
+    const models = (ctx.call("agent:get-models") ?? []) as CatalogModel[];
+    if (provider) return models.find(m => m.id === modelId && m.provider === provider);
+    const active = bus.emitPipe("config:get-models", { models: [], active: null }).active?.provider;
+    return models.find(m => m.id === modelId && m.provider === active) ?? models.find(m => m.id === modelId);
+  }
+
   // The model's window as its provider reports it, so long runs compact before they overflow.
-  function contextWindow(modelId: string): number | undefined {
-    const models = (ctx.call("agent:get-models") ?? []) as { id: string; contextWindow?: number }[];
-    return models.find(m => m.id === modelId)?.contextWindow;
+  function contextWindow(modelId: string, provider?: string): number | undefined {
+    return findModel(modelId, provider)?.contextWindow;
   }
 
   // As the main agent does: the model's nearest declared level, encoded by its provider's reasoning hook.
-  function reasoningParams(level: string | undefined, modelId: string): Record<string, unknown> | undefined {
+  function reasoningParams(level: string | undefined, modelId: string, provider?: string): Record<string, unknown> | undefined {
     if (!level) return undefined;
-    const models = (ctx.call("agent:get-models") ?? []) as { id: string; provider: string; reasoning?: boolean; supportsReasoningEffort?: boolean; reasoningLevels?: string[] }[];
-    const model = models.find(m => m.id === modelId);
+    const model = findModel(modelId, provider);
     if (model?.reasoning === false || model?.supportsReasoningEffort === false) return undefined;
     const effective = effectiveReasoningLevel(level, model?.reasoningLevels);
     let build: ((level: string) => Record<string, unknown>) | undefined;

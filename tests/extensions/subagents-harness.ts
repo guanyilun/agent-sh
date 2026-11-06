@@ -39,8 +39,10 @@ export function setup(opts: HarnessOpts) {
   const invokes: Message[][] = [];
   h.define("cwd", () => project);
   h.define("agent:get-models", () => []);
-  h.define("llm:get-client", () => ({
+  const client = {
     model: "stub",
+    // provider= runs fork a client per provider; the stub records every call either way.
+    fork: () => client,
     stream: async (o: StreamOpts) => {
       calls.push(o);
       const delta = await opts.reply(o);
@@ -50,7 +52,8 @@ export function setup(opts: HarnessOpts) {
         if (usage) yield { choices: [], usage };
       })();
     },
-  }));
+  };
+  h.define("llm:get-client", () => client);
   h.define("llm:invoke", async (messages: Message[]) => {
     invokes.push(messages);
     if (!opts.invoke) throw new Error("no invoke scripted");
