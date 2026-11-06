@@ -295,8 +295,8 @@ A backend listens for input events and emits output events. The TUI and all exte
 | Event | Payload | Description |
 |---|---|---|
 | `agent:submit` | `{ query }` | User submitted a query |
-| `agent:steer` | `{ text, images? }` | Message for the turn already running — injected before its next set of tool calls. Falls back to `agent:submit` when idle. Backends that can't inject mid-turn may treat it as a queued query |
-| `agent:steer-cancel` | `{}` | Drop the most recently queued steering message |
+| `agent:steer` | `{ text, images?, id? }` | Message for the turn already running — injected before its next set of tool calls. Falls back to `agent:submit` when idle. Re-sending a pending `id` edits that message in place. Backends that can't inject mid-turn may treat it as a queued query |
+| `agent:steer-cancel` | `{ id? }` | Drop the pending steering message with this `id`, or the most recent one when `id` is omitted |
 | `agent:cancel-request` | `{ silent? }` | User requested cancellation |
 | `agent:reset-session` | `{}` | User issued reset — clear conversation state |
 
@@ -311,8 +311,8 @@ A backend listens for input events and emits output events. The TUI and all exte
 | 5 | `agent:processing-done` | `{}` | Stops spinner, returns control to prompt |
 
 Steering acknowledgements (ash emits these; a frontend renders its queue from them):
-`agent:steer-queued` `{ text, depth }`, `agent:steer-consumed` `{ text, depth }` — followed by a normal
-`agent:query` for the injected message — and `agent:steer-dropped` `{ texts, reason }` when the user
+`agent:steer-queued` `{ text, id?, depth }`, `agent:steer-consumed` `{ text, id?, depth }` — followed by a normal
+`agent:query` for the injected message — and `agent:steer-dropped` `{ texts, ids?, reason }` when the user
 unqueues one or the turn is cancelled.
 
 **Optional events** for richer backends:

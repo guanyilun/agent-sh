@@ -32,6 +32,7 @@ interface DriverResult {
   models?: any[];
   cacheProbes?: CacheProbe[];
   headerProbes?: HeaderProbe[];
+  llmClient?: { enabled: boolean; apiKey: string };
   stderr: string;
   stdout: string;
   exitCode: number | null;
@@ -39,7 +40,7 @@ interface DriverResult {
 
 async function runDriver(
   settings: Record<string, unknown>,
-  scenario: { config?: Record<string, unknown>; capture: string[]; dumpModels?: boolean; probeCacheTokens?: unknown[]; probeRequestHeaders?: unknown[]; steps: unknown[] },
+  scenario: { config?: Record<string, unknown>; capture: string[]; dumpModels?: boolean; probeCacheTokens?: unknown[]; probeRequestHeaders?: unknown[]; probeLlmClient?: boolean; steps: unknown[] },
   envOverride: Record<string, string> = {},
 ): Promise<DriverResult> {
   const home = mkdtempSync(join(tmpdir(), "agent-sh-pmodes-"));
@@ -73,8 +74,8 @@ async function runDriver(
         clearTimeout(timer);
         try {
           const line = stdout.trim().split(/\r?\n/).pop() ?? "";
-          const parsed = JSON.parse(line) as { events: CapturedEvent[]; models?: any[]; cacheProbes?: CacheProbe[]; headerProbes?: HeaderProbe[] };
-          resolve({ events: parsed.events, models: parsed.models, cacheProbes: parsed.cacheProbes, headerProbes: parsed.headerProbes, stderr, stdout, exitCode: code });
+          const parsed = JSON.parse(line) as { events: CapturedEvent[]; models?: any[]; cacheProbes?: CacheProbe[]; headerProbes?: HeaderProbe[]; llmClient?: { enabled: boolean; apiKey: string } };
+          resolve({ events: parsed.events, models: parsed.models, cacheProbes: parsed.cacheProbes, headerProbes: parsed.headerProbes, llmClient: parsed.llmClient, stderr, stdout, exitCode: code });
         } catch (err) {
           reject(new Error(`driver output not JSON.\nexit=${code}\nstdout:\n${stdout}\nstderr:\n${stderr}\nparse error: ${(err as Error).message}`));
         }
@@ -306,4 +307,60 @@ test("non-openrouter providers register no request-headers hook", async () => {
   const probes = result.headerProbes!;
   assert.ok(probes[0].found, "deepseek model should exist");
   assert.equal(probes[0].headers, undefined, "deepseek configures no requestHeaders hook, so no header is built");
+});
+
+test("--model alone starts on a provider that offers it, not the default", async () => {
+  const result = await runDriver({ defaultProvider: "p1" }, {
+    config: { model: "only-in-p2" },
+    capture: ["agent:info", "ui:error"],
+    steps: [
+      { kind: "providers.register", payload: { id: "p1", apiKey: "k1", baseURL: "https://p1.local/v1", models: ["m1"] } },
+      { kind: "providers.register", payload: { id: "p2", apiKey: "k2", baseURL: "https://p2.local/v1", models: ["m2", "only-in-p2"] } },
+      { kind: "core:extensions-loaded" },
+      { kind: "activate-backend", name: "ash" },
+    ],
+  });
+  const info = pickEvents(result.events, "agent:info")[0];
+  assert.equal(info.provider, "p2");
+  assert.equal(info.model, "only-in-p2");
+  assert.deepEqual(pickEvents(result.events, "ui:error"), []);
+});
+
+test("a default provider with a key but no model falls back to one that has a model", async () => {
+  const result = await runDriver({ defaultProvider: "empty" }, {
+    capture: ["agent:info", "ui:error"],
+    steps: [
+      { kind: "providers.register", payload: { id: "empty", apiKey: "k1", baseURL: "https://empty.local/v1", models: [] } },
+      { kind: "providers.register", payload: { id: "p2", apiKey: "k2", baseURL: "https://p2.local/v1", models: ["m2"] } },
+      { kind: "core:extensions-loaded" },
+      { kind: "activate-backend", name: "ash" },
+    ],
+  });
+  const errors = pickEvents(result.events, "ui:error").map((e) => e.message);
+  assert.ok(errors.some((m) => m.includes('"empty" has no model configured; falling back to "p2"')), JSON.stringify(errors));
+  const info = pickEvents(result.events, "agent:info")[0];
+  assert.equal(info.provider, "p2");
+  assert.equal(info.model, "m2");
+});
+
+test("keys.json edits reach a built-in provider and the active client without restart", async () => {
+  const base = [
+    { kind: "save-keys", keys: { deepseek: "sk-1" } },
+    { kind: "activate-provider", name: "deepseek" },
+    { kind: "core:extensions-loaded" },
+    { kind: "activate-backend", name: "ash" },
+  ];
+  const rotated = await runDriver({}, {
+    dumpModels: true, probeLlmClient: true, capture: [],
+    steps: [...base, { kind: "save-keys", keys: { deepseek: "sk-2" } }, { kind: "providers-changed" }, { kind: "wait" }],
+  });
+  assert.equal(rotated.models!.find((m) => m.provider === "deepseek")?.endpoint.apiKey, "sk-2");
+  assert.deepEqual(rotated.llmClient, { enabled: true, apiKey: "sk-2" }, "active client picks up the new key");
+
+  const removed = await runDriver({}, {
+    dumpModels: true, probeLlmClient: true, capture: [],
+    steps: [...base, { kind: "save-keys", keys: {} }, { kind: "providers-changed" }, { kind: "wait" }],
+  });
+  assert.equal(removed.models!.some((m) => m.provider === "deepseek"), false);
+  assert.deepEqual(removed.llmClient, { enabled: false, apiKey: "" }, "removed key disables the active client");
 });

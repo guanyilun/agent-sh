@@ -24,11 +24,11 @@ function buildReasoningParams(level: string, model?: string): Record<string, unk
 }
 
 export default function activate(ctx: AgentContext): void {
-  const { key } = resolveApiKey(ID);
   ctx.agent.providers.configure(ID, { reasoningParams: buildReasoningParams });
   ctx.agent.providers.register({
     id: ID,
-    apiKey: key ?? process.env.ZAI_API_KEY ?? process.env.ZHIPU_API_KEY,
+    // Getter: re-read on each provider refresh so key changes apply without restart.
+    get apiKey() { return resolveApiKey(ID).key ?? process.env.ZAI_API_KEY ?? process.env.ZHIPU_API_KEY; },
     baseURL: BASE_URL,
     defaultModel: DEFAULT_MODELS[0].id,
     models: DEFAULT_MODELS,

@@ -4,6 +4,7 @@ import { createCore } from "../../src/core/index.js";
 import agentBackend from "../../src/agent/index.js";
 import type { AppConfig, ExtensionContext } from "../../src/shell/host-types.js";
 import type { Model, ModelEndpoint, AgentSurface, ProviderRegistration } from "../../src/agent/host-types.js";
+import { saveKeysFile } from "../../src/cli/auth/keys.js";
 
 interface Scenario {
   config?: Partial<AppConfig>;
@@ -11,6 +12,7 @@ interface Scenario {
   dumpModels?: boolean;
   probeCacheTokens?: Array<{ model: string; usage: Record<string, unknown> }>;
   probeRequestHeaders?: Array<{ model: string; sessionId?: string }>;
+  probeLlmClient?: boolean;
   steps: Array<
     | { kind: "providers.register"; payload: ProviderRegistration }
     | { kind: "providers.unregister"; id: string }
@@ -18,6 +20,8 @@ interface Scenario {
     | { kind: "core:extensions-loaded"; names?: string[] }
     | { kind: "activate-backend"; name: string }
     | { kind: "wait" }
+    | { kind: "save-keys"; keys: Record<string, string> }
+    | { kind: "providers-changed" }
   >;
 }
 
@@ -62,6 +66,10 @@ async function main() {
       await core.activateBackend(step.name);
     } else if (step.kind === "wait") {
       await new Promise((r) => setImmediate(r));
+    } else if (step.kind === "save-keys") {
+      saveKeysFile(step.keys);
+    } else if (step.kind === "providers-changed") {
+      core.bus.emit("agent:providers:changed", {});
     }
   }
 
@@ -101,6 +109,10 @@ async function main() {
     });
   }
 
+  // Shared client state: whether an SDK client exists and which key it holds.
+  const llm = ctx.call("llm:get-client") as { client?: unknown; config: { apiKey: string } };
+  const llmClient = scenario.probeLlmClient ? { enabled: !!llm.client, apiKey: llm.config.apiKey } : undefined;
+
   const dumped = models?.map((m) => ({ ...m, endpoint: endpointFor(m) }));
 
   process.stdout.write(JSON.stringify({
@@ -108,6 +120,7 @@ async function main() {
     models: scenario.dumpModels ? stripFns(dumped) : undefined,
     cacheProbes,
     headerProbes,
+    llmClient,
   }) + "\n");
   process.exit(0);
 }

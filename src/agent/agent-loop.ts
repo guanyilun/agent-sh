@@ -86,7 +86,7 @@ export class AgentLoop implements AgentBackend {
   private boundListeners: Array<{ event: string; fn: (...args: any[]) => void }> = [];
   private boundPipeListeners: Array<{ event: string; fn: (...args: any[]) => any; async: boolean }> = [];
   private lastProjectSkillNames = new Set<string>();
-  private steerQueue: Array<{ text: string; images?: ImageContent[] }> = [];
+  private steerQueue: Array<{ text: string; images?: ImageContent[]; id?: string }> = [];
 
   // ── Session telemetry: per-session behavioral counters ──
   // Exposed to extensions via the agent:get-* handlers below.
@@ -124,10 +124,9 @@ export class AgentLoop implements AgentBackend {
     return this.handlers.call("config:settings")?.get() ?? getSettings();
   }
 
-  private updateSettings(patch: Parameters<typeof updateSettings>[0]): void {
+  private updateSettings(patch: Parameters<typeof updateSettings>[0]): boolean {
     const service = this.handlers.call("config:settings");
-    if (service) service.update(patch);
-    else updateSettings(patch);
+    return (service ? service.update(patch) : updateSettings(patch)) !== false;
   }
   private compositor: Compositor | null = null;
   private toolProtocol: ToolProtocol;
@@ -235,17 +234,22 @@ export class AgentLoop implements AgentBackend {
     on("agent:cancel-request", (e) => {
       this.abortController?.abort(e.silent ? "silent" : undefined);
     });
-    on("agent:steer", ({ text, images }) => {
+    on("agent:steer", ({ text, images, id }) => {
       if (!this.abortController) {
         this.startRun(text, { images }, true).catch(() => {});
         return;
       }
-      this.steerQueue.push({ text, images });
-      this.bus.emit("agent:steer-queued", { text, depth: this.steerQueue.length });
+      // Re-sending a pending id edits that message in place.
+      const existing = id === undefined ? -1 : this.steerQueue.findIndex((m) => m.id === id);
+      if (existing < 0) this.steerQueue.push({ text, images, id });
+      else this.steerQueue[existing] = { text, images, id };
+      this.bus.emit("agent:steer-queued", { text, id, depth: this.steerQueue.length });
     });
-    on("agent:steer-cancel", () => {
-      const last = this.steerQueue.pop();
-      if (last) this.bus.emit("agent:steer-dropped", { texts: [last.text], reason: "cancelled" });
+    on("agent:steer-cancel", (e) => {
+      const id = e?.id;
+      const index = id === undefined ? this.steerQueue.length - 1 : this.steerQueue.findIndex((m) => m.id === id);
+      const [dropped] = index < 0 ? [] : this.steerQueue.splice(index, 1);
+      if (dropped) this.bus.emit("agent:steer-dropped", { texts: [dropped.text], ids: [dropped.id], reason: "cancelled" });
     });
     on("agent:append-user-message", ({ text }) => {
       this.conversation.appendUserMessage(text);
@@ -270,25 +274,28 @@ export class AgentLoop implements AgentBackend {
       // dynamic providers: agent-backend defers model resolution to
       // core:extensions-loaded, so the extension re-registers before the
       // persisted default is looked up.
-      this.updateSettings({
+      const saved = this.updateSettings({
         defaultProvider: found.provider,
         providers: { [found.provider]: { defaultModel: found.id } },
       });
-      this.bus.emit("ui:info", { message: `Model: ${found.provider}: ${found.id} (saved as default)` });
+      this.bus.emit("ui:info", { message: `Model: ${found.provider}: ${found.id} (${saved ? "saved as default" : "this session only; settings not saved"})` });
       this.bus.emit("config:changed", {});
     });
     on("agent:models-changed", () => {
       const models = this.pullModels();
       const prev = this.activeModel;
       const fresh = models.find((m) => m.id === prev.id && m.provider === prev.provider);
+      // Track key/endpoint changes even for a ghost model; a removed key disables the client.
+      const ep = this.resolveEndpoint(fresh ?? prev);
+      if (ep && (ep.apiKey !== this.activeEndpoint?.apiKey || ep.baseURL !== this.activeEndpoint?.baseURL)) {
+        this.llmClient.reconfigure({ apiKey: ep.apiKey, baseURL: ep.baseURL, model: prev.id, requestBody: this.settings().providers?.[prev.provider]?.requestBody });
+      } else if (!ep && this.activeEndpoint) {
+        this.llmClient.disable();
+      }
+      this.activeEndpoint = ep;
       let identityChanged = false;
       if (fresh) {
         this.activeModel = fresh;
-        const ep = this.resolveEndpoint(fresh);
-        if (ep && (ep.apiKey !== this.activeEndpoint?.apiKey || ep.baseURL !== this.activeEndpoint?.baseURL)) {
-          this.llmClient.reconfigure({ apiKey: ep.apiKey, baseURL: ep.baseURL, model: fresh.id, requestBody: this.settings().providers?.[fresh.provider]?.requestBody });
-        }
-        this.activeEndpoint = ep;
         identityChanged = fresh.contextWindow !== prev.contextWindow;
       } else {
         // Ghost: keep prev active so mid-turn stream() doesn't switch models.
@@ -1140,8 +1147,9 @@ export class AgentLoop implements AgentBackend {
       this.runState = null;
       if (this.steerQueue.length > 0) {
         const texts = this.steerQueue.map((m) => m.text);
+        const ids = this.steerQueue.map((m) => m.id);
         this.steerQueue = [];
-        this.bus.emit("agent:steer-dropped", { texts, reason: "aborted" });
+        this.bus.emit("agent:steer-dropped", { texts, ids, reason: "aborted" });
       }
 
       if (signal.aborted && signal.reason !== "silent") {
@@ -1172,7 +1180,7 @@ export class AgentLoop implements AgentBackend {
     const queued = this.steerQueue;
     this.steerQueue = [];
     for (let i = 0; i < queued.length; i++) {
-      const { text, images } = queued[i]!;
+      const { text, images, id } = queued[i]!;
       let steerImages = images?.length ? images : undefined;
       if (steerImages && !this.activeModel.modalities?.includes("image")) {
         this.bus.emit("ui:info", { message: `Current model has no declared image support — ${steerImages.length} image(s) dropped.` });
@@ -1182,7 +1190,7 @@ export class AgentLoop implements AgentBackend {
       this.runState?.options.onMessage?.({ role: "user", content: text });
       this.bus.emit("agent:query", { query: text });
       this.bus.emit("conversation:message-appended", { role: "user", content: text });
-      this.bus.emit("agent:steer-consumed", { text, depth: queued.length - i - 1 });
+      this.bus.emit("agent:steer-consumed", { text, id, depth: queued.length - i - 1 });
     }
   }
 

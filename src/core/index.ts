@@ -110,8 +110,8 @@ export function createCore(config: AppConfig): AgentShellCore {
   bus.on("config:switch-backend", ({ name }) => {
     activateByName(name).then((ok) => {
       if (!ok) return;
-      settings.update({ defaultBackend: name });
-      bus.emit("ui:info", { message: `Backend: ${name} (saved as default)` });
+      const saved = settings.update({ defaultBackend: name }) !== false;
+      bus.emit("ui:info", { message: `Backend: ${name} (${saved ? "saved as default" : "this session only; settings not saved"})` });
       bus.emit("config:changed", {});
     });
   });

@@ -57,16 +57,18 @@ function attributionHeaders(config: LlmClientConfig): Record<string, string> {
   };
 }
 
+/** No key → no SDK client; requests fail with a clear error instead. */
+function makeClient(config: LlmClientConfig): OpenAI | undefined {
+  if (!config.apiKey) return undefined;
+  return new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL, defaultHeaders: attributionHeaders(config) });
+}
+
 export class LlmClient {
-  private client: OpenAI;
+  private client?: OpenAI;
   public model: string;
 
   constructor(private config: LlmClientConfig) {
-    this.client = new OpenAI({
-      apiKey: config.apiKey,
-      baseURL: config.baseURL,
-      defaultHeaders: attributionHeaders(config),
-    });
+    this.client = makeClient(config);
     this.model = config.model;
   }
 
@@ -79,12 +81,19 @@ export class LlmClient {
   /** Swap the underlying client config at runtime (e.g. provider switch). */
   reconfigure(newConfig: LlmClientConfig): void {
     this.config = newConfig;
-    this.client = new OpenAI({
-      apiKey: newConfig.apiKey,
-      baseURL: newConfig.baseURL,
-      defaultHeaders: attributionHeaders(newConfig),
-    });
+    this.client = makeClient(newConfig);
     this.model = newConfig.model;
+  }
+
+  /** Drop credentials when the active provider loses its key or endpoint. */
+  disable(): void {
+    this.client = undefined;
+    this.config = { ...this.config, apiKey: "" };
+  }
+
+  private requireClient(): OpenAI {
+    if (!this.client) throw new Error("Provider unavailable: no API key or endpoint is configured. Run `agent-sh auth` or switch with /model.");
+    return this.client;
   }
 
   stream(opts: StreamOpts) {
@@ -99,7 +108,7 @@ export class LlmClient {
       stream: true as const,
       stream_options: { include_usage: true },
     };
-    return this.client.chat.completions.create(body as ChatCompletionCreateParamsStreaming, { signal, headers });
+    return this.requireClient().chat.completions.create(body as ChatCompletionCreateParamsStreaming, { signal, headers });
   }
 
   async complete(opts: CompleteOpts): Promise<string> {
@@ -111,7 +120,7 @@ export class LlmClient {
       messages: messages.map(stripMeta),
       max_tokens: max_tokens ?? 1024,
     };
-    const response = await this.client.chat.completions.create(body as ChatCompletionCreateParamsNonStreaming);
+    const response = await this.requireClient().chat.completions.create(body as ChatCompletionCreateParamsNonStreaming);
     return response.choices[0]?.message?.content ?? "";
   }
 }

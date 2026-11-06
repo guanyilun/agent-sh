@@ -8,6 +8,28 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Added
+
+- Steering messages take an optional `id`. Re-sending `agent:steer` with a
+  pending `id` edits that message in place, `agent:steer-cancel { id }` removes
+  that message rather than the last one, and queued, consumed and dropped
+  events carry the ids. Ported from asHub's kernel patches (thanks @firslov).
+
+### Fixed
+
+- API keys changed in `keys.json` or `agent-sh auth` apply on the next
+  `agent:providers:changed` without a restart: built-in providers read their
+  key when providers are refreshed, an active session switches to the new key,
+  and a removed key disables the client with a clear error instead of reusing
+  the old one.
+- `--model X` without `--provider` starts on a provider that offers `X`
+  instead of sending `X` to the default provider. Startup fallback also skips
+  providers that have a key and endpoint but no model.
+- A `settings.json` that cannot be parsed is no longer overwritten by `/model`
+  or `/backend`. The selection applies to the session and the message says it
+  was not saved. JSON parse warnings for `settings.json` and `keys.json` no
+  longer quote file contents, which could include API keys.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

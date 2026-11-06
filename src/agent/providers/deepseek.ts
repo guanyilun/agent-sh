@@ -32,7 +32,8 @@ export default function activate(ctx: AgentContext): void {
   });
   ctx.agent.providers.register({
     id: "deepseek",
-    apiKey: resolveApiKey("deepseek").key ?? undefined,
+    // Getter: re-read on each provider refresh so key changes apply without restart.
+    get apiKey() { return resolveApiKey("deepseek").key ?? undefined; },
     baseURL: BASE_URL,
     defaultModel: DEFAULT_MODELS[0].id,
     models: DEFAULT_MODELS,
