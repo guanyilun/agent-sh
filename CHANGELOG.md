@@ -8,12 +8,20 @@ Releases before this file are recorded in the git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-05
+
 ### Added
 
-- Steering messages take an optional `id`. Re-sending `agent:steer` with a
-  pending `id` edits that message in place, `agent:steer-cancel { id }` removes
-  that message rather than the last one, and queued, consumed and dropped
-  events carry the ids. Ported from asHub's kernel patches (thanks @firslov).
+- `agent-sh/runtime`: explicitly composed headless hosts with callable runs,
+  steering, cancellation, snapshots, owned child runs and awaitable disposal
+  (#284). Main agents and subagents share the full ash engine; extensions keep
+  the same agent surface, with per-host settings and tracked cleanup. Tool
+  delegation keeps the parent's policy checks, and tools can run in a separate
+  process. See `docs/programmable-agent-sketch.md` and
+  `examples/programmatic-agent.ts`.
+- Provider setting `requestBody`: extra fields merged into every request, e.g.
+  OpenRouter routing options. It cannot override `messages`, `tools`, `model`
+  or `max_tokens` (#291).
 - Models and providers can declare the thinking levels they accept
   (`reasoningLevels`, from a provider extension or `settings.json`). `/thinking`,
   its completions and shift+tab offer only those, the one global preference maps
@@ -24,15 +32,51 @@ Releases before this file are recorded in the git tags and GitHub releases.
   `xhigh`. `/thinking` also accepts `minimal` and `max`. Subagents apply the same
   levels through their provider's reasoning hook. Idea from asHub (thanks
   @firslov).
+- Steering messages take an optional `id`. Re-sending `agent:steer` with a
+  pending `id` edits that message in place, `agent:steer-cancel { id }` removes
+  that message rather than the last one, and queued, consumed and dropped
+  events carry the ids. Ported from asHub's kernel patches (thanks @firslov).
+- subagents, for long workflows (#291, #295):
+  - Long single-turn runs compact when the model's context window is known:
+    the oldest tool results are cleared first, then the middle is cut as ashi
+    does, with no model call.
+  - Per-agent write roots (`write: [...]`, `[]` for read-only), per-call
+    `max_steps`, and a run-level `budgetUncached` cap on billed tokens.
+  - `provider=` per run, `Agent` or turn, so one workflow can mix providers;
+    keys stay with the agent backend.
+  - Child runs send the provider's cache-routing header (Codex
+    `prompt_cache_key`), keyed on the conversation's opening.
+  - `live=`: a file re-read before every model call as dynamic context.
+  - `Agent.context()` reports the latest prompt size and cache hits
+    (`chat_size`).
+  - Workflow transcripts log one `request` line per model response.
 - subagents: `spawn_agent { resume: "s3", task }` continues a finished
   subagent's conversation, and `{ resume: "s3" }` re-reads its full answer.
-  Answers are tagged with their id, parallel results get a count line and mark
-  subagents that stopped early, large fan-outs are clipped to a share each, and
-  repeated parallel tasks are refused. Ideas from asHub's `subagent_resume` and
-  `agentswarm`.
+  Parallel results get a count line and mark subagents that stopped early,
+  large fan-outs are clipped to a share each, and repeated parallel tasks are
+  refused. Ideas from asHub's `subagent_resume` and `agentswarm`.
+- bash tool: optional `AGENT_SH_BASH_MAX_TIMEOUT` cap, and a message when a
+  command was killed by its timeout (#295).
+
+### Changed
+
+- `spawn_agent` answers end with their subagent id (`[subagent s3]`), and
+  parallel sections are headed `## [1] reviewer · s3`.
+- Subagent runs ride out endpoint outages: transient model-call failures retry
+  within a 45-minute window (backoff capped at 60 s) instead of failing after
+  4 attempts and losing the run's in-memory steps (#295).
+- `agent-sh run`: SIGTERM cancels gracefully (finally blocks run, state is
+  saved); a second SIGTERM exits (#291).
+- `onUsage` reports every response, with `finish_reason`, `duration_ms` and
+  `first_token_ms` (#291).
 
 ### Fixed
 
+- A model stream cut mid-response (undici `terminated`, LiteLLM
+  `APIConnectionError … Connection closed`) is retried instead of ending the
+  run; nothing from a cut stream has been recorded, so earlier steps are kept.
+  A reply with neither text nor tool calls is re-sent (up to twice), and a reply
+  whose reasoning used all of `max_tokens` now fails with a clear message (#291).
 - API keys changed in `keys.json` or `agent-sh auth` apply on the next
   `agent:providers:changed` without a restart: built-in providers read their
   key when providers are refreshed, an active session switches to the new key,
@@ -45,6 +89,12 @@ Releases before this file are recorded in the git tags and GitHub releases.
   or `/backend`. The selection applies to the session and the message says it
   was not saved. JSON parse warnings for `settings.json` and `keys.json` no
   longer quote file contents, which could include API keys.
+- `/codex-login` on Windows opens the full OAuth URL; `cmd /c start` cut it at
+  the first `&` (#285, #286, thanks @firslov).
+- subagents: a run whose model id is listed by several providers uses its own
+  provider's reasoning levels and context window (#296).
+- sandbox: with bubblewrap, a run file or write dir under `/tmp` is refused,
+  since `/tmp` is private inside the sandbox (#283).
 
 ## [0.16.1] - 2026-10-25
 
