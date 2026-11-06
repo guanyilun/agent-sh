@@ -193,7 +193,8 @@ export interface SettingsService {
   setSessionOverlay(patch: Partial<Settings>): void;
   clearSessionOverlay(...keys: (keyof Settings)[]): void;
   getSettingSource(key: keyof Settings): SettingSource;
-  update(patch: Record<string, unknown>): void;
+  /** Returns false when the change could not be persisted. */
+  update(patch: Record<string, unknown>): boolean | void;
   getExtensionSettings<T extends Record<string, unknown>>(namespace: string, defaults: T): T;
   getProviderNames(): string[];
   resolveProvider(name: string): ResolvedProvider | null;
@@ -227,6 +228,7 @@ export function createSettingsService(snapshot: Settings | Record<string, unknow
     },
     update(patch) {
       baseline = deepMerge(baseline, structuredClone(patch));
+      return true;
     },
     getExtensionSettings(namespace, defaults) {
       const ext = (get() as unknown as Record<string, unknown>)[namespace];
@@ -289,7 +291,8 @@ export function getSettings(): Settings & typeof DEFAULTS {
       cached = JSON.parse(raw) as Settings;
     } catch (err) {
       if (err instanceof SyntaxError) {
-        console.error(`[agent-sh] Warning: invalid JSON in ${SETTINGS_PATH}: ${err.message}`);
+        // err.message quotes file contents; keep secrets out of logs.
+        console.error(`[agent-sh] Warning: invalid JSON in ${SETTINGS_PATH}`);
       }
       cached = {};
     }
@@ -357,13 +360,18 @@ export function reloadSettings(): void {
  * Used by runtime controls (`/model`, `/backend`) that want their selection
  * to persist as the default across restarts.
  */
-export function updateSettings(patch: Record<string, unknown>): void {
+export function updateSettings(patch: Record<string, unknown>): boolean {
   let existing: Record<string, unknown> = {};
   try {
     const raw = fs.readFileSync(SETTINGS_PATH, "utf-8");
     existing = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    // file missing or unreadable — start fresh
+    if (!existing || typeof existing !== "object" || Array.isArray(existing)) throw new SyntaxError();
+  } catch (err) {
+    // Missing file starts fresh; never overwrite a file we couldn't parse.
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error(`[agent-sh] Warning: could not read ${SETTINGS_PATH} as a settings object; left unchanged`);
+      return false;
+    }
   }
 
   const merged = deepMerge(existing, patch);
@@ -372,8 +380,10 @@ export function updateSettings(patch: Record<string, unknown>): void {
     fs.mkdirSync(CONFIG_DIR, { recursive: true });
     fs.writeFileSync(SETTINGS_PATH, JSON.stringify(merged, null, 2) + "\n", "utf-8");
     cached = null;
+    return true;
   } catch (err) {
     console.error(`[agent-sh] Warning: failed to update ${SETTINGS_PATH}: ${(err as Error).message}`);
+    return false;
   }
 }
 

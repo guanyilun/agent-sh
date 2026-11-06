@@ -54,7 +54,8 @@ export default function activate(ctx: AgentContext): void {
   });
   ctx.agent.providers.register({
     id: "openrouter",
-    apiKey: apiKey ?? undefined,
+    // Getter: re-read on each provider refresh so key changes apply without restart.
+    get apiKey() { return resolveApiKey("openrouter").key ?? undefined; },
     baseURL: BASE_URL,
     defaultModel: DEFAULT_MODELS[0],
     models: DEFAULT_MODELS,
@@ -67,7 +68,7 @@ export default function activate(ctx: AgentContext): void {
     const patterns = readEchoPatterns();
     ctx.agent.providers.register({
       id: "openrouter",
-      apiKey,
+      get apiKey() { return resolveApiKey("openrouter").key ?? undefined; },
       baseURL: BASE_URL,
       defaultModel: DEFAULT_MODELS[0],
       supportsReasoningEffort: true,

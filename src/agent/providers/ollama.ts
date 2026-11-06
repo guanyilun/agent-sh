@@ -19,7 +19,8 @@ export default function activate(ctx: AgentContext): void {
     : (process.env.OLLAMA_HOST ?? "http://localhost:11434").replace(/\/$/, "");
   const id = cloudKey ? "ollama-cloud" : "ollama";
 
-  const sdkKey = cloudKey || "no-key";
+  // Cloud mode is fixed at activation; its key is re-read on each provider refresh.
+  const currentKey = () => cloudKey ? resolveApiKey("ollama-cloud").key ?? process.env.OLLAMA_API_KEY : "no-key";
   const noAuth = !cloudKey;
   const baseURL = `${host}/v1`;
   const headers: Record<string, string> = {};
@@ -32,13 +33,13 @@ export default function activate(ctx: AgentContext): void {
     },
   });
 
-  ctx.agent.providers.register({ id, apiKey: sdkKey, baseURL, models: [], noAuth });
+  ctx.agent.providers.register({ id, get apiKey() { return currentKey(); }, baseURL, models: [], noAuth });
 
   fetchCatalog(host, headers).then((models) => {
     if (models.length === 0) return;
     ctx.agent.providers.register({
       id,
-      apiKey: sdkKey,
+      get apiKey() { return currentKey(); },
       baseURL,
       defaultModel: models[0]!.id,
       models,

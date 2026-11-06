@@ -98,7 +98,8 @@ export function loadKeysFile(): KeysFile {
     }
   } catch (err) {
     if (err instanceof SyntaxError) {
-      console.error(`[agent-sh] Warning: invalid JSON in ${KEYS_PATH}: ${err.message}`);
+      // err.message quotes file contents; keep keys out of logs.
+      console.error(`[agent-sh] Warning: invalid JSON in ${KEYS_PATH}`);
     }
     cached = {};
   }
@@ -125,8 +126,9 @@ export function resolveApiKey(providerId: string): ResolvedKey {
     if (expanded) return { key: expanded, source: "settings" };
   }
 
-  const fileKey = loadKeysFile()[providerId];
-  if (fileKey) return { key: fileKey, source: "keys-file" };
+  const keys = loadKeysFile();
+  const fileKey = Object.hasOwn(keys, providerId) ? keys[providerId] : undefined;
+  if (typeof fileKey === "string" && fileKey) return { key: fileKey, source: "keys-file" };
 
   const info = KNOWN_PROVIDERS.find((p) => p.id === providerId);
   if (info?.envVar) {

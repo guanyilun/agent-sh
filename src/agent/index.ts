@@ -276,20 +276,36 @@ export default function agentBackend(ctx: ExtensionContext): void {
     const settings = settingsService.get();
 
     let providerName: string | undefined = config.provider ?? settings.defaultProvider;
+    // `--model X` alone: prefer a provider that actually offers X over the default.
+    if (!config.provider && config.model && !config.apiKey) {
+      const model = config.model;
+      const offers = (p: ResolvedProvider | undefined) =>
+        usableProvider(p) && (p!.defaultModel === model || p!.models.includes(model));
+      if (!offers(providerName ? resolvedProviders.get(providerName) : undefined)) {
+        providerName = [...resolvedProviders].find(([, p]) => offers(p))?.[0] ?? providerName;
+      }
+    }
     let activeProvider = providerName ? resolvedProviders.get(providerName) ?? null : null;
+    // config.model belongs to the requested provider; a fallback uses its own model.
+    const requestedProvider = providerName;
+    const startupModel = (p: ResolvedProvider | null | undefined): string | undefined =>
+      (requestedProvider === p?.id ? config.model : undefined)
+      ?? persistedModelFor(p?.id) ?? p?.defaultModel ?? p?.models[0];
+    const startable = (p: ResolvedProvider | null | undefined) => usableProvider(p) && !!startupModel(p);
 
     // Inline CLI credentials carry their own endpoint, so they skip the
     // usable-provider fallback that registry-driven selection needs.
     if (!config.apiKey) {
       if (!providerName) {
-        const first = [...resolvedProviders].find(([, p]) => usableProvider(p));
+        const first = [...resolvedProviders].find(([, p]) => startable(p));
         providerName = first?.[0];
         activeProvider = first?.[1] ?? null;
-      } else if (!usableProvider(activeProvider)) {
+      } else if (!startable(activeProvider)) {
         const reason = !activeProvider ? "is not registered"
           : !activeProvider.apiKey ? "has no API key configured"
-          : "has no endpoint configured";
-        const next = [...resolvedProviders].find(([, p]) => usableProvider(p));
+          : !usableProvider(activeProvider) ? "has no endpoint configured"
+          : "has no model configured";
+        const next = [...resolvedProviders].find(([, p]) => startable(p));
         if (next) {
           bus.emit("ui:error", { message: `Provider "${providerName}" ${reason}; falling back to "${next[0]}".` });
           providerName = next[0];
@@ -304,7 +320,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     // Persisted defaultModel wins over openrouter's hardcoded DEFAULT_MODELS[0].
     const effectiveApiKey = config.apiKey ?? activeProvider?.apiKey;
     const effectiveBaseURL = config.baseURL ?? activeProvider?.baseURL;
-    const effectiveModel = config.model ?? persistedModelFor(providerName) ?? activeProvider?.defaultModel;
+    const effectiveModel = (config.apiKey ? config.model : undefined) ?? startupModel(activeProvider);
 
     // No provider → don't register ash; let another backend own activation.
     if (!effectiveApiKey || !effectiveModel) return;

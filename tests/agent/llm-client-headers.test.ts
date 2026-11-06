@@ -55,3 +55,13 @@ test("SSE status recovery is limited to validated Codex proxy errors", () => {
     assert.equal(llmErrorStatus(Object.assign(new Error("invalid"), { type: "codex_proxy_error", error: { status } })), undefined);
   }
 });
+
+test("disable() fails requests without retrying and stays disabled across fork", async () => {
+  const client = new LlmClient({ apiKey: "x", model: "m" });
+  client.disable();
+  assert.throws(() => client.stream({ messages: [] } as never), /Provider unavailable/);
+  await assert.rejects(client.complete({ messages: [] } as never), /Provider unavailable/);
+  assert.throws(() => client.fork().stream({ messages: [] } as never), /Provider unavailable/);
+  // A fork with its own credentials is usable again.
+  assert.doesNotThrow(() => captureStream(client.fork({ apiKey: "y" }), { messages: [] }));
+});

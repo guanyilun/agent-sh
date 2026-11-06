@@ -45,7 +45,8 @@ export default function activate(ctx: AgentContext): void {
   ctx.agent.providers.configure("openai", { reasoningParams: buildReasoningParams });
   ctx.agent.providers.register({
     id: "openai",
-    apiKey: resolveApiKey("openai").key ?? undefined,
+    // Getter: re-read on each provider refresh so key changes apply without restart.
+    get apiKey() { return resolveApiKey("openai").key ?? undefined; },
     defaultModel: CLOUD_MODELS[0].id,
     models: CLOUD_MODELS,
   });

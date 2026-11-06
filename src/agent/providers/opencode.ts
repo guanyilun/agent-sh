@@ -75,20 +75,20 @@ function reasoningParams(level: string): Record<string, unknown> {
 // ── Activation ───────────────────────────────────────────────────
 
 export default function activate(ctx: AgentContext): void {
-  const apiKey =
-    process.env.OPENCODE_API_KEY ??
-    resolveApiKey("opencode").key ?? undefined;
+  // Re-read on each provider refresh so key changes apply without restart.
+  const currentKey = () => process.env.OPENCODE_API_KEY ?? resolveApiKey("opencode").key ?? undefined;
+  const apiKey = currentKey();
 
   ctx.agent.providers.configure("opencode", { reasoningParams });
   ctx.agent.providers.register({
-    id: "opencode", apiKey, baseURL: ZEN_BASE_URL,
+    id: "opencode", get apiKey() { return currentKey(); }, baseURL: ZEN_BASE_URL,
     defaultModel: ZEN_FALLBACK[0], models: ZEN_FALLBACK,
     supportsReasoningEffort: true,
   });
 
   ctx.agent.providers.configure("opencode-go", { reasoningParams });
   ctx.agent.providers.register({
-    id: "opencode-go", apiKey, baseURL: GO_BASE_URL,
+    id: "opencode-go", get apiKey() { return currentKey(); }, baseURL: GO_BASE_URL,
     defaultModel: GO_FALLBACK[0], models: GO_FALLBACK,
     supportsReasoningEffort: true,
   });
@@ -107,12 +107,12 @@ export default function activate(ctx: AgentContext): void {
       const go = resolve(goIds, md?.["opencode-go"], GO_FALLBACK);
 
       ctx.agent.providers.register({
-        id: "opencode", apiKey, baseURL: ZEN_BASE_URL,
+        id: "opencode", get apiKey() { return currentKey(); }, baseURL: ZEN_BASE_URL,
         defaultModel: zen[0]?.id ?? ZEN_FALLBACK[0], models: zen,
         supportsReasoningEffort: true,
       });
       ctx.agent.providers.register({
-        id: "opencode-go", apiKey, baseURL: GO_BASE_URL,
+        id: "opencode-go", get apiKey() { return currentKey(); }, baseURL: GO_BASE_URL,
         defaultModel: go[0]?.id ?? GO_FALLBACK[0], models: go,
         supportsReasoningEffort: true,
       });
