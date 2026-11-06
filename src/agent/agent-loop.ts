@@ -28,6 +28,7 @@ import { createToolProtocol, type ToolProtocol, type PendingToolCall as Protocol
 
 import { discoverGlobalSkills, discoverProjectSkills } from "./skills.js";
 import type { FileReadCache } from "./tools/read-file.js";
+import { DEFAULT_REASONING_LEVELS, REASONING_LEVELS, effectiveReasoningLevel } from "../core/reasoning-levels.js";
 
 type PendingToolCall = ProtocolPendingToolCall;
 
@@ -106,7 +107,6 @@ export class AgentLoop implements AgentBackend {
   private lastErrorByTool = new Map<string, string>(); // tool → error summary
   private lastErrorByFile = new Map<string, string>(); // file path → error summary
 
-  private static readonly THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"];
 
   private bus: EventBus;
   private llmClient: LlmClient;
@@ -316,8 +316,8 @@ export class AgentLoop implements AgentBackend {
       return { models: list, active: this.activeModel };
     });
     on("config:set-thinking", ({ level }) => {
-      if (!AgentLoop.THINKING_LEVELS.includes(level)) {
-        this.bus.emit("ui:error", { message: `Unknown thinking level: ${level}. Use: ${AgentLoop.THINKING_LEVELS.join(", ")}` });
+      if (!(REASONING_LEVELS as readonly string[]).includes(level)) {
+        this.bus.emit("ui:error", { message: `Unknown thinking level: ${level}. Use: ${this.thinkingLevels().join(", ")}` });
         return;
       }
       const mode = this.activeModel;
@@ -329,14 +329,19 @@ export class AgentLoop implements AgentBackend {
         this.bus.emit("ui:error", { message: `Provider ${mode.provider} does not support reasoning_effort.` });
         return;
       }
+      // The preference is global; each model uses its nearest declared level.
       this.thinkingLevel = level;
       this.updateSettings({ thinkingLevel: level });
+      const applied = effectiveReasoningLevel(level, mode.reasoningLevels);
+      if (applied !== level) this.bus.emit("ui:info", { message: `Thinking: ${mode.id} supports ${this.thinkingLevels().join(", ")}; using ${applied}.` });
       this.bus.emit("config:changed", {});
     });
     onPipe("config:get-thinking", () => {
       const mode = this.activeModel;
-      const supported = mode.reasoning !== false && mode.supportsReasoningEffort !== false;
-      return { level: this.settings().thinkingLevel ?? this.thinkingLevel, levels: AgentLoop.THINKING_LEVELS, supported };
+      const declared = mode.reasoningLevels;
+      const supported = mode.reasoning !== false && mode.supportsReasoningEffort !== false
+        && (!declared || declared.some((l) => l !== "off"));
+      return { level: this.thinkingLevelFor(mode), levels: this.thinkingLevels(), supported };
     });
     on("agent:reset-session", () => {
       this.cancel();
@@ -593,15 +598,26 @@ export class AgentLoop implements AgentBackend {
     this.abortController?.abort();
   }
 
+  /** Levels the active model offers (its declared list, else the default ladder). */
+  private thinkingLevels(): string[] {
+    return this.activeModel.reasoningLevels ?? DEFAULT_REASONING_LEVELS;
+  }
+
+  /** The level sent to `model` for the user's preference. */
+  private thinkingLevelFor(model: Model): string {
+    return effectiveReasoningLevel(this.settings().thinkingLevel ?? this.thinkingLevel, model.reasoningLevels);
+  }
+
   private reasoningParams(): Record<string, unknown> {
     const model = this.activeModel;
     if (model.reasoning === false) return {};
     if (model.supportsReasoningEffort === false) return {};
     const build = this.activeEndpoint?.buildReasoningParams;
-    const level = this.settings().thinkingLevel ?? this.thinkingLevel;
+    const level = this.thinkingLevelFor(model);
     if (build) return build(level);
     if (level === "off") return {};
-    const effort = level === "xhigh" ? "high" : level;
+    // Undeclared models keep the old clamp; declared levels are already valid.
+    const effort = level === "xhigh" && !model.reasoningLevels ? "high" : level;
     return { reasoning_effort: effort };
   }
 

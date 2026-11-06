@@ -34,6 +34,7 @@ import { createGrepTool } from "./tools/grep.js";
 import { createGlobTool } from "./tools/glob.js";
 import { createLsTool } from "./tools/ls.js";
 import { createListSkillsTool } from "./tools/list-skills.js";
+import { normalizeReasoningLevels } from "../core/reasoning-levels.js";
 
 /** The OpenAI SDK silently defaults an empty baseURL to api.openai.com, so a
  *  provider with a key but no endpoint would misroute its key there. `openai`
@@ -42,11 +43,16 @@ function usableProvider(p: ResolvedProvider | null | undefined): boolean {
   return !!p?.apiKey && (!!p.baseURL || p.id === "openai");
 }
 
-type ModelCap = { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean; modalities?: ("text" | "image")[] };
+type ModelCap = { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean; modalities?: ("text" | "image")[]; reasoningLevels?: string[] };
 
 function defaultReasoningBuilder(level: string): Record<string, unknown> {
   if (level === "off") return {};
   return { reasoning_effort: level === "xhigh" ? "high" : level };
+}
+
+/** For models that declare their levels: the level is already valid, send it as is. */
+function declaredReasoningBuilder(level: string): Record<string, unknown> {
+  return level === "off" ? {} : { reasoning_effort: level };
 }
 
 function defaultCacheTokens(usage: Record<string, unknown>): number | undefined {
@@ -71,6 +77,7 @@ function mergeCaps(
       maxTokens: s?.maxTokens ?? p?.maxTokens,
       echoReasoning: s?.echoReasoning ?? p?.echoReasoning,
       modalities: s?.modalities ?? p?.modalities,
+      reasoningLevels: s?.reasoningLevels ?? p?.reasoningLevels,
     });
   }
   return out.size > 0 ? out : undefined;
@@ -85,7 +92,7 @@ function splitRegistration(p: ProviderRegistration): { ids: string[]; caps: Map<
       ids.push(m);
     } else {
       ids.push(m.id);
-      caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning, modalities: m.modalities });
+      caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning, modalities: m.modalities, reasoningLevels: normalizeReasoningLevels(m.reasoningLevels) });
     }
   }
   return { ids, caps };
@@ -116,9 +123,10 @@ export default function agentBackend(ctx: ExtensionContext): void {
   }>();
 
   // Bakes model id so ModelEndpoint.buildReasoningParams keeps its (level) signature.
-  const bindReasoning = (shapeId: string, model: string) => {
+  const bindReasoning = (shapeId: string, model: string, declared: boolean) => {
     const hook = providerHooks.get(shapeId)?.reasoningParams;
-    return hook ? (level: string) => hook(level, model) : defaultReasoningBuilder;
+    if (hook) return (level: string) => hook(level, model);
+    return declared ? declaredReasoningBuilder : defaultReasoningBuilder;
   };
 
   const bindCacheTokens = (shapeId: string) =>
@@ -178,6 +186,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
       supportsReasoningEffort: s?.supportsReasoningEffort ?? p?.supportsReasoningEffort,
       modelCapabilities: mergeCaps(s?.modelCapabilities, payloadCaps, modelIds),
       reasoningShape: s?.reasoningShape,
+      reasoningLevels: s?.reasoningLevels ?? normalizeReasoningLevels(p?.reasoningLevels),
     };
   };
 
@@ -212,6 +221,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
           supportsReasoningEffort: p.supportsReasoningEffort,
           echoReasoning: mc?.echoReasoning,
           modalities: mc?.modalities,
+          reasoningLevels: mc?.reasoningLevels ?? p.reasoningLevels,
         });
       }
     }
@@ -225,7 +235,7 @@ export default function agentBackend(ctx: ExtensionContext): void {
     return {
       apiKey: p.apiKey,
       baseURL: p.baseURL,
-      buildReasoningParams: bindReasoning(shapeId, modelId),
+      buildReasoningParams: bindReasoning(shapeId, modelId, !!(p.modelCapabilities?.get(modelId)?.reasoningLevels ?? p.reasoningLevels)),
       extractCachedTokens: bindCacheTokens(shapeId),
       buildRequestHeaders: bindRequestHeaders(shapeId),
     };

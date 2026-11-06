@@ -33,6 +33,7 @@ interface DriverResult {
   cacheProbes?: CacheProbe[];
   headerProbes?: HeaderProbe[];
   llmClient?: { enabled: boolean; apiKey: string };
+  thinking?: { level: string; levels: string[]; supported: boolean; model: string; params?: Record<string, unknown> };
   stderr: string;
   stdout: string;
   exitCode: number | null;
@@ -40,7 +41,7 @@ interface DriverResult {
 
 async function runDriver(
   settings: Record<string, unknown>,
-  scenario: { config?: Record<string, unknown>; capture: string[]; dumpModels?: boolean; probeCacheTokens?: unknown[]; probeRequestHeaders?: unknown[]; probeLlmClient?: boolean; steps: unknown[] },
+  scenario: { config?: Record<string, unknown>; capture: string[]; dumpModels?: boolean; probeCacheTokens?: unknown[]; probeRequestHeaders?: unknown[]; probeLlmClient?: boolean; probeThinking?: boolean; steps: unknown[] },
   envOverride: Record<string, string> = {},
 ): Promise<DriverResult> {
   const home = mkdtempSync(join(tmpdir(), "agent-sh-pmodes-"));
@@ -74,8 +75,8 @@ async function runDriver(
         clearTimeout(timer);
         try {
           const line = stdout.trim().split(/\r?\n/).pop() ?? "";
-          const parsed = JSON.parse(line) as { events: CapturedEvent[]; models?: any[]; cacheProbes?: CacheProbe[]; headerProbes?: HeaderProbe[]; llmClient?: { enabled: boolean; apiKey: string } };
-          resolve({ events: parsed.events, models: parsed.models, cacheProbes: parsed.cacheProbes, headerProbes: parsed.headerProbes, llmClient: parsed.llmClient, stderr, stdout, exitCode: code });
+          const parsed = JSON.parse(line) as { events: CapturedEvent[]; models?: any[]; cacheProbes?: CacheProbe[]; headerProbes?: HeaderProbe[]; llmClient?: { enabled: boolean; apiKey: string }; thinking?: DriverResult["thinking"] };
+          resolve({ events: parsed.events, models: parsed.models, cacheProbes: parsed.cacheProbes, headerProbes: parsed.headerProbes, llmClient: parsed.llmClient, thinking: parsed.thinking, stderr, stdout, exitCode: code });
         } catch (err) {
           reject(new Error(`driver output not JSON.\nexit=${code}\nstdout:\n${stdout}\nstderr:\n${stderr}\nparse error: ${(err as Error).message}`));
         }
@@ -363,4 +364,70 @@ test("keys.json edits reach a built-in provider and the active client without re
   });
   assert.equal(removed.models!.some((m) => m.provider === "deepseek"), false);
   assert.deepEqual(removed.llmClient, { enabled: false, apiKey: "" }, "removed key disables the active client");
+});
+
+const levelsProvider = {
+  id: "lv", apiKey: "k", baseURL: "https://lv.local/v1", defaultModel: "plain",
+  models: ["plain", { id: "deep", reasoningLevels: ["off", "high", "max"] }],
+};
+
+test("undeclared models keep the default ladder and the xhigh→high clamp", async () => {
+  const r = await runDriver({ thinkingLevel: "xhigh" }, {
+    probeThinking: true, capture: [],
+    steps: [{ kind: "providers.register", payload: levelsProvider }, { kind: "core:extensions-loaded" }, { kind: "activate-backend", name: "ash" }],
+  });
+  assert.equal(r.thinking!.model, "plain");
+  assert.deepEqual(r.thinking!.levels, ["off", "low", "medium", "high", "xhigh"]);
+  assert.equal(r.thinking!.level, "xhigh");
+  assert.deepEqual(r.thinking!.params, { reasoning_effort: "high" });
+});
+
+test("a model's declared levels drive the menu, and the preference maps to the nearest", async () => {
+  const r = await runDriver({ thinkingLevel: "xhigh" }, {
+    probeThinking: true, capture: [],
+    steps: [
+      { kind: "providers.register", payload: levelsProvider }, { kind: "core:extensions-loaded" }, { kind: "activate-backend", name: "ash" },
+      { kind: "switch-model", id: "deep", provider: "lv" },
+    ],
+  });
+  assert.deepEqual(r.thinking!.levels, ["off", "high", "max"]);
+  assert.equal(r.thinking!.level, "max", "xhigh maps to max, sent as is");
+  assert.deepEqual(r.thinking!.params, { reasoning_effort: "max" });
+});
+
+test("/thinking accepts max, keeps it as the preference, and reports the level a model uses", async () => {
+  const r = await runDriver({}, {
+    probeThinking: true, capture: ["ui:info", "ui:error"],
+    steps: [
+      { kind: "providers.register", payload: { ...levelsProvider, defaultModel: "o", models: [{ id: "o", reasoningLevels: ["low", "medium", "high"] }] } },
+      { kind: "core:extensions-loaded" }, { kind: "activate-backend", name: "ash" },
+      { kind: "set-thinking", level: "max" },
+    ],
+  });
+  assert.deepEqual(pickEvents(r.events, "ui:error"), []);
+  const infos = pickEvents(r.events, "ui:info").map((e) => e.message);
+  assert.ok(infos.includes("Thinking: o supports low, medium, high; using high."), JSON.stringify(infos));
+  assert.equal(r.thinking!.level, "high");
+  assert.deepEqual(r.thinking!.params, { reasoning_effort: "high" });
+});
+
+test("settings.json can declare levels per provider and per model", async () => {
+  const r = await runDriver({
+    defaultProvider: "flat", thinkingLevel: "xhigh",
+    providers: { flat: { apiKey: "k", baseURL: "https://flat.local/v1", reasoningLevels: ["off", "low", "medium", "high", "xhigh"], models: ["gpt-x"] } },
+  }, {
+    probeThinking: true, capture: [],
+    steps: [{ kind: "core:extensions-loaded" }, { kind: "activate-backend", name: "ash" }],
+  });
+  assert.deepEqual(r.thinking!.levels, ["off", "low", "medium", "high", "xhigh"]);
+  assert.deepEqual(r.thinking!.params, { reasoning_effort: "xhigh" }, "declared xhigh is sent, not clamped");
+});
+
+test("native DeepSeek offers off/high/max and sends max", async () => {
+  const r = await runDriver({ defaultProvider: "deepseek", thinkingLevel: "xhigh" }, {
+    probeThinking: true, capture: [],
+    steps: [{ kind: "activate-provider", name: "deepseek" }, { kind: "core:extensions-loaded" }, { kind: "activate-backend", name: "ash" }],
+  }, { DEEPSEEK_API_KEY: "sk-test" });
+  assert.deepEqual(r.thinking!.levels, ["off", "high", "max"]);
+  assert.deepEqual(r.thinking!.params, { thinking: { type: "enabled" }, reasoning_effort: "max" });
 });

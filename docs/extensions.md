@@ -503,7 +503,8 @@ export default function activate(ctx: AgentContext): void {
 | `apiKey` | API key; omit for `noAuth` providers, otherwise resolve via `ctx.call("provider:resolve-api-key", id)` which returns `{ key, source }` (settings → keys.json → env) |
 | `baseURL` | OpenAI-compatible base URL |
 | `defaultModel` | Selected by default when this provider is active |
-| `models` | Catalog. Either `string[]` or `Array<{ id, contextWindow?, reasoning?, echoReasoning? }>` for per-model capabilities |
+| `models` | Catalog. Either `string[]` or `Array<{ id, contextWindow?, reasoning?, echoReasoning?, reasoningLevels? }>` for per-model capabilities |
+| `reasoningLevels` | Thinking levels every model accepts unless it lists its own; `/thinking` offers only these |
 | `supportsReasoningEffort` | Whether `/thinking` levels apply to this provider |
 | `noAuth` | `true` for local daemons that don't require an API key — appears as "(no auth required)" in `auth list` |
 

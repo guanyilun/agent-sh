@@ -7,6 +7,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { normalizeReasoningLevels } from "./reasoning-levels.js";
 
 /** Root config directory. Override via AGENT_SH_HOME for isolated instances
  *  (testing, multi-agent setups). Path is resolved at module load. */
@@ -29,6 +30,9 @@ export interface ModelCapabilityConfig {
   echoReasoning?: boolean;
   /** Content modalities the model supports (e.g. ["text", "image"]). */
   modalities?: ("text" | "image")[];
+  /** Thinking levels this model accepts, from off/minimal/low/medium/high/xhigh/max.
+   *  Other preferences map to the nearest one. Omit for the default ladder. */
+  reasoningLevels?: string[];
 }
 
 /** Provider profile — a named LLM configuration. */
@@ -49,6 +53,8 @@ export interface ProviderConfig {
   /** Borrow another registered provider's reasoning request shape by id
    *  (e.g. "openrouter"). Defaults to OpenAI-compat. */
   reasoningShape?: string;
+  /** Thinking levels for every model of this provider (a model's own list wins). */
+  reasoningLevels?: string[];
   /** Extra fields merged into every request body sent to this provider, e.g. for
    *  OpenRouter `{ "provider": { "zdr": true, "data_collection": "deny" } }` to route
    *  only to endpoints that neither retain nor train on prompts.  Cannot override
@@ -427,9 +433,10 @@ export interface ResolvedProvider {
   /** Provider supports the reasoning_effort parameter. Default: true. */
   supportsReasoningEffort?: boolean;
   /** Per-model capabilities, keyed by model id. */
-  modelCapabilities?: Map<string, { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean; modalities?: ("text" | "image")[] }>;
+  modelCapabilities?: Map<string, { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean; modalities?: ("text" | "image")[]; reasoningLevels?: string[] }>;
   /** Borrow another registered provider's reasoning request shape by id. */
   reasoningShape?: string;
+  reasoningLevels?: string[];
 }
 
 /**
@@ -446,14 +453,15 @@ function resolveProviderFromSettings(name: string, settings: Settings): Resolved
 
   const rawModels = provider.models ?? (provider.defaultModel ? [provider.defaultModel] : []);
   const modelIds: string[] = [];
-  const caps = new Map<string, { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean; modalities?: ("text" | "image")[] }>();
+  const caps = new Map<string, { reasoning?: boolean; contextWindow?: number; maxTokens?: number; echoReasoning?: boolean; modalities?: ("text" | "image")[]; reasoningLevels?: string[] }>();
   for (const m of rawModels) {
     if (typeof m === "string") {
       modelIds.push(m);
     } else {
       modelIds.push(m.id);
-      if (m.reasoning !== undefined || m.contextWindow !== undefined || m.maxTokens !== undefined || m.echoReasoning !== undefined || m.modalities !== undefined) {
-        caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning, modalities: m.modalities });
+      const reasoningLevels = normalizeReasoningLevels(m.reasoningLevels);
+      if (m.reasoning !== undefined || m.contextWindow !== undefined || m.maxTokens !== undefined || m.echoReasoning !== undefined || m.modalities !== undefined || reasoningLevels) {
+        caps.set(m.id, { reasoning: m.reasoning, contextWindow: m.contextWindow, maxTokens: m.maxTokens, echoReasoning: m.echoReasoning, modalities: m.modalities, reasoningLevels });
       }
     }
   }
@@ -470,6 +478,7 @@ function resolveProviderFromSettings(name: string, settings: Settings): Resolved
     contextWindow: provider.contextWindow,
     modelCapabilities: caps.size > 0 ? caps : undefined,
     reasoningShape: provider.reasoningShape,
+    reasoningLevels: normalizeReasoningLevels(provider.reasoningLevels),
   };
 }
 
