@@ -215,10 +215,14 @@ test("a quiet workflow prints how many subagents are working and queued", async 
 
 test("pipeline sends each item to its next stage without waiting for the others", async () => {
   const order: string[] = [];
+  let fastChecked!: () => void;
+  const checked = new Promise<void>((r) => { fastChecked = r; });
   const s = setup({ reply: async (o) => {
     const task = lastUser(o);
-    // Item "slow" takes longer in stage 1, so "fast" reaches stage 2 first.
-    await new Promise((r) => setTimeout(r, task === "read slow" ? 80 : 5));
+    // "read slow" finishes only once "check fast" has started, so the test fails (after the timeout)
+    // if the pipeline waits for both items between stages, instead of racing timers on a busy runner.
+    if (task === "check fast") fastChecked();
+    if (task === "read slow") await Promise.race([checked, new Promise((r) => setTimeout(r, 2_000))]);
     order.push(task);
     return { content: `${task} ok` };
   } });
