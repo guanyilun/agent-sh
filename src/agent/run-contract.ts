@@ -31,7 +31,8 @@ export interface AgentRunOptions {
   runId?: string;
   images?: ImageContent[];
   systemPrompt?: string;
-  dynamicContext?: string;
+  /** A string, or a function re-evaluated before every model call (a live signal for long runs). */
+  dynamicContext?: string | (() => string);
   /** Replaces this engine's history before appending query; defensively copied. */
   history?: ChatCompletionMessageParam[];
   /** Maximum LLM rounds (retries do not count). Unlimited by default. */
@@ -52,6 +53,10 @@ export interface AgentRunOptions {
   throwToolErrors?: boolean;
   /** Preserve the original failure message in result.error (legacy adapters). */
   rawErrors?: boolean;
+  /** Keep retrying a transient model-call failure (a cut stream, a network error, 429/5xx) for this long from the
+   *  first failure, instead of giving up after the fixed few attempts.  The run's conversation is in memory, so a
+   *  long unattended run (a workflow's subagent) rides out an endpoint outage without losing its earlier steps. */
+  retryWindowMs?: number;
 }
 
 /** Named handler agent:run accepts this single object.

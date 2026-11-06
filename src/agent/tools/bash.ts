@@ -48,7 +48,9 @@ export function createBashTool(opts: {
 
     async execute(args, onChunk, ctx) {
       const command = args.command as string;
-      const timeout = ((args.timeout as number) ?? 60) * 1000;
+      // AGENT_SH_BASH_MAX_TIMEOUT (seconds) caps what the agent may ask for (e.g. on a shared login node).
+      const cap = Number(process.env.AGENT_SH_BASH_MAX_TIMEOUT) || Infinity;
+      const timeout = Math.min((args.timeout as number) ?? 60, cap) * 1000;
 
       // Let extensions intercept before execution
       const intercepted = opts.bus.emitPipe("agent:terminal-intercept", {
@@ -73,6 +75,7 @@ export function createBashTool(opts: {
         onOutput: onChunk,
       });
 
+      const started = Date.now();
       const onAbort = () => killSession(session);
       ctx?.signal?.addEventListener("abort", onAbort, { once: true });
       try {
@@ -81,9 +84,13 @@ export function createBashTool(opts: {
         ctx?.signal?.removeEventListener("abort", onAbort);
       }
 
-      const content = session.truncated
+      let content = session.truncated
         ? `[output truncated, showing last portion]\n${session.output}`
         : session.output;
+      if (session.exitCode === -1 && !ctx?.signal?.aborted && Date.now() - started >= timeout - 50) {
+        content = `${content ? content + "\n" : ""}[killed after the ${timeout / 1000} s timeout` +
+          (timeout / 1000 === cap ? " (the most this machine allows: AGENT_SH_BASH_MAX_TIMEOUT)]" : "]");
+      }
 
       return {
         content: content || "(no output)",

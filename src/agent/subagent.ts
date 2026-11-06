@@ -30,7 +30,7 @@ export interface SubagentOptions {
    * streamResponse uses. If provided, the subagent sees budget,
    * metacognitive signals, in-flight siblings, etc.
    */
-  dynamicContext?: string;
+  dynamicContext?: string | (() => string);
   /**
    * Per-subagent completion-token budget. When the cumulative
    * completion_tokens across iterations exceeds this, the subagent
@@ -63,6 +63,11 @@ export interface SubagentOptions {
   shouldStop?: () => boolean;
   /** An earlier run's `outMeta.messages`; the task continues that conversation. */
   history?: ChatCompletionMessageParam[];
+  /** Transport headers for every request of this run, e.g. the provider's cache-routing key (the codex provider
+   *  turns its session header into `prompt_cache_key`).  A child host has no session, so the caller supplies them. */
+  requestHeaders?: Record<string, string>;
+  /** See AgentRunOptions.retryWindowMs (the caller's choice; unset keeps the fixed few attempts). */
+  retryWindowMs?: number;
 }
 
 export interface SubagentUsage {
@@ -119,6 +124,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       endpoint: {
         apiKey: "",
         extractCachedTokens: usage => (usage.prompt_tokens_details as { cached_tokens?: number } | undefined)?.cached_tokens ?? 0,
+        ...(opts.requestHeaders ? { buildRequestHeaders: () => opts.requestHeaders! } : {}),
       },
       tools: opts.tools,
     }), subagentCompaction({ historyLength: opts.history?.length })],
@@ -164,6 +170,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       // errors without the interactive engine's provider/model decoration.
       throwToolErrors: true,
       rawErrors: true,
+      retryWindowMs: opts.retryWindowMs,
     };
     const result = await host.run(opts.task, runOptions);
     const details = result.details;

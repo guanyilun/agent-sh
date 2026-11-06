@@ -10,7 +10,7 @@ from ._positions import Position, here, start
 
 
 def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, thinking=None, label=None, write=None,
-        max_steps=None):
+        max_steps=None, live=None, provider=None):
     """Give `task` to an agent and get its answer.
 
     The agent starts working straight away, and the call returns an awaitable for the answer, so
@@ -23,16 +23,19 @@ def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, 
     tools     the tools a plain agent may use ([] for none)
     system    a plain agent's role and rules
     model, thinking, label   override the agent's model, its reasoning effort, and its name in progress lines
+    provider  another configured provider for this agent (e.g. "codex"; needs model): one workflow can mix providers
     write     paths the agent may write (files under them); [] makes it read-only.  Inside the run's sandbox, which
               stays the boundary: this catches an agent writing into the wrong tree (a reviewer saving scratch
               files into the code it reviews), not a determined escape.
     max_steps the most tool-using steps this run may take (default: config maxIterations)
+    live      a file the workflow rewrites while the agent works: re-read before every model call and shown to the
+              agent as current state (time, notes, new facts), outside the cached prompt; missing or empty adds nothing
 
     A run that fails raises RunError.
     """
     position = here()
     spec = _spec(task, agent, returns, tools=tools, system=system, model=model, thinking=thinking, label=label,
-                 write=_paths(write), maxSteps=max_steps)
+                 write=_paths(write), maxSteps=max_steps, live=live, provider=provider)
     return _answer(spec, position.next(), position, returns)
 
 
@@ -46,18 +49,20 @@ class Agent:
     The options are the same as for `run` and apply to every turn.
     """
 
-    def __init__(self, name=None, *, tools=None, system=None, model=None, thinking=None, label=None, write=None):
+    def __init__(self, name=None, *, tools=None, system=None, model=None, thinking=None, label=None, write=None, live=None,
+                 provider=None):
         self._name = name
-        self._options = dict(tools=tools, system=system, model=model, thinking=thinking, label=label, write=_paths(write))
+        self._options = dict(tools=tools, system=system, model=model, thinking=thinking, label=label, write=_paths(write),
+                             live=live, provider=provider)
         self._id = here().next()
         self._turns = 0
         self._last_turn = None
 
-    def ask(self, task, *, returns=None, model=None, thinking=None, label=None, max_steps=None):
+    def ask(self, task, *, returns=None, model=None, thinking=None, label=None, max_steps=None, provider=None):
         """Say `task` to the agent and get its answer. Turns happen one at a time, in the order asked."""
         position = here()
         overrides = {name: value for name, value in dict(model=model, thinking=thinking, label=label,
-                                                         maxSteps=max_steps).items() if value is not None}
+                                                         maxSteps=max_steps, provider=provider).items() if value is not None}
         spec = _spec(task, self._name, returns, **{**self._options, **overrides})
         self._turns += 1
         turn_id, previous = f"{self._id}:{self._turns}", self._last_turn
@@ -69,6 +74,14 @@ class Agent:
 
         self._last_turn = start(turn(), position)
         return self._last_turn
+
+    async def context(self):
+        """The conversation's size at its latest model call: {"prompt": tokens sent, "cached": the part the provider
+        served from cache}; zeros before the first turn.  For deciding whether to keep talking (a cached prefix is
+        cheap to extend) or start a fresh agent (a long one is slow and costly to re-send)."""
+        if self._last_turn is not None:
+            await asyncio.wait([self._last_turn])
+        return await _host.link().request("chat_size", session=self._id)
 
 
 async def race(*attempts, accept=None):

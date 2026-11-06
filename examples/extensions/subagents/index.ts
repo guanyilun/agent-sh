@@ -4,6 +4,7 @@ import type { ToolDefinition } from "agent-sh/agent/types";
 import { runSubagent, type SubagentOptions, type SubagentRunMeta } from "agent-sh/agent/subagent";
 import { effectiveReasoningLevel, getSettings } from "agent-sh/settings";
 import { delegatedTools } from "agent-sh/runtime";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,7 @@ export type { AgentRegistration } from "./agents.js";
 export type { WorkflowRegistration } from "./workflows.js";
 
 const TOOL_NAME = "spawn_agent";
+const LIVE_CHARS = 6000;                   // the most of a live file shown per model call
 const WORKFLOW_TOOL = "run_workflow";
 const JOBS_TOOL = "subagent_jobs";
 const SUBMIT_TOOL = "submit_result";
@@ -40,7 +42,7 @@ const PARENT_CONTEXT_CHARS = 12_000;
 /** Above this, fan-out answers are clipped to a share each; `resume` re-reads one in full. */
 const FANOUT_RESULT_CHARS = 24_000;
 
-interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; thinking?: string; write?: string[]; maxSteps?: number }
+interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string }
 
 const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python"];
 
@@ -648,6 +650,15 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     return { text, value: submitted?.value };
   }
 
+  function readLive(file: string): string {
+    try {
+      const text = fs.readFileSync(file, "utf8").trim();
+      return text.length > LIVE_CHARS ? text.slice(0, LIVE_CHARS) + "\n[…]" : text;
+    } catch {
+      return "";
+    }
+  }
+
   async function runOne(
     spec: TaskSpec,
     def: AgentDef | undefined,
@@ -655,8 +666,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     progress?: (line: string) => void,
     extra: RunExtras = {},
   ): Promise<string> {
-    const llmClient = ctx.call("llm:get-client") as SubagentOptions["llmClient"] | undefined;
-    if (!llmClient) throw new Error("no LLM client available");
+    const llmClient = clientFor(spec, def);
 
     const cwd = ctx.call("cwd") as string;
     const wanted = def ? def.tools : spec.tools;
@@ -713,6 +723,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         model: spec.model ?? def?.model,
         signal,
         maxIterations: spec.maxSteps ?? def?.maxIterations ?? settings.maxIterations,
+        // live: a file the workflow rewrites; read before every model call, shown as dynamic context (outside the
+        // cached prefix).  Empty or missing adds nothing.
+        dynamicContext: spec.live ? () => readLive(path.resolve(cwd, spec.live!)) : undefined,
         reasoningParams: reasoningParams(spec.thinking ?? def?.thinking ?? defaultThinking(), spec.model ?? def?.model ?? llmClient.model),
         contextWindow: contextWindow(spec.model ?? def?.model ?? llmClient.model),
         outMeta: meta,
@@ -720,6 +733,10 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         onMessage: extra.onMessage as SubagentOptions["onMessage"],
         shouldStop: extra.shouldStop,
         history: extra.history as SubagentOptions["history"],
+        requestHeaders: requestHeadersFor(spec, def, systemPrompt, extra.history),
+        // a workflow's agents run unattended for hours: ride out an endpoint outage inside the run (its steps are in
+        // memory) rather than fail it and lose them (a 104-min critic turn lost to a cut stream, 2026-11-03)
+        retryWindowMs: 45 * 60_000,
       });
       if (meta.messages) extra.onHistory?.(meta.messages);
       extra.onMeta?.(meta);
@@ -731,6 +748,46 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       : meta.degraded === "budget" ? "stopped: token budget reached"
       : "done");
     return text;
+  }
+
+  // provider: this agent's own client on another configured provider (its endpoint and key resolved by the agent
+  // backend; the key never leaves it), so one workflow can mix providers.  Kept per provider and model.
+  const providerClients = new Map<string, SubagentOptions["llmClient"]>();
+  const providerHeaders = new Map<string, ((info: { sessionId?: string }) => Record<string, string>) | undefined>();
+  function clientFor(spec: TaskSpec, def: AgentDef | undefined): SubagentOptions["llmClient"] {
+    const base = ctx.call("llm:get-client") as SubagentOptions["llmClient"] | undefined;
+    if (!base) throw new Error("no LLM client available");
+    if (!spec.provider) return base;
+    const model = spec.model ?? def?.model;
+    if (!model) throw new Error(`provider "${spec.provider}" needs a model`);
+    const key = `${spec.provider}\u0000${model}`;
+    let client = providerClients.get(key);
+    if (!client) {
+      const ep = ctx.call("agent:resolve-endpoint", { provider: spec.provider, id: model }) as
+        { apiKey: string; baseURL?: string } | undefined;
+      if (!ep) throw new Error(`provider "${spec.provider}" is not available (not registered, or no key or sign-in)`);
+      client = base.fork({ apiKey: ep.apiKey, baseURL: ep.baseURL, provider: spec.provider, model });
+      providerClients.set(key, client);
+      providerHeaders.set(key, (ep as { buildRequestHeaders?: (info: { sessionId?: string }) => Record<string, string> }).buildRequestHeaders);
+    }
+    return client;
+  }
+
+  // A cache-routing key for providers that take one (the codex provider: prompt_cache_key).  Without it a child run
+  // sent none and the ChatGPT backend served almost nothing from cache, even within one conversation (2026-11-03).
+  // Keyed on the conversation's start (system prompt and first task), so every turn of one conversation, and
+  // conversations that open alike, share it.
+  function requestHeadersFor(spec: TaskSpec, def: AgentDef | undefined, systemPrompt: string,
+                             history: unknown): Record<string, string> | undefined {
+    if (!spec.provider) return undefined;
+    const build = providerHeaders.get(`${spec.provider}\u0000${spec.model ?? def?.model}`);
+    if (!build) return undefined;
+    const first = Array.isArray(history) ? history.find((m: { role?: string }) => m?.role === "user") : undefined;
+    const opening = first ? (typeof first.content === "string" ? first.content : JSON.stringify(first.content)) : spec.task;
+    const id = crypto.createHash("sha256").update(systemPrompt).update("\u0000").update(String(opening).slice(0, 4000))
+      .digest("hex").slice(0, 32);
+    const h = build({ sessionId: `subagent-${id}` });
+    return h && Object.keys(h).length ? h : undefined;
   }
 
   // The user's thinking level, for runs and agents that don't set one: the session's, or the saved setting
