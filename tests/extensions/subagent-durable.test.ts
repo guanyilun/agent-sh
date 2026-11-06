@@ -330,8 +330,11 @@ test("race keeps the first result that passes, cancels the rest, and resume runs
   let slowSignal: AbortSignal | undefined;
   const s = setup({ reply: async (o) => {
     const task = lastUser(o);
-    if (task === "try slow") slowSignal = (o as { signal?: AbortSignal }).signal;
-    await new Promise((r) => setTimeout(r, task === "try slow" ? 80 : 5));
+    if (task === "try slow") {
+      // Stays in flight until the race cancels it (2 s fallback), instead of racing a timer.
+      slowSignal = (o as { signal?: AbortSignal }).signal;
+      await new Promise((r) => { slowSignal?.addEventListener("abort", r, { once: true }); setTimeout(r, 2_000); });
+    }
     if (task === "after" && failAfter) throw new Error("boom");
     return { content: `did ${task}` };
   } });
