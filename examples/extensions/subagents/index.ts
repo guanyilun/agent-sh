@@ -740,7 +740,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         reasoningParams: reasoningParams(spec.thinking ?? def?.thinking ?? defaultThinking(), spec.model ?? def?.model ?? llmClient.model, spec.provider),
         contextWindow: contextWindow(spec.model ?? def?.model ?? llmClient.model, spec.provider),
         outMeta: meta,
-        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens, u.cached_tokens, { ...u }) : undefined,
+        // Each response is logged with the model and provider that produced it (a turn may override either).
+        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens, u.cached_tokens,
+          { ...u, model: spec.model ?? def?.model ?? llmClient.model, provider: spec.provider ?? "default" }) : undefined,
         onMessage: extra.onMessage as SubagentOptions["onMessage"],
         shouldStop: extra.shouldStop,
         history: extra.history as SubagentOptions["history"],

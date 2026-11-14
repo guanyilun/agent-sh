@@ -202,7 +202,10 @@ export async function runWorkflow(
         throw new WorkflowStop(`uncached-token budget of ${opts.budgetUncached} exhausted`);
 
       const write = record.transcript(seq);
-      write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema });
+      // Who this is, for reading the run afterwards: the label and the model as asked (each "request" line carries the
+      // model and provider that answered), the call's position, and the conversation it continues.
+      write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema, label: spec.label, model: spec.model,
+              provider: spec.provider, thinking: spec.thinking, id, ...(chat && { conversation: id.replace(/:\d+$/, "") }) });
       let tokens = 0;
       let state: "queued" | "working" = "queued";
       let history: unknown[] | undefined;
@@ -370,6 +373,7 @@ export async function runWorkflow(
       },
       args: apiArgs,
       log: (message) => progress(`· ${message}`),
+      event: (kind, data) => record.event(String(kind), data),
       signal,
       budget,
     };

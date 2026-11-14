@@ -118,6 +118,14 @@ passed, output = await run_tests(directory)
 
 Agent answers are saved automatically. Your own functions are not, and a resumed run would call them again. Mark a function with `@checkpoint` and its result is saved too. The function may be async or not, but the call is always awaited. Its result must be plain data (numbers, text, lists, dicts); a tuple comes back as a list. Each call is remembered by where it happens in the program, not by its arguments.
 
+### `event(kind, **data)`: the program's side of the record
+
+```python
+event("check", worker="port", round=2, ok=False, feedback=tail)
+```
+
+Each agent's steps are in its transcript (`workflow-runs/<id>/agents/<n>.jsonl`, whose first line gives the label, the model and provider asked for, and the conversation it continues; each model response is logged with the model and provider that answered). `event` adds what the program itself decided or measured, one JSON line in `workflow-runs/<id>/events.jsonl`: a check's result, a round, a promotion. With both, a run can be read afterwards without parsing the program's own logs.
+
 ### `budget`: tokens left
 
 `budget.remaining`, `budget.spent`, `budget.cached` and `budget.total`, as of the last call that finished (`spent - cached` is what a provider bills; `budgetUncached` in `config` caps it). `total` is `None` and `remaining` is infinite unless `config` sets `budgetTokens`. Check it in open-ended loops:

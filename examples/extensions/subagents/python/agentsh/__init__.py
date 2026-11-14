@@ -22,9 +22,10 @@ the file sets in `config`.
     Agent        an agent you keep talking to, turn after turn
     race         try several things at once and keep the first good result
     checkpoint   mark a function of your own whose results a resumed run should not redo
+    event        record what the program decided or measured, for reading the run afterwards
     budget       how many tokens are left
 """
-from ._calls import Agent, checkpoint, race, run
+from ._calls import Agent, checkpoint, event, race, run
 from ._host import RunError, budget
 
-__all__ = ["run", "Agent", "race", "checkpoint", "budget", "RunError"]
+__all__ = ["run", "Agent", "race", "checkpoint", "event", "budget", "RunError"]

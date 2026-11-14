@@ -46,3 +46,42 @@ test("submit_result accepts a repaired answer, and a refused one is told the sha
   } finally { s.cleanup(); }
 });
 
+test("env runs before each of an agent's shell commands; the transcript keeps the agent's own text", async () => {
+  let turn = 0;
+  const s = setup({ reply: () => (++turn === 1 ? call("bash", { command: "python fit.py" }) : { content: "done" }) });
+  const ran: string[] = [];
+  s.h.advise("tool:bash", (_next: unknown, args: { command: string }) => { ran.push(args.command); return { content: "ok", exitCode: 0, isError: false }; });
+  try {
+    wf(s, "envy.ts", 'export default async ({ run }) => run(null, "fit", { tools: ["bash"], env: "source env.sh >/dev/null 2>&1; umask 077", label: "fitter", model: "m1" });');
+    await s.exec("run_workflow", { name: "envy" });
+    assert.deepEqual(ran, ["source env.sh >/dev/null 2>&1; umask 077\npython fit.py"]);
+    const transcript = lines(findFiles(s.root, "1.jsonl")[0]!);
+    const start = transcript.find(e => e.type === "start")!;
+    assert.equal(start.label, "fitter");
+    assert.equal(start.model, "m1");
+    assert.equal(start.id, "1");
+    assert.ok(JSON.stringify(transcript).includes("python fit.py") && !JSON.stringify(transcript.filter(e => e.type === "message")).includes("umask"));
+    const request = transcript.find(e => e.type === "request");
+    if (request) assert.equal(request.model, "m1");
+  } finally { s.cleanup(); }
+});
+
+test("event() from a workflow lands in the run's events.jsonl", { skip: spawnSync("python3", ["--version"]).status !== 0 }, async () => {
+  const s = setup({ reply: () => ({ content: "fine" }) });
+  try {
+    wf(s, "ev.py", [
+      "from agentsh import run, event",
+      "async def main():",
+      '    answer = await run("check", tools=[])',
+      '    event("check", worker="w1", ok=True, round=1)',
+      "    return answer",
+    ].join("\n"));
+    await s.exec("run_workflow", { name: "ev" });
+    wf(s, "ev2.ts", 'export default async ({ event }) => { event("promotion", { id: "g1w0", gain: 0.2 }); return "x"; };');
+    await s.exec("run_workflow", { name: "ev2" });
+    const all = findFiles(s.root, "events.jsonl").flatMap(lines);
+    assert.ok(all.some(e => e.kind === "check" && e.worker === "w1" && e.ok === true && e.round === 1 && typeof e.at === "number"));
+    assert.ok(all.some(e => e.kind === "promotion" && e.gain === 0.2));
+  } finally { s.cleanup(); }
+});
+

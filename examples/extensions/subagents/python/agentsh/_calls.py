@@ -41,6 +41,16 @@ def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, 
     return _answer(spec, position.next(), position, returns)
 
 
+def event(kind, **data):
+    """Record what the program decided or measured, as one line of the run's events.jsonl:
+
+        event("check", worker="port", ok=False, round=2, feedback=tail)
+
+    Agents' steps are already in their transcripts; this is for the program's side (a check's result, a round, a
+    promotion, a refusal), so a run can be read afterwards from one place.  Values must be plain data."""
+    _host.link().send("event", name=str(kind), data=data)
+
+
 class Agent:
     """An agent you keep talking to: every `ask` continues the same conversation.
 

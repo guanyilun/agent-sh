@@ -136,6 +136,11 @@ export class RunDir {
     this.save();  // keep the token count current in case the process dies
   }
 
+  /** The program's own events (checks, rounds, decisions), one JSON line each. */
+  event(kind: string, data: Record<string, unknown> = {}): void {
+    try { fs.appendFileSync(path.join(this.dir, "events.jsonl"), JSON.stringify({ ...data, kind, at: Date.now() }) + "\n"); } catch {}
+  }
+
   transcript(seq: number): (event: Record<string, unknown>) => void {
     const file = path.join(this.dir, "agents", `${seq}.jsonl`);
     return (event) => fs.appendFileSync(file, JSON.stringify({ ...event, at: Date.now() }) + "\n");

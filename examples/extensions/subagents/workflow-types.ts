@@ -56,6 +56,9 @@ export interface WorkflowApi {
   checkpoint<T>(name: string, fn: () => T | Promise<T>): Promise<T>;
   args: any;
   log(message: string): void;
+  /** One line in the run's events.jsonl: what the program decided or measured (a check's result, a round, a
+   *  promotion), so the run can be read afterwards without parsing the program's own logs. */
+  event(kind: string, data?: Record<string, unknown>): void;
   signal: AbortSignal;
   /** Subagent tokens (prompt + completion) this run; run() throws once `total` is spent. */
   budget: { total: number | null; spent(): number; remaining(): number; /** The part of spent() served from the provider's prompt cache. */ cached(): number };

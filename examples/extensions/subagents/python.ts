@@ -111,6 +111,7 @@ export function pythonModule(file: string, python = defaultPython()): Promise<Py
         }
         else if (m.t === "checkpoint_set") reply(m.rid, () => host.checkpointRecord(m.id, m.key, m.value));
         else if (m.t === "log") api.log(String(m.message));
+        else if (m.t === "event") api.event(String(m.name), (m.data && typeof m.data === "object") ? m.data : {});
         else if (m.t === "done") finish(() => resolve(m.result ?? undefined));
         else if (m.t === "fail") finish(() => reject(m.stop ? host.stop(m.error) : new Error(m.traceback ? `${m.error}\n${String(m.traceback).trim()}` : m.error)));
       };
