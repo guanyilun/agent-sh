@@ -23,6 +23,9 @@ export interface RunOptions {
   maxSteps?: number;
   /** A file the workflow rewrites while the agent works; re-read before every model call (dynamic context). */
   live?: string;
+  /** Shell text run before every shell command of this agent (an environment: `source env.sh; export X=1; umask 077`).
+   *  The agent does not see or type it, so it cannot forget it. */
+  env?: string;
 }
 
 export interface RunSpec extends RunOptions {

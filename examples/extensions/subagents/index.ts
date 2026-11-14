@@ -42,7 +42,7 @@ const PARENT_CONTEXT_CHARS = 12_000;
 /** Above this, fan-out answers are clipped to a share each; `resume` re-reads one in full. */
 const FANOUT_RESULT_CHARS = 24_000;
 
-interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string }
+interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string; env?: string }
 
 const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python"];
 
@@ -695,6 +695,12 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
           progress?.(detail ? `${tool.name}: ${detail}` : tool.name);
           const refusal = writeCheck?.(tool.name, args as Record<string, unknown>);
           if (refusal) return refusal;
+          // env: the agent's environment, run before each of its shell commands (on its own line, so a prelude that
+          // ends in a comment or lacks a semicolon cannot swallow the command).  The agent's own text is what the
+          // transcript and the write check see.
+          if (spec.env && (tool.name === "bash" || tool.name === "pwsh") && typeof (args as { command?: unknown }).command === "string") {
+            return tool.execute({ ...(args as Record<string, unknown>), command: `${spec.env}\n${(args as { command: string }).command}` }, onChunk, execCtx);
+          }
           return tool.execute(args, onChunk, execCtx);
         },
       } satisfies ToolDefinition))

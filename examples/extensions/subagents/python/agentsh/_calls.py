@@ -10,7 +10,7 @@ from ._positions import Position, here, start
 
 
 def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, thinking=None, label=None, write=None,
-        max_steps=None, live=None, provider=None):
+        max_steps=None, live=None, provider=None, env=None):
     """Give `task` to an agent and get its answer.
 
     The agent starts working straight away, and the call returns an awaitable for the answer, so
@@ -30,12 +30,14 @@ def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, 
     max_steps the most tool-using steps this run may take (default: config maxIterations)
     live      a file the workflow rewrites while the agent works: re-read before every model call and shown to the
               agent as current state (time, notes, new facts), outside the cached prompt; missing or empty adds nothing
+    env       shell text run before every shell command of this agent ("source env.sh >/dev/null; export X=1; umask 077"):
+              its environment, which it then cannot forget to set up
 
     A run that fails raises RunError.
     """
     position = here()
     spec = _spec(task, agent, returns, tools=tools, system=system, model=model, thinking=thinking, label=label,
-                 write=_paths(write), maxSteps=max_steps, live=live, provider=provider)
+                 write=_paths(write), maxSteps=max_steps, live=live, provider=provider, env=env)
     return _answer(spec, position.next(), position, returns)
 
 
@@ -50,10 +52,10 @@ class Agent:
     """
 
     def __init__(self, name=None, *, tools=None, system=None, model=None, thinking=None, label=None, write=None, live=None,
-                 provider=None):
+                 provider=None, env=None):
         self._name = name
         self._options = dict(tools=tools, system=system, model=model, thinking=thinking, label=label, write=_paths(write),
-                             live=live, provider=provider)
+                             live=live, provider=provider, env=env)
         self._id = here().next()
         self._turns = 0
         self._last_turn = None

@@ -74,6 +74,7 @@ plan = await run("Split this goal into tasks: ...", agent="plan", returns=Plan)
 | `write` | paths the agent may write (files under them); `[]` makes it read-only. A tripwire on its `write_file`/`edit_file` and the visible writes of its shell commands, inside the run's sandbox: it stops a reviewer saving scratch files into the code it reviews, not a determined escape. |
 | `max_steps` | the most tool-using steps this call may take (default: `config` `maxIterations`). |
 | `live` | a file the workflow rewrites while the agent works: re-read before every model call and shown to the agent as `<dynamic_context>` (outside the cached prompt).  Use it for the time, new instructions, new facts.  Missing or empty adds nothing. |
+| `env` | shell text run before every shell command of this agent (`"source env.sh >/dev/null 2>&1; export X=1; umask 077"`): its environment. The agent neither sees nor types it, so it cannot forget it; the transcript keeps the agent's own command. |
 
 `run` starts the agent immediately and returns an awaitable. Start several and wait for them together:
 
@@ -93,7 +94,7 @@ draft = await worker.ask("Write the function described in SPEC.md.")
 fixed = await worker.ask(f"The tests fail:\n{output}\nFix it.")      # it remembers the first turn
 ```
 
-`Agent(name, ...)` takes `tools`, `system`, `model`, `thinking`, `label` and `write`, which apply to every turn; `ask(task, ...)` takes `returns`, `model`, `thinking`, `label` and `max_steps`. Turns run one at a time. Use it for repair loops, where restating the history to a fresh agent would cost more and lose detail.
+`Agent(name, ...)` takes `tools`, `system`, `model`, `thinking`, `label`, `write`, `live`, `env`, `context_tokens` and `history_from`, which apply to every turn; `ask(task, ...)` takes `returns`, `model`, `thinking`, `label` and `max_steps`. Turns run one at a time. Use it for repair loops, where restating the history to a fresh agent would cost more and lose detail.
 
 ### `race(*attempts, accept=...)`: first good result wins
 
