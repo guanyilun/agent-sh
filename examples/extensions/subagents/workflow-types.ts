@@ -26,6 +26,9 @@ export interface RunOptions {
   /** Shell text run before every shell command of this agent (an environment: `source env.sh; export X=1; umask 077`).
    *  The agent does not see or type it, so it cannot forget it. */
   env?: string;
+  /** Compact the run once its prompt passes this many tokens (old tool output is cleared: a file can be re-read, a
+   *  command re-run; a very long run also loses its middle steps), instead of only near the model's context window. */
+  contextTokens?: number;
 }
 
 export interface RunSpec extends RunOptions {

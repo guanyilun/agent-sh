@@ -42,7 +42,7 @@ const PARENT_CONTEXT_CHARS = 12_000;
 /** Above this, fan-out answers are clipped to a share each; `resume` re-reads one in full. */
 const FANOUT_RESULT_CHARS = 24_000;
 
-interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string; env?: string }
+interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string; env?: string; contextTokens?: number }
 
 const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python"];
 
@@ -750,6 +750,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         // a workflow's agents run unattended for hours: ride out an endpoint outage inside the run (its steps are in
         // memory) rather than fail it and lose them (a 104-min critic turn lost to a cut stream, 2026-11-03)
         retryWindowMs: 45 * 60_000,
+        contextTokens: spec.contextTokens,
       });
       if (meta.messages) extra.onHistory?.(meta.messages);
       extra.onMeta?.(meta);

@@ -75,6 +75,7 @@ plan = await run("Split this goal into tasks: ...", agent="plan", returns=Plan)
 | `max_steps` | the most tool-using steps this call may take (default: `config` `maxIterations`). |
 | `live` | a file the workflow rewrites while the agent works: re-read before every model call and shown to the agent as `<dynamic_context>` (outside the cached prompt).  Use it for the time, new instructions, new facts.  Missing or empty adds nothing. |
 | `env` | shell text run before every shell command of this agent (`"source env.sh >/dev/null 2>&1; export X=1; umask 077"`): its environment. The agent neither sees nor types it, so it cannot forget it; the transcript keeps the agent's own command. |
+| `context_tokens` | compact the run once its prompt passes this many tokens, instead of only near the model's context window: old tool output is cleared (the agent can read the file or run the command again), and a very long run also loses its middle steps. A long tool-using run re-sends mostly old tool output on every call; a lower trigger keeps its prompts small. |
 
 `run` starts the agent immediately and returns an awaitable. Start several and wait for them together:
 

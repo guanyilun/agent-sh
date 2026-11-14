@@ -68,6 +68,10 @@ export interface SubagentOptions {
   requestHeaders?: Record<string, string>;
   /** See AgentRunOptions.retryWindowMs (the caller's choice; unset keeps the fixed few attempts). */
   retryWindowMs?: number;
+  /** Compact the run once its prompt passes this many tokens (subagent-compaction.ts: old tool output is cleared,
+   *  then the middle of a very long run is cut), instead of only at `autoCompactThreshold` of a known context
+   *  window.  Long tool-using runs re-send mostly old tool output; a lower trigger keeps prompts small. */
+  contextTokens?: number;
 }
 
 export interface SubagentUsage {
@@ -110,15 +114,22 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
   const client = typeof llmClient.fork === "function"
     ? llmClient.fork(model ? { model } : {})
     : llmClient;
+  // The loop compacts at threshold x (window - reserve).  contextTokens sets that product directly; with no known
+  // window a large nominal one carries it.
+  const RESERVE = 8192;
+  const window = opts.contextWindow ?? (opts.contextTokens ? 1_000_000 : undefined);
+  const threshold = window && opts.contextTokens
+    ? Math.min(opts.autoCompactThreshold ?? 0.8, opts.contextTokens / (window - RESERVE))
+    : opts.autoCompactThreshold ?? 0.8;
   const host = await createAgentHost({
     cwd: opts.cwd ?? process.cwd(),
-    settings: opts.contextWindow
-      ? { autoCompact: true, autoCompactThreshold: opts.autoCompactThreshold ?? 0.8, toolMode: "api" }
+    settings: window
+      ? { autoCompact: true, autoCompactThreshold: threshold, toolMode: "api" }
       : { autoCompact: false, toolMode: "api" },
     extensions: [ashEngine({
       client,
       model: { id: model ?? client.model, provider: "custom", echoReasoning: true,
-               ...(opts.contextWindow ? { contextWindow: opts.contextWindow } : {}) },
+               ...(window ? { contextWindow: window } : {}) },
       // The client already owns credentials; this endpoint only supplies the
       // legacy OpenAI-shaped usage decoder, including cache accounting.
       endpoint: {
