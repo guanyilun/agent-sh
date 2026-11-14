@@ -39,7 +39,14 @@ def build(tp, value):
         return None if value is None else build(inner, value)
     if _is_dataclass(tp) and isinstance(value, dict):
         hints = typing.get_type_hints(tp)
-        return tp(**{f.name: build(hints[f.name], value[f.name]) for f in dataclasses.fields(tp) if f.name in value})
+        fields = {}
+        for f in dataclasses.fields(tp):
+            if f.name in value:
+                fields[f.name] = build(hints[f.name], value[f.name])
+            elif not _is_required(f, hints[f.name]) and f.default is dataclasses.MISSING \
+                    and f.default_factory is dataclasses.MISSING:
+                fields[f.name] = None          # an Optional field the agent left out (the schema does not require it)
+        return tp(**fields)
     if typing.get_origin(tp) is list and isinstance(value, list) and typing.get_args(tp):
         return [build(typing.get_args(tp)[0], item) for item in value]
     return value
