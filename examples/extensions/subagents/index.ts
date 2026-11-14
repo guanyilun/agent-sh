@@ -12,7 +12,7 @@ import { discoverAgents, findAgent, fromRegistration, type AgentDef, type AgentR
 import { describe, JobTable, type JobOutcome } from "./jobs.js";
 import { Semaphore } from "./semaphore.js";
 import { RunStore } from "./runs.js";
-import { example, normalizeSchema, validate } from "./schema.js";
+import { coerce, example, normalizeSchema, validate } from "./schema.js";
 import * as os from "node:os";
 import {
   ArgsError, describeFile, discoverWorkflows, formatResult, helpText, runWorkflow, TrustStore, workflowArgs,
@@ -633,12 +633,17 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       name: SUBMIT_TOOL,
       description: "Submit your final result; its arguments are the result. Call it once, when you are done.",
       input_schema: params,
-      async execute(args) {
+      async execute(given) {
+        // Habitual slips that lose nothing are repaired (a list sent as one string, one item where a list is asked);
+        // the rest goes back with the shape spelled out, which a bare path ("$.facts must be array") did not convey.
+        const { value: args, notes } = coerce(given, params);
         const problem = validate(args, params);
-        if (problem) return { content: `Invalid: ${problem}. Fix it and call ${SUBMIT_TOOL} again.`, exitCode: 1, isError: true };
+        if (problem) {
+          return { content: `Invalid: ${problem}. The result must have this shape (placeholders for values): ${JSON.stringify(example(params))}. Fix it and call ${SUBMIT_TOOL} again.`, exitCode: 1, isError: true };
+        }
         submitted = { value: wrapped ? (args as { result: unknown }).result : args };
         ctl.progress(SUBMIT_TOOL);
-        return { content: "Recorded.", exitCode: 0, isError: false };
+        return { content: notes.length ? `Recorded (adjusted: ${notes.slice(0, 5).join("; ")}).` : "Recorded.", exitCode: 0, isError: false };
       },
     };
     const text = await runOne(spec, def, ctl.signal, ctl.progress, {

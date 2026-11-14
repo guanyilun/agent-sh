@@ -159,6 +159,8 @@ class Report:
 
 Supported field types: `str`, `int`, `float`, `bool`, `list[...]`, another dataclass, `Literal[...]`, `Optional[...]`. `returns=list[Finding]` works too. The agent is given a tool whose parameters are this shape and must call it to finish; an answer that doesn't fit is sent back to it to fix. Write `Optional[int]`, not `int | None`, to stay compatible with Python 3.9.
 
+An answer is repaired when the slip loses nothing: a list sent as JSON text or as a single item, a list of lines where text is asked, a number or `true`/`false` as text. The agent is told what was adjusted. Anything else is refused with the expected shape spelled out, and the agent submits again.
+
 ## Doing things at the same time
 
 Concurrency is plain asyncio. There is nothing workflow-specific to learn.
