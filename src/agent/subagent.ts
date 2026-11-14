@@ -68,6 +68,8 @@ export interface SubagentOptions {
   requestHeaders?: Record<string, string>;
   /** See AgentRunOptions.retryWindowMs (the caller's choice; unset keeps the fixed few attempts). */
   retryWindowMs?: number;
+  /** See AgentRunOptions.firstByteTimeoutMs. */
+  firstByteTimeoutMs?: number;
   /** Compact the run once its prompt passes this many tokens (subagent-compaction.ts: old tool output is cleared,
    *  then the middle of a very long run is cut), instead of only at `autoCompactThreshold` of a known context
    *  window.  Long tool-using runs re-send mostly old tool output; a lower trigger keeps prompts small. */
@@ -182,6 +184,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       throwToolErrors: true,
       rawErrors: true,
       retryWindowMs: opts.retryWindowMs,
+      firstByteTimeoutMs: opts.firstByteTimeoutMs,
     };
     const result = await host.run(opts.task, runOptions);
     const details = result.details;

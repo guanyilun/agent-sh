@@ -29,6 +29,9 @@ export type { AgentRegistration } from "./agents.js";
 export type { WorkflowRegistration } from "./workflows.js";
 
 const TOOL_NAME = "spawn_agent";
+// A model call that has sent nothing by then is retried as a network failure; an unreachable backend used to hold a
+// first call for 35-46 min.  Generous: slow first tokens of 1-2 min are normal on a busy endpoint.
+const FIRST_BYTE_MS = 240_000;
 const LIVE_CHARS = 6000;                   // the most of a live file shown per model call
 const WORKFLOW_TOOL = "run_workflow";
 const JOBS_TOOL = "subagent_jobs";
@@ -750,6 +753,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         // a workflow's agents run unattended for hours: ride out an endpoint outage inside the run (its steps are in
         // memory) rather than fail it and lose them (a 104-min critic turn lost to a cut stream, 2026-11-03)
         retryWindowMs: 45 * 60_000,
+        firstByteTimeoutMs: FIRST_BYTE_MS,
         contextTokens: spec.contextTokens,
       });
       if (meta.messages) extra.onHistory?.(meta.messages);

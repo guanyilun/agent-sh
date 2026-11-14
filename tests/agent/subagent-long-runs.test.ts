@@ -56,3 +56,29 @@ test("without contextTokens or a known window nothing is compacted", async () =>
   assert.ok(!requests[requests.length - 1]!.includes("earlier tool output cleared") && !requests[requests.length - 1]!.includes("were removed"));
 });
 
+test("an endpoint that sends nothing is given up on after firstByteTimeoutMs, retried, and then fails", async () => {
+  let n = 0;
+  const llmClient = { model: "stub", stream: async (request: { signal?: AbortSignal }) => {
+    n++;
+    return (async function* () {
+      await new Promise((_, reject) => request.signal?.addEventListener("abort", () => reject(new Error("aborted"))));
+      yield { choices: [{ delta: { content: "never" } }] };
+    })();
+  } } as unknown as LlmClient;
+  const started = Date.now();
+  await assert.rejects(runSubagent({ systemPrompt: "s", task: "t", llmClient, tools: [], firstByteTimeoutMs: 60, retryWindowMs: 60_000 }),
+                       /ETIMEDOUT.*sent nothing/);
+  assert.ok(n >= 2 && n <= 4, `retried a fixed few times (${n} calls), not for the whole retry window`);
+  assert.ok(Date.now() - started < 30_000);
+});
+
+test("a slow first byte within the limit is fine, and later silence is not policed", async () => {
+  const llmClient = { model: "stub", stream: async () => (async function* () {
+    await new Promise(r => setTimeout(r, 40));
+    yield { choices: [{ delta: { content: "a" } }] };
+    await new Promise(r => setTimeout(r, 200));
+    yield { choices: [{ delta: { content: "b" } }] };
+    yield { choices: [], usage: usage(5) };
+  })() } as unknown as LlmClient;
+  assert.equal(await runSubagent({ systemPrompt: "s", task: "t", llmClient, tools: [], firstByteTimeoutMs: 120 }), "ab");
+});

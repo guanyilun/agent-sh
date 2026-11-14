@@ -97,6 +97,8 @@ fixed = await worker.ask(f"The tests fail:\n{output}\nFix it.")      # it rememb
 
 `Agent(name, ...)` takes `tools`, `system`, `model`, `thinking`, `label`, `write`, `live`, `env`, `context_tokens` and `history_from`, which apply to every turn; `ask(task, ...)` takes `returns`, `model`, `thinking`, `label` and `max_steps`. Turns run one at a time. Use it for repair loops, where restating the history to a fresh agent would cost more and lose detail.
 
+**A silent endpoint.** A model call that has sent nothing for four minutes is retried as a network failure. Before an agent's first response the retries are few, so a dead endpoint fails the call within minutes and your program can move to another model; after it, a call is retried for up to 45 minutes, because by then the agent has work in memory worth keeping.
+
 ### `race(*attempts, accept=...)`: first good result wins
 
 ```python
