@@ -68,6 +68,15 @@ export interface SubagentOptions {
   requestHeaders?: Record<string, string>;
   /** See AgentRunOptions.retryWindowMs (the caller's choice; unset keeps the fixed few attempts). */
   retryWindowMs?: number;
+  /** See AgentRunOptions.firstByteTimeoutMs. */
+  firstByteTimeoutMs?: number;
+  /** Compact the run once its prompt passes this many tokens (subagent-compaction.ts: old tool output is cleared,
+   *  then the middle of a very long run is cut), instead of only at `autoCompactThreshold` of a known context
+   *  window.  Long tool-using runs re-send mostly old tool output; a lower trigger keeps prompts small. */
+  contextTokens?: number;
+  /** Messages from outside for the running agent (an overseer's note): polled between tool rounds; each returned text
+   *  becomes one user message, once, kept in the history like a user's mid-turn message. */
+  steer?: () => string[];
 }
 
 export interface SubagentUsage {
@@ -85,9 +94,11 @@ export interface SubagentUsage {
 export interface SubagentMessage {
   role: "user" | "assistant" | "tool";
   content: string;
-  toolCalls?: { name: string; arguments: string }[];
+  toolCalls?: { id?: string; name: string; arguments: string }[];
   toolName?: string;
   isError?: boolean;
+  /** Tool results: the call they answer (with toolCalls[].id, a transcript can be turned back into a history). */
+  callId?: string;
 }
 
 export interface SubagentRunMeta {
@@ -110,15 +121,22 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
   const client = typeof llmClient.fork === "function"
     ? llmClient.fork(model ? { model } : {})
     : llmClient;
+  // The loop compacts at threshold x (window - reserve).  contextTokens sets that product directly; with no known
+  // window a large nominal one carries it.
+  const RESERVE = 8192;
+  const window = opts.contextWindow ?? (opts.contextTokens ? 1_000_000 : undefined);
+  const threshold = window && opts.contextTokens
+    ? Math.min(opts.autoCompactThreshold ?? 0.8, opts.contextTokens / (window - RESERVE))
+    : opts.autoCompactThreshold ?? 0.8;
   const host = await createAgentHost({
     cwd: opts.cwd ?? process.cwd(),
-    settings: opts.contextWindow
-      ? { autoCompact: true, autoCompactThreshold: opts.autoCompactThreshold ?? 0.8, toolMode: "api" }
+    settings: window
+      ? { autoCompact: true, autoCompactThreshold: threshold, toolMode: "api" }
       : { autoCompact: false, toolMode: "api" },
     extensions: [ashEngine({
       client,
       model: { id: model ?? client.model, provider: "custom", echoReasoning: true,
-               ...(opts.contextWindow ? { contextWindow: opts.contextWindow } : {}) },
+               ...(window ? { contextWindow: window } : {}) },
       // The client already owns credentials; this endpoint only supplies the
       // legacy OpenAI-shaped usage decoder, including cache accounting.
       endpoint: {
@@ -164,13 +182,19 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
         if (message.role === "assistant" && message.content) lastText = message.content;
         opts.onMessage?.(message);
       },
-      shouldStop: opts.shouldStop,
+      // Between tool rounds: stop if asked, else hand over what the outside has queued for this agent.
+      shouldStop: opts.shouldStop || opts.steer ? async () => {
+        if (await opts.shouldStop?.()) return true;
+        for (const text of opts.steer?.() ?? []) host.context.call("agent:steer-active", text);
+        return false;
+      } : undefined,
       toolScheduling: "sequential" as const,
       // Compatibility callers expect thrown tools to fail the run and provider
       // errors without the interactive engine's provider/model decoration.
       throwToolErrors: true,
       rawErrors: true,
       retryWindowMs: opts.retryWindowMs,
+      firstByteTimeoutMs: opts.firstByteTimeoutMs,
     };
     const result = await host.run(opts.task, runOptions);
     const details = result.details;

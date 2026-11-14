@@ -11,9 +11,11 @@ export interface AgentSnapshot {
 export interface AgentRunMessage {
   role: "user" | "assistant" | "tool";
   content: string;
-  toolCalls?: { name: string; arguments: string }[];
+  toolCalls?: { id?: string; name: string; arguments: string }[];
   toolName?: string;
   isError?: boolean;
+  /** Tool results: the id of the call they answer. */
+  callId?: string;
 }
 
 export interface AgentRunUsage {
@@ -57,6 +59,9 @@ export interface AgentRunOptions {
    *  first failure, instead of giving up after the fixed few attempts.  The run's conversation is in memory, so a
    *  long unattended run (a workflow's subagent) rides out an endpoint outage without losing its earlier steps. */
   retryWindowMs?: number;
+  /** Treat a model call that sends nothing at all for this long as a transient failure (retried like a cut stream).
+   *  An unreachable backend otherwise holds the call until the transport's own long timeout (35-46 min seen). */
+  firstByteTimeoutMs?: number;
 }
 
 /** Named handler agent:run accepts this single object.

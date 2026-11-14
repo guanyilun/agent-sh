@@ -117,6 +117,67 @@ function duration(ms: number): string {
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s` : `${Math.floor(s / 3600)}h${String(Math.floor(s / 60) % 60).padStart(2, "0")}m`;
 }
 
+/** A conversation of an earlier run, rebuilt from its transcripts as chat messages: every turn of `conversation`
+ *  in order, a cut turn up to its last complete step (an assistant message whose tool results are not all there is
+ *  dropped with them).  Empty when the run or the conversation is not found. */
+export function conversationHistory(root: string, runId: string, conversation: string, depth = 0): Record<string, unknown>[] {
+  const dir = path.join(root, runId, "agents");
+  let files: string[];
+  try { files = fs.readdirSync(dir).filter(f => f.endsWith(".jsonl")).sort((a, b) => parseInt(a) - parseInt(b)); } catch { return []; }
+  const paths = files.map(f => path.join(dir, f));
+  // A conversation that itself continued an earlier run's starts with that one (a job restarted several times).
+  let earlier: Record<string, unknown>[] = [];
+  for (const file of paths) {
+    const start = readEvents(file).find(e => e.type === "start");
+    if (!start || (start.conversation !== conversation && start.id !== conversation)) continue;
+    const from = start.historyFrom as { run?: unknown; conversation?: unknown } | undefined;
+    if (from && depth < 50) earlier = conversationHistory(root, String(from.run), String(from.conversation), depth + 1);
+    break;
+  }
+  return [...earlier, ...transcriptMessages(paths, conversation)];
+}
+
+/** The chat messages logged in these transcript files (all of them, or only those of `conversation`), with a cut
+ *  last step dropped. */
+export function transcriptMessages(files: string[], conversation?: string): Record<string, unknown>[] {
+  const messages: Record<string, unknown>[] = [];
+  let made = 0;
+  for (const file of files) {
+    const events = readEvents(file);
+    const start = events.find(e => e.type === "start");
+    if (conversation !== undefined && (!start || (start.conversation !== conversation && start.id !== conversation))) continue;
+    let pending: string[] = [];
+    for (const e of events) {
+      if (e.type !== "message") continue;
+      if (e.role === "user") { messages.push({ role: "user", content: String(e.content ?? "") }); pending = []; }
+      else if (e.role === "assistant") {
+        const calls = (Array.isArray(e.toolCalls) ? e.toolCalls : []) as { id?: string; name: string; arguments: string }[];
+        const ids = calls.map(c => c.id || `restored_${++made}`);
+        messages.push({
+          role: "assistant", content: String(e.content ?? ""),
+          ...(calls.length && { tool_calls: calls.map((c, i) => ({ id: ids[i], type: "function", function: { name: c.name, arguments: c.arguments || "{}" } })) }),
+        });
+        pending = ids;
+      } else if (e.role === "tool") {
+        const id = typeof e.callId === "string" && pending.includes(e.callId) ? e.callId : pending[0];
+        if (!id) continue;
+        pending = pending.filter(p => p !== id);
+        messages.push({ role: "tool", tool_call_id: id, content: String(e.content ?? "") });
+      }
+    }
+  }
+  // Drop a last step that was cut: an assistant message still waiting for tool results.
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role !== "assistant") continue;
+    const wanted = ((m.tool_calls as { id: string }[] | undefined) ?? []).map(c => c.id);
+    const got = new Set(messages.slice(i + 1).filter(x => x.role === "tool").map(x => x.tool_call_id));
+    if (wanted.some(id => !got.has(id))) messages.length = i;
+    break;
+  }
+  return messages;
+}
+
 export class RunDir {
   private readonly heartbeat: NodeJS.Timeout;
 
@@ -134,6 +195,11 @@ export class RunDir {
   append(entry: JournalEntry): void {
     fs.appendFileSync(path.join(this.dir, "journal.jsonl"), JSON.stringify(entry) + "\n");
     this.save();  // keep the token count current in case the process dies
+  }
+
+  /** The program's own events (checks, rounds, decisions), one JSON line each. */
+  event(kind: string, data: Record<string, unknown> = {}): void {
+    try { fs.appendFileSync(path.join(this.dir, "events.jsonl"), JSON.stringify({ ...data, kind, at: Date.now() }) + "\n"); } catch {}
   }
 
   transcript(seq: number): (event: Record<string, unknown>) => void {

@@ -23,6 +23,16 @@ export interface RunOptions {
   maxSteps?: number;
   /** A file the workflow rewrites while the agent works; re-read before every model call (dynamic context). */
   live?: string;
+  /** Shell text run before every shell command of this agent (an environment: `source env.sh; export X=1; umask 077`).
+   *  The agent does not see or type it, so it cannot forget it. */
+  env?: string;
+  /** Compact the run once its prompt passes this many tokens (old tool output is cleared: a file can be re-read, a
+   *  command re-run; a very long run also loses its middle steps), instead of only near the model's context window. */
+  contextTokens?: number;
+  /** agent() only, first turn: start from an earlier run's conversation, rebuilt from its transcripts
+   *  ({ run: its id, conversation: the agent's id there }).  A turn that was cut mid-work is included up to its last
+   *  complete step, so the new turn can say "you were interrupted; continue". */
+  historyFrom?: { run: string; conversation: string };
 }
 
 export interface RunSpec extends RunOptions {
@@ -34,6 +44,11 @@ export interface RunSpec extends RunOptions {
 export interface AgentHandle {
   /** The next turn of the same conversation; one runs at a time. */
   ask(task: string, options?: RunOptions): Promise<any>;
+  /** A message for the agent while it works: delivered once, between its tool rounds, as a user message that stays
+   *  in the conversation.  Queued until then (or until its next turn if it is idle). */
+  steer(text: string): void;
+  /** This conversation's id within the run (with the run's id, what `historyFrom` takes). */
+  id: string;
 }
 
 export interface WorkflowApi {
@@ -52,7 +67,12 @@ export interface WorkflowApi {
   /** The script's own work, saved when done: a resumed run gets the saved result (JSON data) instead of calling fn. */
   checkpoint<T>(name: string, fn: () => T | Promise<T>): Promise<T>;
   args: any;
+  /** This run's id (its folder under workflow-runs). */
+  runId: string;
   log(message: string): void;
+  /** One line in the run's events.jsonl: what the program decided or measured (a check's result, a round, a
+   *  promotion), so the run can be read afterwards without parsing the program's own logs. */
+  event(kind: string, data?: Record<string, unknown>): void;
   signal: AbortSignal;
   /** Subagent tokens (prompt + completion) this run; run() throws once `total` is spent. */
   budget: { total: number | null; spent(): number; remaining(): number; /** The part of spent() served from the provider's prompt cache. */ cached(): number };

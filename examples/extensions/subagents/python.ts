@@ -16,6 +16,9 @@ export interface ScriptHost {
   run(spec: RunSpec, id: string, scope: string, session?: string): { done: Promise<unknown>; abort(): void };
   /** Resolves once every aborted run has stopped. */
   quiet(): Promise<void>;
+  /** Queue a message for a conversation's running (or next) turn. */
+  steer(session: string, text: string): void;
+  runId: string;
   /** A conversation's latest model call: its prompt tokens and the part served from cache (zeros before any). */
   chatSize(session: string): { prompt: number; cached: number };
   raceWinner(id: string, key: string, scope: string): number | undefined;
@@ -100,6 +103,7 @@ export function pythonModule(file: string, python = defaultPython()): Promise<Py
         // The script stopped waiting for this reply (a cancelled task, a lost race, a timeout).
         else if (m.t === "abandon") aborts.get(m.rid)?.();
         else if (m.t === "quiet") reply(m.rid, () => host.quiet());
+        else if (m.t === "steer") host.steer(String(m.session), String(m.text));
         else if (m.t === "chat_size") reply(m.rid, () => host.chatSize(String(m.session)));
         else if (m.t === "race_get") reply(m.rid, () => host.raceWinner(m.id, m.key, m.scope));
         else if (m.t === "race_set") reply(m.rid, () => host.raceRecord(m.id, m.key, m.winner));
@@ -111,6 +115,7 @@ export function pythonModule(file: string, python = defaultPython()): Promise<Py
         }
         else if (m.t === "checkpoint_set") reply(m.rid, () => host.checkpointRecord(m.id, m.key, m.value));
         else if (m.t === "log") api.log(String(m.message));
+        else if (m.t === "event") api.event(String(m.name), (m.data && typeof m.data === "object") ? m.data : {});
         else if (m.t === "done") finish(() => resolve(m.result ?? undefined));
         else if (m.t === "fail") finish(() => reject(m.stop ? host.stop(m.error) : new Error(m.traceback ? `${m.error}\n${String(m.traceback).trim()}` : m.error)));
       };
@@ -120,7 +125,7 @@ export function pythonModule(file: string, python = defaultPython()): Promise<Py
         onExit = () => { clearTimeout(timer); settle(); };
         if (!running()) onExit("");
       };
-      send({ t: "start", args: api.args, budget: usage() });
+      send({ t: "start", args: api.args, budget: usage(), run: host.runId });
     }).finally(dispose);
   }
 }

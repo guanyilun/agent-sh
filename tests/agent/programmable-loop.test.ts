@@ -53,7 +53,8 @@ test("direct unwired run uses the real multi-round engine, advice, callbacks and
   assert.deepEqual(result.usage, { prompt_tokens: 20, completion_tokens: 4, total_tokens: 24 });
   assert.deepEqual(order, ["policy", "tool"]);
   assert.deepEqual(messages.map(m => m.role), ["user", "assistant", "tool", "assistant"]);
-  assert.deepEqual(messages[1].toolCalls, [{ name: "probe", arguments: '{"path":"file"}' }]);
+  assert.deepEqual(messages[1].toolCalls, [{ id: "call-1", name: "probe", arguments: '{"path":"file"}' }]);
+  assert.equal(messages[2].callId, "call-1");
   assert.equal(usage.length, 2);
   assert.equal(requests[0].messages[0].content, options.systemPrompt);
   assert.match(JSON.stringify(requests[0].messages), /test context/);

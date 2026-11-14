@@ -12,7 +12,7 @@ import { discoverAgents, findAgent, fromRegistration, type AgentDef, type AgentR
 import { describe, JobTable, type JobOutcome } from "./jobs.js";
 import { Semaphore } from "./semaphore.js";
 import { RunStore } from "./runs.js";
-import { example, normalizeSchema, validate } from "./schema.js";
+import { coerce, example, normalizeSchema, validate } from "./schema.js";
 import * as os from "node:os";
 import {
   ArgsError, describeFile, discoverWorkflows, formatResult, helpText, runWorkflow, TrustStore, workflowArgs,
@@ -29,6 +29,9 @@ export type { AgentRegistration } from "./agents.js";
 export type { WorkflowRegistration } from "./workflows.js";
 
 const TOOL_NAME = "spawn_agent";
+// A model call that has sent nothing by then is retried as a network failure; an unreachable backend used to hold a
+// first call for 35-46 min.  Generous: slow first tokens of 1-2 min are normal on a busy endpoint.
+const FIRST_BYTE_MS = 240_000;
 const LIVE_CHARS = 6000;                   // the most of a live file shown per model call
 const WORKFLOW_TOOL = "run_workflow";
 const JOBS_TOOL = "subagent_jobs";
@@ -42,7 +45,7 @@ const PARENT_CONTEXT_CHARS = 12_000;
 /** Above this, fan-out answers are clipped to a share each; `resume` re-reads one in full. */
 const FANOUT_RESULT_CHARS = 24_000;
 
-interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string }
+interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string; env?: string; contextTokens?: number }
 
 const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python"];
 
@@ -80,6 +83,7 @@ interface RunExtras {
   history?: unknown[];
   onHistory?: (messages: unknown[]) => void;
   onMeta?: (meta: SubagentRunMeta) => void;
+  steer?: () => string[];
 }
 
 export default function activate(ctx: ExtensionContext & AgentContext): void {
@@ -633,12 +637,17 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       name: SUBMIT_TOOL,
       description: "Submit your final result; its arguments are the result. Call it once, when you are done.",
       input_schema: params,
-      async execute(args) {
+      async execute(given) {
+        // Habitual slips that lose nothing are repaired (a list sent as one string, one item where a list is asked);
+        // the rest goes back with the shape spelled out, which a bare path ("$.facts must be array") did not convey.
+        const { value: args, notes } = coerce(given, params);
         const problem = validate(args, params);
-        if (problem) return { content: `Invalid: ${problem}. Fix it and call ${SUBMIT_TOOL} again.`, exitCode: 1, isError: true };
+        if (problem) {
+          return { content: `Invalid: ${problem}. The result must have this shape (placeholders for values): ${JSON.stringify(example(params))}. Fix it and call ${SUBMIT_TOOL} again.`, exitCode: 1, isError: true };
+        }
         submitted = { value: wrapped ? (args as { result: unknown }).result : args };
         ctl.progress(SUBMIT_TOOL);
-        return { content: "Recorded.", exitCode: 0, isError: false };
+        return { content: notes.length ? `Recorded (adjusted: ${notes.slice(0, 5).join("; ")}).` : "Recorded.", exitCode: 0, isError: false };
       },
     };
     const text = await runOne(spec, def, ctl.signal, ctl.progress, {
@@ -695,6 +704,12 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
           progress?.(detail ? `${tool.name}: ${detail}` : tool.name);
           const refusal = writeCheck?.(tool.name, args as Record<string, unknown>);
           if (refusal) return refusal;
+          // env: the agent's environment, run before each of its shell commands (on its own line, so a prelude that
+          // ends in a comment or lacks a semicolon cannot swallow the command).  The agent's own text is what the
+          // transcript and the write check see.
+          if (spec.env && (tool.name === "bash" || tool.name === "pwsh") && typeof (args as { command?: unknown }).command === "string") {
+            return tool.execute({ ...(args as Record<string, unknown>), command: `${spec.env}\n${(args as { command: string }).command}` }, onChunk, execCtx);
+          }
           return tool.execute(args, onChunk, execCtx);
         },
       } satisfies ToolDefinition))
@@ -729,7 +744,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         reasoningParams: reasoningParams(spec.thinking ?? def?.thinking ?? defaultThinking(), spec.model ?? def?.model ?? llmClient.model, spec.provider),
         contextWindow: contextWindow(spec.model ?? def?.model ?? llmClient.model, spec.provider),
         outMeta: meta,
-        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens, u.cached_tokens, { ...u }) : undefined,
+        // Each response is logged with the model and provider that produced it (a turn may override either).
+        onUsage: extra.onUsage ? (u) => extra.onUsage!(u.total_tokens || u.prompt_tokens + u.completion_tokens, u.cached_tokens,
+          { ...u, model: spec.model ?? def?.model ?? llmClient.model, provider: spec.provider ?? "default" }) : undefined,
         onMessage: extra.onMessage as SubagentOptions["onMessage"],
         shouldStop: extra.shouldStop,
         history: extra.history as SubagentOptions["history"],
@@ -737,6 +754,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         // a workflow's agents run unattended for hours: ride out an endpoint outage inside the run (its steps are in
         // memory) rather than fail it and lose them (a 104-min critic turn lost to a cut stream, 2026-11-03)
         retryWindowMs: 45 * 60_000,
+        firstByteTimeoutMs: FIRST_BYTE_MS,
+        contextTokens: spec.contextTokens,
+        steer: extra.steer,
       });
       if (meta.messages) extra.onHistory?.(meta.messages);
       extra.onMeta?.(meta);

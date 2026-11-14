@@ -10,7 +10,7 @@ from ._positions import Position, here, start
 
 
 def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, thinking=None, label=None, write=None,
-        max_steps=None, live=None, provider=None):
+        max_steps=None, live=None, provider=None, env=None, context_tokens=None):
     """Give `task` to an agent and get its answer.
 
     The agent starts working straight away, and the call returns an awaitable for the answer, so
@@ -30,13 +30,28 @@ def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, 
     max_steps the most tool-using steps this run may take (default: config maxIterations)
     live      a file the workflow rewrites while the agent works: re-read before every model call and shown to the
               agent as current state (time, notes, new facts), outside the cached prompt; missing or empty adds nothing
+    env       shell text run before every shell command of this agent ("source env.sh >/dev/null; export X=1; umask 077"):
+              its environment, which it then cannot forget to set up
+    context_tokens   compact the run once its prompt passes this many tokens (old tool output is cleared: the agent can
+              read the file or run the command again), instead of only near the model's context window
 
     A run that fails raises RunError.
     """
     position = here()
     spec = _spec(task, agent, returns, tools=tools, system=system, model=model, thinking=thinking, label=label,
-                 write=_paths(write), maxSteps=max_steps, live=live, provider=provider)
+                 write=_paths(write), maxSteps=max_steps, live=live, provider=provider, env=env,
+                 contextTokens=context_tokens)
     return _answer(spec, position.next(), position, returns)
+
+
+def event(kind, **data):
+    """Record what the program decided or measured, as one line of the run's events.jsonl:
+
+        event("check", worker="port", ok=False, round=2, feedback=tail)
+
+    Agents' steps are already in their transcripts; this is for the program's side (a check's result, a round, a
+    promotion, a refusal), so a run can be read afterwards from one place.  Values must be plain data."""
+    _host.link().send("event", name=str(kind), data=data)
 
 
 class Agent:
@@ -50,10 +65,12 @@ class Agent:
     """
 
     def __init__(self, name=None, *, tools=None, system=None, model=None, thinking=None, label=None, write=None, live=None,
-                 provider=None):
+                 provider=None, env=None, context_tokens=None, history_from=None):
         self._name = name
         self._options = dict(tools=tools, system=system, model=model, thinking=thinking, label=label, write=_paths(write),
-                             live=live, provider=provider)
+                             live=live, provider=provider, env=env, contextTokens=context_tokens,
+                             historyFrom=(dict(run=str(history_from[0]), conversation=str(history_from[1]))
+                                          if history_from else None))
         self._id = here().next()
         self._turns = 0
         self._last_turn = None
@@ -74,6 +91,19 @@ class Agent:
 
         self._last_turn = start(turn(), position)
         return self._last_turn
+
+    @property
+    def id(self):
+        """This conversation's id within the run.  Save it with `run_id()`; a later run continues the conversation
+        with `Agent(history_from=(run, id))`: its first turn starts from everything this agent said and did,
+        including a turn that was cut (an epoch's end, a restart, an outage) up to its last complete step."""
+        return self._id
+
+    def steer(self, text):
+        """A message for the agent while it works (a correction, a fact, "wrap up"): delivered once, between its tool
+        rounds, as a user message that stays in the conversation.  If it is idle, it leads its next turn's work.
+        Unlike `live`, it is not re-read on every call, and its delivery is logged in the transcript."""
+        _host.link().send("steer", session=self._id, text=str(text))
 
     async def context(self):
         """The conversation's size at its latest model call: {"prompt": tokens sent, "cached": the part the provider

@@ -1288,7 +1288,7 @@ export class AgentLoop implements AgentBackend {
       if (text || toolCalls.length > 0) {
         this.toolProtocol.recordAssistant(this.conversation, text, toolCalls, extras);
         options.onMessage?.({ role: "assistant", content: text,
-          toolCalls: toolCalls.length ? toolCalls.map(tc => ({ name: tc.name, arguments: tc.argumentsJson })) : undefined,
+          toolCalls: toolCalls.length ? toolCalls.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.argumentsJson })) : undefined,
         });
         this.bus.emit("conversation:message-appended", {
           role: "assistant",
@@ -1540,7 +1540,7 @@ export class AgentLoop implements AgentBackend {
       collectedResults.sort((a, b) => toolCalls.findIndex(tc => tc.id === a.callId) - toolCalls.findIndex(tc => tc.id === b.callId));
       this.toolProtocol.recordResults(this.conversation, collectedResults);
       for (const r of collectedResults) options.onMessage?.({
-        role: "tool", content: contentText(r.content), toolName: r.toolName, isError: !!r.isError,
+        role: "tool", content: contentText(r.content), toolName: r.toolName, isError: !!r.isError, callId: r.callId,
       });
 
       // Emit enriched message-appended events so derived-log extensions
@@ -1570,6 +1570,8 @@ export class AgentLoop implements AgentBackend {
   }
 
   private readonly maxRetries = 3;
+  /** Runs that have had a model response (see streamWithRetry). */
+  private readonly responded = new WeakSet<object>();
 
   // ── Resolution pattern helpers ──
   // Extract a file path from a tool call's arguments. Used to correlate
@@ -1593,7 +1595,9 @@ export class AgentLoop implements AgentBackend {
     signal: AbortSignal,
   ): ReturnType<typeof this.streamResponse> {
     let empties = 0;
-    const window = this.runState?.options.retryWindowMs ?? 0;
+    // The long window exists to keep a run's earlier steps through an outage.  Before the run's first response there
+    // are none: fail after the fixed few attempts, so the caller can move to another model within minutes.
+    const window = this.runState && this.responded.has(this.runState) ? this.runState.options.retryWindowMs ?? 0 : 0;
     let firstFailure: number | undefined;
     for (let attempt = 0; ; attempt++) {
       try {
@@ -1616,6 +1620,7 @@ export class AgentLoop implements AgentBackend {
           attempt--;
           continue;
         }
+        if (this.runState) this.responded.add(this.runState);
         return response;
       } catch (e) {
         if (signal.aborted) throw e;
@@ -1724,16 +1729,41 @@ export class AgentLoop implements AgentBackend {
     this.bus.emit("llm:request", requestParams);
 
     const headers = this.activeEndpoint?.buildRequestHeaders?.({ sessionId: this.currentSessionId() });
-    const stream = await raceAbort(() => this.llmClient.stream({
-      ...requestParams,
-      signal,
-      ...(headers && Object.keys(headers).length ? { headers } : {}),
-    }), signal);
+    // firstByteTimeoutMs: a call that has sent nothing by then is given up as a network failure ("etimedout" is
+    // retryable), and its request aborted.  Once anything arrives the call runs as long as it needs.
+    const firstByteMs = this.runState?.options.firstByteTimeoutMs ?? 0;
+    const attempt = new AbortController();
+    const onOuterAbort = () => attempt.abort();
+    signal.addEventListener("abort", onOuterAbort, { once: true });
+    let silent: ReturnType<typeof setTimeout> | undefined;
+    const silence = firstByteMs > 0 ? new Promise<never>((_, reject) => {
+      silent = setTimeout(() => {
+        attempt.abort();
+        reject(new Error(`ETIMEDOUT: the model endpoint sent nothing for ${Math.round(firstByteMs / 1000)} s`));
+      }, firstByteMs);
+    }) : undefined;
+    silence?.catch(() => {});
+    const untilFirstByte = <T>(work: Promise<T>): Promise<T> => silence ? Promise.race([work, silence]) : work;
+    const heard = () => { if (silent) { clearTimeout(silent); silent = undefined; } };
+    let stream: Awaited<ReturnType<typeof this.llmClient.stream>>;
+    try {
+      stream = await untilFirstByte(raceAbort(() => this.llmClient.stream({
+        ...requestParams,
+        signal: attempt.signal,
+        ...(headers && Object.keys(headers).length ? { headers } : {}),
+      }), signal));
+    } catch (e) {
+      heard();
+      signal.removeEventListener("abort", onOuterAbort);
+      throw e;
+    }
     const iterator = stream[Symbol.asyncIterator]();
+    let first = true;
 
     try {
     while (!signal.aborted) {
-      const next = await raceAbort(() => iterator.next(), signal);
+      const next = first ? await untilFirstByte(raceAbort(() => iterator.next(), signal)) : await raceAbort(() => iterator.next(), signal);
+      if (first) { first = false; heard(); }
       if (next.done) break;
       const chunk = next.value;
       if (signal.aborted) break;
@@ -1827,6 +1857,8 @@ export class AgentLoop implements AgentBackend {
       // Preserve for-await's iterator cleanup without letting an uncooperative
       // iterator prevent cancellation from settling the run.
       if (signal.aborted) void Promise.resolve(iterator.return?.()).catch(() => {});
+      heard();
+      signal.removeEventListener("abort", onOuterAbort);
     }
 
     if (responseUsage && this.runState) {

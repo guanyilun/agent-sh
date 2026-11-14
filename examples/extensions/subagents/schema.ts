@@ -50,6 +50,46 @@ export function example(schema: JsonSchema, name = "text"): unknown {
   return `<${name}>`;
 }
 
+/** Repairs the mismatches a model makes by habit and that lose nothing: a JSON value sent as a string, one item
+ *  where a list is asked, a one-item list or a list of lines where text is asked, a number or boolean as text.
+ *  Returns the repaired value and what was changed (empty when nothing was).  Anything else is left for validate(). */
+export function coerce(value: unknown, schema: JsonSchema, at = "$", notes: string[] = []): { value: unknown; notes: string[] } {
+  const types = schema.type === undefined ? [] : Array.isArray(schema.type) ? schema.type.map(String) : [String(schema.type)];
+  const wants = (t: string) => types.includes(t);
+  let v = value;
+  if (typeof v === "string" && (wants("array") || wants("object")) && !wants("string")) {
+    const text = v.trim();
+    if ((wants("array") && text.startsWith("[")) || (wants("object") && text.startsWith("{"))) {
+      try { v = JSON.parse(text); notes.push(`${at}: read from JSON text`); } catch { /* not JSON: handled below */ }
+    }
+  }
+  if (wants("array") && !wants("string") && !Array.isArray(v) && v !== null && v !== undefined) {
+    const items = schema.items as JsonSchema | undefined;
+    const itemTypes = items?.type === undefined ? [] : Array.isArray(items.type) ? items.type.map(String) : [String(items.type)];
+    const fits = typeof v === "string" ? itemTypes.includes("string") || !itemTypes.length
+      : typeof v === "object" ? itemTypes.includes("object") || !!items?.properties || !itemTypes.length : false;
+    if (fits) { v = typeof v === "string" && !v.trim() ? [] : [v]; notes.push(`${at}: one item put in a list`); }
+  }
+  if (wants("string") && !wants("array") && Array.isArray(v) && v.every(x => typeof x === "string")) {
+    v = v.join("\n"); notes.push(`${at}: a list of lines joined into text`);
+  }
+  if ((wants("number") || wants("integer")) && !wants("string") && typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) {
+    v = Number(v); notes.push(`${at}: a number read from text`);
+  }
+  if (wants("boolean") && !wants("string") && typeof v === "string" && /^(true|false)$/i.test(v.trim())) {
+    v = v.trim().toLowerCase() === "true"; notes.push(`${at}: a boolean read from text`);
+  }
+  if (v && typeof v === "object" && !Array.isArray(v) && schema.properties) {
+    const out: Record<string, unknown> = { ...(v as Record<string, unknown>) };
+    for (const [key, sub] of Object.entries(schema.properties as Record<string, JsonSchema>)) {
+      if (key in out) out[key] = coerce(out[key], sub, `${at}.${key}`, notes).value;
+    }
+    v = out;
+  }
+  if (Array.isArray(v) && schema.items) v = v.map((item, i) => coerce(item, schema.items as JsonSchema, `${at}[${i}]`, notes).value);
+  return { value: v, notes };
+}
+
 /** Returns a description of the first mismatch, or null when the value fits. */
 export function validate(value: unknown, schema: JsonSchema, at = "$"): string | null {
   if (Array.isArray(schema.enum) && !schema.enum.some(e => e === value)) {

@@ -74,6 +74,8 @@ plan = await run("Split this goal into tasks: ...", agent="plan", returns=Plan)
 | `write` | paths the agent may write (files under them); `[]` makes it read-only. A tripwire on its `write_file`/`edit_file` and the visible writes of its shell commands, inside the run's sandbox: it stops a reviewer saving scratch files into the code it reviews, not a determined escape. |
 | `max_steps` | the most tool-using steps this call may take (default: `config` `maxIterations`). |
 | `live` | a file the workflow rewrites while the agent works: re-read before every model call and shown to the agent as `<dynamic_context>` (outside the cached prompt).  Use it for the time, new instructions, new facts.  Missing or empty adds nothing. |
+| `env` | shell text run before every shell command of this agent (`"source env.sh >/dev/null 2>&1; export X=1; umask 077"`): its environment. The agent neither sees nor types it, so it cannot forget it; the transcript keeps the agent's own command. |
+| `context_tokens` | compact the run once its prompt passes this many tokens, instead of only near the model's context window: old tool output is cleared (the agent can read the file or run the command again), and a very long run also loses its middle steps. A long tool-using run re-sends mostly old tool output on every call; a lower trigger keeps its prompts small. |
 
 `run` starts the agent immediately and returns an awaitable. Start several and wait for them together:
 
@@ -93,7 +95,26 @@ draft = await worker.ask("Write the function described in SPEC.md.")
 fixed = await worker.ask(f"The tests fail:\n{output}\nFix it.")      # it remembers the first turn
 ```
 
-`Agent(name, ...)` takes `tools`, `system`, `model`, `thinking`, `label` and `write`, which apply to every turn; `ask(task, ...)` takes `returns`, `model`, `thinking`, `label` and `max_steps`. Turns run one at a time. Use it for repair loops, where restating the history to a fresh agent would cost more and lose detail.
+`Agent(name, ...)` takes `tools`, `system`, `model`, `thinking`, `label`, `write`, `live`, `env`, `context_tokens` and `history_from`, which apply to every turn; `ask(task, ...)` takes `returns`, `model`, `thinking`, `label` and `max_steps`. Turns run one at a time. Use it for repair loops, where restating the history to a fresh agent would cost more and lose detail.
+
+**Talking to it while it works.** `worker.steer("use 50 iterations, not 150")` queues a message that the agent gets once, between its tool rounds, as a user message that stays in the conversation; the delivery is logged in its transcript. If the agent is idle, the message leads its next turn. Use `steer` for a correction or a new fact, and `live` for state that changes all the time (the clock, a budget).
+
+**Continuing after an interruption.** Every step an agent takes is in its transcript, so a conversation outlives the run:
+
+```python
+from agentsh import Agent, run_id
+
+worker = Agent("worker")
+save(run=run_id(), conversation=worker.id)            # in your own state file
+...
+# a later run (the first was cut by a deadline, a restart, an outage):
+worker = Agent("worker", history_from=(saved_run, saved_conversation))
+await worker.ask("You were interrupted. Your work so far is above and your files are on disk; continue.")
+```
+
+The new agent starts from everything the old one said and did, a cut turn included up to its last complete step; conversations that were themselves continued are followed back. Within one run, a turn that fails part-way (an outage longer than the retries) leaves its finished steps in the conversation, so the next `ask` continues from them.
+
+**A silent endpoint.** A model call that has sent nothing for four minutes is retried as a network failure. Before an agent's first response the retries are few, so a dead endpoint fails the call within minutes and your program can move to another model; after it, a call is retried for up to 45 minutes, because by then the agent has work in memory worth keeping.
 
 ### `race(*attempts, accept=...)`: first good result wins
 
@@ -116,6 +137,14 @@ passed, output = await run_tests(directory)
 ```
 
 Agent answers are saved automatically. Your own functions are not, and a resumed run would call them again. Mark a function with `@checkpoint` and its result is saved too. The function may be async or not, but the call is always awaited. Its result must be plain data (numbers, text, lists, dicts); a tuple comes back as a list. Each call is remembered by where it happens in the program, not by its arguments.
+
+### `event(kind, **data)`: the program's side of the record
+
+```python
+event("check", worker="port", round=2, ok=False, feedback=tail)
+```
+
+Each agent's steps are in its transcript (`workflow-runs/<id>/agents/<n>.jsonl`, whose first line gives the label, the model and provider asked for, and the conversation it continues; each model response is logged with the model and provider that answered). `event` adds what the program itself decided or measured, one JSON line in `workflow-runs/<id>/events.jsonl`: a check's result, a round, a promotion. With both, a run can be read afterwards without parsing the program's own logs.
 
 ### `budget`: tokens left
 
@@ -157,6 +186,8 @@ class Report:
 ```
 
 Supported field types: `str`, `int`, `float`, `bool`, `list[...]`, another dataclass, `Literal[...]`, `Optional[...]`. `returns=list[Finding]` works too. The agent is given a tool whose parameters are this shape and must call it to finish; an answer that doesn't fit is sent back to it to fix. Write `Optional[int]`, not `int | None`, to stay compatible with Python 3.9.
+
+An answer is repaired when the slip loses nothing: a list sent as JSON text or as a single item, a list of lines where text is asked, a number or `true`/`false` as text. The agent is told what was adjusted. Anything else is refused with the expected shape spelled out, and the agent submits again.
 
 ## Doing things at the same time
 
