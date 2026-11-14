@@ -97,6 +97,8 @@ fixed = await worker.ask(f"The tests fail:\n{output}\nFix it.")      # it rememb
 
 `Agent(name, ...)` takes `tools`, `system`, `model`, `thinking`, `label`, `write`, `live`, `env`, `context_tokens` and `history_from`, which apply to every turn; `ask(task, ...)` takes `returns`, `model`, `thinking`, `label` and `max_steps`. Turns run one at a time. Use it for repair loops, where restating the history to a fresh agent would cost more and lose detail.
 
+**Talking to it while it works.** `worker.steer("use 50 iterations, not 150")` queues a message that the agent gets once, between its tool rounds, as a user message that stays in the conversation; the delivery is logged in its transcript. If the agent is idle, the message leads its next turn. Use `steer` for a correction or a new fact, and `live` for state that changes all the time (the clock, a budget).
+
 **A silent endpoint.** A model call that has sent nothing for four minutes is retried as a network failure. Before an agent's first response the retries are few, so a dead endpoint fails the call within minutes and your program can move to another model; after it, a call is retried for up to 45 minutes, because by then the agent has work in memory worth keeping.
 
 ### `race(*attempts, accept=...)`: first good result wins

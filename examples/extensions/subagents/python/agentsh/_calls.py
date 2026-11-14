@@ -90,6 +90,12 @@ class Agent:
         self._last_turn = start(turn(), position)
         return self._last_turn
 
+    def steer(self, text):
+        """A message for the agent while it works (a correction, a fact, "wrap up"): delivered once, between its tool
+        rounds, as a user message that stays in the conversation.  If it is idle, it leads its next turn's work.
+        Unlike `live`, it is not re-read on every call, and its delivery is logged in the transcript."""
+        _host.link().send("steer", session=self._id, text=str(text))
+
     async def context(self):
         """The conversation's size at its latest model call: {"prompt": tokens sent, "cached": the part the provider
         served from cache}; zeros before the first turn.  For deciding whether to keep talking (a cached prefix is

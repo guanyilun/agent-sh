@@ -40,6 +40,9 @@ export interface RunSpec extends RunOptions {
 export interface AgentHandle {
   /** The next turn of the same conversation; one runs at a time. */
   ask(task: string, options?: RunOptions): Promise<any>;
+  /** A message for the agent while it works: delivered once, between its tool rounds, as a user message that stays
+   *  in the conversation.  Queued until then (or until its next turn if it is idle). */
+  steer(text: string): void;
 }
 
 export interface WorkflowApi {

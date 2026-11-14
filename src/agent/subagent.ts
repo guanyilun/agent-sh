@@ -74,6 +74,9 @@ export interface SubagentOptions {
    *  then the middle of a very long run is cut), instead of only at `autoCompactThreshold` of a known context
    *  window.  Long tool-using runs re-send mostly old tool output; a lower trigger keeps prompts small. */
   contextTokens?: number;
+  /** Messages from outside for the running agent (an overseer's note): polled between tool rounds; each returned text
+   *  becomes one user message, once, kept in the history like a user's mid-turn message. */
+  steer?: () => string[];
 }
 
 export interface SubagentUsage {
@@ -177,7 +180,12 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
         if (message.role === "assistant" && message.content) lastText = message.content;
         opts.onMessage?.(message);
       },
-      shouldStop: opts.shouldStop,
+      // Between tool rounds: stop if asked, else hand over what the outside has queued for this agent.
+      shouldStop: opts.shouldStop || opts.steer ? async () => {
+        if (await opts.shouldStop?.()) return true;
+        for (const text of opts.steer?.() ?? []) host.context.call("agent:steer-active", text);
+        return false;
+      } : undefined,
       toolScheduling: "sequential" as const,
       // Compatibility callers expect thrown tools to fail the run and provider
       // errors without the interactive engine's provider/model decoration.

@@ -56,6 +56,29 @@ test("without contextTokens or a known window nothing is compacted", async () =>
   assert.ok(!requests[requests.length - 1]!.includes("earlier tool output cleared") && !requests[requests.length - 1]!.includes("were removed"));
 });
 
+test("steer: queued text reaches the agent between tool rounds, once, as a user message", async () => {
+  const requests: AgentShMessage[][] = [];
+  const queue: string[] = [];
+  let n = 0;
+  const llmClient = { model: "stub", stream: async (request: { messages: AgentShMessage[] }) => {
+    requests.push(structuredClone(request.messages));
+    const call = ++n;
+    if (call === 2) queue.push("use the f150 band, not f090");
+    return (async function* () {
+      if (call <= 3) yield callTool(`c${call}`, `file${call}`); else yield { choices: [{ delta: { content: "done." } }] };
+      yield { choices: [], usage: usage(50) };
+    })();
+  } } as unknown as LlmClient;
+  const seen: string[] = [];
+  await runSubagent({ systemPrompt: "sys", task: "t", llmClient, tools: [reader], steer: () => queue.splice(0),
+                      onMessage: (m) => { if (m.role === "user") seen.push(m.content); } });
+  const users = (r: AgentShMessage[]) => r.filter(m => m.role === "user").map(m => String(m.content)).filter(c => c.includes("f150"));
+  assert.equal(users(requests[1]!).length, 0, "not before it was queued");
+  assert.equal(users(requests[2]!).length, 1, "in the next request after the tool round");
+  assert.equal(users(requests[3]!).length, 1, "and only once");
+  assert.ok(seen.some(s => s.includes("f150")), "the delivery is reported to onMessage");
+});
+
 test("an endpoint that sends nothing is given up on after firstByteTimeoutMs, retried, and then fails", async () => {
   let n = 0;
   const llmClient = { model: "stub", stream: async (request: { signal?: AbortSignal }) => {

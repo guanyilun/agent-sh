@@ -87,6 +87,8 @@ export interface TaskControl {
   /** agent() turns: the conversation so far in, the updated one out. */
   history?: unknown[];
   onHistory?(messages: unknown[]): void;
+  /** agent() turns: what the workflow has queued for the running agent since it last asked. */
+  steer?(): string[];
 }
 
 export interface TaskResult {
@@ -214,6 +216,8 @@ export async function runWorkflow(
         const result = await deps.runTask(spec, {
           signal: stopped,
           ...(chat && { history: chat.history, onHistory: (m: unknown[]) => { history = m; } }),
+          // Steering: handed over between tool rounds, and logged when it is (the delivery is then on record).
+          ...(chat && { steer: () => { const texts = chat.steer.splice(0); for (const text of texts) write({ type: "steer", text }); return texts; } }),
           onStart: () => {
             if (state === "working") return;
             state = "working"; counts.queued--; counts.working++;
@@ -284,7 +288,7 @@ export async function runWorkflow(
       agent: (name, base) => {
         const at = scope();
         const sid = `${at.path}${++at.next}`;
-        const chat: Chat = { key: "", history: [] };
+        const chat: Chat = { key: "", history: [], steer: [] };
         let turns = 0;
         let last: Promise<unknown> = Promise.resolve();
         return {
@@ -298,6 +302,7 @@ export async function runWorkflow(
             last = turn.catch(() => {});
             return turn;
           },
+          steer: (text) => { chat.steer.push(String(text)); },
         };
       },
       race: async (items, fn, accept) => {
@@ -393,7 +398,7 @@ export async function runWorkflow(
     const stopping = new Set<Promise<unknown>>();
     const host: ScriptHost = {
       run: (spec, id, at, session) => {
-        if (session && !chats.has(session)) chats.set(session, { key: "", history: [] });
+        if (session && !chats.has(session)) chats.set(session, { key: "", history: [], steer: [] });
         const stop = new AbortController();
         const done = exec(toSpec(spec), ++runs, scopeAt(at), id, session ? chats.get(session) : undefined, stop.signal);
         const abort = () => {
@@ -404,6 +409,10 @@ export async function runWorkflow(
         return { done, abort };
       },
       quiet: async () => { await Promise.all(stopping); },
+      steer: (session, text) => {
+        if (!chats.has(session)) chats.set(session, { key: "", history: [], steer: [] });
+        chats.get(session)!.steer.push(String(text));
+      },
       chatSize: (session) => ({ prompt: chats.get(session)?.prompt ?? 0, cached: chats.get(session)?.cached ?? 0 }),
       raceWinner: (id, key, at) => {
         const cached = isDiverged(scopeAt(at)) ? undefined : replay.get(id);
@@ -476,7 +485,7 @@ export function dedent(text: string): string {
 }
 
 interface Scope { path: string; next: number; diverged: boolean; parent?: Scope; signal: AbortSignal }
-interface Chat { key: string; history: unknown[]; prompt?: number; cached?: number }   // prompt/cached: the latest call's
+interface Chat { key: string; history: unknown[]; steer: string[]; seeded?: boolean; prompt?: number; cached?: number }   // prompt/cached: the latest call's
 const isDiverged = (s: Scope | undefined): boolean => !!s && (s.diverged || isDiverged(s.parent));
 
 function specKey(spec: RunSpec): string {

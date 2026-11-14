@@ -83,6 +83,7 @@ interface RunExtras {
   history?: unknown[];
   onHistory?: (messages: unknown[]) => void;
   onMeta?: (meta: SubagentRunMeta) => void;
+  steer?: () => string[];
 }
 
 export default function activate(ctx: ExtensionContext & AgentContext): void {
@@ -755,6 +756,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         retryWindowMs: 45 * 60_000,
         firstByteTimeoutMs: FIRST_BYTE_MS,
         contextTokens: spec.contextTokens,
+        steer: extra.steer,
       });
       if (meta.messages) extra.onHistory?.(meta.messages);
       extra.onMeta?.(meta);
