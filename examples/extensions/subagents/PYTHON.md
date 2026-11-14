@@ -99,6 +99,21 @@ fixed = await worker.ask(f"The tests fail:\n{output}\nFix it.")      # it rememb
 
 **Talking to it while it works.** `worker.steer("use 50 iterations, not 150")` queues a message that the agent gets once, between its tool rounds, as a user message that stays in the conversation; the delivery is logged in its transcript. If the agent is idle, the message leads its next turn. Use `steer` for a correction or a new fact, and `live` for state that changes all the time (the clock, a budget).
 
+**Continuing after an interruption.** Every step an agent takes is in its transcript, so a conversation outlives the run:
+
+```python
+from agentsh import Agent, run_id
+
+worker = Agent("worker")
+save(run=run_id(), conversation=worker.id)            # in your own state file
+...
+# a later run (the first was cut by a deadline, a restart, an outage):
+worker = Agent("worker", history_from=(saved_run, saved_conversation))
+await worker.ask("You were interrupted. Your work so far is above and your files are on disk; continue.")
+```
+
+The new agent starts from everything the old one said and did, a cut turn included up to its last complete step; conversations that were themselves continued are followed back. Within one run, a turn that fails part-way (an outage longer than the retries) leaves its finished steps in the conversation, so the next `ask` continues from them.
+
 **A silent endpoint.** A model call that has sent nothing for four minutes is retried as a network failure. Before an agent's first response the retries are few, so a dead endpoint fails the call within minutes and your program can move to another model; after it, a call is retried for up to 45 minutes, because by then the agent has work in memory worth keeping.
 
 ### `race(*attempts, accept=...)`: first good result wins

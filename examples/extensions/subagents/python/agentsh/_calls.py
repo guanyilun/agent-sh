@@ -65,10 +65,12 @@ class Agent:
     """
 
     def __init__(self, name=None, *, tools=None, system=None, model=None, thinking=None, label=None, write=None, live=None,
-                 provider=None, env=None, context_tokens=None):
+                 provider=None, env=None, context_tokens=None, history_from=None):
         self._name = name
         self._options = dict(tools=tools, system=system, model=model, thinking=thinking, label=label, write=_paths(write),
-                             live=live, provider=provider, env=env, contextTokens=context_tokens)
+                             live=live, provider=provider, env=env, contextTokens=context_tokens,
+                             historyFrom=(dict(run=str(history_from[0]), conversation=str(history_from[1]))
+                                          if history_from else None))
         self._id = here().next()
         self._turns = 0
         self._last_turn = None
@@ -89,6 +91,13 @@ class Agent:
 
         self._last_turn = start(turn(), position)
         return self._last_turn
+
+    @property
+    def id(self):
+        """This conversation's id within the run.  Save it with `run_id()`; a later run continues the conversation
+        with `Agent(history_from=(run, id))`: its first turn starts from everything this agent said and did,
+        including a turn that was cut (an epoch's end, a restart, an outage) up to its last complete step."""
+        return self._id
 
     def steer(self, text):
         """A message for the agent while it works (a correction, a fact, "wrap up"): delivered once, between its tool

@@ -26,6 +26,6 @@ the file sets in `config`.
     budget       how many tokens are left
 """
 from ._calls import Agent, checkpoint, event, race, run
-from ._host import RunError, budget
+from ._host import RunError, budget, run_id
 
-__all__ = ["run", "Agent", "race", "checkpoint", "event", "budget", "RunError"]
+__all__ = ["run", "Agent", "race", "checkpoint", "event", "budget", "run_id", "RunError"]

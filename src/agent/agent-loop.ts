@@ -1288,7 +1288,7 @@ export class AgentLoop implements AgentBackend {
       if (text || toolCalls.length > 0) {
         this.toolProtocol.recordAssistant(this.conversation, text, toolCalls, extras);
         options.onMessage?.({ role: "assistant", content: text,
-          toolCalls: toolCalls.length ? toolCalls.map(tc => ({ name: tc.name, arguments: tc.argumentsJson })) : undefined,
+          toolCalls: toolCalls.length ? toolCalls.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.argumentsJson })) : undefined,
         });
         this.bus.emit("conversation:message-appended", {
           role: "assistant",
@@ -1540,7 +1540,7 @@ export class AgentLoop implements AgentBackend {
       collectedResults.sort((a, b) => toolCalls.findIndex(tc => tc.id === a.callId) - toolCalls.findIndex(tc => tc.id === b.callId));
       this.toolProtocol.recordResults(this.conversation, collectedResults);
       for (const r of collectedResults) options.onMessage?.({
-        role: "tool", content: contentText(r.content), toolName: r.toolName, isError: !!r.isError,
+        role: "tool", content: contentText(r.content), toolName: r.toolName, isError: !!r.isError, callId: r.callId,
       });
 
       // Emit enriched message-appended events so derived-log extensions

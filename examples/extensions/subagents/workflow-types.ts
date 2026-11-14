@@ -29,6 +29,10 @@ export interface RunOptions {
   /** Compact the run once its prompt passes this many tokens (old tool output is cleared: a file can be re-read, a
    *  command re-run; a very long run also loses its middle steps), instead of only near the model's context window. */
   contextTokens?: number;
+  /** agent() only, first turn: start from an earlier run's conversation, rebuilt from its transcripts
+   *  ({ run: its id, conversation: the agent's id there }).  A turn that was cut mid-work is included up to its last
+   *  complete step, so the new turn can say "you were interrupted; continue". */
+  historyFrom?: { run: string; conversation: string };
 }
 
 export interface RunSpec extends RunOptions {
@@ -43,6 +47,8 @@ export interface AgentHandle {
   /** A message for the agent while it works: delivered once, between its tool rounds, as a user message that stays
    *  in the conversation.  Queued until then (or until its next turn if it is idle). */
   steer(text: string): void;
+  /** This conversation's id within the run (with the run's id, what `historyFrom` takes). */
+  id: string;
 }
 
 export interface WorkflowApi {
@@ -61,6 +67,8 @@ export interface WorkflowApi {
   /** The script's own work, saved when done: a resumed run gets the saved result (JSON data) instead of calling fn. */
   checkpoint<T>(name: string, fn: () => T | Promise<T>): Promise<T>;
   args: any;
+  /** This run's id (its folder under workflow-runs). */
+  runId: string;
   log(message: string): void;
   /** One line in the run's events.jsonl: what the program decided or measured (a check's result, a round, a
    *  promotion), so the run can be read afterwards without parsing the program's own logs. */

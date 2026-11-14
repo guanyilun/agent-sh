@@ -11,9 +11,11 @@ export interface AgentSnapshot {
 export interface AgentRunMessage {
   role: "user" | "assistant" | "tool";
   content: string;
-  toolCalls?: { name: string; arguments: string }[];
+  toolCalls?: { id?: string; name: string; arguments: string }[];
   toolName?: string;
   isError?: boolean;
+  /** Tool results: the id of the call they answer. */
+  callId?: string;
 }
 
 export interface AgentRunUsage {

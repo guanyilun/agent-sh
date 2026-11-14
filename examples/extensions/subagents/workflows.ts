@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { normalizeSchema, parseJsonReply, validate } from "./schema.js";
-import type { JournalEntry, RunDir } from "./runs.js";
+import { conversationHistory, transcriptMessages, type JournalEntry, type RunDir } from "./runs.js";
 import type { JsonSchema, RunOptions, RunSpec, WorkflowApi } from "./workflow-types.js";
 import { ArgsError, helpText, parseArgs, tokenize, type ArgsSpec } from "./args.js";
 import { isPython, pythonModule, type ScriptHost } from "./python.js";
@@ -180,6 +180,14 @@ export async function runWorkflow(
       if (seq > deps.maxRuns) throw new WorkflowStop(`workflow exceeded ${deps.maxRuns} subagent runs (subagents.maxRunsPerWorkflow)`);
       if (spec.system && spec.agent) throw new Error(`run(): "system" is for ad-hoc runs; ${spec.agent} has its own prompt`);
       const label = `[${seq} ${spec.label ?? spec.agent ?? "ad-hoc"}]`;
+      // historyFrom: the conversation starts from an earlier run's, once, before anything else reads it.
+      if (chat && spec.historyFrom && !chat.seeded) {
+        chat.seeded = true;
+        const earlier = conversationHistory(path.dirname(record.dir), String(spec.historyFrom.run), String(spec.historyFrom.conversation));
+        if (!earlier.length) throw new Error(`historyFrom: no conversation ${spec.historyFrom.conversation} in run ${spec.historyFrom.run}`);
+        chat.history = earlier;
+        progress(`${label} continues conversation ${spec.historyFrom.conversation} of run ${spec.historyFrom.run} (${earlier.length} messages)`);
+      }
       // A turn's key covers the turns before it.
       const key = chat ? createHash("sha256").update(chat.key + specKey(spec)).digest("hex").slice(0, 16) : specKey(spec);
 
@@ -207,7 +215,8 @@ export async function runWorkflow(
       // Who this is, for reading the run afterwards: the label and the model as asked (each "request" line carries the
       // model and provider that answered), the call's position, and the conversation it continues.
       write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema, label: spec.label, model: spec.model,
-              provider: spec.provider, thinking: spec.thinking, id, ...(chat && { conversation: id.replace(/:\d+$/, "") }) });
+              provider: spec.provider, thinking: spec.thinking, id, ...(chat && { conversation: id.replace(/:\d+$/, "") }),
+              ...(spec.historyFrom && { historyFrom: spec.historyFrom }) });
       let tokens = 0;
       let state: "queued" | "working" = "queued";
       let history: unknown[] | undefined;
@@ -250,6 +259,14 @@ export async function runWorkflow(
         const message = err instanceof Error ? err.message : String(err);
         write({ type: "end", ok: false, error: message, tokens });
         const lost = stopped.aborted && !signal.aborted;
+        // A turn that failed part-way (an outage past the retries, a reply that never fitted) leaves its steps in the
+        // conversation, so the next ask() continues from them instead of from the turn's start.
+        if (chat && !stopped.aborted && tokens > 0) {
+          try {
+            const done = transcriptMessages([path.join(record.dir, "agents", `${seq}.jsonl`)]);
+            if (done.length > 1) { chat.history = [...chat.history, ...done]; progress(`${label} keeps ${done.length} messages of the failed turn`); }
+          } catch { /* the turn's start is still a valid place to continue from */ }
+        }
         progress(lost ? `${label} cancelled` : `${label} failed: ${message}`);
         throw signal.aborted ? new WorkflowStop("cancelled") : lost ? new Cancelled("cancelled") : err;
       } finally {
@@ -303,6 +320,7 @@ export async function runWorkflow(
             return turn;
           },
           steer: (text) => { chat.steer.push(String(text)); },
+          id: sid,
         };
       },
       race: async (items, fn, accept) => {
@@ -377,6 +395,7 @@ export async function runWorkflow(
         })));
       },
       args: apiArgs,
+      runId: record.id,
       log: (message) => progress(`· ${message}`),
       event: (kind, data) => record.event(String(kind), data),
       signal,
@@ -413,6 +432,7 @@ export async function runWorkflow(
         if (!chats.has(session)) chats.set(session, { key: "", history: [], steer: [] });
         chats.get(session)!.steer.push(String(text));
       },
+      runId: record.id,
       chatSize: (session) => ({ prompt: chats.get(session)?.prompt ?? 0, cached: chats.get(session)?.cached ?? 0 }),
       raceWinner: (id, key, at) => {
         const cached = isDiverged(scopeAt(at)) ? undefined : replay.get(id);
@@ -491,6 +511,7 @@ const isDiverged = (s: Scope | undefined): boolean => !!s && (s.diverged || isDi
 function specKey(spec: RunSpec): string {
   const inputs = [spec.agent ?? null, spec.task, spec.tools ?? null, spec.schema ?? null];
   // Added later; only included when set, so older journals still match.
+  if (spec.historyFrom !== undefined) inputs.push(`historyFrom:${JSON.stringify(spec.historyFrom)}`);
   for (const k of ["system", "model", "thinking", "provider", "env"] as const) if (spec[k] !== undefined) inputs.push(`${k}:${spec[k]}`);
   if (spec.write !== undefined) inputs.push(`write:${JSON.stringify(spec.write)}`);
   return createHash("sha256").update(JSON.stringify(inputs)).digest("hex").slice(0, 16);

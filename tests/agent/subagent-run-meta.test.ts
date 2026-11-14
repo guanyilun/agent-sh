@@ -187,8 +187,8 @@ test("onMessage sees the task, each assistant turn and each tool result in order
   });
   assert.deepEqual(seen, [
     { role: "user", content: "t" },
-    { role: "assistant", content: "", toolCalls: [{ name: "noop", arguments: "{}" }] },
-    { role: "tool", toolName: "noop", content: "ok", isError: false },
+    { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "noop", arguments: "{}" }] },
+    { role: "tool", toolName: "noop", content: "ok", isError: false, callId: "c1" },
     { role: "assistant", content: "done.", toolCalls: undefined },
   ]);
 });

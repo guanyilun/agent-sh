@@ -85,3 +85,97 @@ test("event() from a workflow lands in the run's events.jsonl", { skip: spawnSyn
   } finally { s.cleanup(); }
 });
 
+test("steer reaches a working agent once and is logged; a later run continues the conversation", async () => {
+  const requests: string[][] = [];
+  let turn = 0;
+  const s = setup({ reply: (o) => {
+    requests.push(o.messages.map(m => `${m.role}: ${typeof m.content === "string" ? m.content : JSON.stringify(m.content)}`));
+    turn++;
+    return turn === 1 ? call("bash", { command: "make maps" }) : { content: `answer ${turn}` };
+  } });
+  try {
+    wf(s, "first.ts", [
+      "export default async ({ agent, runId }) => {",
+      '  const worker = agent(null, { tools: ["bash"], label: "mapper" });',
+      '  const answer = worker.ask("make the f090 maps");',
+      '  worker.steer("use 50 iterations, not 150");',
+      "  await answer;",
+      "  return JSON.stringify({ run: runId, conversation: worker.id });",
+      "};",
+    ].join("\n"));
+    const first = JSON.parse(body(await s.exec("run_workflow", { name: "first" })));
+    assert.ok(!requests[0]!.some(m => m.includes("50 iterations")), "not in the first request");
+    assert.equal(requests[1]!.filter(m => m.startsWith("user:") && m.includes("50 iterations")).length, 1, "delivered after the tool round, once");
+    const transcript = lines(findFiles(s.root, "1.jsonl")[0]!);
+    assert.ok(transcript.some(e => e.type === "steer" && String(e.text).includes("50 iterations")), "the delivery is on record");
+    assert.equal(transcript.find(e => e.type === "start")!.conversation, first.conversation);
+
+    wf(s, "second.ts", [
+      "export default async ({ agent, args }) => {",
+      "  const [run, conversation] = String(args).split(' ');",
+      '  return agent(null, { tools: ["bash"], historyFrom: { run, conversation } }).ask("you were interrupted; continue");',
+      "};",
+    ].join("\n"));
+    const before = requests.length;
+    await s.exec("run_workflow", { name: "second", args: `${first.run} ${first.conversation}` });
+    const resumed = requests[before]!;
+    assert.ok(resumed.some(m => m === "user: make the f090 maps"), "the earlier task");
+    assert.ok(resumed.some(m => m.startsWith("tool:") && m.includes("bash ran")), "the earlier tool result");
+    assert.ok(resumed.some(m => m.includes("50 iterations")), "the steering");
+    assert.ok(resumed[resumed.length - 1]!.includes("you were interrupted; continue"), "then the new turn");
+    // A third run continuing the second gets the first's steps too (a job restarted more than once).
+    wf(s, "again.ts", [
+      "export default async ({ agent, runId }) => {",
+      '  const worker = agent(null, { tools: ["bash"], historyFrom: { run: "' + "${first.run}" + '", conversation: "' + "${first.conversation}" + '" } });',
+      '  await worker.ask("second leg");',
+      "  return JSON.stringify({ run: runId, conversation: worker.id });",
+      "};",
+    ].join("\n").replace("${first.run}", first.run).replace("${first.conversation}", first.conversation));
+    const second = JSON.parse(body(await s.exec("run_workflow", { name: "again" })));
+    const mark = requests.length;
+    await s.exec("run_workflow", { name: "second", args: `${second.run} ${second.conversation}` });
+    const chained = requests[mark]!;
+    assert.ok(chained.some(m => m === "user: make the f090 maps") && chained.some(m => m === "user: second leg"), "both earlier legs");
+    assert.ok(chained.findIndex(m => m === "user: make the f090 maps") < chained.findIndex(m => m === "user: second leg"), "in order");
+
+    await assert.rejects(async () => {
+      wf(s, "third.ts", 'export default async ({ agent }) => agent(null, { historyFrom: { run: "nope", conversation: "1" } }).ask("x");');
+      const r = await s.exec("run_workflow", { name: "third" });
+      if (/no conversation 1 in run nope/.test(String(r.content))) throw new Error("refused");
+    }, /refused/);
+  } finally { s.cleanup(); }
+});
+
+test("a transcript cut mid-step is rebuilt up to its last complete step", async () => {
+  const { transcriptMessages } = await import("../../examples/extensions/subagents/runs.js");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(join(tmpdir(), "cut-"));
+  try {
+    const file = join(dir, "3.jsonl");
+    writeFileSync(file, [
+      { type: "start", task: "t", id: "2:1", conversation: "2" },
+      { type: "message", role: "user", content: "t" },
+      { type: "message", role: "assistant", content: "reading", toolCalls: [{ id: "a", name: "read_file", arguments: "{}" }] },
+      { type: "message", role: "tool", toolName: "read_file", content: "data", callId: "a" },
+      { type: "request", total_tokens: 5 },
+      { type: "message", role: "assistant", content: "two more", toolCalls: [{ id: "b", name: "bash", arguments: "{}" }, { id: "c", name: "bash", arguments: "{}" }] },
+      { type: "message", role: "tool", toolName: "bash", content: "one", callId: "b" },
+    ].map(e => JSON.stringify(e)).join("\n"));
+    const messages = transcriptMessages([file], "2");
+    assert.deepEqual(messages.map(m => m.role), ["user", "assistant", "tool"]);
+    assert.equal(messages[2]!.tool_call_id, "a");
+    assert.deepEqual(transcriptMessages([file], "other"), []);
+    // transcripts from before call ids were logged: results are matched in order
+    writeFileSync(file, [
+      { type: "start", task: "t" },
+      { type: "message", role: "user", content: "t" },
+      { type: "message", role: "assistant", content: "", toolCalls: [{ name: "bash", arguments: "{}" }] },
+      { type: "message", role: "tool", toolName: "bash", content: "ok" },
+      { type: "message", role: "assistant", content: "done" },
+    ].map(e => JSON.stringify(e)).join("\n"));
+    const old = transcriptMessages([file]);
+    assert.equal(old.length, 4);
+    assert.equal((old[1]!.tool_calls as { id: string }[])[0]!.id, old[2]!.tool_call_id);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

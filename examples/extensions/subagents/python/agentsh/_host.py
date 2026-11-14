@@ -32,6 +32,7 @@ class Connection:
         self._stop_program = None
         self.stopped = None  # why agent-sh is ending the run, once it is
         self.tokens = {"total": None, "spent": 0}
+        self.run_id = None
 
     def send(self, kind, **fields):
         with self._write_lock:
@@ -136,6 +137,12 @@ class Budget:
 budget = Budget()
 
 
+def run_id():
+    """This run's id: the name of its folder under workflow-runs.  With an Agent's `id`, it names a conversation
+    that a later run can continue (`Agent(history_from=(run, id))`)."""
+    return link().run_id
+
+
 def serve(module, read_fd, write_fd):
     """Run the file's `main` and report how it went. Returns the exit code."""
     global _link
@@ -152,6 +159,7 @@ def serve(module, read_fd, write_fd):
     if not start or start.get("t") != "start":
         return 0
     _link.tokens = start.get("budget", _link.tokens)
+    _link.run_id = start.get("run")
     given = start.get("args")
     if isinstance(given, dict):
         given = types.SimpleNamespace(**given)

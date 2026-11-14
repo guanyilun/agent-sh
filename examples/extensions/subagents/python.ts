@@ -18,6 +18,7 @@ export interface ScriptHost {
   quiet(): Promise<void>;
   /** Queue a message for a conversation's running (or next) turn. */
   steer(session: string, text: string): void;
+  runId: string;
   /** A conversation's latest model call: its prompt tokens and the part served from cache (zeros before any). */
   chatSize(session: string): { prompt: number; cached: number };
   raceWinner(id: string, key: string, scope: string): number | undefined;
@@ -124,7 +125,7 @@ export function pythonModule(file: string, python = defaultPython()): Promise<Py
         onExit = () => { clearTimeout(timer); settle(); };
         if (!running()) onExit("");
       };
-      send({ t: "start", args: api.args, budget: usage() });
+      send({ t: "start", args: api.args, budget: usage(), run: host.runId });
     }).finally(dispose);
   }
 }

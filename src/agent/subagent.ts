@@ -94,9 +94,11 @@ export interface SubagentUsage {
 export interface SubagentMessage {
   role: "user" | "assistant" | "tool";
   content: string;
-  toolCalls?: { name: string; arguments: string }[];
+  toolCalls?: { id?: string; name: string; arguments: string }[];
   toolName?: string;
   isError?: boolean;
+  /** Tool results: the call they answer (with toolCalls[].id, a transcript can be turned back into a history). */
+  callId?: string;
 }
 
 export interface SubagentRunMeta {
