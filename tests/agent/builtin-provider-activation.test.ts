@@ -18,6 +18,7 @@ interface DriverResult {
 async function run(opts: {
   keys?: Record<string, string>;
   settings?: Record<string, unknown>;
+  anthropicKey?: string;
 }): Promise<DriverResult> {
   const home = mkdtempSync(join(tmpdir(), "agent-sh-bpa-"));
   writeFileSync(join(home, "settings.json"), JSON.stringify(opts.settings ?? {}));
@@ -33,6 +34,7 @@ async function run(opts: {
           OPENROUTER_API_KEY: "",
           OPENAI_API_KEY: "",
           DEEPSEEK_API_KEY: "",
+          ANTHROPIC_API_KEY: opts.anthropicKey ?? "",
           OPENAI_BASE_URL: "",
         },
         stdio: ["ignore", "pipe", "pipe"],
@@ -64,6 +66,16 @@ test("no keys configured: built-in providers still register for auth discovery",
   assert.ok(result.registeredIds.includes("openrouter"));
   assert.ok(result.registeredIds.includes("openai"));
   assert.ok(result.registeredIds.includes("deepseek"));
+  assert.ok(result.registeredIds.includes("anthropic"));
+  assert.equal(result.backendRegistrations.some((b) => b.name === "ash"), false);
+});
+
+test("Anthropic activates ash without a settings block via env or auth login", async () => {
+  for (const opts of [{ anthropicKey: "sk-test" }, { keys: { anthropic: "sk-test" } }]) {
+    const result = await run(opts);
+    assert.ok(result.backendRegistrations.some((b) => b.name === "ash"));
+    assert.deepEqual(result.uiErrors, []);
+  }
 });
 
 test("only deepseek keyed: ash backend registers against deepseek", async () => {

@@ -127,6 +127,18 @@ export DEEPSEEK_API_KEY="sk-..."
 agent-sh   # defaults to deepseek-v4-flash
 ```
 
+### Anthropic
+
+Set `ANTHROPIC_API_KEY` in your environment or run `agent-sh auth login anthropic`. No `settings.json` provider block is required.
+
+```bash
+agent-sh --provider anthropic  # defaults to claude-sonnet-5-5
+```
+
+The built-in catalog also includes `claude-opus-5-5` and `claude-haiku-5-5`. All three have a [1M-token context window](https://platform.claude.com/docs/en/build-with-claude/context-windows). In a running session, use `/model claude-haiku-5-5@anthropic` to switch.
+
+Ash sends Chat Completions requests directly to Anthropic’s [OpenAI compatibility endpoint](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk), not through OpenRouter. This is not the native Messages API: ash cannot set Claude’s thinking effort through this endpoint, and native features such as explicit prompt caching and citations are not exposed.
+
 ### OpenAI
 
 ```bash

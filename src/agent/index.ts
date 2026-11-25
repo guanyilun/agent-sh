@@ -21,6 +21,7 @@ import activateOpenrouter from "./providers/openrouter.js";
 import activateOpenai from "./providers/openai.js";
 import activateOpenaiCompatible from "./providers/openai-compatible.js";
 import activateDeepseek from "./providers/deepseek.js";
+import activateAnthropic from "./providers/anthropic.js";
 import activateOllama from "./providers/ollama.js";
 import activateZaiCodingPlan from "./providers/zai-coding-plan.js";
 import activateOpencode from "./providers/opencode.js";
@@ -490,6 +491,7 @@ export function activateAgent(ctx: ExtensionContext): void {
   activateOpenai(agentCtx);
   if (process.env.OPENAI_BASE_URL) activateOpenaiCompatible(agentCtx);
   activateDeepseek(agentCtx);
+  activateAnthropic(agentCtx);
   activateOllama(agentCtx);
   activateZaiCodingPlan(agentCtx);
   activateOpencode(agentCtx);
