@@ -28,11 +28,6 @@ const EXAMPLE_SETTINGS = {
       apiKey: "$OPENAI_API_KEY",
       defaultModel: "gpt-5",
     },
-    anthropic: {
-      apiKey: "$ANTHROPIC_API_KEY",
-      baseURL: "https://api.anthropic.com/v1",
-      defaultModel: "claude-sonnet-4-5",
-    },
     ollama: {
       apiKey: "ollama",
       baseURL: "http://localhost:11434/v1",
