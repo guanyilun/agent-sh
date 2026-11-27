@@ -53,7 +53,9 @@ const RETRY_KEYS = ["windowMin", "firstCall"];
 interface RunFileConfig {
   base: string;
   agents?: string | string[];
-  concurrency?: number;
+  /** Agents working at once: a number, or a dict of limits by "provider:model", provider or model, with "default"
+   *  for everything else (each key its own pool), e.g. { default: 4, codex: 20, "flatiron:XiaomiMiMo/MiMo-V2.6-Pro-MOPD": 1 }. */
+  concurrency?: number | Record<string, number>;
   maxIterations?: number;
   maxRuns?: number;
   budgetTokens?: number;
@@ -100,14 +102,14 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       maxConcurrency: 4, maxIterations: 25, maxRunsPerWorkflow: 50, backgroundWake: true, workflowTokenBudget: 0,
     }),
     ...definedOnly({
-      maxConcurrency: runConfig?.concurrency,
+      maxConcurrency: typeof runConfig?.concurrency === "object" ? runConfig.concurrency.default : runConfig?.concurrency,
       maxIterations: runConfig?.maxIterations,
       maxRunsPerWorkflow: runConfig?.maxRuns,
       workflowTokenBudget: runConfig?.budgetTokens,
       backgroundWake: runConfig ? false : undefined,
     }),
   };
-  if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS], problems: [...p.problems, ...retryProblems(runConfig.retry)] }));
+  if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS], problems: [...p.problems, ...retryProblems(runConfig.retry), ...concurrencyProblems(runConfig.concurrency)] }));
   const retryWindowMs = (runConfig?.retry?.windowMin ?? 45) * 60_000;
   const retryFirstCall = runConfig?.retry?.firstCall ?? false;
   // A path (e.g. a venv's interpreter) is relative to the run file; a bare name is looked up on PATH.
@@ -123,6 +125,17 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   // Shared by foreground and background runs so background work can't flood the provider.
   const slots = new Semaphore(Math.max(1, settings.maxConcurrency));
   const finished = new FinishedSubagents<TaskSpec>();
+  // Per-provider or per-model pools (capacity-limited models next to uncapped ones), created on first use.
+  const limits = typeof runConfig?.concurrency === "object" ? runConfig.concurrency : {};
+  const pools = new Map<string, Semaphore>();
+  const slotFor = (spec: TaskSpec, def: AgentDef | undefined): Semaphore => {
+    const model = spec.model ?? def?.model;
+    const key = [spec.provider && model && `${spec.provider}:${model}`, spec.provider, model]
+      .find((k): k is string => !!k && k !== "default" && typeof limits[k] === "number");
+    if (!key) return slots;
+    if (!pools.has(key)) pools.set(key, new Semaphore(Math.max(1, limits[key]!)));
+    return pools.get(key)!;
+  };
 
   // Status goes in dynamic context, results come back as tool results, and a
   // short note wakes the agent only when it's idle with unread results.
@@ -733,7 +746,8 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     ].filter(Boolean).join("\n\n");
 
     const meta: SubagentRunMeta = {};
-    await slots.acquire();
+    const slot = slotFor(spec, def);
+    await slot.acquire();
     let text: string;
     try {
       if (signal?.aborted) throw new Error("cancelled");
@@ -772,7 +786,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       extra.onMeta?.(meta);
       if (meta.degraded === "iterations" || meta.degraded === "budget") extra.onDegraded?.(meta.degraded);
     } finally {
-      slots.release();
+      slot.release();
     }
     progress?.(signal?.aborted ? "cancelled"
       : meta.degraded === "iterations" ? "stopped: step limit reached"
@@ -922,4 +936,13 @@ function retryProblems(retry: unknown): string[] {
     ...(r.windowMin !== undefined && !(typeof r.windowMin === "number" && r.windowMin >= 0) ? ["config.retry.windowMin must be a number of minutes >= 0"] : []),
     ...(r.firstCall !== undefined && typeof r.firstCall !== "boolean" ? ["config.retry.firstCall must be true or false"] : []),
   ];
+}
+
+function concurrencyProblems(concurrency: unknown): string[] {
+  if (concurrency === undefined || typeof concurrency === "number") return [];
+  if (!concurrency || typeof concurrency !== "object" || Array.isArray(concurrency))
+    return ["config.concurrency must be a number or a dict of limits (\"default\", provider, provider:model or model)"];
+  return Object.entries(concurrency as Record<string, unknown>)
+    .filter(([, v]) => !(typeof v === "number" && Number.isInteger(v) && v >= 1))
+    .map(([k]) => `config.concurrency.${k} must be a whole number >= 1`);
 }

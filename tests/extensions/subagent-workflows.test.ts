@@ -246,3 +246,31 @@ test("a shaped run cut at its step limit fails with a cut error, unless onCut is
     assert.equal(s.invokes.length, 1);
   } finally { s.cleanup(); }
 });
+
+test("config.concurrency as a dict: a model's own pool, the rest in the default pool", async () => {
+  const active: Record<string, number> = {};
+  const peak: Record<string, number> = {};
+  const s = setup({
+    reply: async (o) => {
+      const which = lastUser(o).startsWith("slow") ? "slow" : "fast";
+      active[which] = (active[which] ?? 0) + 1;
+      peak[which] = Math.max(peak[which] ?? 0, active[which]!);
+      await new Promise(r => setTimeout(r, 40));
+      active[which]!--;
+      return { content: "ok" };
+    },
+    before: (h) => h.define("run:config", () => ({ base: "/", concurrency: { default: 3, "slow-model": 1 } })),
+  });
+  try {
+    userWf(s, "pools.ts", [
+      "export default async ({ run }) => {",
+      '  await Promise.all([1, 2, 3].flatMap(i => [run({ task: `slow ${i}`, tools: [], model: "slow-model" }), run({ task: `fast ${i}`, tools: [] })]));',
+      '  return "done";',
+      "};",
+    ].join("\n"));
+    const r = await s.exec("run_workflow", { name: "pools" });
+    assert.equal(body(r), "done");
+    assert.equal(peak.slow, 1);
+    assert.equal(peak.fast, 3);
+  } finally { s.cleanup(); }
+});
