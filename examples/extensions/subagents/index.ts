@@ -84,6 +84,7 @@ interface RunExtras {
   onHistory?: (messages: unknown[]) => void;
   onMeta?: (meta: SubagentRunMeta) => void;
   steer?: () => string[];
+  onDegraded?: (reason: "iterations" | "budget") => void;
 }
 
 export default function activate(ctx: ExtensionContext & AgentContext): void {
@@ -650,13 +651,15 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         return { content: notes.length ? `Recorded (adjusted: ${notes.slice(0, 5).join("; ")}).` : "Recorded.", exitCode: 0, isError: false };
       },
     };
+    let degraded: "iterations" | "budget" | undefined;
     const text = await runOne(spec, def, ctl.signal, ctl.progress, {
       ...ctl,
       extraTools: [submit],
       systemNote: `When you are done, call ${SUBMIT_TOOL} with your result.`,
       shouldStop: () => submitted !== undefined,
+      onDegraded: (reason) => { degraded = reason; },
     });
-    return { text, value: submitted?.value };
+    return { text, value: submitted?.value, degraded };
   }
 
   function readLive(file: string): string {
@@ -760,6 +763,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       });
       if (meta.messages) extra.onHistory?.(meta.messages);
       extra.onMeta?.(meta);
+      if (meta.degraded === "iterations" || meta.degraded === "budget") extra.onDegraded?.(meta.degraded);
     } finally {
       slots.release();
     }

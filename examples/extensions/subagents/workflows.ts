@@ -94,6 +94,8 @@ export interface TaskControl {
 export interface TaskResult {
   text: string;
   value?: unknown;
+  /** Set when the agent was stopped before finishing: its step limit or its token budget. */
+  degraded?: "iterations" | "budget";
 }
 
 export interface WorkflowDeps {
@@ -117,6 +119,15 @@ export interface WorkflowRunOpts {
 
 /** Ends the whole workflow; all() rethrows it instead of returning null. */
 export class WorkflowStop extends Error {}
+/** A run that asked for a shape stopped at its step limit or token budget before submitting: no answer, only partial
+ *  text.  Before 2026-11-27 the partial text was extracted into the shape and looked like an answer (25 of 493 runs had
+ *  such a stop; one replaced a report that had passed its check). */
+export class RunCut extends Error {
+  constructor(readonly reason: "iterations" | "budget", readonly partial: string) {
+    super(`cut: the agent stopped at its ${reason === "iterations" ? "step limit" : "token budget"} before submitting its answer; `
+      + `nothing was extracted.  An agent() conversation keeps the turn's steps: ask again to continue it`);
+  }
+}
 /** A race() item stopped because another one won. */
 class Cancelled extends Error {}
 const stops = (err: unknown) => err instanceof WorkflowStop || err instanceof Cancelled;
@@ -247,6 +258,8 @@ export async function runWorkflow(
         // An aborted subagent returns its partial text; that's a stop, not a result.
         if (signal.aborted) throw new WorkflowStop("cancelled");
         if (stopped.aborted) throw new Cancelled("cancelled");
+        if (spec.schema && result.value === undefined && result.degraded && spec.onCut !== "extract")
+          throw new RunCut(result.degraded, result.text);
         const output = !spec.schema ? result.text
           : result.value !== undefined ? result.value
           : await extract(result.text, normalizeSchema(spec.schema), deps.complete);
@@ -441,7 +454,7 @@ export async function runWorkflow(
       raceRecord: (id, key, winner) => record.append({ seq: runs, id, key, winner, output: null, tokens: 0 }),
       checkpointResult: (id, key, at, name) => checkpointResult(scopeAt(at), id, key, name),
       checkpointRecord,
-      kind: (err) => err instanceof WorkflowStop ? "stop" : err instanceof Cancelled ? "cancelled" : "error",
+      kind: (err) => err instanceof WorkflowStop ? "stop" : err instanceof Cancelled ? "cancelled" : err instanceof RunCut ? "cut" : "error",
       stop: (message) => new WorkflowStop(message),
     };
 

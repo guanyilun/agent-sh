@@ -10,7 +10,7 @@ from ._positions import Position, here, start
 
 
 def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, thinking=None, label=None, write=None,
-        max_steps=None, live=None, provider=None, env=None, context_tokens=None):
+        max_steps=None, live=None, provider=None, env=None, context_tokens=None, on_cut=None):
     """Give `task` to an agent and get its answer.
 
     The agent starts working straight away, and the call returns an awaitable for the answer, so
@@ -34,13 +34,15 @@ def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, 
               its environment, which it then cannot forget to set up
     context_tokens   compact the run once its prompt passes this many tokens (old tool output is cleared: the agent can
               read the file or run the command again), instead of only near the model's context window
+    on_cut    with `returns`: an agent stopped at its step limit or token budget before submitting raises RunCut
+              (default), or with "extract" a model rebuilds the shape from its partial text
 
-    A run that fails raises RunError.
+    A run that fails raises RunError (RunCut, a subclass, when it was cut before submitting).
     """
     position = here()
     spec = _spec(task, agent, returns, tools=tools, system=system, model=model, thinking=thinking, label=label,
                  write=_paths(write), maxSteps=max_steps, live=live, provider=provider, env=env,
-                 contextTokens=context_tokens)
+                 contextTokens=context_tokens, onCut=on_cut)
     return _answer(spec, position.next(), position, returns)
 
 
@@ -75,11 +77,14 @@ class Agent:
         self._turns = 0
         self._last_turn = None
 
-    def ask(self, task, *, returns=None, model=None, thinking=None, label=None, max_steps=None, provider=None):
-        """Say `task` to the agent and get its answer. Turns happen one at a time, in the order asked."""
+    def ask(self, task, *, returns=None, model=None, thinking=None, label=None, max_steps=None, provider=None,
+            on_cut=None):
+        """Say `task` to the agent and get its answer. Turns happen one at a time, in the order asked.
+        A turn cut before submitting its `returns` shape raises RunCut; its steps stay in the conversation."""
         position = here()
         overrides = {name: value for name, value in dict(model=model, thinking=thinking, label=label,
-                                                         maxSteps=max_steps, provider=provider).items() if value is not None}
+                                                         maxSteps=max_steps, provider=provider,
+                                                         onCut=on_cut).items() if value is not None}
         spec = _spec(task, self._name, returns, **{**self._options, **overrides})
         self._turns += 1
         turn_id, previous = f"{self._id}:{self._turns}", self._last_turn

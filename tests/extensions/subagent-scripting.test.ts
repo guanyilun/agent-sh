@@ -108,3 +108,27 @@ test("a .py file in the workflows folder is listed and runs through run_workflow
     assert.equal(body(r), "answer to hello there | answer to bye there");
   } finally { s.cleanup(); }
 });
+
+test("python: a shaped turn cut at its step limit raises RunCut with its reason", { skip: spawnSync("python3", ["--version"]).status !== 0 }, async () => {
+  let n = 0;
+  const s = setup({ reply: () => ({ tool_calls: [{ index: 0, id: `c${++n}`, function: { name: "grep", arguments: "{}" } }] }) });
+  try {
+    wf(s, "cut.py", [
+      "from dataclasses import dataclass",
+      "from agentsh import Agent, RunCut, RunError",
+      "@dataclass",
+      "class Out:",
+      "    ok: bool",
+      "async def main():",
+      '    worker = Agent(tools=["grep"])',
+      "    try:",
+      '        await worker.ask("t", returns=Out, max_steps=2)',
+      "    except RunCut as cut:",
+      '        return f"cut {cut.reason} {isinstance(cut, RunError)}"',
+      '    return "not cut"',
+    ].join("\n"));
+    const r = await s.exec("run_workflow", { name: "cut" });
+    assert.equal(body(r), "cut iterations True");
+    assert.equal(s.invokes.length, 0);
+  } finally { s.cleanup(); }
+});

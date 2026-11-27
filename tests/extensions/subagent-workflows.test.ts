@@ -226,3 +226,23 @@ test("research splits the question, researches the parts in parallel, checks the
     assert.match(lastUser(s.calls[0]!), /at most 3 independent sub-questions[\s\S]*why is the sky blue/);
   } finally { s.cleanup(); }
 });
+
+test("a shaped run cut at its step limit fails with a cut error, unless onCut is extract", async () => {
+  let n = 0;
+  const s = setup({
+    reply: () => ({ tool_calls: [{ index: 0, id: `c${++n}`, function: { name: "grep", arguments: "{}" } }] }),
+    invoke: () => '{"ok": true}',
+  });
+  try {
+    userWf(s, "cut.ts", 'export default async ({ run }) => (await run({ task: "t", tools: ["grep"], maxSteps: 2, schema: { ok: { type: "boolean" } } })).ok;\n');
+    let r = await s.exec("run_workflow", { name: "cut" });
+    assert.equal(r.isError, true);
+    assert.match(String(r.content), /cut: the agent stopped at its step limit before submitting/);
+    assert.equal(s.invokes.length, 0);
+
+    userWf(s, "cutx.ts", 'export default async ({ run }) => (await run({ task: "t", tools: ["grep"], maxSteps: 2, onCut: "extract", schema: { ok: { type: "boolean" } } })).ok;\n');
+    r = await s.exec("run_workflow", { name: "cutx" });
+    assert.equal(body(r), "true");
+    assert.equal(s.invokes.length, 1);
+  } finally { s.cleanup(); }
+});

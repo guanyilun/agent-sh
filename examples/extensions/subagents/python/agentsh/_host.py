@@ -21,6 +21,18 @@ class RunError(Exception):
     """An agent's run failed: the model or a tool gave an error, or the answer never fitted the shape asked for."""
 
 
+class RunCut(RunError):
+    """An agent asked for a shape (`returns=`) stopped at its step limit or token budget before submitting.
+
+    `reason` is "iterations" or "budget"; `partial` is its last text.  Nothing was extracted into the shape: an
+    `Agent`'s conversation keeps the turn's steps, so asking again continues the work ("you were stopped; finish and
+    submit").  `ask(..., on_cut="extract")` restores the old behaviour (a model rebuilds the shape from the text)."""
+
+    def __init__(self, message, reason=None, partial=""):
+        super().__init__(message)
+        self.reason, self.partial = reason, partial
+
+
 class Connection:
     def __init__(self, read_fd, write_fd):
         self._incoming = os.fdopen(read_fd, "r", encoding="utf-8")
@@ -91,6 +103,8 @@ class Connection:
             self._stop(message.get("error"))
         elif message.get("cancelled"):
             reply.cancel()
+        elif message.get("cut"):
+            reply.set_exception(RunCut(message.get("error", "cut"), message.get("cut"), message.get("partial") or ""))
         else:
             reply.set_exception(RunError(message.get("error", "the run failed")))
 
