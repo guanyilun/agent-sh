@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { discoverAgents, findAgent, fromRegistration, type AgentDef, type AgentRegistration } from "./agents.js";
 import { describe, JobTable, type JobOutcome } from "./jobs.js";
 import { Semaphore } from "./semaphore.js";
+import { controlProblem } from "./control.js";
 import { RunStore } from "./runs.js";
 import { coerce, example, normalizeSchema, validate } from "./schema.js";
 import * as os from "node:os";
@@ -47,7 +48,7 @@ const FANOUT_RESULT_CHARS = 24_000;
 
 interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string; env?: string; contextTokens?: number }
 
-const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python", "retry", "steerDir"];
+const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python", "retry", "steerDir", "control"];
 const RETRY_KEYS = ["windowMin", "firstCall"];
 
 interface RunFileConfig {
@@ -68,6 +69,8 @@ interface RunFileConfig {
   retry?: { windowMin?: number; firstCall?: boolean };
   /** A folder (relative to the run file) where `<label>.steer.md` steers the running agent of that label once. */
   steerDir?: string;
+  /** A Unix socket path (relative to the run file) for the run's control socket: status and steer by label. */
+  control?: string;
 }
 
 interface RunFileRequest {
@@ -111,7 +114,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       backgroundWake: runConfig ? false : undefined,
     }),
   };
-  if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS], problems: [...p.problems, ...retryProblems(runConfig.retry), ...concurrencyProblems(runConfig.concurrency)] }));
+  if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS], problems: [...p.problems, ...retryProblems(runConfig.retry), ...concurrencyProblems(runConfig.concurrency), ...controlProblems(runConfig)] }));
   const retryWindowMs = (runConfig?.retry?.windowMin ?? 45) * 60_000;
   const retryFirstCall = runConfig?.retry?.firstCall ?? false;
   // A path (e.g. a venv's interpreter) is relative to the run file; a bare name is looked up on PATH.
@@ -565,6 +568,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       }, opts.signal, opts.progress, {
         run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, budgetUncached: opts.budgetUncached, module: opts.module, quietMs: opts.quietMs, python,
         steerDir: runConfig?.steerDir ? path.resolve(runConfig.base, runConfig.steerDir) : undefined,
+        controlPath: runConfig?.control && !opts.dryRun ? path.resolve(runConfig.base, runConfig.control) : undefined,
       });
       return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
     } catch (err) {
@@ -948,4 +952,11 @@ function concurrencyProblems(concurrency: unknown): string[] {
   return Object.entries(concurrency as Record<string, unknown>)
     .filter(([, v]) => !(typeof v === "number" && Number.isInteger(v) && v >= 1))
     .map(([k]) => `config.concurrency.${k} must be a whole number >= 1`);
+}
+
+function controlProblems(config: RunFileConfig): string[] {
+  if (config.control === undefined) return [];
+  if (typeof config.control !== "string" || !config.control) return ["config.control must be a socket path (relative to the run file)"];
+  const problem = controlProblem(path.resolve(config.base, config.control));
+  return problem ? [problem] : [];
 }

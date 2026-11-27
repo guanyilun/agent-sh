@@ -274,3 +274,48 @@ test("config.concurrency as a dict: a model's own pool, the rest in the default 
     assert.equal(peak.fast, 3);
   } finally { s.cleanup(); }
 });
+
+test("config.control: a 0600 socket answers status and steers a running agent by label, then is removed", async () => {
+  const { mkdtempSync, rmSync, statSync, existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const net = await import("node:net");
+  const dir = mkdtempSync(join(tmpdir(), "ctl-"));
+  const sock = join(dir, "c.sock");
+  const ask = (req: unknown) => new Promise<any>((resolve, reject) => {
+    const c = net.createConnection(sock, () => c.write(JSON.stringify(req) + "\n"));
+    let buf = "";
+    c.on("data", (d) => { buf += d; if (buf.includes("\n")) { resolve(JSON.parse(buf)); c.end(); } });
+    c.on("error", reject);
+  });
+  const seen: any[] = [];
+  let n = 0;
+  const s = setup({
+    reply: async (o) => {
+      if (++n === 1) {
+        seen.push((statSync(sock).mode & 0o777).toString(8));
+        seen.push(await ask({ method: "status" }));
+        seen.push(await ask({ method: "steer", label: "w1", text: "use the f150 band" }));
+        seen.push(await ask({ method: "steer", label: "nobody", text: "x" }));
+        seen.push(await ask({ method: "stop" }));
+        return { tool_calls: [{ index: 0, id: "c1", function: { name: "grep", arguments: "{}" } }] };
+      }
+      seen.push(o.messages.some(m => m.role === "user" && String(m.content).includes("f150")));
+      return { content: "done" };
+    },
+    before: (h) => h.define("run:config", () => ({ base: dir, control: "c.sock" })),
+  });
+  try {
+    userWf(s, "ctl.ts", 'export default async ({ run }) => run({ task: "t", tools: ["grep"], label: "w1" });\n');
+    const r = await s.exec("run_workflow", { name: "ctl" });
+    assert.equal(body(r), "done");
+    const [mode, status, steer, missing, stop, delivered] = seen;
+    assert.equal(mode, "600");
+    assert.equal(status.ok, true);
+    assert.deepEqual(status.agents.map((a: any) => [a.label, a.state]), [["w1", "working"]]);
+    assert.deepEqual(steer, { ok: true, queued: [1] });
+    assert.match(missing.error, /no running agent labelled nobody \(running: w1\)/);
+    assert.match(stop.error, /offers status and steer/);
+    assert.equal(delivered, true);
+    assert.equal(existsSync(sock), false);
+  } finally { s.cleanup(); rmSync(dir, { recursive: true, force: true }); }
+});

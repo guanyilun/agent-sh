@@ -8,6 +8,7 @@ import { conversationHistory, transcriptMessages, type JournalEntry, type RunDir
 import type { JsonSchema, RunOptions, RunSpec, WorkflowApi } from "./workflow-types.js";
 import { ArgsError, helpText, parseArgs, tokenize, type ArgsSpec } from "./args.js";
 import { isPython, pythonModule, type ScriptHost } from "./python.js";
+import { startControl, type LiveAgent } from "./control.js";
 
 const EXTS = [".ts", ".mts", ".js", ".mjs", ".py"];
 
@@ -118,6 +119,8 @@ export interface WorkflowRunOpts {
   /** A folder the overseer writes steers into: `<label>.steer.md` is handed to the running agent of that label once,
    *  between its tool rounds, then renamed `<label>.steer.sent_<HHMMSS>.md` (polled at start and every 15 s). */
   steerDir?: string;
+  /** The run's control socket (control.ts): status and steer by label, answered at once. */
+  controlPath?: string;
 }
 
 const STEER_POLL_MS = 15_000;
@@ -158,6 +161,7 @@ export async function runWorkflow(
   }, Math.min(opts.quietMs, 10_000));
   if (quiet) quiet.unref();
   let mod: Record<string, unknown> | undefined = opts.module;
+  let closeControl: (() => void) | undefined;
   try {
     mod ??= isPython(def.file) ? await pythonModule(def.file, opts.python) : await importFresh(def);
     const fn = (mod.default ?? mod.run) as ((api: WorkflowApi, host: ScriptHost) => unknown) | undefined;
@@ -180,6 +184,7 @@ export async function runWorkflow(
     };
     let reused = 0;
     let runs = 0;
+    const live = new Map<number, LiveAgent>();
     const total = opts.budgetTokens && opts.budgetTokens > 0 ? opts.budgetTokens : null;
     const spent = () => record.record.tokens;
     const budget = { total, spent, cached: () => record.record.cached ?? 0, remaining: () => (total === null ? Infinity : Math.max(0, total - spent())) };
@@ -247,6 +252,11 @@ export async function runWorkflow(
       pollSteer();
       const steerTimer = steerFile ? setInterval(pollSteer, STEER_POLL_MS) : undefined;
       steerTimer?.unref?.();
+      const liveAgent: LiveAgent = {
+        seq, label: spec.label ?? spec.agent ?? "ad-hoc", state: "queued", since: Date.now(), tokens: () => tokens,
+        steer: (text) => { queue.push(text); write({ type: "steer_control", text }); },
+      };
+      live.set(seq, liveAgent);
       // Who this is, for reading the run afterwards: the label and the model as asked (each "request" line carries the
       // model and provider that answered), the call's position, and the conversation it continues.
       write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema, label: spec.label, model: spec.model,
@@ -264,7 +274,7 @@ export async function runWorkflow(
           steer: () => { const texts = queue.splice(0); for (const text of texts) { write({ type: "steer", text }); delivered.push(text); } return texts; },
           onStart: () => {
             if (state === "working") return;
-            state = "working"; counts.queued--; counts.working++;
+            state = "working"; counts.queued--; counts.working++; liveAgent.state = "working";
             write({ type: "running" });
             progress(`${label} started`);
           },
@@ -307,6 +317,7 @@ export async function runWorkflow(
         progress(lost ? `${label} cancelled` : `${label} failed: ${message}`);
         throw signal.aborted ? new WorkflowStop("cancelled") : lost ? new Cancelled("cancelled") : err;
       } finally {
+        live.delete(seq);
         if (steerTimer) clearInterval(steerTimer);
         if (!chat && queue.length) { write({ type: "steer_undelivered", texts: queue }); progress(`${label} ended before ${queue.length} steer(s) could be delivered`); }
         counts[state]--;
@@ -485,6 +496,11 @@ export async function runWorkflow(
       stop: (message) => new WorkflowStop(message),
     };
 
+    closeControl = opts.controlPath ? startControl(opts.controlPath, {
+      runId: record.id, agents: () => [...live.values()], log: progress,
+      totals: () => ({ tokens: record.record.tokens, cached: record.record.cached ?? 0 }),
+    }) : undefined;
+    if (opts.controlPath) progress(`· control socket: ${opts.controlPath}`);
     const result = await fn(api, host);
     record.finish("done");
     return result;
@@ -493,6 +509,7 @@ export async function runWorkflow(
     record.finish(signal.aborted ? "cancelled" : "failed", message);
     throw err;
   } finally {
+    closeControl?.();
     if (quiet) clearInterval(quiet);
     (mod?.dispose as (() => void) | undefined)?.();
   }
