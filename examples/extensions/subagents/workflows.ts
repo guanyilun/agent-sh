@@ -361,7 +361,9 @@ export async function runWorkflow(
         return {
           // Numbered on call; run after the turn before it.
           ask: (task, options) => {
-            const spec = toSpec(name, task, { ...base, ...options });
+            const merged = { ...base, ...options };
+            if (options?.model !== undefined && options.provider === undefined) delete merged.provider;   // as in Python
+            const spec = toSpec(name, task, merged);
             const seq = ++runs;
             const here = scope();
             const id = `${sid}:${++turns}`;

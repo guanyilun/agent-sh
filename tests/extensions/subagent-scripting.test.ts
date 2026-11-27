@@ -158,3 +158,25 @@ test("python: config.steerDir hands <label>.steer.md to that agent once, renames
     assert.ok(!left.includes("w1.steer.md") && left.some(f => /^w1\.steer\.sent_\d{6}\.md$/.test(f)), left.join(","));
   } finally { s.cleanup(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("python: provider:model in Agent; a turn's model override does not inherit the agent's provider", { skip: spawnSync("python3", ["--version"]).status !== 0 }, async () => {
+  const s = setup({ reply: (o) => ({ content: `answer to ${lastUser(o)}` }) });
+  try {
+    wf(s, "prov.py", [
+      "from agentsh import Agent, RunError",
+      "async def main():",
+      '    a = Agent(model="nope:m1", tools=[])',
+      '    first = await a.ask("plain id: nope is no provider")',
+      '    b = Agent(model="m1", provider="unknown-provider", tools=[])',
+      '    second = await b.ask("override", model="m2")',
+      "    try:",
+      '        await b.ask("inherits")',
+      '        third = "ran"',
+      "    except RunError as e:",
+      '        third = "refused"',
+      '    return f"{first} | {second} | {third}"',
+    ].join("\n"));
+    const r = await s.exec("run_workflow", { name: "prov" });
+    assert.equal(body(r), "answer to plain id: nope is no provider | answer to override | refused");
+  } finally { s.cleanup(); }
+});

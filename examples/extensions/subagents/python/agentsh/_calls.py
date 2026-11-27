@@ -85,7 +85,10 @@ class Agent:
         overrides = {name: value for name, value in dict(model=model, thinking=thinking, label=label,
                                                          maxSteps=max_steps, provider=provider,
                                                          onCut=on_cut).items() if value is not None}
-        spec = _spec(task, self._name, returns, **{**self._options, **overrides})
+        options = dict(self._options)
+        if model is not None and provider is None:
+            options.pop("provider", None)     # a turn's model names its own provider ("codex:gpt-6-luna"), or the run's
+        spec = _spec(task, self._name, returns, **{**options, **overrides})
         self._turns += 1
         turn_id, previous = f"{self._id}:{self._turns}", self._last_turn
 
