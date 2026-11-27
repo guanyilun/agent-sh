@@ -68,13 +68,16 @@ plan = await run("Split this goal into tasks: ...", agent="plan", returns=Plan)
 | `returns` | a dataclass; the answer comes back as an instance instead of as text. |
 | `tools` | for a plain agent, the tools it may use; `[]` for none. Named agents keep their own. |
 | `system` | for a plain agent, its role and rules. Not allowed together with `agent`. |
-| `model` | override the model for this call. |
-| `thinking` | how hard the model reasons: `"low"`, `"high"`, or `"off"`. Left out, the agent uses your agent-sh thinking level. |
+| `role` | a role from the agent-sh settings (`subagents.roles`) or the run's `config.roles`: its model, provider and thinking. Name roles, not models, in programs you keep. |
+| `model` | the model for this call, directly: `"codex:gpt-6-luna"` or `"flatiron:moonshotai/Kimi-K3"` (the prefix names the provider), or a bare id on the run's provider. Wins over the role's model, keeping the role's thinking. A role name here works as `role=`. |
+| `provider` | a provider for a bare `model` id; rarely needed, since the id can carry it. |
+| `thinking` | how hard the model reasons: `"off"`, `"low"`, `"medium"`, `"high"`; codex models also `"xhigh"` and `"max"` (others get `"high"` for those). Wins over the role's. Left out: the role's, else your agent-sh thinking level. |
 | `label` | the name shown for it in progress lines. |
 | `write` | paths the agent may write (files under them); `[]` makes it read-only. A tripwire on its `write_file`/`edit_file` and the visible writes of its shell commands, inside the run's sandbox: it stops a reviewer saving scratch files into the code it reviews, not a determined escape. |
 | `max_steps` | the most tool-using steps this call may take (default: `config` `maxIterations`). |
 | `live` | a file the workflow rewrites while the agent works: re-read before every model call and shown to the agent as `<dynamic_context>` (outside the cached prompt).  Use it for the time, new instructions, new facts.  Missing or empty adds nothing. |
 | `env` | shell text run before every shell command of this agent (`"source env.sh >/dev/null 2>&1; export X=1; umask 077"`): its environment. The agent neither sees nor types it, so it cannot forget it; the transcript keeps the agent's own command. |
+| `on_cut` | with `returns`: an agent stopped at `max_steps` or the token budget before submitting raises `RunCut` (default); `"extract"` has a model rebuild the shape from its partial text instead. |
 | `context_tokens` | compact the run once its prompt passes this many tokens, instead of only near the model's context window: old tool output is cleared (the agent can read the file or run the command again), and a very long run also loses its middle steps. A long tool-using run re-sends mostly old tool output on every call; a lower trigger keeps its prompts small. |
 
 `run` starts the agent immediately and returns an awaitable. Start several and wait for them together:
@@ -83,7 +86,7 @@ plan = await run("Split this goal into tasks: ...", agent="plan", returns=Plan)
 first, second = await asyncio.gather(run("..."), run("..."))
 ```
 
-A run that fails (a model or tool error, or an answer that never fitted `returns`) raises `RunError`.
+A run that fails (a model or tool error, or an answer that never fitted `returns`) raises `RunError`; one cut before it submitted its `returns` shape raises `RunCut`, a `RunError` with `.reason` (`"iterations"` or `"budget"`) and `.partial` (its last text).
 
 **Every agent starts from nothing.** It sees only its task: not your variables, not other agents' answers, not earlier calls. Put everything it needs into the task text, including file paths and the earlier results it should build on.
 
@@ -95,9 +98,22 @@ draft = await worker.ask("Write the function described in SPEC.md.")
 fixed = await worker.ask(f"The tests fail:\n{output}\nFix it.")      # it remembers the first turn
 ```
 
-`Agent(name, ...)` takes `tools`, `system`, `model`, `thinking`, `label`, `write`, `live`, `env`, `context_tokens` and `history_from`, which apply to every turn; `ask(task, ...)` takes `returns`, `model`, `thinking`, `label` and `max_steps`. Turns run one at a time. Use it for repair loops, where restating the history to a fresh agent would cost more and lose detail.
+`Agent(name, ...)` takes `role`, `model`, `provider`, `thinking`, `tools`, `system`, `label`, `write`, `live`, `env`, `context_tokens` and `history_from`, which apply to every turn; `ask(task, ...)` takes `returns`, `role`, `model`, `provider`, `thinking`, `label`, `max_steps` and `on_cut` for that turn. Turns run one at a time, in the order asked. Use it for repair loops, where restating the history to a fresh agent would cost more and lose detail.
 
-**Talking to it while it works.** `worker.steer("use 50 iterations, not 150")` queues a message that the agent gets once, between its tool rounds, as a user message that stays in the conversation; the delivery is logged in its transcript. If the agent is idle, the message leads its next turn. Use `steer` for a correction or a new fact, and `live` for state that changes all the time (the clock, a budget).
+`name` is a **named agent** (the table below: a prompt, tools and limits written for a kind of work); `role=` is a **model choice** from the settings. They combine: `Agent("reviewer", role="cheap")`.
+
+**Changing the model for one turn.** `ask(..., role="reviewer")` replaces the agent's model choice for that turn. `ask(..., model="codex:gpt-6-luna")` does too, and does not inherit the agent's provider (a bare id goes to the run's provider). Keep one model per conversation where you can: switching mid-conversation re-sends the whole history to a model that has not cached it.
+
+**A cut turn.** If a turn with `returns` is stopped at its step limit or budget, `ask` raises `RunCut`, and the turn's finished steps stay in the conversation, so the usual repair is to ask again:
+
+```python
+try:
+    report = await worker.ask(task, returns=Report)
+except RunCut:
+    report = await worker.ask("You were stopped before submitting. Submit your answer now from what you found.", returns=Report)
+```
+
+**Talking to it while it works.** `worker.steer("use 50 iterations, not 150")` queues a message that the agent gets once, between its tool rounds, as a user message that stays in the conversation; the delivery is logged in its transcript. If the agent is idle, the message leads its next turn. Use `steer` for a correction or a new fact, and `live` for state that changes all the time (the clock, a budget). `await worker.steers()` lists what the agent has received so far, from `steer()` and from steer files (`config.steerDir`), for showing a reviewer what it was told. An overseer outside the program steers by file or through the control socket (see the file's settings below); say in the task that such messages are part of it, or a careful agent may only note them.
 
 **Continuing after an interruption.** Every step an agent takes is in its transcript, so a conversation outlives the run:
 
@@ -114,7 +130,7 @@ await worker.ask("You were interrupted. Your work so far is above and your files
 
 The new agent starts from everything the old one said and did, a cut turn included up to its last complete step; conversations that were themselves continued are followed back. Within one run, a turn that fails part-way (an outage longer than the retries) leaves its finished steps in the conversation, so the next `ask` continues from them.
 
-**A silent endpoint.** A model call that has sent nothing for four minutes is retried as a network failure. Before an agent's first response the retries are few, so a dead endpoint fails the call within minutes and your program can move to another model; after it, a call is retried for up to 45 minutes, because by then the agent has work in memory worth keeping.
+**Failures and retries.** A transient failure (a cut stream, 429/5xx, "overloaded", a call that has sent nothing for four minutes) is retried on the same model. Before an agent's first response the retries are few, so a dead endpoint fails within minutes and your program can choose another model; after it, a call is retried for 45 minutes, because by then the agent has work in memory worth keeping. `config.retry = dict(firstCall=True, windowMin=45)` applies the window from the first call, for a program that would never switch models anyway.
 
 ### `race(*attempts, accept=...)`: first good result wins
 
