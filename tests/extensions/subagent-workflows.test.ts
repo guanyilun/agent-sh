@@ -319,3 +319,14 @@ test("config.control: a 0600 socket answers status and steers a running agent by
     assert.equal(existsSync(sock), false);
   } finally { s.cleanup(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("provider:model ids: split only when the prefix is a provider the backend resolves; an explicit provider wins", async () => {
+  const { splitProviderModel } = await import("../../examples/extensions/subagents/models.js");
+  const known = (p: string) => p === "flatiron" || p === "codex";
+  assert.deepEqual(splitProviderModel({ model: "flatiron:moonshotai/Kimi-K3" }, known), { model: "moonshotai/Kimi-K3", provider: "flatiron" });
+  assert.deepEqual(splitProviderModel({ model: "codex:gpt-6-luna", thinking: "max" } as any, known), { model: "gpt-6-luna", provider: "codex", thinking: "max" });
+  assert.deepEqual(splitProviderModel({ model: "llama3:8b" }, known), { model: "llama3:8b" });
+  assert.deepEqual(splitProviderModel({ model: "org/model:tag" }, known), { model: "org/model:tag" });
+  assert.deepEqual(splitProviderModel({ model: "codex:gpt-6-luna", provider: "other" }, known), { model: "codex:gpt-6-luna", provider: "other" });
+  assert.deepEqual(splitProviderModel({ model: "plain" }, known), { model: "plain" });
+});

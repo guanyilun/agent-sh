@@ -12,6 +12,7 @@ import { discoverAgents, findAgent, fromRegistration, type AgentDef, type AgentR
 import { describe, JobTable, type JobOutcome } from "./jobs.js";
 import { Semaphore } from "./semaphore.js";
 import { controlProblem } from "./control.js";
+import { splitProviderModel } from "./models.js";
 import { RunStore } from "./runs.js";
 import { coerce, example, normalizeSchema, validate } from "./schema.js";
 import * as os from "node:os";
@@ -698,12 +699,13 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   }
 
   async function runOne(
-    spec: TaskSpec,
+    given: TaskSpec,
     def: AgentDef | undefined,
     signal?: AbortSignal,
     progress?: (line: string) => void,
     extra: RunExtras = {},
   ): Promise<string> {
+    const spec = splitProviderModel(given, isProvider);
     const llmClient = clientFor(spec, def);
 
     const cwd = ctx.call("cwd") as string;
@@ -806,6 +808,14 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   // backend; the key never leaves it), so one workflow can mix providers.  Kept per provider and model.
   const providerClients = new Map<string, SubagentOptions["llmClient"]>();
   const providerHeaders = new Map<string, ((info: { sessionId?: string }) => Record<string, string>) | undefined>();
+  /** A provider the agent backend can resolve (registered and signed in); a yes is remembered, a no asked again. */
+  const known = new Set<string>();
+  function isProvider(name: string): boolean {
+    if (known.has(name)) return true;
+    try { if (ctx.call("agent:resolve-endpoint", { provider: name, id: "" })) known.add(name); } catch { /* not a provider */ }
+    return known.has(name);
+  }
+
   function clientFor(spec: TaskSpec, def: AgentDef | undefined): SubagentOptions["llmClient"] {
     const base = ctx.call("llm:get-client") as SubagentOptions["llmClient"] | undefined;
     if (!base) throw new Error("no LLM client available");
