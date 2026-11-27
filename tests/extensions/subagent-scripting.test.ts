@@ -1,7 +1,8 @@
 /** Workflow scripting ergonomics: schema shorthand, dedented tasks, run(agent, task, options), map(), declared args. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { normalizeSchema, validate, example } from "../../examples/extensions/subagents/schema.js";
@@ -106,5 +107,98 @@ test("a .py file in the workflows folder is listed and runs through run_workflow
     assert.match(s.description("run_workflow"), /- greet: Greets twice/);
     const r = await s.exec("run_workflow", { name: "greet", args: "--name there" });
     assert.equal(body(r), "answer to hello there | answer to bye there");
+  } finally { s.cleanup(); }
+});
+
+test("python: a shaped turn cut at its step limit raises RunCut with its reason", { skip: spawnSync("python3", ["--version"]).status !== 0 }, async () => {
+  let n = 0;
+  const s = setup({ reply: () => ({ tool_calls: [{ index: 0, id: `c${++n}`, function: { name: "grep", arguments: "{}" } }] }) });
+  try {
+    wf(s, "cut.py", [
+      "from dataclasses import dataclass",
+      "from agentsh import Agent, RunCut, RunError",
+      "@dataclass",
+      "class Out:",
+      "    ok: bool",
+      "async def main():",
+      '    worker = Agent(tools=["grep"])',
+      "    try:",
+      '        await worker.ask("t", returns=Out, max_steps=2)',
+      "    except RunCut as cut:",
+      '        return f"cut {cut.reason} {isinstance(cut, RunError)}"',
+      '    return "not cut"',
+    ].join("\n"));
+    const r = await s.exec("run_workflow", { name: "cut" });
+    assert.equal(body(r), "cut iterations True");
+    assert.equal(s.invokes.length, 0);
+  } finally { s.cleanup(); }
+});
+
+test("python: config.steerDir hands <label>.steer.md to that agent once, renames it, and steers() lists it", { skip: spawnSync("python3", ["--version"]).status !== 0 }, async () => {
+  let n = 0;
+  const dir = mkdtempSync(join(tmpdir(), "steers-"));
+  const steerDir = () => dir;
+  const s = setup({
+    reply: () => (++n === 1 ? { tool_calls: [{ index: 0, id: "c1", function: { name: "grep", arguments: "{}" } }] } : { content: "done" }),
+    before: (h) => h.define("run:config", () => ({ base: "/", steerDir: dir })),
+  });
+  try {
+    writeFileSync(join(steerDir(), "w1.steer.md"), "use the f150 band\n");
+    wf(s, "steered.py", [
+      "from agentsh import Agent",
+      "async def main():",
+      '    worker = Agent(tools=["grep"], label="w1")',
+      '    await worker.ask("t")',
+      '    return "|".join(await worker.steers())',
+    ].join("\n"));
+    const r = await s.exec("run_workflow", { name: "steered" });
+    assert.equal(body(r), "use the f150 band");
+    assert.ok(s.calls[1]!.messages.some(m => m.role === "user" && String(m.content).includes("f150")), "delivered after the tool round");
+    const left = readdirSync(steerDir());
+    assert.ok(!left.includes("w1.steer.md") && left.some(f => /^w1\.steer\.sent_\d{6}\.md$/.test(f)), left.join(","));
+  } finally { s.cleanup(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("python: provider:model in Agent; a turn's model override does not inherit the agent's provider", { skip: spawnSync("python3", ["--version"]).status !== 0 }, async () => {
+  const s = setup({ reply: (o) => ({ content: `answer to ${lastUser(o)}` }) });
+  try {
+    wf(s, "prov.py", [
+      "from agentsh import Agent, RunError",
+      "async def main():",
+      '    a = Agent(model="nope:m1", tools=[])',
+      '    first = await a.ask("plain id: nope is no provider")',
+      '    b = Agent(model="m1", provider="unknown-provider", tools=[])',
+      '    second = await b.ask("override", model="m2")',
+      "    try:",
+      '        await b.ask("inherits")',
+      '        third = "ran"',
+      "    except RunError as e:",
+      '        third = "refused"',
+      '    return f"{first} | {second} | {third}"',
+    ].join("\n"));
+    const r = await s.exec("run_workflow", { name: "prov" });
+    assert.equal(body(r), "answer to plain id: nope is no provider | answer to override | refused");
+  } finally { s.cleanup(); }
+});
+
+test("python: Agent(role=...) and ask(role=...) resolve through the settings' roles", { skip: spawnSync("python3", ["--version"]).status !== 0 }, async () => {
+  const s = setup({ reply: (o) => ({ content: `answer to ${lastUser(o)}` }), usage: 5,
+                    settings: { roles: { worker: { model: "m-worker" }, reviewer: { model: "m-reviewer", thinking: "high" } } } });
+  try {
+    wf(s, "roles.py", [
+      "from agentsh import Agent, RunError",
+      "async def main():",
+      '    a = Agent(role="worker", tools=[])',
+      '    first = await a.ask("one")',
+      '    second = await a.ask("two", role="reviewer")',
+      "    try:",
+      '        await Agent(role="ghost", tools=[]).ask("three")',
+      '        third = "ran"',
+      "    except RunError as e:",
+      '        third = "refused" if "unknown role" in str(e) else str(e)',
+      '    return f"{first} | {second} | {third}"',
+    ].join("\n"));
+    const r = await s.exec("run_workflow", { name: "roles" });
+    assert.equal(body(r), "answer to one | answer to two | refused");
   } finally { s.cleanup(); }
 });

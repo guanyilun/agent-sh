@@ -709,6 +709,8 @@ export class AgentLoop implements AgentBackend {
   /** Check if an error is retryable (transient). */
   private isRetryable(e: unknown): boolean {
     if (!(e instanceof Error)) return false;
+    // "Our servers are currently overloaded" (codex, 2026-11-25: 8 of 20 retries the workflows did themselves)
+    if (e.message.toLowerCase().includes("overloaded")) return true;
     const proxyError = e as Error & { type?: string; error?: { retryable?: unknown } };
     if (proxyError.type === "codex_proxy_error" && llmErrorStatus(e) !== undefined
         && typeof proxyError.error?.retryable === "boolean") {
@@ -736,7 +738,7 @@ export class AgentLoop implements AgentBackend {
 
     // HTTP status-based (OpenAI SDK includes status in error)
     const status = llmErrorStatus(e);
-    if (status === 429 || status === 500 || status === 502 || status === 503 || status === 529) {
+    if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || status === 529) {
       return true;
     }
 
@@ -1597,7 +1599,8 @@ export class AgentLoop implements AgentBackend {
     let empties = 0;
     // The long window exists to keep a run's earlier steps through an outage.  Before the run's first response there
     // are none: fail after the fixed few attempts, so the caller can move to another model within minutes.
-    const window = this.runState && this.responded.has(this.runState) ? this.runState.options.retryWindowMs ?? 0 : 0;
+    const window = this.runState && (this.responded.has(this.runState) || this.runState.options.retryFirstCall)
+      ? this.runState.options.retryWindowMs ?? 0 : 0;
     let firstFailure: number | undefined;
     for (let attempt = 0; ; attempt++) {
       try {

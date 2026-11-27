@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 import { discoverAgents, findAgent, fromRegistration, type AgentDef, type AgentRegistration } from "./agents.js";
 import { describe, JobTable, type JobOutcome } from "./jobs.js";
 import { Semaphore } from "./semaphore.js";
+import { controlProblem } from "./control.js";
+import { applyRole, rolesProblems, splitProviderModel, type RoleDef, type RoleEntry } from "./models.js";
 import { RunStore } from "./runs.js";
 import { coerce, example, normalizeSchema, validate } from "./schema.js";
 import * as os from "node:os";
@@ -45,14 +47,17 @@ const PARENT_CONTEXT_CHARS = 12_000;
 /** Above this, fan-out answers are clipped to a share each; `resume` re-reads one in full. */
 const FANOUT_RESULT_CHARS = 24_000;
 
-interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string; env?: string; contextTokens?: number }
+interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; role?: string; write?: string[]; maxSteps?: number; live?: string; env?: string; contextTokens?: number }
 
-const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python"];
+const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python", "retry", "steerDir", "control", "roles"];
+const RETRY_KEYS = ["windowMin", "firstCall"];
 
 interface RunFileConfig {
   base: string;
   agents?: string | string[];
-  concurrency?: number;
+  /** Agents working at once: a number, or a dict of limits by "provider:model", provider or model, with "default"
+   *  for everything else (each key its own pool), e.g. { default: 4, codex: 20, "flatiron:XiaomiMiMo/MiMo-V2.6-Pro-MOPD": 1 }. */
+  concurrency?: number | Record<string, number>;
   maxIterations?: number;
   maxRuns?: number;
   budgetTokens?: number;
@@ -60,6 +65,15 @@ interface RunFileConfig {
    *  resent conversation again. */
   budgetUncached?: number;
   python?: string;
+  /** Transient model-call failures: keep retrying the same model for windowMin minutes (default 45) from the first
+   *  failure; firstCall: also before the agent's first response (default false: the fixed few attempts there). */
+  retry?: { windowMin?: number; firstCall?: boolean };
+  /** A folder (relative to the run file) where `<label>.steer.md` steers the running agent of that label once. */
+  steerDir?: string;
+  /** A Unix socket path (relative to the run file) for the run's control socket: status and steer by label. */
+  control?: string;
+  /** Role name -> model, provider, thinking, over the agent-sh settings' subagents.roles for this run. */
+  roles?: Record<string, RoleEntry>;
 }
 
 interface RunFileRequest {
@@ -84,6 +98,7 @@ interface RunExtras {
   onHistory?: (messages: unknown[]) => void;
   onMeta?: (meta: SubagentRunMeta) => void;
   steer?: () => string[];
+  onDegraded?: (reason: "iterations" | "budget") => void;
 }
 
 export default function activate(ctx: ExtensionContext & AgentContext): void {
@@ -93,16 +108,22 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   const settings = {
     ...ctx.getExtensionSettings("subagents", {
       maxConcurrency: 4, maxIterations: 25, maxRunsPerWorkflow: 50, backgroundWake: true, workflowTokenBudget: 0,
+      roles: {} as Record<string, RoleEntry>,
     }),
     ...definedOnly({
-      maxConcurrency: runConfig?.concurrency,
+      maxConcurrency: typeof runConfig?.concurrency === "object" ? runConfig.concurrency.default : runConfig?.concurrency,
       maxIterations: runConfig?.maxIterations,
       maxRunsPerWorkflow: runConfig?.maxRuns,
       workflowTokenBudget: runConfig?.budgetTokens,
       backgroundWake: runConfig ? false : undefined,
     }),
   };
-  if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS] }));
+  if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS], problems: [...p.problems, ...retryProblems(runConfig.retry), ...concurrencyProblems(runConfig.concurrency), ...controlProblems(runConfig), ...rolesProblems(runConfig.roles, "config.roles")] }));
+  const roles: Record<string, RoleEntry> = { ...(settings.roles ?? {}) };
+  for (const [name, def] of Object.entries(runConfig?.roles ?? {}))
+    roles[name] = typeof def === "string" || typeof roles[name] !== "object" ? def : { ...(roles[name] as RoleDef), ...def };
+  const retryWindowMs = (runConfig?.retry?.windowMin ?? 45) * 60_000;
+  const retryFirstCall = runConfig?.retry?.firstCall ?? false;
   // A path (e.g. a venv's interpreter) is relative to the run file; a bare name is looked up on PATH.
   const python = runConfig?.python?.includes("/") ? path.resolve(runConfig.base, runConfig.python) : runConfig?.python;
   const runAgentDirs = [runConfig?.agents ?? []].flat().map(d => path.resolve(runConfig!.base, d));
@@ -116,6 +137,17 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   // Shared by foreground and background runs so background work can't flood the provider.
   const slots = new Semaphore(Math.max(1, settings.maxConcurrency));
   const finished = new FinishedSubagents<TaskSpec>();
+  // Per-provider or per-model pools (capacity-limited models next to uncapped ones), created on first use.
+  const limits = typeof runConfig?.concurrency === "object" ? runConfig.concurrency : {};
+  const pools = new Map<string, Semaphore>();
+  const slotFor = (spec: TaskSpec, def: AgentDef | undefined): Semaphore => {
+    const model = spec.model ?? def?.model;
+    const key = [spec.provider && model && `${spec.provider}:${model}`, spec.provider, model]
+      .find((k): k is string => !!k && k !== "default" && typeof limits[k] === "number");
+    if (!key) return slots;
+    if (!pools.has(key)) pools.set(key, new Semaphore(Math.max(1, limits[key]!)));
+    return pools.get(key)!;
+  };
 
   // Status goes in dynamic context, results come back as tool results, and a
   // short note wakes the agent only when it's idle with unread results.
@@ -542,6 +574,8 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         maxRuns: settings.maxRunsPerWorkflow,
       }, opts.signal, opts.progress, {
         run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, budgetUncached: opts.budgetUncached, module: opts.module, quietMs: opts.quietMs, python,
+        steerDir: runConfig?.steerDir ? path.resolve(runConfig.base, runConfig.steerDir) : undefined,
+        controlPath: runConfig?.control && !opts.dryRun ? path.resolve(runConfig.base, runConfig.control) : undefined,
       });
       return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
     } catch (err) {
@@ -615,6 +649,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
 
   async function dryRunTask(spec: RunSpec, ctl: TaskControl): Promise<TaskResult> {
     if (spec.agent && !findAgent(loadAgents(), spec.agent)) throw new Error(`unknown agent: ${spec.agent}`);
+    applyRole(spec, roles);
     const firstLine = spec.task.split("\n")[0]!.slice(0, 120);
     const value = spec.schema ? example(normalizeSchema(spec.schema)) : undefined;
     ctl.progress(`(dry run) ${firstLine}${value === undefined ? "" : ` → ${JSON.stringify(value)}`}`);
@@ -650,13 +685,15 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         return { content: notes.length ? `Recorded (adjusted: ${notes.slice(0, 5).join("; ")}).` : "Recorded.", exitCode: 0, isError: false };
       },
     };
+    let degraded: "iterations" | "budget" | undefined;
     const text = await runOne(spec, def, ctl.signal, ctl.progress, {
       ...ctl,
       extraTools: [submit],
       systemNote: `When you are done, call ${SUBMIT_TOOL} with your result.`,
       shouldStop: () => submitted !== undefined,
+      onDegraded: (reason) => { degraded = reason; },
     });
-    return { text, value: submitted?.value };
+    return { text, value: submitted?.value, degraded };
   }
 
   function readLive(file: string): string {
@@ -669,12 +706,13 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   }
 
   async function runOne(
-    spec: TaskSpec,
+    given: TaskSpec,
     def: AgentDef | undefined,
     signal?: AbortSignal,
     progress?: (line: string) => void,
     extra: RunExtras = {},
   ): Promise<string> {
+    const spec = splitProviderModel(applyRole(given, roles), isProvider);
     const llmClient = clientFor(spec, def);
 
     const cwd = ctx.call("cwd") as string;
@@ -724,7 +762,8 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     ].filter(Boolean).join("\n\n");
 
     const meta: SubagentRunMeta = {};
-    await slots.acquire();
+    const slot = slotFor(spec, def);
+    await slot.acquire();
     let text: string;
     try {
       if (signal?.aborted) throw new Error("cancelled");
@@ -753,15 +792,17 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         requestHeaders: requestHeadersFor(spec, def, systemPrompt, extra.history),
         // a workflow's agents run unattended for hours: ride out an endpoint outage inside the run (its steps are in
         // memory) rather than fail it and lose them (a 104-min critic turn lost to a cut stream, 2026-11-03)
-        retryWindowMs: 45 * 60_000,
+        retryWindowMs,
+        retryFirstCall,
         firstByteTimeoutMs: FIRST_BYTE_MS,
         contextTokens: spec.contextTokens,
         steer: extra.steer,
       });
       if (meta.messages) extra.onHistory?.(meta.messages);
       extra.onMeta?.(meta);
+      if (meta.degraded === "iterations" || meta.degraded === "budget") extra.onDegraded?.(meta.degraded);
     } finally {
-      slots.release();
+      slot.release();
     }
     progress?.(signal?.aborted ? "cancelled"
       : meta.degraded === "iterations" ? "stopped: step limit reached"
@@ -774,6 +815,14 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   // backend; the key never leaves it), so one workflow can mix providers.  Kept per provider and model.
   const providerClients = new Map<string, SubagentOptions["llmClient"]>();
   const providerHeaders = new Map<string, ((info: { sessionId?: string }) => Record<string, string>) | undefined>();
+  /** A provider the agent backend can resolve (registered and signed in); a yes is remembered, a no asked again. */
+  const known = new Set<string>();
+  function isProvider(name: string): boolean {
+    if (known.has(name)) return true;
+    try { if (ctx.call("agent:resolve-endpoint", { provider: name, id: "" })) known.add(name); } catch { /* not a provider */ }
+    return known.has(name);
+  }
+
   function clientFor(spec: TaskSpec, def: AgentDef | undefined): SubagentOptions["llmClient"] {
     const base = ctx.call("llm:get-client") as SubagentOptions["llmClient"] | undefined;
     if (!base) throw new Error("no LLM client available");
@@ -900,4 +949,31 @@ function specName(s: TaskSpec): string {
 
 function toolResult(o: JobOutcome) {
   return { content: o.content, exitCode: o.isError ? 1 : 0, isError: o.isError };
+}
+
+function retryProblems(retry: unknown): string[] {
+  if (retry === undefined) return [];
+  if (!retry || typeof retry !== "object" || Array.isArray(retry)) return ["config.retry must be a dict(windowMin=..., firstCall=...)"];
+  const r = retry as Record<string, unknown>;
+  return [
+    ...Object.keys(r).filter(k => !RETRY_KEYS.includes(k)).map(k => `config.retry.${k} isn't a retry option (${RETRY_KEYS.join(", ")}).`),
+    ...(r.windowMin !== undefined && !(typeof r.windowMin === "number" && r.windowMin >= 0) ? ["config.retry.windowMin must be a number of minutes >= 0"] : []),
+    ...(r.firstCall !== undefined && typeof r.firstCall !== "boolean" ? ["config.retry.firstCall must be true or false"] : []),
+  ];
+}
+
+function concurrencyProblems(concurrency: unknown): string[] {
+  if (concurrency === undefined || typeof concurrency === "number") return [];
+  if (!concurrency || typeof concurrency !== "object" || Array.isArray(concurrency))
+    return ["config.concurrency must be a number or a dict of limits (\"default\", provider, provider:model or model)"];
+  return Object.entries(concurrency as Record<string, unknown>)
+    .filter(([, v]) => !(typeof v === "number" && Number.isInteger(v) && v >= 1))
+    .map(([k]) => `config.concurrency.${k} must be a whole number >= 1`);
+}
+
+function controlProblems(config: RunFileConfig): string[] {
+  if (config.control === undefined) return [];
+  if (typeof config.control !== "string" || !config.control) return ["config.control must be a socket path (relative to the run file)"];
+  const problem = controlProblem(path.resolve(config.base, config.control));
+  return problem ? [problem] : [];
 }

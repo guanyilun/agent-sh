@@ -226,3 +226,135 @@ test("research splits the question, researches the parts in parallel, checks the
     assert.match(lastUser(s.calls[0]!), /at most 3 independent sub-questions[\s\S]*why is the sky blue/);
   } finally { s.cleanup(); }
 });
+
+test("a shaped run cut at its step limit fails with a cut error, unless onCut is extract", async () => {
+  let n = 0;
+  const s = setup({
+    reply: () => ({ tool_calls: [{ index: 0, id: `c${++n}`, function: { name: "grep", arguments: "{}" } }] }),
+    invoke: () => '{"ok": true}',
+  });
+  try {
+    userWf(s, "cut.ts", 'export default async ({ run }) => (await run({ task: "t", tools: ["grep"], maxSteps: 2, schema: { ok: { type: "boolean" } } })).ok;\n');
+    let r = await s.exec("run_workflow", { name: "cut" });
+    assert.equal(r.isError, true);
+    assert.match(String(r.content), /cut: the agent stopped at its step limit before submitting/);
+    assert.equal(s.invokes.length, 0);
+
+    userWf(s, "cutx.ts", 'export default async ({ run }) => (await run({ task: "t", tools: ["grep"], maxSteps: 2, onCut: "extract", schema: { ok: { type: "boolean" } } })).ok;\n');
+    r = await s.exec("run_workflow", { name: "cutx" });
+    assert.equal(body(r), "true");
+    assert.equal(s.invokes.length, 1);
+  } finally { s.cleanup(); }
+});
+
+test("config.concurrency as a dict: a model's own pool, the rest in the default pool", async () => {
+  const active: Record<string, number> = {};
+  const peak: Record<string, number> = {};
+  const s = setup({
+    reply: async (o) => {
+      const which = lastUser(o).startsWith("slow") ? "slow" : "fast";
+      active[which] = (active[which] ?? 0) + 1;
+      peak[which] = Math.max(peak[which] ?? 0, active[which]!);
+      await new Promise(r => setTimeout(r, 40));
+      active[which]!--;
+      return { content: "ok" };
+    },
+    before: (h) => h.define("run:config", () => ({ base: "/", concurrency: { default: 3, "slow-model": 1 } })),
+  });
+  try {
+    userWf(s, "pools.ts", [
+      "export default async ({ run }) => {",
+      '  await Promise.all([1, 2, 3].flatMap(i => [run({ task: `slow ${i}`, tools: [], model: "slow-model" }), run({ task: `fast ${i}`, tools: [] })]));',
+      '  return "done";',
+      "};",
+    ].join("\n"));
+    const r = await s.exec("run_workflow", { name: "pools" });
+    assert.equal(body(r), "done");
+    assert.equal(peak.slow, 1);
+    assert.equal(peak.fast, 3);
+  } finally { s.cleanup(); }
+});
+
+test("config.control: a 0600 socket answers status and steers a running agent by label, then is removed", async () => {
+  const { mkdtempSync, rmSync, statSync, existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const net = await import("node:net");
+  const dir = mkdtempSync(join(tmpdir(), "ctl-"));
+  const sock = join(dir, "c.sock");
+  const ask = (req: unknown) => new Promise<any>((resolve, reject) => {
+    const c = net.createConnection(sock, () => c.write(JSON.stringify(req) + "\n"));
+    let buf = "";
+    c.on("data", (d) => { buf += d; if (buf.includes("\n")) { resolve(JSON.parse(buf)); c.end(); } });
+    c.on("error", reject);
+  });
+  const seen: any[] = [];
+  let n = 0;
+  const s = setup({
+    reply: async (o) => {
+      if (++n === 1) {
+        seen.push((statSync(sock).mode & 0o777).toString(8));
+        seen.push(await ask({ method: "status" }));
+        seen.push(await ask({ method: "steer", label: "w1", text: "use the f150 band" }));
+        seen.push(await ask({ method: "steer", label: "nobody", text: "x" }));
+        seen.push(await ask({ method: "stop" }));
+        return { tool_calls: [{ index: 0, id: "c1", function: { name: "grep", arguments: "{}" } }] };
+      }
+      seen.push(o.messages.some(m => m.role === "user" && String(m.content).includes("f150")));
+      return { content: "done" };
+    },
+    before: (h) => h.define("run:config", () => ({ base: dir, control: "c.sock" })),
+  });
+  try {
+    userWf(s, "ctl.ts", 'export default async ({ run }) => run({ task: "t", tools: ["grep"], label: "w1" });\n');
+    const r = await s.exec("run_workflow", { name: "ctl" });
+    assert.equal(body(r), "done");
+    const [mode, status, steer, missing, stop, delivered] = seen;
+    assert.equal(mode, "600");
+    assert.equal(status.ok, true);
+    assert.deepEqual(status.agents.map((a: any) => [a.label, a.state]), [["w1", "working"]]);
+    assert.deepEqual(steer, { ok: true, queued: [1] });
+    assert.match(missing.error, /no running agent labelled nobody \(running: w1\)/);
+    assert.match(stop.error, /offers status and steer/);
+    assert.equal(delivered, true);
+    assert.equal(existsSync(sock), false);
+  } finally { s.cleanup(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("provider:model ids: split only when the prefix is a provider the backend resolves; an explicit provider wins", async () => {
+  const { splitProviderModel } = await import("../../examples/extensions/subagents/models.js");
+  const known = (p: string) => p === "flatiron" || p === "codex";
+  assert.deepEqual(splitProviderModel({ model: "flatiron:moonshotai/Kimi-K3" }, known), { model: "moonshotai/Kimi-K3", provider: "flatiron" });
+  assert.deepEqual(splitProviderModel({ model: "codex:gpt-6-luna", thinking: "max" } as any, known), { model: "gpt-6-luna", provider: "codex", thinking: "max" });
+  assert.deepEqual(splitProviderModel({ model: "llama3:8b" }, known), { model: "llama3:8b" });
+  assert.deepEqual(splitProviderModel({ model: "org/model:tag" }, known), { model: "org/model:tag" });
+  assert.deepEqual(splitProviderModel({ model: "codex:gpt-6-luna", provider: "other" }, known), { model: "codex:gpt-6-luna", provider: "other" });
+  assert.deepEqual(splitProviderModel({ model: "plain" }, known), { model: "plain" });
+});
+
+test("roles: settings and config.roles give model and thinking; explicit model wins; unknown roles are refused", async () => {
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const s = setup({
+    reply: () => ({ content: "ok" }), usage: 5,
+    settings: { roles: { main: { model: "m-worker", thinking: "high" }, worker: "main", reviewer: { model: "m-old" } } },
+    before: (h) => h.define("run:config", () => ({ base: "/", roles: { reviewer: { model: "m-reviewer" } } })),
+  });
+  try {
+    userWf(s, "roles.ts", [
+      "export default async ({ run }) => {",
+      '  await run({ task: "a", tools: [], role: "worker" });',
+      '  await run({ task: "b", tools: [], role: "reviewer" });',
+      '  await run({ task: "c", tools: [], role: "worker", model: "m-explicit" });',
+      '  await run({ task: "c2", tools: [], model: "reviewer" });',
+      '  await run({ agent: "explore", task: "c3", role: "worker" });',
+      '  try { await run({ task: "d", tools: [], role: "nobody" }); return "ran"; } catch (e) { return String(e.message); }',
+      "};",
+    ].join("\n"));
+    const r = await s.exec("run_workflow", { name: "roles" });
+    assert.match(body(r), /unknown role "nobody" \(roles: main, worker, reviewer\)/);
+    const id = String(r.content).match(/\(workflow run (\S+);/)![1]!;
+    const dir = join(s.root, "workflow-runs", id, "agents");
+    const models = readdirSync(dir).sort().map(f => readFileSync(join(dir, f), "utf8").split("\n").filter(Boolean)
+      .map(l => JSON.parse(l)).find(l => l.type === "request")?.model);
+    assert.deepEqual(models.slice(0, 5), ["m-worker", "m-reviewer", "m-explicit", "m-reviewer", "m-worker"]);
+  } finally { s.cleanup(); }
+});

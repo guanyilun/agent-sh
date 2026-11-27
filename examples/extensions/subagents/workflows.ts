@@ -8,6 +8,7 @@ import { conversationHistory, transcriptMessages, type JournalEntry, type RunDir
 import type { JsonSchema, RunOptions, RunSpec, WorkflowApi } from "./workflow-types.js";
 import { ArgsError, helpText, parseArgs, tokenize, type ArgsSpec } from "./args.js";
 import { isPython, pythonModule, type ScriptHost } from "./python.js";
+import { startControl, type LiveAgent } from "./control.js";
 
 const EXTS = [".ts", ".mts", ".js", ".mjs", ".py"];
 
@@ -94,6 +95,8 @@ export interface TaskControl {
 export interface TaskResult {
   text: string;
   value?: unknown;
+  /** Set when the agent was stopped before finishing: its step limit or its token budget. */
+  degraded?: "iterations" | "budget";
 }
 
 export interface WorkflowDeps {
@@ -113,10 +116,26 @@ export interface WorkflowRunOpts {
   quietMs?: number;
   /** Interpreter for .py workflows. */
   python?: string;
+  /** A folder the overseer writes steers into: `<label>.steer.md` is handed to the running agent of that label once,
+   *  between its tool rounds, then renamed `<label>.steer.sent_<HHMMSS>.md` (polled at start and every 15 s). */
+  steerDir?: string;
+  /** The run's control socket (control.ts): status and steer by label, answered at once. */
+  controlPath?: string;
 }
+
+const STEER_POLL_MS = 15_000;
 
 /** Ends the whole workflow; all() rethrows it instead of returning null. */
 export class WorkflowStop extends Error {}
+/** A run that asked for a shape stopped at its step limit or token budget before submitting: no answer, only partial
+ *  text.  Before 2026-11-27 the partial text was extracted into the shape and looked like an answer (25 of 493 runs had
+ *  such a stop; one replaced a report that had passed its check). */
+export class RunCut extends Error {
+  constructor(readonly reason: "iterations" | "budget", readonly partial: string) {
+    super(`cut: the agent stopped at its ${reason === "iterations" ? "step limit" : "token budget"} before submitting its answer; `
+      + `nothing was extracted.  An agent() conversation keeps the turn's steps: ask again to continue it`);
+  }
+}
 /** A race() item stopped because another one won. */
 class Cancelled extends Error {}
 const stops = (err: unknown) => err instanceof WorkflowStop || err instanceof Cancelled;
@@ -142,6 +161,7 @@ export async function runWorkflow(
   }, Math.min(opts.quietMs, 10_000));
   if (quiet) quiet.unref();
   let mod: Record<string, unknown> | undefined = opts.module;
+  let closeControl: (() => void) | undefined;
   try {
     mod ??= isPython(def.file) ? await pythonModule(def.file, opts.python) : await importFresh(def);
     const fn = (mod.default ?? mod.run) as ((api: WorkflowApi, host: ScriptHost) => unknown) | undefined;
@@ -164,6 +184,7 @@ export async function runWorkflow(
     };
     let reused = 0;
     let runs = 0;
+    const live = new Map<number, LiveAgent>();
     const total = opts.budgetTokens && opts.budgetTokens > 0 ? opts.budgetTokens : null;
     const spent = () => record.record.tokens;
     const budget = { total, spent, cached: () => record.record.cached ?? 0, remaining: () => (total === null ? Infinity : Math.max(0, total - spent())) };
@@ -212,9 +233,33 @@ export async function runWorkflow(
         throw new WorkflowStop(`uncached-token budget of ${opts.budgetUncached} exhausted`);
 
       const write = record.transcript(seq);
+      // Steers: the program's own (agent.steer) and, with steerDir, the overseer's files; both delivered once.
+      const queue = chat ? chat.steer : [] as string[];
+      const delivered = chat ? (chat.delivered ??= []) : [] as string[];
+      const steerFile = opts.steerDir && spec.label && !/[\\/]/.test(spec.label) ? path.join(opts.steerDir, `${spec.label}.steer.md`) : undefined;
+      const pollSteer = () => {
+        if (!steerFile) return;
+        try {
+          const text = fs.readFileSync(steerFile, "utf8").trim();
+          if (!text) return;
+          const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
+          fs.renameSync(steerFile, steerFile.replace(/\.md$/, `.sent_${stamp}.md`));
+          queue.push(text);
+          write({ type: "steer_file", file: steerFile });
+          progress(`${label} steer queued from ${path.basename(steerFile)}`);
+        } catch { /* no file yet */ }
+      };
+      pollSteer();
+      const steerTimer = steerFile ? setInterval(pollSteer, STEER_POLL_MS) : undefined;
+      steerTimer?.unref?.();
+      const liveAgent: LiveAgent = {
+        seq, label: spec.label ?? spec.agent ?? "ad-hoc", state: "queued", since: Date.now(), tokens: () => tokens,
+        steer: (text) => { queue.push(text); write({ type: "steer_control", text }); },
+      };
+      live.set(seq, liveAgent);
       // Who this is, for reading the run afterwards: the label and the model as asked (each "request" line carries the
       // model and provider that answered), the call's position, and the conversation it continues.
-      write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema, label: spec.label, model: spec.model,
+      write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema, label: spec.label, role: spec.role, model: spec.model,
               provider: spec.provider, thinking: spec.thinking, id, ...(chat && { conversation: id.replace(/:\d+$/, "") }),
               ...(spec.historyFrom && { historyFrom: spec.historyFrom }) });
       let tokens = 0;
@@ -226,10 +271,10 @@ export async function runWorkflow(
           signal: stopped,
           ...(chat && { history: chat.history, onHistory: (m: unknown[]) => { history = m; } }),
           // Steering: handed over between tool rounds, and logged when it is (the delivery is then on record).
-          ...(chat && { steer: () => { const texts = chat.steer.splice(0); for (const text of texts) write({ type: "steer", text }); return texts; } }),
+          steer: () => { const texts = queue.splice(0); for (const text of texts) { write({ type: "steer", text }); delivered.push(text); } return texts; },
           onStart: () => {
             if (state === "working") return;
-            state = "working"; counts.queued--; counts.working++;
+            state = "working"; counts.queued--; counts.working++; liveAgent.state = "working";
             write({ type: "running" });
             progress(`${label} started`);
           },
@@ -247,6 +292,8 @@ export async function runWorkflow(
         // An aborted subagent returns its partial text; that's a stop, not a result.
         if (signal.aborted) throw new WorkflowStop("cancelled");
         if (stopped.aborted) throw new Cancelled("cancelled");
+        if (spec.schema && result.value === undefined && result.degraded && spec.onCut !== "extract")
+          throw new RunCut(result.degraded, result.text);
         const output = !spec.schema ? result.text
           : result.value !== undefined ? result.value
           : await extract(result.text, normalizeSchema(spec.schema), deps.complete);
@@ -270,6 +317,9 @@ export async function runWorkflow(
         progress(lost ? `${label} cancelled` : `${label} failed: ${message}`);
         throw signal.aborted ? new WorkflowStop("cancelled") : lost ? new Cancelled("cancelled") : err;
       } finally {
+        live.delete(seq);
+        if (steerTimer) clearInterval(steerTimer);
+        if (!chat && queue.length) { write({ type: "steer_undelivered", texts: queue }); progress(`${label} ended before ${queue.length} steer(s) could be delivered`); }
         counts[state]--;
         counts.done++;
       }
@@ -311,7 +361,9 @@ export async function runWorkflow(
         return {
           // Numbered on call; run after the turn before it.
           ask: (task, options) => {
-            const spec = toSpec(name, task, { ...base, ...options });
+            const merged = { ...base, ...options };
+            if (options?.model !== undefined && options.provider === undefined) delete merged.provider;   // as in Python
+            const spec = toSpec(name, task, merged);
             const seq = ++runs;
             const here = scope();
             const id = `${sid}:${++turns}`;
@@ -434,6 +486,7 @@ export async function runWorkflow(
       },
       runId: record.id,
       chatSize: (session) => ({ prompt: chats.get(session)?.prompt ?? 0, cached: chats.get(session)?.cached ?? 0 }),
+      chatSteers: (session) => [...(chats.get(session)?.delivered ?? [])],
       raceWinner: (id, key, at) => {
         const cached = isDiverged(scopeAt(at)) ? undefined : replay.get(id);
         return cached?.key === key ? cached.winner : undefined;
@@ -441,10 +494,15 @@ export async function runWorkflow(
       raceRecord: (id, key, winner) => record.append({ seq: runs, id, key, winner, output: null, tokens: 0 }),
       checkpointResult: (id, key, at, name) => checkpointResult(scopeAt(at), id, key, name),
       checkpointRecord,
-      kind: (err) => err instanceof WorkflowStop ? "stop" : err instanceof Cancelled ? "cancelled" : "error",
+      kind: (err) => err instanceof WorkflowStop ? "stop" : err instanceof Cancelled ? "cancelled" : err instanceof RunCut ? "cut" : "error",
       stop: (message) => new WorkflowStop(message),
     };
 
+    closeControl = opts.controlPath ? startControl(opts.controlPath, {
+      runId: record.id, agents: () => [...live.values()], log: progress,
+      totals: () => ({ tokens: record.record.tokens, cached: record.record.cached ?? 0 }),
+    }) : undefined;
+    if (opts.controlPath) progress(`· control socket: ${opts.controlPath}`);
     const result = await fn(api, host);
     record.finish("done");
     return result;
@@ -453,6 +511,7 @@ export async function runWorkflow(
     record.finish(signal.aborted ? "cancelled" : "failed", message);
     throw err;
   } finally {
+    closeControl?.();
     if (quiet) clearInterval(quiet);
     (mod?.dispose as (() => void) | undefined)?.();
   }
@@ -505,14 +564,14 @@ export function dedent(text: string): string {
 }
 
 interface Scope { path: string; next: number; diverged: boolean; parent?: Scope; signal: AbortSignal }
-interface Chat { key: string; history: unknown[]; steer: string[]; seeded?: boolean; prompt?: number; cached?: number }   // prompt/cached: the latest call's
+interface Chat { key: string; history: unknown[]; steer: string[]; delivered?: string[]; seeded?: boolean; prompt?: number; cached?: number }   // prompt/cached: the latest call's
 const isDiverged = (s: Scope | undefined): boolean => !!s && (s.diverged || isDiverged(s.parent));
 
 function specKey(spec: RunSpec): string {
   const inputs = [spec.agent ?? null, spec.task, spec.tools ?? null, spec.schema ?? null];
   // Added later; only included when set, so older journals still match.
   if (spec.historyFrom !== undefined) inputs.push(`historyFrom:${JSON.stringify(spec.historyFrom)}`);
-  for (const k of ["system", "model", "thinking", "provider", "env"] as const) if (spec[k] !== undefined) inputs.push(`${k}:${spec[k]}`);
+  for (const k of ["system", "model", "thinking", "provider", "env", "role"] as const) if (spec[k] !== undefined) inputs.push(`${k}:${spec[k]}`);
   if (spec.write !== undefined) inputs.push(`write:${JSON.stringify(spec.write)}`);
   return createHash("sha256").update(JSON.stringify(inputs)).digest("hex").slice(0, 16);
 }

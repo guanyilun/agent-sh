@@ -15,6 +15,9 @@ export interface RunOptions {
   /** Another configured provider for this agent (e.g. "codex"); needs `model`.  Default: the run's. */
   provider?: string;
   thinking?: string;
+  /** A role from the agent-sh settings (subagents.roles) or the run's config.roles: its model, provider and thinking,
+   *  under any given here.  Programs name roles, not models, so a change of models is one settings edit. */
+  role?: string;
   label?: string;
   /** Paths this agent may write (files under them); [] makes it read-only.  A tripwire on its write_file/edit_file
    *  and visible shell writes, inside the run's sandbox (which stays the boundary). */
@@ -33,6 +36,10 @@ export interface RunOptions {
    *  ({ run: its id, conversation: the agent's id there }).  A turn that was cut mid-work is included up to its last
    *  complete step, so the new turn can say "you were interrupted; continue". */
   historyFrom?: { run: string; conversation: string };
+  /** With `returns`: what happens when the agent stops at its step limit or token budget before submitting.
+   *  "error" (default): the run fails with a cut error (the turn's steps stay in an agent()'s conversation, so the
+   *  next ask continues them); "extract": a model rebuilds the shape from the partial text, as before 2026-11-27. */
+  onCut?: "error" | "extract";
 }
 
 export interface RunSpec extends RunOptions {
