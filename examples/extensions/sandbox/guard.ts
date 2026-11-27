@@ -8,6 +8,8 @@ export interface GuardPolicy {
   hide?: string[];
   /** JSON files with extra rules. */
   policy?: string | string[];
+  /** Paths under a hidden one that stay readable (e.g. ~/.claude/skills under ~/.claude). */
+  reveal?: string[];
 }
 
 export interface Refusal { content: string; exitCode: number; isError: true }
@@ -54,13 +56,14 @@ function loadRules(files: string[]): Rules {
   return { forbid, searchAt, atRe, underRe, searchMessage };
 }
 
-export function makeVerdict({ write = [], hide = [], policy = [] }: GuardPolicy = {}): Verdict {
+export function makeVerdict({ write = [], hide = [], policy = [], reveal = [] }: GuardPolicy = {}): Verdict {
   const roots = write.map(expand);
   const hidden = hide.map(expand);
   const rules = loadRules([policy].flat().filter(Boolean));
-  const isHidden = (p: string) => hidden.length > 0 && underAny(p, hidden);
+  const revealed = reveal.map(expand);
+  const isHidden = (p: string) => hidden.length > 0 && underAny(p, hidden) && !(revealed.length > 0 && underAny(p, revealed));
   // Only words that look like paths: naming a hidden dir isn't reading it.
-  const reachesHidden = (command: string) => hidden.some(h => command.includes(h))
+  const reachesHidden = (command: string) => hidden.some(h => command.includes(h) && !revealed.some(r => r.startsWith(h) && command.split(h).slice(1).every(rest => (h + rest).startsWith(r))))
     || command.split(/[\s;|&()<>"'`=]+/).some(word => /^~|\//.test(word) && isHidden(word));
 
   return function verdict(name, a = {}) {
