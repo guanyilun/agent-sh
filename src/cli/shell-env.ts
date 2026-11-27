@@ -54,7 +54,11 @@ export async function captureShellEnvAsync(shell: string): Promise<Record<string
     };
 
     try {
+      // A clean environment: the capture records what the login shell itself sets, not what the process that
+      // happened to start agent-sh carried (a dry-run flag, an editor's session token), which the cache would
+      // otherwise hand to every later run.
       const child = spawn(shell, ["-l", "-c", captureCmd], {
+        env: loginBaseEnv(process.env),
         stdio: ["ignore", "pipe", "ignore"],
         timeout: 5000,
       });
@@ -92,6 +96,16 @@ export async function captureShellEnvAsync(shell: string): Promise<Record<string
       done({});
     }
   });
+}
+
+/** What a login shell starts from: who and where the user is, nothing the caller added. */
+export function loginBaseEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const keep = ["HOME", "USER", "LOGNAME", "SHELL", "PATH", "TERM", "LANG", "TMPDIR", "HOSTNAME"];
+  const base: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (v !== undefined && (keep.includes(k) || k.startsWith("LC_"))) base[k] = v;
+  }
+  return base;
 }
 
 export function mergeShellEnv(
