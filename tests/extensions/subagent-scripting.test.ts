@@ -180,3 +180,25 @@ test("python: provider:model in Agent; a turn's model override does not inherit 
     assert.equal(body(r), "answer to plain id: nope is no provider | answer to override | refused");
   } finally { s.cleanup(); }
 });
+
+test("python: Agent(role=...) and ask(role=...) resolve through the settings' roles", { skip: spawnSync("python3", ["--version"]).status !== 0 }, async () => {
+  const s = setup({ reply: (o) => ({ content: `answer to ${lastUser(o)}` }), usage: 5,
+                    settings: { roles: { worker: { model: "m-worker" }, reviewer: { model: "m-reviewer", thinking: "high" } } } });
+  try {
+    wf(s, "roles.py", [
+      "from agentsh import Agent, RunError",
+      "async def main():",
+      '    a = Agent(role="worker", tools=[])',
+      '    first = await a.ask("one")',
+      '    second = await a.ask("two", role="reviewer")',
+      "    try:",
+      '        await Agent(role="ghost", tools=[]).ask("three")',
+      '        third = "ran"',
+      "    except RunError as e:",
+      '        third = "refused" if "unknown role" in str(e) else str(e)',
+      '    return f"{first} | {second} | {third}"',
+    ].join("\n"));
+    const r = await s.exec("run_workflow", { name: "roles" });
+    assert.equal(body(r), "answer to one | answer to two | refused");
+  } finally { s.cleanup(); }
+});

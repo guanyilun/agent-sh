@@ -10,7 +10,7 @@ from ._positions import Position, here, start
 
 
 def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, thinking=None, label=None, write=None,
-        max_steps=None, live=None, provider=None, env=None, context_tokens=None, on_cut=None):
+        max_steps=None, live=None, provider=None, env=None, context_tokens=None, on_cut=None, role=None):
     """Give `task` to an agent and get its answer.
 
     The agent starts working straight away, and the call returns an awaitable for the answer, so
@@ -22,7 +22,10 @@ def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, 
     returns   a dataclass, and the answer comes back as an instance of it instead of as text
     tools     the tools a plain agent may use ([] for none)
     system    a plain agent's role and rules
-    model, thinking, label   override the agent's model, its reasoning effort, and its name in progress lines
+    role      a role from the agent-sh settings (subagents.roles) or the run's config.roles: its model, provider and
+              thinking.  Name roles, not models, in programs; `model=` and `thinking=` given here still win
+    model, thinking, label   override the agent's model ("provider:model" names its provider), its reasoning effort,
+              and its name in progress lines
     provider  another configured provider for this agent (e.g. "codex"; needs model): one workflow can mix providers
     write     paths the agent may write (files under them); [] makes it read-only.  Inside the run's sandbox, which
               stays the boundary: this catches an agent writing into the wrong tree (a reviewer saving scratch
@@ -42,7 +45,7 @@ def run(task, *, agent=None, returns=None, tools=None, system=None, model=None, 
     position = here()
     spec = _spec(task, agent, returns, tools=tools, system=system, model=model, thinking=thinking, label=label,
                  write=_paths(write), maxSteps=max_steps, live=live, provider=provider, env=env,
-                 contextTokens=context_tokens, onCut=on_cut)
+                 contextTokens=context_tokens, onCut=on_cut, role=role)
     return _answer(spec, position.next(), position, returns)
 
 
@@ -67,9 +70,10 @@ class Agent:
     """
 
     def __init__(self, name=None, *, tools=None, system=None, model=None, thinking=None, label=None, write=None, live=None,
-                 provider=None, env=None, context_tokens=None, history_from=None):
+                 provider=None, env=None, context_tokens=None, history_from=None, role=None):
         self._name = name
-        self._options = dict(tools=tools, system=system, model=model, thinking=thinking, label=label, write=_paths(write),
+        self._options = dict(tools=tools, system=system, model=model, thinking=thinking, label=label, role=role,
+                             write=_paths(write),
                              live=live, provider=provider, env=env, contextTokens=context_tokens,
                              historyFrom=(dict(run=str(history_from[0]), conversation=str(history_from[1]))
                                           if history_from else None))
@@ -78,7 +82,7 @@ class Agent:
         self._last_turn = None
 
     def ask(self, task, *, returns=None, model=None, thinking=None, label=None, max_steps=None, provider=None,
-            on_cut=None):
+            on_cut=None, role=None):
         """Say `task` to the agent and get its answer. Turns happen one at a time, in the order asked.
         A turn cut before submitting its `returns` shape raises RunCut; its steps stay in the conversation."""
         position = here()
@@ -88,6 +92,10 @@ class Agent:
         options = dict(self._options)
         if model is not None and provider is None:
             options.pop("provider", None)     # a turn's model names its own provider ("codex:gpt-6-luna"), or the run's
+        if role is not None:
+            for key in ("model", "provider", "thinking"):
+                options.pop(key, None)        # a turn's role replaces the agent's model choice
+            options["role"] = role
         spec = _spec(task, self._name, returns, **{**options, **overrides})
         self._turns += 1
         turn_id, previous = f"{self._id}:{self._turns}", self._last_turn

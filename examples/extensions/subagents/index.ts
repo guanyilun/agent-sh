@@ -12,7 +12,7 @@ import { discoverAgents, findAgent, fromRegistration, type AgentDef, type AgentR
 import { describe, JobTable, type JobOutcome } from "./jobs.js";
 import { Semaphore } from "./semaphore.js";
 import { controlProblem } from "./control.js";
-import { splitProviderModel } from "./models.js";
+import { applyRole, rolesProblems, splitProviderModel, type RoleDef } from "./models.js";
 import { RunStore } from "./runs.js";
 import { coerce, example, normalizeSchema, validate } from "./schema.js";
 import * as os from "node:os";
@@ -47,9 +47,9 @@ const PARENT_CONTEXT_CHARS = 12_000;
 /** Above this, fan-out answers are clipped to a share each; `resume` re-reads one in full. */
 const FANOUT_RESULT_CHARS = 24_000;
 
-interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string; env?: string; contextTokens?: number }
+interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; role?: string; write?: string[]; maxSteps?: number; live?: string; env?: string; contextTokens?: number }
 
-const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python", "retry", "steerDir", "control"];
+const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python", "retry", "steerDir", "control", "roles"];
 const RETRY_KEYS = ["windowMin", "firstCall"];
 
 interface RunFileConfig {
@@ -72,6 +72,8 @@ interface RunFileConfig {
   steerDir?: string;
   /** A Unix socket path (relative to the run file) for the run's control socket: status and steer by label. */
   control?: string;
+  /** Role name -> model, provider, thinking, over the agent-sh settings' subagents.roles for this run. */
+  roles?: Record<string, RoleDef>;
 }
 
 interface RunFileRequest {
@@ -106,6 +108,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   const settings = {
     ...ctx.getExtensionSettings("subagents", {
       maxConcurrency: 4, maxIterations: 25, maxRunsPerWorkflow: 50, backgroundWake: true, workflowTokenBudget: 0,
+      roles: {} as Record<string, RoleDef>,
     }),
     ...definedOnly({
       maxConcurrency: typeof runConfig?.concurrency === "object" ? runConfig.concurrency.default : runConfig?.concurrency,
@@ -115,7 +118,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       backgroundWake: runConfig ? false : undefined,
     }),
   };
-  if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS], problems: [...p.problems, ...retryProblems(runConfig.retry), ...concurrencyProblems(runConfig.concurrency), ...controlProblems(runConfig)] }));
+  if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS], problems: [...p.problems, ...retryProblems(runConfig.retry), ...concurrencyProblems(runConfig.concurrency), ...controlProblems(runConfig), ...rolesProblems(runConfig.roles, "config.roles")] }));
+  const roles: Record<string, RoleDef> = { ...(settings.roles ?? {}) };
+  for (const [name, def] of Object.entries(runConfig?.roles ?? {})) roles[name] = { ...roles[name], ...def };
   const retryWindowMs = (runConfig?.retry?.windowMin ?? 45) * 60_000;
   const retryFirstCall = runConfig?.retry?.firstCall ?? false;
   // A path (e.g. a venv's interpreter) is relative to the run file; a bare name is looked up on PATH.
@@ -643,6 +648,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
 
   async function dryRunTask(spec: RunSpec, ctl: TaskControl): Promise<TaskResult> {
     if (spec.agent && !findAgent(loadAgents(), spec.agent)) throw new Error(`unknown agent: ${spec.agent}`);
+    applyRole(spec, roles);
     const firstLine = spec.task.split("\n")[0]!.slice(0, 120);
     const value = spec.schema ? example(normalizeSchema(spec.schema)) : undefined;
     ctl.progress(`(dry run) ${firstLine}${value === undefined ? "" : ` → ${JSON.stringify(value)}`}`);
@@ -705,7 +711,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     progress?: (line: string) => void,
     extra: RunExtras = {},
   ): Promise<string> {
-    const spec = splitProviderModel(given, isProvider);
+    const spec = splitProviderModel(applyRole(given, roles), isProvider);
     const llmClient = clientFor(spec, def);
 
     const cwd = ctx.call("cwd") as string;

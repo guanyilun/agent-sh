@@ -242,6 +242,21 @@ config = dict(
 )
 ```
 
+**Roles, not models.**  Programs say what an agent is for; the agent-sh settings say which model does it:
+
+```json
+"subagents": { "roles": {
+  "worker":   { "model": "codex:gpt-6-luna", "thinking": "max" },
+  "reviewer": { "model": "flatiron:XiaomiMiMo/MiMo-V2.6-Pro-MOPD" }
+}}
+```
+
+`Agent(role="worker", tools=[...])`, `run(task, role="reviewer")`, `agent.ask(task, role="reviewer")` take the role's
+model, provider and thinking; `model=` or `thinking=` given in the call still win.  A run overrides a role with
+`config = dict(roles=dict(reviewer=dict(model="codex:gpt-6-luna")))`.  An unknown role fails with the list of known
+ones (also in `--dry-run`).  A model id may name its provider, `"flatiron:moonshotai/Kimi-K3"`; the prefix is split off
+only when it is a provider agent-sh can reach.  Import `Agent` and `run` from `agentsh` itself: no wrapper is needed.
+
 Steering from outside: a file `<steerDir>/<label>.steer.md`, or one JSON line to the control socket,
 `{"method": "steer", "label": "w1", "text": "..."}`, answered at once with the agent it was queued for (or the labels
 that are running); `{"method": "status"}` lists the running agents with their state and tokens.  The socket offers

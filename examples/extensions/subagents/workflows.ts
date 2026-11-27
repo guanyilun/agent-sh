@@ -259,7 +259,7 @@ export async function runWorkflow(
       live.set(seq, liveAgent);
       // Who this is, for reading the run afterwards: the label and the model as asked (each "request" line carries the
       // model and provider that answered), the call's position, and the conversation it continues.
-      write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema, label: spec.label, model: spec.model,
+      write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema, label: spec.label, role: spec.role, model: spec.model,
               provider: spec.provider, thinking: spec.thinking, id, ...(chat && { conversation: id.replace(/:\d+$/, "") }),
               ...(spec.historyFrom && { historyFrom: spec.historyFrom }) });
       let tokens = 0;
@@ -571,7 +571,7 @@ function specKey(spec: RunSpec): string {
   const inputs = [spec.agent ?? null, spec.task, spec.tools ?? null, spec.schema ?? null];
   // Added later; only included when set, so older journals still match.
   if (spec.historyFrom !== undefined) inputs.push(`historyFrom:${JSON.stringify(spec.historyFrom)}`);
-  for (const k of ["system", "model", "thinking", "provider", "env"] as const) if (spec[k] !== undefined) inputs.push(`${k}:${spec[k]}`);
+  for (const k of ["system", "model", "thinking", "provider", "env", "role"] as const) if (spec[k] !== undefined) inputs.push(`${k}:${spec[k]}`);
   if (spec.write !== undefined) inputs.push(`write:${JSON.stringify(spec.write)}`);
   return createHash("sha256").update(JSON.stringify(inputs)).digest("hex").slice(0, 16);
 }
