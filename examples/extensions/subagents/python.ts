@@ -21,6 +21,8 @@ export interface ScriptHost {
   runId: string;
   /** A conversation's latest model call: its prompt tokens and the part served from cache (zeros before any). */
   chatSize(session: string): { prompt: number; cached: number };
+  /** The steers a conversation's agent has received so far (its program's and the overseer's files). */
+  chatSteers(session: string): string[];
   raceWinner(id: string, key: string, scope: string): number | undefined;
   raceRecord(id: string, key: string, winner: number): void;
   checkpointResult(id: string, key: string, scope: string, name: string): { value: unknown } | undefined;
@@ -106,6 +108,7 @@ export function pythonModule(file: string, python = defaultPython()): Promise<Py
         else if (m.t === "quiet") reply(m.rid, () => host.quiet());
         else if (m.t === "steer") host.steer(String(m.session), String(m.text));
         else if (m.t === "chat_size") reply(m.rid, () => host.chatSize(String(m.session)));
+        else if (m.t === "chat_steers") reply(m.rid, () => host.chatSteers(String(m.session)));
         else if (m.t === "race_get") reply(m.rid, () => host.raceWinner(m.id, m.key, m.scope));
         else if (m.t === "race_set") reply(m.rid, () => host.raceRecord(m.id, m.key, m.winner));
         else if (m.t === "checkpoint_get") {

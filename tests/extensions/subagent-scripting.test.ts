@@ -1,7 +1,8 @@
 /** Workflow scripting ergonomics: schema shorthand, dedented tasks, run(agent, task, options), map(), declared args. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { normalizeSchema, validate, example } from "../../examples/extensions/subagents/schema.js";
@@ -131,4 +132,29 @@ test("python: a shaped turn cut at its step limit raises RunCut with its reason"
     assert.equal(body(r), "cut iterations True");
     assert.equal(s.invokes.length, 0);
   } finally { s.cleanup(); }
+});
+
+test("python: config.steerDir hands <label>.steer.md to that agent once, renames it, and steers() lists it", { skip: spawnSync("python3", ["--version"]).status !== 0 }, async () => {
+  let n = 0;
+  const dir = mkdtempSync(join(tmpdir(), "steers-"));
+  const steerDir = () => dir;
+  const s = setup({
+    reply: () => (++n === 1 ? { tool_calls: [{ index: 0, id: "c1", function: { name: "grep", arguments: "{}" } }] } : { content: "done" }),
+    before: (h) => h.define("run:config", () => ({ base: "/", steerDir: dir })),
+  });
+  try {
+    writeFileSync(join(steerDir(), "w1.steer.md"), "use the f150 band\n");
+    wf(s, "steered.py", [
+      "from agentsh import Agent",
+      "async def main():",
+      '    worker = Agent(tools=["grep"], label="w1")',
+      '    await worker.ask("t")',
+      '    return "|".join(await worker.steers())',
+    ].join("\n"));
+    const r = await s.exec("run_workflow", { name: "steered" });
+    assert.equal(body(r), "use the f150 band");
+    assert.ok(s.calls[1]!.messages.some(m => m.role === "user" && String(m.content).includes("f150")), "delivered after the tool round");
+    const left = readdirSync(steerDir());
+    assert.ok(!left.includes("w1.steer.md") && left.some(f => /^w1\.steer\.sent_\d{6}\.md$/.test(f)), left.join(","));
+  } finally { s.cleanup(); rmSync(dir, { recursive: true, force: true }); }
 });

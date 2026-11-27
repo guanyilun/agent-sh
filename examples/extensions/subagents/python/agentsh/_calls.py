@@ -110,6 +110,11 @@ class Agent:
         Unlike `live`, it is not re-read on every call, and its delivery is logged in the transcript."""
         _host.link().send("steer", session=self._id, text=str(text))
 
+    async def steers(self):
+        """The steers this agent has received so far, in order: the program's `steer()` texts and, with the run's
+        `steerDir`, the overseer's `<label>.steer.md` files.  For showing a reviewer what the agent was told mid-run."""
+        return await _host.link().request("chat_steers", session=self._id)
+
     async def context(self):
         """The conversation's size at its latest model call: {"prompt": tokens sent, "cached": the part the provider
         served from cache}; zeros before the first turn.  For deciding whether to keep talking (a cached prefix is

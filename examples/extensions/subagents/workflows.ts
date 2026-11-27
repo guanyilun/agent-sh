@@ -115,7 +115,12 @@ export interface WorkflowRunOpts {
   quietMs?: number;
   /** Interpreter for .py workflows. */
   python?: string;
+  /** A folder the overseer writes steers into: `<label>.steer.md` is handed to the running agent of that label once,
+   *  between its tool rounds, then renamed `<label>.steer.sent_<HHMMSS>.md` (polled at start and every 15 s). */
+  steerDir?: string;
 }
+
+const STEER_POLL_MS = 15_000;
 
 /** Ends the whole workflow; all() rethrows it instead of returning null. */
 export class WorkflowStop extends Error {}
@@ -223,6 +228,25 @@ export async function runWorkflow(
         throw new WorkflowStop(`uncached-token budget of ${opts.budgetUncached} exhausted`);
 
       const write = record.transcript(seq);
+      // Steers: the program's own (agent.steer) and, with steerDir, the overseer's files; both delivered once.
+      const queue = chat ? chat.steer : [] as string[];
+      const delivered = chat ? (chat.delivered ??= []) : [] as string[];
+      const steerFile = opts.steerDir && spec.label && !/[\\/]/.test(spec.label) ? path.join(opts.steerDir, `${spec.label}.steer.md`) : undefined;
+      const pollSteer = () => {
+        if (!steerFile) return;
+        try {
+          const text = fs.readFileSync(steerFile, "utf8").trim();
+          if (!text) return;
+          const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
+          fs.renameSync(steerFile, steerFile.replace(/\.md$/, `.sent_${stamp}.md`));
+          queue.push(text);
+          write({ type: "steer_file", file: steerFile });
+          progress(`${label} steer queued from ${path.basename(steerFile)}`);
+        } catch { /* no file yet */ }
+      };
+      pollSteer();
+      const steerTimer = steerFile ? setInterval(pollSteer, STEER_POLL_MS) : undefined;
+      steerTimer?.unref?.();
       // Who this is, for reading the run afterwards: the label and the model as asked (each "request" line carries the
       // model and provider that answered), the call's position, and the conversation it continues.
       write({ type: "start", agent: spec.agent, task: spec.task, schema: spec.schema, label: spec.label, model: spec.model,
@@ -237,7 +261,7 @@ export async function runWorkflow(
           signal: stopped,
           ...(chat && { history: chat.history, onHistory: (m: unknown[]) => { history = m; } }),
           // Steering: handed over between tool rounds, and logged when it is (the delivery is then on record).
-          ...(chat && { steer: () => { const texts = chat.steer.splice(0); for (const text of texts) write({ type: "steer", text }); return texts; } }),
+          steer: () => { const texts = queue.splice(0); for (const text of texts) { write({ type: "steer", text }); delivered.push(text); } return texts; },
           onStart: () => {
             if (state === "working") return;
             state = "working"; counts.queued--; counts.working++;
@@ -283,6 +307,8 @@ export async function runWorkflow(
         progress(lost ? `${label} cancelled` : `${label} failed: ${message}`);
         throw signal.aborted ? new WorkflowStop("cancelled") : lost ? new Cancelled("cancelled") : err;
       } finally {
+        if (steerTimer) clearInterval(steerTimer);
+        if (!chat && queue.length) { write({ type: "steer_undelivered", texts: queue }); progress(`${label} ended before ${queue.length} steer(s) could be delivered`); }
         counts[state]--;
         counts.done++;
       }
@@ -447,6 +473,7 @@ export async function runWorkflow(
       },
       runId: record.id,
       chatSize: (session) => ({ prompt: chats.get(session)?.prompt ?? 0, cached: chats.get(session)?.cached ?? 0 }),
+      chatSteers: (session) => [...(chats.get(session)?.delivered ?? [])],
       raceWinner: (id, key, at) => {
         const cached = isDiverged(scopeAt(at)) ? undefined : replay.get(id);
         return cached?.key === key ? cached.winner : undefined;
@@ -518,7 +545,7 @@ export function dedent(text: string): string {
 }
 
 interface Scope { path: string; next: number; diverged: boolean; parent?: Scope; signal: AbortSignal }
-interface Chat { key: string; history: unknown[]; steer: string[]; seeded?: boolean; prompt?: number; cached?: number }   // prompt/cached: the latest call's
+interface Chat { key: string; history: unknown[]; steer: string[]; delivered?: string[]; seeded?: boolean; prompt?: number; cached?: number }   // prompt/cached: the latest call's
 const isDiverged = (s: Scope | undefined): boolean => !!s && (s.diverged || isDiverged(s.parent));
 
 function specKey(spec: RunSpec): string {

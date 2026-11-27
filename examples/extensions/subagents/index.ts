@@ -47,7 +47,7 @@ const FANOUT_RESULT_CHARS = 24_000;
 
 interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string; env?: string; contextTokens?: number }
 
-const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python", "retry"];
+const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python", "retry", "steerDir"];
 const RETRY_KEYS = ["windowMin", "firstCall"];
 
 interface RunFileConfig {
@@ -66,6 +66,8 @@ interface RunFileConfig {
   /** Transient model-call failures: keep retrying the same model for windowMin minutes (default 45) from the first
    *  failure; firstCall: also before the agent's first response (default false: the fixed few attempts there). */
   retry?: { windowMin?: number; firstCall?: boolean };
+  /** A folder (relative to the run file) where `<label>.steer.md` steers the running agent of that label once. */
+  steerDir?: string;
 }
 
 interface RunFileRequest {
@@ -562,6 +564,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         maxRuns: settings.maxRunsPerWorkflow,
       }, opts.signal, opts.progress, {
         run, replay: opts.resumeId ? runs.journal(opts.resumeId) : undefined, budgetTokens: opts.budgetTokens, budgetUncached: opts.budgetUncached, module: opts.module, quietMs: opts.quietMs, python,
+        steerDir: runConfig?.steerDir ? path.resolve(runConfig.base, runConfig.steerDir) : undefined,
       });
       return { content: `${formatResult(result)}\n\n${footer}`, isError: false };
     } catch (err) {
