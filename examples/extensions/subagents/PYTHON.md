@@ -71,7 +71,7 @@ plan = await run("Split this goal into tasks: ...", agent="plan", returns=Plan)
 | `role` | a role from the agent-sh settings (`subagents.roles`) or the run's `config.roles`: its model, provider and thinking. Name roles, not models, in programs you keep. |
 | `model` | the model for this call, directly: `"codex:gpt-6-luna"` or `"flatiron:moonshotai/Kimi-K3"` (the prefix names the provider), or a bare id on the run's provider. Wins over the role's model, keeping the role's thinking. A role name here works as `role=`. |
 | `provider` | a provider for a bare `model` id; rarely needed, since the id can carry it. |
-| `thinking` | how hard the model reasons: `"off"`, `"low"`, `"medium"`, `"high"`; codex models also `"xhigh"` and `"max"` (others get `"high"` for those). Wins over the role's. Left out: the role's, else your agent-sh thinking level. |
+| `thinking` | how hard the model reasons: `"off"`, `"low"`, `"medium"`, `"high"`; `"xhigh"` and `"max"` where the model declares them; each model gets its nearest declared level. Wins over the role's. Left out: the role's, else your agent-sh thinking level. |
 | `label` | the name shown for it in progress lines. |
 | `write` | paths the agent may write (files under them); `[]` makes it read-only. A tripwire on its `write_file`/`edit_file` and the visible writes of its shell commands, inside the run's sandbox: it stops a reviewer saving scratch files into the code it reviews, not a determined escape. |
 | `max_steps` | the most tool-using steps this call may take (default: `config` `maxIterations`). |
