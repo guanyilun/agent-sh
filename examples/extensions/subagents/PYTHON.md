@@ -226,7 +226,8 @@ args = dict(
 )
 
 config = dict(
-    concurrency=6,            # agents working at once
+    concurrency=6,            # agents working at once; or pools: dict(default=4, codex=20, flatiron=1)
+                              #   (keys: "provider:model", provider or model; "default" for the rest)
     maxRuns=200,              # agent runs in total (default 50)
     maxIterations=60,         # steps one agent may take
     budgetTokens=5_000_000,   # stop when the agents have used this many tokens
@@ -235,8 +236,21 @@ config = dict(
     agents="./agents",        # a folder of extra agent definitions, next to this file
     python=".venv/bin/python",   # the interpreter for this file, relative to it
     model="...", provider="...", # optional; otherwise agent-sh's defaults
+    retry=dict(firstCall=True, windowMin=45),   # keep retrying a failing model call on the same model, from the first call
+    steerDir="./work",        # <label>.steer.md here steers the running agent of that label once (renamed .sent_<time>)
+    control="./state/control.sock",   # a socket answering status and steer-by-label (inside a sandbox write root)
 )
 ```
+
+Steering from outside: a file `<steerDir>/<label>.steer.md`, or one JSON line to the control socket,
+`{"method": "steer", "label": "w1", "text": "..."}`, answered at once with the agent it was queued for (or the labels
+that are running); `{"method": "status"}` lists the running agents with their state and tokens.  The socket offers
+nothing else (no stop): the program and its agents share the sandbox, so it grants only what a steer file does.
+`await agent.steers()` lists the steers an agent has received, for showing a reviewer what it was told.
+
+An agent asked for a shape (`returns=`) that stops at its step limit or token budget before submitting raises
+`RunCut` (a `RunError`; `.reason`, `.partial`).  Nothing is extracted from its partial text unless you ask
+(`on_cut="extract"`); an `Agent`'s conversation keeps the cut turn's steps, so asking again continues it.
 
 `main(args)` receives the parsed arguments as `args.target`, `args.rounds`. Leftover words on the command line fill the first text argument. `config` must be a literal (plain values, lists, dicts, `dict(...)`), because it is read without running the file. A misspelled key refuses to start.
 
