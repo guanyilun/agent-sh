@@ -47,7 +47,8 @@ const FANOUT_RESULT_CHARS = 24_000;
 
 interface TaskSpec { agent?: string; task: string; resume?: string; tools?: string[]; system?: string; model?: string; provider?: string; thinking?: string; write?: string[]; maxSteps?: number; live?: string; env?: string; contextTokens?: number }
 
-const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python"];
+const RUN_CONFIG_KEYS = ["agents", "concurrency", "maxIterations", "maxRuns", "budgetTokens", "budgetUncached", "python", "retry"];
+const RETRY_KEYS = ["windowMin", "firstCall"];
 
 interface RunFileConfig {
   base: string;
@@ -60,6 +61,9 @@ interface RunFileConfig {
    *  resent conversation again. */
   budgetUncached?: number;
   python?: string;
+  /** Transient model-call failures: keep retrying the same model for windowMin minutes (default 45) from the first
+   *  failure; firstCall: also before the agent's first response (default false: the fixed few attempts there). */
+  retry?: { windowMin?: number; firstCall?: boolean };
 }
 
 interface RunFileRequest {
@@ -103,7 +107,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
       backgroundWake: runConfig ? false : undefined,
     }),
   };
-  if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS] }));
+  if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS], problems: [...p.problems, ...retryProblems(runConfig.retry)] }));
+  const retryWindowMs = (runConfig?.retry?.windowMin ?? 45) * 60_000;
+  const retryFirstCall = runConfig?.retry?.firstCall ?? false;
   // A path (e.g. a venv's interpreter) is relative to the run file; a bare name is looked up on PATH.
   const python = runConfig?.python?.includes("/") ? path.resolve(runConfig.base, runConfig.python) : runConfig?.python;
   const runAgentDirs = [runConfig?.agents ?? []].flat().map(d => path.resolve(runConfig!.base, d));
@@ -756,7 +762,8 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
         requestHeaders: requestHeadersFor(spec, def, systemPrompt, extra.history),
         // a workflow's agents run unattended for hours: ride out an endpoint outage inside the run (its steps are in
         // memory) rather than fail it and lose them (a 104-min critic turn lost to a cut stream, 2026-11-03)
-        retryWindowMs: 45 * 60_000,
+        retryWindowMs,
+        retryFirstCall,
         firstByteTimeoutMs: FIRST_BYTE_MS,
         contextTokens: spec.contextTokens,
         steer: extra.steer,
@@ -904,4 +911,15 @@ function specName(s: TaskSpec): string {
 
 function toolResult(o: JobOutcome) {
   return { content: o.content, exitCode: o.isError ? 1 : 0, isError: o.isError };
+}
+
+function retryProblems(retry: unknown): string[] {
+  if (retry === undefined) return [];
+  if (!retry || typeof retry !== "object" || Array.isArray(retry)) return ["config.retry must be a dict(windowMin=..., firstCall=...)"];
+  const r = retry as Record<string, unknown>;
+  return [
+    ...Object.keys(r).filter(k => !RETRY_KEYS.includes(k)).map(k => `config.retry.${k} isn't a retry option (${RETRY_KEYS.join(", ")}).`),
+    ...(r.windowMin !== undefined && !(typeof r.windowMin === "number" && r.windowMin >= 0) ? ["config.retry.windowMin must be a number of minutes >= 0"] : []),
+    ...(r.firstCall !== undefined && typeof r.firstCall !== "boolean" ? ["config.retry.firstCall must be true or false"] : []),
+  ];
 }

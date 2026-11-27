@@ -68,6 +68,8 @@ export interface SubagentOptions {
   requestHeaders?: Record<string, string>;
   /** See AgentRunOptions.retryWindowMs (the caller's choice; unset keeps the fixed few attempts). */
   retryWindowMs?: number;
+  /** See AgentRunOptions.retryFirstCall. */
+  retryFirstCall?: boolean;
   /** See AgentRunOptions.firstByteTimeoutMs. */
   firstByteTimeoutMs?: number;
   /** Compact the run once its prompt passes this many tokens (subagent-compaction.ts: old tool output is cleared,
@@ -194,6 +196,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<string> {
       throwToolErrors: true,
       rawErrors: true,
       retryWindowMs: opts.retryWindowMs,
+      retryFirstCall: opts.retryFirstCall,
       firstByteTimeoutMs: opts.firstByteTimeoutMs,
     };
     const result = await host.run(opts.task, runOptions);

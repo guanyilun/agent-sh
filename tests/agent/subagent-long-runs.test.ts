@@ -105,3 +105,19 @@ test("a slow first byte within the limit is fine, and later silence is not polic
   })() } as unknown as LlmClient;
   assert.equal(await runSubagent({ systemPrompt: "s", task: "t", llmClient, tools: [], firstByteTimeoutMs: 120 }), "ab");
 });
+
+test("retryFirstCall applies the retry window before the first response; 'overloaded' counts as transient", async () => {
+  const client = () => {
+    let n = 0;
+    return { calls: () => n, llmClient: { model: "stub", stream: async () => {
+      if (++n <= 6) throw Object.assign(new Error("Our servers are currently overloaded. Please try again later."), { headers: { "retry-after": "0" } });
+      return (async function* () { yield { choices: [{ delta: { content: "ok" } }] }; yield { choices: [], usage: usage(5) }; })();
+    } } as unknown as LlmClient };
+  };
+  const fixed = client();
+  await assert.rejects(runSubagent({ systemPrompt: "s", task: "t", llmClient: fixed.llmClient, tools: [], retryWindowMs: 60_000 }), /overloaded/);
+  assert.ok(fixed.calls() < 7, `the fixed few attempts before a first response (${fixed.calls()} calls)`);
+  const patient = client();
+  assert.equal(await runSubagent({ systemPrompt: "s", task: "t", llmClient: patient.llmClient, tools: [], retryWindowMs: 60_000, retryFirstCall: true }), "ok");
+  assert.equal(patient.calls(), 7);
+});

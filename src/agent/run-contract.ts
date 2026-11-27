@@ -59,6 +59,10 @@ export interface AgentRunOptions {
    *  first failure, instead of giving up after the fixed few attempts.  The run's conversation is in memory, so a
    *  long unattended run (a workflow's subagent) rides out an endpoint outage without losing its earlier steps. */
   retryWindowMs?: number;
+  /** Apply retryWindowMs from the run's first call too.  By default a call before the run's first response gets only
+   *  the fixed few attempts (nothing is lost yet, and a caller may move to another model); a caller that never
+   *  changes model (an unattended workflow on one provider) rides out an outage that starts before it. */
+  retryFirstCall?: boolean;
   /** Treat a model call that sends nothing at all for this long as a transient failure (retried like a cut stream).
    *  An unreachable backend otherwise holds the call until the transport's own long timeout (35-46 min seen). */
   firstByteTimeoutMs?: number;
