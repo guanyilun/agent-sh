@@ -17,7 +17,8 @@ const OS_MODES = ["required", "preferred", "off"];
 interface SandboxConfig {
   write?: string[];
   hide?: string[];
-  policy?: string;
+  /** One rules file, or several (e.g. the team's generic one and the project's own); all apply. */
+  policy?: string | string[];
   os?: string;
   net?: boolean;
 }
@@ -68,12 +69,15 @@ export default function activate(ctx: ExtensionContext): void {
     }
   }
 
-  arm(write, hide, sb.policy ? [abs(sb.policy)] : []);
+  const policies = [sb.policy ?? []].flat().filter((p): p is string => typeof p === "string").map(abs);
+  arm(write, hide, policies);
 
   ctx.bus.onPipe("run:checks", (p) => {
     p.handled.push("sandbox");
     for (const key of Object.keys(sb)) if (!OPTIONS.includes(key)) p.problems.push(`config.sandbox.${key} isn't a sandbox option (${OPTIONS.join(", ")}).`);
     if (!OS_MODES.includes(mode)) p.problems.push(`config.sandbox.os must be one of ${OS_MODES.join(", ")}; got ${JSON.stringify(sb.os)}.`);
+    if (sb.policy !== undefined && !(typeof sb.policy === "string" || (Array.isArray(sb.policy) && sb.policy.every(p => typeof p === "string"))))
+      p.problems.push("config.sandbox.policy must be a path or a list of paths.");
     if (sb.net !== undefined && typeof sb.net !== "boolean") p.problems.push("config.sandbox.net must be true or false (false: agents' own commands have no network; model calls are unaffected).");
     if (isolated) return p;
     // net: false and hiding credentials from agents' commands need a nested bubblewrap around each command

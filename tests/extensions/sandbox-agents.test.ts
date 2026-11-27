@@ -47,3 +47,15 @@ test("the box under bubblewrap: hidden unreadable, revealed readable, writes onl
     assert.equal(run(`echo 'it''s quoted'; exit 3`).status, 3, "exit status and quoting");
   } finally { rmSync(base, { recursive: true, force: true }); }
 });
+
+test("guard: rules from several policy files all apply", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pol-"));
+  try {
+    writeFileSync(join(dir, "a.json"), JSON.stringify({ forbid: [{ regex: "\\bsbatch\\b", message: "team rule" }] }));
+    writeFileSync(join(dir, "b.json"), JSON.stringify({ noRecursiveSearch: { at: ["/big"], message: "project rule" } }));
+    const v = makeVerdict({ policy: [join(dir, "a.json"), join(dir, "b.json")] });
+    assert.match(String(v("bash", { command: "sbatch x.sh" })?.content), /team rule/);
+    assert.match(String(v("bash", { command: "grep -r foo /big" })?.content), /project rule/);
+    assert.equal(v("bash", { command: "ls /big/x" }), null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

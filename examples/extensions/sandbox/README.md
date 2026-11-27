@@ -35,7 +35,7 @@ A run file with a `sandbox` section refuses to start when this extension isn't l
 export const config = {
   sandbox: {
     write: ["./out"], hide: ["../private"],     // relative to the file
-    policy: "./rules.json",                     // optional extra rules (format below)
+    policy: "./rules.json",                     // optional extra rules (format below); or a list of files, all applied
     os: "preferred",                            // "required" | "preferred" | "off"
     net: true,                                  // false: agents' own commands are offline (bubblewrap)
   },

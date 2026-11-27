@@ -41,6 +41,7 @@ for (const [name, sandbox, extensions, env, message] of [
   ["os: \"required\" without an OS sandbox", '{ os: "required" }', EXTENSIONS, NO_OS_SANDBOX, /"required" but no OS sandbox is usable here/],
   ["net: false with os off (nothing to cut agents' commands off with)", '{ net: false, os: "off" }', EXTENSIONS, {}, /net: false needs the OS sandbox \(bubblewrap\)/],
   ["net that is not true or false", '{ net: "no", os: "off" }', EXTENSIONS, {}, /config\.sandbox\.net must be true or false/],
+  ["a policy that is not a path or a list of paths", '{ policy: 3, os: "off" }', EXTENSIONS, {}, /config\.sandbox\.policy must be a path or a list of paths/],
 ] as const) {
   test(`refuses to start, before any model call: ${name}`, async () => {
     const llm = await fakeLlm(() => ({ content: "ok" }));
