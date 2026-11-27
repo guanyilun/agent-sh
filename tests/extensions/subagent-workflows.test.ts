@@ -344,6 +344,7 @@ test("roles: settings and config.roles give model and thinking; explicit model w
       '  await run({ task: "a", tools: [], role: "worker" });',
       '  await run({ task: "b", tools: [], role: "reviewer" });',
       '  await run({ task: "c", tools: [], role: "worker", model: "m-explicit" });',
+      '  await run({ task: "c2", tools: [], model: "reviewer" });',
       '  try { await run({ task: "d", tools: [], role: "nobody" }); return "ran"; } catch (e) { return String(e.message); }',
       "};",
     ].join("\n"));
@@ -353,6 +354,6 @@ test("roles: settings and config.roles give model and thinking; explicit model w
     const dir = join(s.root, "workflow-runs", id, "agents");
     const models = readdirSync(dir).sort().map(f => readFileSync(join(dir, f), "utf8").split("\n").filter(Boolean)
       .map(l => JSON.parse(l)).find(l => l.type === "request")?.model);
-    assert.deepEqual(models.slice(0, 3), ["m-worker", "m-reviewer", "m-explicit"]);
+    assert.deepEqual(models.slice(0, 4), ["m-worker", "m-reviewer", "m-explicit", "m-reviewer"]);
   } finally { s.cleanup(); }
 });

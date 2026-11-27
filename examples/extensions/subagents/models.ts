@@ -7,7 +7,10 @@ export const ROLE_KEYS = ["model", "provider", "thinking"];
 
 /** A role's model, provider and thinking under a spec's own (explicit values win); an unknown role is an error that
  *  lists the known ones.  Roles come from the agent-sh settings (subagents.roles) and a run's config.roles. */
-export function applyRole<T extends { role?: string; model?: string; provider?: string; thinking?: string }>(spec: T, roles: Record<string, RoleDef>): T {
+export function applyRole<T extends { role?: string; model?: string; provider?: string; thinking?: string }>(given: T, roles: Record<string, RoleDef>): T {
+  // a model that names a role resolves through it: model="worker" is role="worker" (so constants can hold role names)
+  const spec = !given.role && given.model && !given.provider && Object.prototype.hasOwnProperty.call(roles, given.model)
+    ? { ...given, role: given.model, model: undefined } : given;
   if (!spec.role) return spec;
   const def = roles[spec.role];
   if (!def) {
