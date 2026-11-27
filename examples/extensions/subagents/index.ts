@@ -12,7 +12,7 @@ import { discoverAgents, findAgent, fromRegistration, type AgentDef, type AgentR
 import { describe, JobTable, type JobOutcome } from "./jobs.js";
 import { Semaphore } from "./semaphore.js";
 import { controlProblem } from "./control.js";
-import { applyRole, rolesProblems, splitProviderModel, type RoleDef } from "./models.js";
+import { applyRole, rolesProblems, splitProviderModel, type RoleDef, type RoleEntry } from "./models.js";
 import { RunStore } from "./runs.js";
 import { coerce, example, normalizeSchema, validate } from "./schema.js";
 import * as os from "node:os";
@@ -73,7 +73,7 @@ interface RunFileConfig {
   /** A Unix socket path (relative to the run file) for the run's control socket: status and steer by label. */
   control?: string;
   /** Role name -> model, provider, thinking, over the agent-sh settings' subagents.roles for this run. */
-  roles?: Record<string, RoleDef>;
+  roles?: Record<string, RoleEntry>;
 }
 
 interface RunFileRequest {
@@ -108,7 +108,7 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
   const settings = {
     ...ctx.getExtensionSettings("subagents", {
       maxConcurrency: 4, maxIterations: 25, maxRunsPerWorkflow: 50, backgroundWake: true, workflowTokenBudget: 0,
-      roles: {} as Record<string, RoleDef>,
+      roles: {} as Record<string, RoleEntry>,
     }),
     ...definedOnly({
       maxConcurrency: typeof runConfig?.concurrency === "object" ? runConfig.concurrency.default : runConfig?.concurrency,
@@ -119,8 +119,9 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
     }),
   };
   if (runConfig) bus.onPipe("run:checks", (p) => ({ ...p, handled: [...p.handled, ...RUN_CONFIG_KEYS], problems: [...p.problems, ...retryProblems(runConfig.retry), ...concurrencyProblems(runConfig.concurrency), ...controlProblems(runConfig), ...rolesProblems(runConfig.roles, "config.roles")] }));
-  const roles: Record<string, RoleDef> = { ...(settings.roles ?? {}) };
-  for (const [name, def] of Object.entries(runConfig?.roles ?? {})) roles[name] = { ...roles[name], ...def };
+  const roles: Record<string, RoleEntry> = { ...(settings.roles ?? {}) };
+  for (const [name, def] of Object.entries(runConfig?.roles ?? {}))
+    roles[name] = typeof def === "string" || typeof roles[name] !== "object" ? def : { ...(roles[name] as RoleDef), ...def };
   const retryWindowMs = (runConfig?.retry?.windowMin ?? 45) * 60_000;
   const retryFirstCall = runConfig?.retry?.firstCall ?? false;
   // A path (e.g. a venv's interpreter) is relative to the run file; a bare name is looked up on PATH.

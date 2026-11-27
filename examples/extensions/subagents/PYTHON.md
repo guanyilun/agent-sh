@@ -100,9 +100,9 @@ fixed = await worker.ask(f"The tests fail:\n{output}\nFix it.")      # it rememb
 
 `Agent(name, ...)` takes `role`, `model`, `provider`, `thinking`, `tools`, `system`, `label`, `write`, `live`, `env`, `context_tokens` and `history_from`, which apply to every turn; `ask(task, ...)` takes `returns`, `role`, `model`, `provider`, `thinking`, `label`, `max_steps` and `on_cut` for that turn. Turns run one at a time, in the order asked. Use it for repair loops, where restating the history to a fresh agent would cost more and lose detail.
 
-`name` is a **named agent** (the table below: a prompt, tools and limits written for a kind of work); `role=` is a **model choice** from the settings. They combine: `Agent("reviewer", role="cheap")`.
+`name` is a **named agent** (the table below: a prompt, tools and limits written for a kind of work); `role=` is a **model choice** from the settings. They combine: `Agent("reviewer", role="critic")` is the reviewer's prompt on the critic role's model.
 
-**Changing the model for one turn.** `ask(..., role="reviewer")` replaces the agent's model choice for that turn. `ask(..., model="codex:gpt-6-luna")` does too, and does not inherit the agent's provider (a bare id goes to the run's provider). Keep one model per conversation where you can: switching mid-conversation re-sends the whole history to a model that has not cached it.
+**Changing the model for one turn.** `ask(..., role="critic")` replaces the agent's model choice for that turn. `ask(..., model="codex:gpt-6-luna")` does too, and does not inherit the agent's provider (a bare id goes to the run's provider). Keep one model per conversation where you can: switching mid-conversation re-sends the whole history to a model that has not cached it.
 
 **A cut turn.** If a turn with `returns` is stopped at its step limit or budget, `ask` raises `RunCut`, and the turn's finished steps stay in the conversation, so the usual repair is to ask again:
 
@@ -262,14 +262,17 @@ config = dict(
 
 ```json
 "subagents": { "roles": {
-  "worker":   { "model": "codex:gpt-6-luna", "thinking": "max" },
-  "reviewer": { "model": "flatiron:XiaomiMiMo/MiMo-V2.6-Pro-MOPD" }
+  "main":     { "model": "codex:gpt-6-luna", "thinking": "max" },
+  "critic":   { "model": "flatiron:XiaomiMiMo/MiMo-V2.6-Pro-MOPD" },
+  "reviewer": "critic"
 }}
 ```
 
-`Agent(role="worker", tools=[...])`, `run(task, role="reviewer")`, `agent.ask(task, role="reviewer")` take the role's
+`Agent(role="main", tools=[...])`, `run(task, role="critic")`, `agent.ask(task, role="critic")` take the role's
 model, provider and thinking; `model=` or `thinking=` given in the call still win.  A run overrides a role with
-`config = dict(roles=dict(reviewer=dict(model="codex:gpt-6-luna")))`.  An unknown role fails with the list of known
+`config = dict(roles=dict(critic=dict(model="codex:gpt-6-luna")))`; a role given as another role's name is an alias
+(`"reviewer": "critic"`), for old names while programs move over.  Pick role names no named agent uses (not
+`worker`, `reviewer`, `explore`, ...), so `Agent("reviewer", role="critic")` reads unambiguously.  An unknown role fails with the list of known
 ones (also in `--dry-run`).  A model id may name its provider, `"flatiron:moonshotai/Kimi-K3"`; the prefix is split off
 only when it is a provider agent-sh can reach.  Import `Agent` and `run` from `agentsh` itself: no wrapper is needed.
 

@@ -335,7 +335,7 @@ test("roles: settings and config.roles give model and thinking; explicit model w
   const { readFileSync, readdirSync } = await import("node:fs");
   const s = setup({
     reply: () => ({ content: "ok" }), usage: 5,
-    settings: { roles: { worker: { model: "m-worker", thinking: "high" }, reviewer: { model: "m-old" } } },
+    settings: { roles: { main: { model: "m-worker", thinking: "high" }, worker: "main", reviewer: { model: "m-old" } } },
     before: (h) => h.define("run:config", () => ({ base: "/", roles: { reviewer: { model: "m-reviewer" } } })),
   });
   try {
@@ -350,7 +350,7 @@ test("roles: settings and config.roles give model and thinking; explicit model w
       "};",
     ].join("\n"));
     const r = await s.exec("run_workflow", { name: "roles" });
-    assert.match(body(r), /unknown role "nobody" \(roles: worker, reviewer\)/);
+    assert.match(body(r), /unknown role "nobody" \(roles: main, worker, reviewer\)/);
     const id = String(r.content).match(/\(workflow run (\S+);/)![1]!;
     const dir = join(s.root, "workflow-runs", id, "agents");
     const models = readdirSync(dir).sort().map(f => readFileSync(join(dir, f), "utf8").split("\n").filter(Boolean)
