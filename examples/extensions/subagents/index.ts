@@ -745,10 +745,12 @@ export default function activate(ctx: ExtensionContext & AgentContext): void {
           // env: the agent's environment, run before each of its shell commands (on its own line, so a prelude that
           // ends in a comment or lacks a semicolon cannot swallow the command).  The agent's own text is what the
           // transcript and the write check see.
+          // agentWrite: this agent's write roots, for the sandbox's per-command box (sandbox/agents.ts); ignored elsewhere
+          const box = tool.name === "bash" && Array.isArray(spec.write) ? { agentWrite: spec.write } : {};
           if (spec.env && (tool.name === "bash" || tool.name === "pwsh") && typeof (args as { command?: unknown }).command === "string") {
-            return tool.execute({ ...(args as Record<string, unknown>), command: `${spec.env}\n${(args as { command: string }).command}` }, onChunk, execCtx);
+            return tool.execute({ ...(args as Record<string, unknown>), ...box, command: `${spec.env}\n${(args as { command: string }).command}` }, onChunk, execCtx);
           }
-          return tool.execute(args, onChunk, execCtx);
+          return tool.execute({ ...(args as Record<string, unknown>), ...box }, onChunk, execCtx);
         },
       } satisfies ToolDefinition))
       .concat(extra.extraTools ?? []);

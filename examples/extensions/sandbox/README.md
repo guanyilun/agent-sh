@@ -35,8 +35,9 @@ A run file with a `sandbox` section refuses to start when this extension isn't l
 export const config = {
   sandbox: {
     write: ["./out"], hide: ["../private"],     // relative to the file
-    policy: "./rules.json",                     // optional extra rules (format below)
+    policy: "./rules.json",                     // optional extra rules (format below); or a list of files, all applied
     os: "preferred",                            // "required" | "preferred" | "off"
+    net: true,                                  // false: agents' own commands are offline (bubblewrap)
   },
 };
 ```
@@ -53,8 +54,24 @@ first, then Landlock. `SBX_BWRAP`, `SBX_SANDBOX_EXEC` and `SBX_PYTHON` override 
 
 An option the sandbox doesn't have (a misspelled `writes`, say) also refuses to start.
 
-`net: false` isn't supported yet and refuses to start: the sandbox wraps the whole run, which needs the network to
-reach the model. Cutting the network for the agents' own commands needs per-agent isolation.
+## Each agent command in its own box
+
+The OS sandbox wraps the whole run, agent-sh included, so it cannot hide what agent-sh itself needs (provider keys,
+sign-ins, the run's transcripts) or cut the network its model calls use. Under bubblewrap, every shell command an
+agent runs therefore gets a second, nested bubblewrap (`agents.ts`):
+
+- **Hidden from agents** (also from their file tools, through the guard, on every platform): the agent-sh homes
+  (`~/.agent-sh`, `$AGENT_SH_HOME`: keys, sign-ins, every run's transcripts, shell history), `~/.codex`, `~/.ssh`,
+  `~/.gnupg`, `~/.aws`, `~/.netrc`, `~/.git-credentials`, `~/.config/gh` and `~/.claude`, with `~/.claude/skills`
+  readable again; plus the run's own `hide` list.
+- **Writable**: the agent's own write roots (`write=` on the agent), else the run's; and `/tmp`. Everything else,
+  e.g. a program's `state/`, is read-only to agents.
+- **`net: false`**: agents' commands have no network. Model calls, made by agent-sh outside the box, are unaffected.
+  It needs bubblewrap: with `os: "required"` and no bubblewrap the run refuses to start; with `"preferred"` it says
+  that agents keep the network; with `os: "off"` it refuses.
+
+Under Landlock or Seatbelt there is no nested box: the guard hides the same paths from file tools only, and the
+startup notice says so.
 
 ## Rules
 
