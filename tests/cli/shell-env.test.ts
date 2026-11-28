@@ -34,3 +34,9 @@ test("empty shellEnv returns a copy of baseEnv", () => {
   const merged = mergeShellEnv({ X: "y" }, {});
   assert.deepEqual(merged, { X: "y" });
 });
+
+test("the login capture starts from who the user is, not from the caller's additions (2026-11-27)", async () => {
+  const { loginBaseEnv } = await import("../../src/cli/shell-env.js");
+  const base = loginBaseEnv({ HOME: "/h", PATH: "/bin", LC_ALL: "C", CREW_DRY_RUN: "1", CLAUDE_CODE_MESSAGING_TOKEN: "t" });
+  assert.deepEqual(base, { HOME: "/h", PATH: "/bin", LC_ALL: "C" });
+});

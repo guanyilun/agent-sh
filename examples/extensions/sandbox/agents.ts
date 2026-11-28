@@ -15,13 +15,15 @@ export interface AgentBox { write: string[]; net: boolean; hide: string[]; revea
 const real = (p: string) => { try { return fs.realpathSync(p); } catch { return undefined; } };
 
 /** What no agent needs and every agent could otherwise read: credentials, sign-ins, agent-sh's own homes (keys,
- *  transcripts of every run, shell history), Claude Code's files.  `reveal` re-exposes read-only what agents use. */
+ *  transcripts of every run, shell history), Claude Code's files, the user's runtime directory (session sockets).  `reveal` re-exposes read-only what agents use. */
 export function defaultAgentHides(agentShHome: string, home = os.homedir()): { hide: string[]; reveal: string[] } {
   const candidates = [
     agentShHome, path.join(home, ".agent-sh"), path.join(home, ".agent-sh-dev"),
     path.join(home, ".codex"), path.join(home, ".ssh"), path.join(home, ".gnupg"), path.join(home, ".aws"),
     path.join(home, ".netrc"), path.join(home, ".git-credentials"), path.join(home, ".config", "gh"),
     path.join(home, ".claude"),
+    // the user's runtime directory: session sockets (an editor's or Claude Code's messaging socket, D-Bus, agents)
+    process.env.XDG_RUNTIME_DIR || `/run/user/${os.userInfo().uid}`,
   ];
   const hide = [...new Set(candidates.flatMap(p => [p, real(p)]).filter((p): p is string => !!p && fs.existsSync(p)))];
   const reveal = [path.join(home, ".claude", "skills")].map(p => real(p)).filter((p): p is string => !!p);
