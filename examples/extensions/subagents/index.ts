@@ -25,6 +25,7 @@ import type { RunSpec } from "./workflow-types.js";
 import { isPython, pythonModule } from "./python.js";
 import { writeRootsVerdict } from "./write-roots.js";
 import { clipMiddle, FinishedSubagents } from "./finished.js";
+import { clipDetail, shortenPaths } from "./describe.js";
 
 export type { Workflow, WorkflowApi, RunSpec, JsonSchema } from "./workflow-types.js";
 export type { AgentRegistration } from "./agents.js";
@@ -928,7 +929,7 @@ function describeCall(tool: ToolDefinition, args: Record<string, unknown>, cwd: 
     if (typeof v === "string") detail = v;
   }
   detail = detail.split(cwd + path.sep).join("").split(cwd).join(".").replace(/\s+/g, " ").trim();
-  return detail.length > 100 ? detail.slice(0, 99) + "…" : detail;
+  return clipDetail(shortenPaths(detail));
 }
 
 function messageText(content: unknown): string {
